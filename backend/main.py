@@ -52,6 +52,7 @@ from .infinite_context import router as infinite_context_router
 from .domains.strategist import router as strategist_router
 from .domains.seo import optimizer as seo_optimizer
 from .domains.radar import router as radar_router
+from .domains.action_center import router as action_center_router
 
 BASE_DIR = Path(__file__).parent.parent
 @asynccontextmanager
@@ -151,6 +152,7 @@ app.include_router(infinite_context_router.router)
 app.include_router(strategist_router.router)
 app.include_router(seo_optimizer.router)
 app.include_router(radar_router.router)
+app.include_router(action_center_router.router)
 
 
 # ── Status / health endpoints ──────────────────────────────────────────────

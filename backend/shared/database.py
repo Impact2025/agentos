@@ -529,6 +529,38 @@ def _migrate(conn) -> None:
     if vac_cols and "posted_days_ago" not in vac_cols:
         conn.execute("ALTER TABLE vacancies ADD COLUMN posted_days_ago INTEGER DEFAULT -1")
 
+    # Uitkomst-kaarten: activity_log bestond alleen impliciet (aangemaakt door
+    # oudere code) — hier expliciet, plus artefact-link ("waar staat het"),
+    # next_step ("wat moet Vincent doen") en status (ok/error) zodat het
+    # Actiecentrum fouten kan oppikken.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS activity_log (
+            id         TEXT PRIMARY KEY,
+            project    TEXT NOT NULL,
+            action     TEXT NOT NULL,
+            detail     TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        )"""
+    )
+    act_cols = {row["name"] for row in conn.execute("PRAGMA table_info(activity_log)").fetchall()}
+    for col, ddl in (
+        ("artifact",  "ALTER TABLE activity_log ADD COLUMN artifact TEXT DEFAULT ''"),
+        ("next_step", "ALTER TABLE activity_log ADD COLUMN next_step TEXT DEFAULT ''"),
+        ("status",    "ALTER TABLE activity_log ADD COLUMN status TEXT DEFAULT 'ok'"),
+    ):
+        if col not in act_cols:
+            conn.execute(ddl)
+
+    # Actiecentrum: weggeklikte inbox-items (bv. een fout die je gezien hebt).
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS inbox_dismissals (
+            kind         TEXT NOT NULL,
+            ref_id       TEXT NOT NULL,
+            dismissed_at TEXT NOT NULL,
+            PRIMARY KEY (kind, ref_id)
+        )"""
+    )
+
 
 @contextmanager
 def get_conn():

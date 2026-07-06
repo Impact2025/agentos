@@ -14,7 +14,7 @@ function loadActivityLogs(targetElId) {
   var el = document.getElementById(targetElId);
   if (!el) return;
   el.innerHTML = '<div style="color:#64748b;text-align:center;padding:8px">Laden...</div>';
-  fetch('/api/activity?limit=30').then(function(r){return r.json();}).then(function(logs){
+  fetch('/api/action-center/feed?limit=30').then(function(r){return r.json();}).then(function(logs){
     if (!logs || !logs.length) {
       el.innerHTML = '<div style="color:#64748b;text-align:center;padding:16px">Nog geen activiteit</div>';
       return;
@@ -26,13 +26,22 @@ function loadActivityLogs(targetElId) {
       var time = (l.created_at||'').slice(11,19);
       var icon = '○';
       var color = '#64748b';
-      if (l.action === 'task_done' || l.action === 'goal_done' || l.action === 'phase_done') { icon = '✓'; color = '#22c55e'; }
-      else if (l.action === 'task_failed' || l.action === 'goal_error') { icon = '✗'; color = '#ef4444'; }
+      if (l.status === 'error') { icon = '✗'; color = '#ef4444'; }
+      else if (l.action === 'task_done' || l.action === 'goal_done' || l.action === 'phase_done' || l.action === 'live') { icon = '✓'; color = '#22c55e'; }
+      else if (l.action === 'task_failed' || l.action === 'goal_error' || (l.action||'').indexOf('fout') >= 0) { icon = '✗'; color = '#ef4444'; }
       else if (l.action === 'task_retry') { icon = '↻'; color = '#f59e0b'; }
       else if (l.action === 'task_start' || l.action === 'goal_start' || l.action === 'phase_start') { icon = '▶'; color = '#60a5fa'; }
       else if (l.action === 'goal_retry') { icon = '⟳'; color = '#a78bfa'; }
       var project = (l.project||'').replace('goal:','').split(':')[0];
       var detail = escHtml(l.detail||'').slice(0,120);
+      // Uitkomst-kaart: artefact-link ("waar staat het") + volgende stap ("wat moet ik doen")
+      var artifact = (l.artifact||'').trim();
+      if (artifact) {
+        var artLabel = artifact.indexOf('http') === 0 ? 'bekijk resultaat' : escHtml(artifact.split(/[\\\/]/).pop());
+        var href = artifact.indexOf('http') === 0 ? artifact : 'obsidian://open?path=' + encodeURIComponent(artifact);
+        detail += ' <a href="' + escHtml(href) + '" target="_blank" style="color:#38bdf8;text-decoration:underline">→ ' + artLabel + '</a>';
+      }
+      if ((l.next_step||'').trim()) detail += ' <span style="color:#fbbf24">✋ ' + escHtml(l.next_step) + '</span>';
       html += '<div style="display:flex;align-items:flex-start;gap:6px;padding:4px 6px;border-bottom:1px solid #1e293b;line-height:1.5">' +
         '<span style="color:' + color + ';flex-shrink:0;width:14px;text-align:center">' + icon + '</span>' +
         '<span style="color:#64748b;flex-shrink:0;width:50px">' + time + '</span>' +
@@ -251,6 +260,9 @@ function renderHome(main) {
       '<span id="resolve-failed-btn-container"></span>' +
       '<p style="font-size:12px;color:#64748b">Control Room &mdash; overzicht van alle projecten en systemen</p></div>';
 
+    // ── Actiecentrum: alles wat op een menselijke beslissing wacht ──
+    html += '<div id="action-center-panel"><div style="color:#64748b;font-size:12px;padding:8px 0">Inbox laden...</div></div>';
+
     // ── Recent Activity logs (Vercel-style) ──
     html += '<div class="section-card" style="margin-bottom:16px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
       '<h4 style="font-size:13px;font-weight:700">\u{1F4DC} Recente activiteit</h4>' +
@@ -322,10 +334,108 @@ function renderHome(main) {
 
     html += '</div>';
     main.innerHTML = html;
+    loadActionCenter();
     loadActivityLogs();
     loadSystemHealth();
     startAgentStatusPoll();
   }).catch(function(e){ main.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; });
+}
+
+// ── Actiecentrum — één inbox met alles wat op jou wacht ────────────
+var _acKindMeta = {
+  goal_draft:    { icon: '\u{1F4CB}', color: '#f59e0b', label: 'Plan wacht op akkoord' },
+  goal_ready:    { icon: '▶',    color: '#3b82f6', label: 'Klaar om te starten' },
+  goal_failed:   { icon: '✗',    color: '#ef4444', label: 'Vastgelopen doel' },
+  content_review:{ icon: '\u{1F4F0}', color: '#8b5cf6', label: 'Content ter review' },
+  task_approval: { icon: '✓',    color: '#0ea5e9', label: 'Taak wacht op goedkeuring' },
+  vacancies:     { icon: '\u{1F4BC}', color: '#10b981', label: 'Opdracht-kansen' },
+  leads:         { icon: '\u{1F465}', color: '#10b981', label: 'Nieuwe leads' },
+  error:         { icon: '⚠',    color: '#ef4444', label: 'Fout' }
+};
+
+function loadActionCenter() {
+  var el = document.getElementById('action-center-panel');
+  if (!el) return;
+  fetch('/api/action-center').then(function(r){return r.json();}).then(function(data){
+    if (!el) return;
+    var items = data.items || [];
+    if (!items.length) {
+      el.innerHTML = '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:13px;color:#166534">' +
+        '✅ <b>Inbox leeg</b> — niets wacht op jou. De agents draaien op schema.</div>';
+      return;
+    }
+    var html = '<div class="section-card" style="margin-bottom:16px;border:2px solid #6366f1;background:linear-gradient(135deg,#eef2ff,#fff)">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
+      '<h3 style="font-size:15px;font-weight:800;color:#312e81">\u{1F4E5} Vandaag — wacht op jou (' + items.length + ')</h3>' +
+      '<span style="font-size:11px;color:#64748b">' + (data.counts.errors ? data.counts.errors + ' fout(en) · ' : '') + 'klik = klaar</span></div>';
+    items.forEach(function(it, idx){
+      var meta = _acKindMeta[it.kind] || { icon: '•', color: '#64748b', label: it.kind };
+      var when = it.created_at ? '<span style="color:#94a3b8;font-size:10px;flex-shrink:0">' + escHtml(String(it.created_at).slice(0,10)) + '</span>' : '';
+      html += '<div id="ac-item-' + idx + '" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;margin-bottom:6px;background:#fff;border:1px solid #e2e8f0;border-left:3px solid ' + meta.color + ';border-radius:8px">' +
+        '<span style="font-size:15px;flex-shrink:0">' + meta.icon + '</span>' +
+        '<div style="flex:1;min-width:0">' +
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+        '<span style="font-size:10px;font-weight:700;text-transform:uppercase;color:' + meta.color + '">' + meta.label + '</span>' +
+        '<span style="font-size:10px;color:#64748b;background:#f1f5f9;padding:1px 6px;border-radius:4px">' + escHtml(it.project || '') + '</span>' + when + '</div>' +
+        '<p style="font-size:13px;font-weight:600;color:#1e293b;margin:2px 0">' + escHtml(it.title) + '</p>' +
+        '<p style="font-size:11px;color:#64748b;margin-bottom:6px">' + escHtml(it.summary || '') + '</p>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+        it.actions.map(function(a){
+          var style = a.danger
+            ? 'background:#fff;color:#dc2626;border:1px solid #fecaca'
+            : (a.type === 'open_tab' || a.type === 'dismiss')
+              ? 'background:#f8fafc;color:#475569;border:1px solid #e2e8f0'
+              : 'background:#4f46e5;color:#fff;border:none';
+          return '<button onclick=\'acAction(this, ' + JSON.stringify(a).replace(/'/g, '&#39;') + ', ' + JSON.stringify(it.project || '') + ')\' ' +
+            'style="padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;' + style + '">' + escHtml(a.label) + '</button>';
+        }).join('') +
+        '</div></div></div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
+  }).catch(function(e){
+    el.innerHTML = '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px;margin-bottom:16px;font-size:12px;color:#991b1b">Actiecentrum laden mislukt: ' + escHtml(e.message) + '</div>';
+  });
+}
+
+function acAction(btn, action, project) {
+  var type = action.type;
+  if (type === 'open_tab') {
+    var proj = PROJECTS.indexOf(project) >= 0 ? project : (currentProject || 'WeAreImpact');
+    currentProject = proj; currentTab = action.tab; weSuggestions = [];
+    history.pushState(null, '', '#project=' + encodeURIComponent(proj));
+    route();
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Bezig...'; }
+  var done = function(){ loadActionCenter(); loadActivityLogs(); };
+  var fail = function(e){ if (btn) { btn.disabled = false; btn.textContent = 'Mislukt — opnieuw'; } console.error('[Actiecentrum]', e); };
+  var post = function(url, body){ return fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined }).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }); };
+
+  if (type === 'goal_confirm_start') {
+    post('/api/goals/confirm', { goal_id: action.id })
+      .then(function(){ return post('/api/goals/start', { goal_id: action.id }); })
+      .then(done).catch(fail);
+  } else if (type === 'goal_start') {
+    post('/api/goals/start', { goal_id: action.id }).then(done).catch(fail);
+  } else if (type === 'goal_retry') {
+    post('/api/goals/retry-failed', { goal_id: action.id }).then(done).catch(fail);
+  } else if (type === 'goal_delete') {
+    if (!confirm('Doel definitief verwijderen?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
+    fetch('/api/goals/' + encodeURIComponent(action.id), { method:'DELETE' }).then(done).catch(fail);
+  } else if (type === 'content_approve') {
+    if (!confirm('Publiceren naar website + social. Doorgaan?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
+    post('/api/content-queue/' + encodeURIComponent(action.id) + '/approve').then(done).catch(fail);
+  } else if (type === 'content_reject') {
+    post('/api/content-queue/' + encodeURIComponent(action.id) + '/reject').then(done).catch(fail);
+  } else if (type === 'task_approve') {
+    fetch('/api/tasks/' + encodeURIComponent(action.id) + '/status', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status:'done'}) })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(done).catch(fail);
+  } else if (type === 'dismiss') {
+    post('/api/action-center/dismiss', { kind: action.dismiss_kind, ref_id: String(action.id) }).then(done).catch(fail);
+  } else {
+    fail(new Error('Onbekende actie: ' + type));
+  }
 }
 
 // ── Systeemgezondheid (herbruikbaar: Control Room + per-project Dashboard) ──
