@@ -836,3 +836,8 @@ async def scan_the_skies() -> None:
         if ev.get("type") == "scan_done":
             saved = ev.get("total_saved", 0)
     log.info("[radar] Sky-scan klaar: %s nieuwe signalen", saved)
+    if saved:
+        from ...shared.outcomes import log_outcome
+        log_outcome("Radar", "sky-scan",
+                    f"{saved} nieuwe signalen (concurrenten/trends) opgepikt",
+                    next_step="Scan de Radar-tab op signalen die actie verdienen")

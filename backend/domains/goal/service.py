@@ -81,6 +81,13 @@ SKILL_DESCRIPTIONS: Dict[str, str] = {
 _CONCEPT_ONLY_SKILLS = {"publisher", "outreach"}
 _DATA_SKILLS = {"analyst"}
 
+# Synthese-taken (schrijven, redigeren, beoordelen) gaan naar Claude — het
+# sterkste beschikbare model — met terugval op Hermes als Claude onbereikbaar
+# is. Research/analyse op Hermes krijgt échte tools (websearch, GA, Obsidian)
+# in plaats van alleen een prompt. Uitschakelen kan met GOAL_USE_CLAUDE=0.
+import os as _os
+_GOAL_USE_CLAUDE = _os.getenv("GOAL_USE_CLAUDE", "1") not in ("0", "false", "no")
+
 _NO_FABRICATION_RULE = (
     "\n\nHARDE REGELS (verplicht, gaan boven alles):\n"
     "- Verzin NOOIT cijfers, statistieken, meetresultaten of uitkomsten die niet "
@@ -398,11 +405,15 @@ def _update_phase(phase_id: str, **fields: Any) -> None:
         )
 
 
-def _log_activity(goal_id: str, action: str, detail: str) -> None:
-    """Log naar de activity_log tabel (herbruikt voor goal-activiteit)."""
-    from ...domains.projects.weareimpact import _log_activity as log_act
+def _log_activity(goal_id: str, action: str, detail: str,
+                  artifact: str = "", next_step: str = "", status: str = "ok") -> None:
+    """Log een uitkomst-kaart naar activity_log: wat gedaan → waar staat het
+    (artifact) → wat moet Vincent doen (next_step). status='error' maakt het
+    een Actiecentrum-item."""
+    from ...shared.outcomes import log_outcome
     try:
-        log_act(f"goal:{goal_id}", action, detail)
+        log_outcome(f"goal:{goal_id}", action, detail,
+                    artifact=artifact, next_step=next_step, status=status)
     except Exception:
         pass  # fallback: negeer log-error
 
@@ -933,14 +944,15 @@ async def _execute_task(goal_id: str, task: Dict[str, Any]) -> str:
     started = time.perf_counter()
 
     try:
-        result = await _route_by_skill(skill, title, description, goal_id)
+        result, artifact, next_step = await _route_by_skill(skill, title, description, goal_id)
         duration_ms = int((time.perf_counter() - started) * 1000)
         _update_task(task_id, status="completed", result=result, duration_ms=duration_ms, finished_at=_now())
         event_bus.publish({
             "type": "goal_task_done", "goal_id": goal_id, "task_id": task_id,
             "title": title, "skill": skill, "duration_ms": duration_ms,
         })
-        _log_activity(goal_id, "task_done", f"'{title}' ({duration_ms}ms)")
+        _log_activity(goal_id, "task_done", f"'{title}' ({duration_ms}ms)",
+                      artifact=artifact, next_step=next_step)
         return result
 
     except Exception as e:
@@ -971,7 +983,8 @@ async def _execute_task(goal_id: str, task: Dict[str, Any]) -> str:
                 "type": "goal_task_failed", "goal_id": goal_id, "task_id": task_id,
                 "title": title, "error": error_str,
             })
-            _log_activity(goal_id, "task_failed", f"'{title}' na {retry+1} pogingen: {error_str}")
+            _log_activity(goal_id, "task_failed", f"'{title}' na {retry+1} pogingen: {error_str}",
+                          status="error", next_step="Bekijk het doel in de Doelen-tab of laat de agent het opnieuw proberen")
 
             # Probeer alternatieve aanpak (self-correctie)
             try:
@@ -997,8 +1010,15 @@ class _RetryLater(Exception):
     pass
 
 
-async def _route_by_skill(skill: str, title: str, description: str, goal_id: str) -> str:
+async def _route_by_skill(
+    skill: str, title: str, description: str, goal_id: str
+) -> Tuple[str, str, str]:
     """Routeer een taak naar de juiste skill/agent op basis van het type.
+
+    Retourneert (result, artifact, next_step):
+      result    — het eindproduct (markdown)
+      artifact  — waar het staat (URL of vault-pad; leeg = alleen in de DB)
+      next_step — wat Vincent nog moet doen (leeg = niets)
 
     Infinite Context: injecteert Obsidian-context in de system prompt en
     logt het resultaat terug naar de vault (The Loop).
@@ -1024,8 +1044,11 @@ async def _route_by_skill(skill: str, title: str, description: str, goal_id: str
                     goal_id=goal_id, task_id=goal_id, title=title,
                     skill=skill, result=result, project=project, duration_ms=0,
                 )
-            _log_activity(goal_id, "wachtrij_staged", f"'{art_title}' → Wachtrij (job {job_id}, score {seo_score})")
-            return result
+            next_step = f"Keur '{art_title}' goed of wijs af in de Wachtrij"
+            _log_activity(goal_id, "wachtrij_staged",
+                          f"'{art_title}' → Wachtrij (job {job_id}, score {seo_score})",
+                          next_step=next_step)
+            return result, "", next_step
 
     if _infinite_ctx.is_configured:
         obsidian_ctx = _infinite_ctx.build_task_context(
@@ -1080,18 +1103,40 @@ async def _route_by_skill(skill: str, title: str, description: str, goal_id: str
 
     user_prompt = f"## Taak: {title}\n\n{description}\n\n## Context\nDit is onderdeel van goal: {goal_id}\n\nLever je resultaat."
 
-    full = ""
-    async for chunk in agent_service.run_agent(
-        messages=[{"role": "user", "content": user_prompt}],
-        system_prompt=system_prompt,
-        agent="hermes",
-        use_tools=False,
-    ):
-        if chunk.get("type") == "text":
-            full += chunk["text"]
-        elif chunk.get("type") == "error":
-            raise RuntimeError(chunk.get("message", "Agent error"))
-    result = full.strip() or "(geen output)"
+    # ── Synthese: Claude eerst (beste model), Hermes als terugval ──
+    # De echte data (Tavily-webresearch, GSC-cijfers) zit al deterministisch
+    # in de system prompt; het model hoeft alleen nog wereldklasse te schrijven.
+    result = ""
+    if _GOAL_USE_CLAUDE:
+        from ..chat import claude as claude_service
+        if claude_service.is_configured():
+            try:
+                result = (await claude_service.get_response(
+                    messages=[{"role": "user", "content": user_prompt}],
+                    system_prompt=system_prompt,
+                    max_tokens=4096,
+                )).strip()
+            except Exception as e:
+                logger.warning(f"Claude-synthese mislukt voor taak '{title}' — terugval op Hermes: {e}")
+
+    if not result:
+        # Hermes-terugval. Research/analyse krijgt échte tools (websearch,
+        # Google Analytics, Obsidian) zodat de agent zelf data kan ophalen;
+        # schrijfwerk blijft tool-loos (kleine modellen + tools = flaky).
+        agentic = skill in _RESEARCH_SKILLS or skill in _DATA_SKILLS or skill == "seo"
+        full = ""
+        async for chunk in agent_service.run_agent(
+            messages=[{"role": "user", "content": user_prompt}],
+            system_prompt=system_prompt,
+            agent="hermes",
+            use_tools=agentic,
+        ):
+            if chunk.get("type") == "text":
+                full += chunk["text"]
+            elif chunk.get("type") == "error":
+                raise RuntimeError(chunk.get("message", "Agent error"))
+        result = full.strip()
+    result = result or "(geen output)"
 
     # Markeer concept-output onmiskenbaar als concept, zodat het resultaat
     # nooit voor een uitgevoerde actie of echt rapport kan doorgaan.
@@ -1102,8 +1147,10 @@ async def _route_by_skill(skill: str, title: str, description: str, goal_id: str
             result = _NO_DATA_BANNER + result
 
     # ── WRITE: Log resultaat terug naar Obsidian ───────────────────
-    if obsidian_ctx and result and result != "(geen output)":
-        _infinite_ctx.log_task_completion(
+    # Het vault-pad is het artefact: de plek waar Vincent het resultaat vindt.
+    artifact = ""
+    if _infinite_ctx.is_configured and result and result != "(geen output)":
+        task_path = _infinite_ctx.log_task_completion(
             goal_id=goal_id,
             task_id=goal_id,  # approximate — caller has real task_id
             title=title,
@@ -1112,8 +1159,13 @@ async def _route_by_skill(skill: str, title: str, description: str, goal_id: str
             project=project,
             duration_ms=0,
         )
+        if task_path:
+            artifact = str(task_path)
 
-    return result
+    next_step = ""
+    if skill in _CONCEPT_ONLY_SKILLS:
+        next_step = "Concept klaar — verstuur/publiceer zelf of keur af"
+    return result, artifact, next_step
 
 
 async def _find_alternative(skill: str, title: str, description: str, error: str) -> Optional[str]:
@@ -1274,7 +1326,9 @@ async def _execution_loop(goal_id: str) -> None:
                 event_bus.publish({
                     "type": "goal_done", "goal_id": goal_id, "status": status, **counts,
                 })
-                _log_activity(goal_id, "goal_done", f"Goal afgerond: {status}, {counts['completed']}/{counts['total']} taken")
+                _log_activity(goal_id, "goal_done",
+                              f"Goal afgerond: {status}, {counts['completed']}/{counts['total']} taken",
+                              next_step="Bekijk de taakresultaten in de Doelen-tab" if status == "completed" else "")
 
                 # ── WRITE: Log goal-resultaat naar Obsidian (Infinite Context) ──
                 if _infinite_ctx.is_configured:

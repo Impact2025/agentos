@@ -55,12 +55,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _log_activity(project: str, action: str, detail: str = "") -> None:
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO activity_log (id, project, action, detail, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-            (str(uuid.uuid4()), project, action, detail),
-        )
+def _log_activity(project: str, action: str, detail: str = "",
+                  artifact: str = "", next_step: str = "", status: str = "ok") -> None:
+    from ...shared.outcomes import log_outcome
+    log_outcome(project, action, detail, artifact=artifact, next_step=next_step, status=status)
 
 
 # ── Herbruikbare generatie-helpers ──────────────────────────────────────────
@@ -374,7 +372,8 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
     logger.info("[content-pipeline] Schrijven — %s / '%s'", site["name"], keyword)
     html_body = await _write_article(site, keyword, angle, rationale)
     if not html_body.strip():
-        _log_activity(site["name"], "auto-content-mislukt", f"Lege schrijf-response voor '{keyword}'")
+        _log_activity(site["name"], "auto-content-mislukt", f"Lege schrijf-response voor '{keyword}'",
+                      status="error")
         return None
 
     review = await _review_article(site, keyword, html_body)
@@ -392,7 +391,8 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
     job_id = create_job(site["id"], title, keyword, rationale, html_body,
                         review["score"], social_copy, image_bytes, slug)
     _log_activity(site["name"], "auto-content-klaar",
-                  f"'{title}' (SEO-score {review['score']}) klaar voor review")
+                  f"'{title}' (SEO-score {review['score']}) klaar voor review",
+                  next_step="Keur goed of wijs af in de Wachtrij")
     return job_id
 
 
@@ -468,7 +468,7 @@ async def run_biweekly_content_job() -> Dict:
             results[site["name"]] = job_id or "geen kansen"
         except Exception as e:
             logger.exception("[content-pipeline] Auto-content mislukt voor %s", site["name"])
-            _log_activity(site["name"], "auto-content-fout", str(e)[:300])
+            _log_activity(site["name"], "auto-content-fout", str(e)[:300], status="error")
             results[site["name"]] = f"fout: {e}"
     logger.info("[content-pipeline] Biweekly content-run klaar: %s", results)
     return results
@@ -552,7 +552,8 @@ async def approve_and_publish(job_id: str) -> Dict:
             social_copy["twitter"], article_url=article_url, site_name=site_name)
 
     _update_job(job_id, status="published", publish_result=json.dumps(result), reviewed_at=_now())
-    _log_activity(site_name, "publicatie", f"'{job['title']}' goedgekeurd en gepubliceerd")
+    _log_activity(site_name, "publicatie", f"'{job['title']}' goedgekeurd en gepubliceerd",
+                  artifact=article_url or "")
     return result
 
 

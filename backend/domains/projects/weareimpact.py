@@ -42,12 +42,13 @@ def _render_frontmatter(meta: Dict[str, str]) -> str:
 
 # ── Activity Log ─────────────────────────────────────────────────────────
 
-def _log_activity(project: str, action: str, detail: str = ""):
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO activity_log (id, project, action, detail, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-            (str(uuid.uuid4()), project, action, detail),
-        )
+def _log_activity(project: str, action: str, detail: str = "",
+                  artifact: str = "", next_step: str = "", status: str = "ok"):
+    from ...shared.outcomes import log_outcome
+    # Fouten krijgen status='error' zodat het Actiecentrum ze als inbox-item toont.
+    if status == "ok" and ("fout" in action or action == "error"):
+        status = "error"
+    log_outcome(project, action, detail, artifact=artifact, next_step=next_step, status=status)
 
 def _resolve_site(name: str):
     norm = lambda x: x.lower().replace(" ", "").replace("-", "")
@@ -636,6 +637,7 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
                         f"'{body.title}' LIVE op {live_result.get('url', '?')} — "
                         f"IndexNow: {indexing.get('indexnow', '?')}, Google: {indexing.get('google', '?')}, "
                         f"socials → {social_note}",
+                        artifact=live_result.get("url", ""),
                     )
                 else:
                     _log_activity(name, "live-fout",

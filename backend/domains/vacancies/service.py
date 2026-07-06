@@ -365,3 +365,8 @@ async def run_vacancy_scan_job() -> None:
         if ev.get("type") == "vacancy_saved":
             saved = ev.get("total_saved", saved)
     log.info("[vacancies] Geplande scan klaar: %s nieuwe vacatures opgeslagen", saved)
+    if saved:
+        from ...shared.outcomes import log_outcome
+        log_outcome("Opdrachten", "vacature-scan",
+                    f"Scan klaar: {saved} nieuwe interim-vacature(s) gevonden",
+                    next_step="Bekijk de Opdrachten-tab en reageer op passende vacatures")
