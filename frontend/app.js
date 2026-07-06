@@ -559,7 +559,10 @@ function runStrategistExecute() {
           '<p style="font-weight:600;font-size:13px;color:#166534;margin-bottom:4px">\u2705 Uitgevoerd!</p>' +
           '<p style="font-size:11px;color:#166534">' + created.length + ' doelen aangemaakt (' + (data.created_tasks||0) + ' taken)</p>';
         for (var g = 0; g < created.length; g++) {
-          html += '<p style="font-size:11px;color:#166534;margin-top:4px">- ' + escHtml(created[g].title) + ' <span style="color:#15803d">(' + created[g].project + ')</span></p>';
+          var startedBadge = created[g].auto_started
+            ? ' <span style="color:#fff;background:#16a34a;padding:1px 6px;border-radius:4px;font-size:10px">▶ direct gestart</span>'
+            : ' <span style="color:#92400e;background:#fef3c7;padding:1px 6px;border-radius:4px;font-size:10px">wacht op jouw akkoord — zie inbox</span>';
+          html += '<p style="font-size:11px;color:#166534;margin-top:4px">- ' + escHtml(created[g].title) + ' <span style="color:#15803d">(' + created[g].project + ')</span>' + startedBadge + '</p>';
         }
         html += '</div>';
       } else if (actions.length > 0) {

@@ -19,6 +19,12 @@ from ...infinite_context import InfiniteContextEngine
 
 logger = logging.getLogger(__name__)
 
+# Strategist-doelen direct bevestigen + starten. Veilig omdat de goal-executor
+# zelf niets extern publiceert of verstuurt — dat blijft achter de menselijke
+# Wachtrij-gate. Uitschakelen kan met STRATEGIST_AUTOSTART=0 in .env.
+import os as _os
+_AUTOSTART_GOALS = _os.getenv("STRATEGIST_AUTOSTART", "1") not in ("0", "false", "no")
+
 _infinite = InfiniteContextEngine(OBSIDIAN_VAULT_PATH)
 
 # Laatste autoheal-run — voor het systeemgezondheid-paneel.
@@ -567,24 +573,48 @@ async def strategist_execute(analysis: str) -> Dict[str, Any]:
 
         if priority in ("kritiek", "belangrijk") and project:
             try:
-                # Maak een goal aan
-                from ...domains.goal.service import create_and_plan
+                # Maak een goal aan — en start hem meteen. De draft-status
+                # voegde geen veiligheid toe (elke taak is concept-only of
+                # eindigt in de Wachtrij-review-gate) maar liet doelen wél
+                # verstoffen totdat iemand toevallig op Bevestig klikte.
+                from ...domains.goal.service import (
+                    create_and_plan, confirm_plan, start_goal_async,
+                )
                 goal = await create_and_plan(
                     title=action_text[:80],
                     objective=f"Strategist prioriteit ({priority}): {action_text}",
                     project=project,
                 )
                 if goal and goal.get("goal_id"):
+                    auto_started = False
+                    if _AUTOSTART_GOALS:
+                        try:
+                            confirm_plan(goal["goal_id"])
+                            await start_goal_async(goal["goal_id"])
+                            auto_started = True
+                        except Exception as e:
+                            logger.warning(
+                                f"Auto-start van doel '{action_text[:40]}' mislukt "
+                                f"(blijft als draft in het Actiecentrum staan): {e}"
+                            )
                     created_goals.append({
                         "goal_id": goal["goal_id"],
                         "title": action_text[:80],
                         "project": project,
                         "priority": priority,
+                        "auto_started": auto_started,
                     })
                     # Tel taken uit het plan
                     plan = goal.get("plan", {})
                     for ph in plan.get("phases", []):
                         created_tasks += len(ph.get("tasks", []))
+                    from ...shared.outcomes import log_outcome
+                    log_outcome(
+                        project, "strategist_goal",
+                        f"Doel '{action_text[:80]}' aangemaakt"
+                        + (" en direct gestart" if auto_started else " (wacht op bevestiging)"),
+                        next_step="" if auto_started else "Bevestig of verwijder het doel in het Actiecentrum",
+                    )
             except Exception as e:
                 logger.warning(f"Kon goal niet aanmaken voor '{action_text[:40]}': {e}")
 
