@@ -153,6 +153,18 @@ def build_inbox() -> Dict[str, Any]:
         ):
             if ("error", e["id"]) in skip:
                 continue
+            # Zelfherstellend: een publicatiefout waarvoor later een geslaagde
+            # 'live' van hetzelfde project+artikel bestaat, is opgelost — dat
+            # is een logregel, geen actie-item.
+            if e["action"] in ("live-fout", "publish-fout", "live-overgeslagen"):
+                title_part = (e["detail"] or "").split("':")[0].lstrip("'")
+                fixed = conn.execute(
+                    "SELECT 1 FROM activity_log WHERE action='live' AND project=? "
+                    "AND detail LIKE ? AND created_at >= ? LIMIT 1",
+                    (e["project"], f"%{title_part[:60]}%", e["created_at"]),
+                ).fetchone()
+                if fixed:
+                    continue
             actions: List[Dict[str, Any]] = [
                 {"label": "Gezien, verberg", "type": "dismiss", "dismiss_kind": "error", "id": e["id"]},
             ]

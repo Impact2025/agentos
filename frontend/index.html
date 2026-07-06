@@ -28,6 +28,13 @@
 </head>
 <body>
 <main id="main-content"></main>
-<script src="/app.js"></script>
+<!-- Klassieke scripts met gedeelde globale scope — volgorde is betekenisvol: core eerst, INIT (in tabs-settings-chat) laatst -->
+<script src="/js/core.js"></script>
+<script src="/js/home.js"></script>
+<script src="/js/shell.js"></script>
+<script src="/js/tabs-content.js"></script>
+<script src="/js/tabs-memory.js"></script>
+<script src="/js/tabs-business.js"></script>
+<script src="/js/tabs-settings-chat.js"></script>
 </body>
 </html>

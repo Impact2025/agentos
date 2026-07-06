@@ -83,3 +83,29 @@ def test_mislukte_publish_job_heeft_retry(conn, clean_tables):
     assert len(items) == 1
     assert items[0]["kind"] == "error"
     assert any(a["type"] == "content_approve" for a in items[0]["actions"])
+
+
+def test_opgeloste_live_fout_verdwijnt_uit_inbox(conn, clean_tables):
+    """Een live-fout gevolgd door een geslaagde 'live' van hetzelfde artikel
+    is opgelost en hoort niet meer in de inbox."""
+    from backend.shared.outcomes import log_outcome
+    from backend.domains.action_center.service import build_inbox
+
+    fout_id = log_outcome("Bijeen", "live-fout",
+                          "'Testartikel X': publish-API gaf 401", status="error")
+    assert any(i["id"] == fout_id for i in build_inbox()["items"])
+
+    log_outcome("Bijeen", "live", "'Testartikel X' LIVE op https://bijeen.app/blog/x",
+                artifact="https://bijeen.app/blog/x")
+    assert not any(i["id"] == fout_id for i in build_inbox()["items"])
+
+
+def test_onopgeloste_live_fout_blijft_staan(conn, clean_tables):
+    from backend.shared.outcomes import log_outcome
+    from backend.domains.action_center.service import build_inbox
+
+    fout_id = log_outcome("Bijeen", "live-fout",
+                          "'Ander artikel': publish-API gaf 401", status="error")
+    # Een 'live' van een ANDER artikel lost deze fout niet op
+    log_outcome("Bijeen", "live", "'Los artikel' LIVE op https://bijeen.app/blog/y")
+    assert any(i["id"] == fout_id for i in build_inbox()["items"])
