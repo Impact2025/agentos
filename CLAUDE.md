@@ -26,4 +26,5 @@ Start: `agentos_service.cmd` (uvicorn `backend.main:app`), of `launch.ps1` (incl
 - Fouten die menselijke actie vereisen: log met `status='error'` via `log_outcome` — niet alleen `logger.warning`.
 - Elke taak/run die "klaar" claimt hoort een artefact-link te hebben (vault-pad of URL).
 - Secrets staan in `.env` (gitignored). `google-credentials.json` idem.
-- Python: `.venv/Scripts/python.exe`; geen tests aanwezig — verifieer wijzigingen tegen de draaiende server (herstart via `agentos_service.cmd`).
+- Python: `.venv/Scripts/python.exe`. Tests: `.venv/Scripts/python.exe -m pytest tests/ -q` (draait tegen een wegwerp-DB via `AGENTOS_DB_PATH`). Draai ze vóór elke server-herstart; verifieer daarna tegen de draaiende server (herstart via `agentos_service.cmd`).
+- Het ochtendrapport (`backend/domains/action_center/digest.py`) draait dagelijks 07:00 en mailt zodra SMTP in `.env` is ingesteld; on demand via `GET /api/action-center/digest`.

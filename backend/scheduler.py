@@ -19,6 +19,7 @@ from .domains.publish.content_pipeline import run_biweekly_content_job
 from .domains.vacancies.service import run_vacancy_scan_job
 from .domains.seo.optimizer import run_weekly_optimizer_job
 from .domains.radar.service import scan_the_skies
+from .domains.action_center.digest import run_daily_digest
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ _JOB_LABELS = {
     "vacancy_scan": "Opdrachten-zoekagent (2x/week)",
     "seo_optimizer_scan": "SEO Optimizer-scan (interne links, CTR, refresh)",
     "radar_sky_scan": "Mission Radar sky-scan (concurrenten & trends, elke 4 uur)",
+    "daily_digest": "Ochtendrapport (fouten · wacht-op-jou · gisteren opgeleverd)",
 }
 
 
@@ -160,6 +162,16 @@ def start_scheduler() -> None:
         id="radar_sky_scan",
         replace_existing=True,
         misfire_grace_time=6 * 3600,  # tot 6u later alsnog inhalen (bv. na slaapstand/herstart)
+        coalesce=True,
+    )
+    # Ochtendrapport: dagelijkse digest van het Actiecentrum — vóór de andere
+    # rapporten zodat Vincent één samenvatting heeft in plaats van losse mails.
+    _scheduler.add_job(
+        run_daily_digest,
+        CronTrigger(hour=7, minute=0, timezone=_TZ),
+        id="daily_digest",
+        replace_existing=True,
+        misfire_grace_time=6 * 3600,
         coalesce=True,
     )
     # Autoheal: elke 15 min — vangt verweesde 'running'-doelen op (bv. na een

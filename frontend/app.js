@@ -263,6 +263,11 @@ function renderHome(main) {
     // ── Actiecentrum: alles wat op een menselijke beslissing wacht ──
     html += '<div id="action-center-panel"><div style="color:#64748b;font-size:12px;padding:8px 0">Inbox laden...</div></div>';
 
+    // ── Ochtendrapport (inklapbaar; zelfde inhoud als de 07:00-digest) ──
+    html += '<details class="section-card" style="margin-bottom:16px;padding:10px 16px" ontoggle="if(this.open)loadDigest()">' +
+      '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:#334155">\u{2615} Ochtendrapport — fouten · wacht-op-jou · gisteren opgeleverd · vandaag gepland</summary>' +
+      '<div id="digest-panel" style="margin-top:10px;font-size:12px"><div style="color:#64748b">Klik om te laden...</div></div></details>';
+
     // ── Recent Activity logs (Vercel-style) ──
     html += '<div class="section-card" style="margin-bottom:16px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
       '<h4 style="font-size:13px;font-weight:700">\u{1F4DC} Recente activiteit</h4>' +
@@ -335,6 +340,7 @@ function renderHome(main) {
     html += '</div>';
     main.innerHTML = html;
     loadActionCenter();
+    startActionCenterRefresh();
     loadActivityLogs();
     loadSystemHealth();
     startAgentStatusPoll();
@@ -353,21 +359,44 @@ var _acKindMeta = {
   error:         { icon: '⚠',    color: '#ef4444', label: 'Fout' }
 };
 
+var _acLastItems = [];
+var _acRefreshTimer = null;
+function startActionCenterRefresh() {
+  if (_acRefreshTimer) clearInterval(_acRefreshTimer);
+  _acRefreshTimer = setInterval(function(){
+    if (!document.getElementById('action-center-panel')) { clearInterval(_acRefreshTimer); _acRefreshTimer = null; return; }
+    loadActionCenter();
+  }, 30000);
+}
+function updateTabBadge(count) {
+  document.title = count > 0 ? '(' + count + ') Agent OS' : 'Agent OS';
+}
+
 function loadActionCenter() {
   var el = document.getElementById('action-center-panel');
   if (!el) return;
   fetch('/api/action-center').then(function(r){return r.json();}).then(function(data){
     if (!el) return;
     var items = data.items || [];
+    _acLastItems = items;
+    updateTabBadge(items.length);
     if (!items.length) {
       el.innerHTML = '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:13px;color:#166534">' +
         '✅ <b>Inbox leeg</b> — niets wacht op jou. De agents draaien op schema.</div>';
       return;
     }
+    var draftCount = items.filter(function(i){ return i.kind === 'goal_draft'; }).length;
+    var bulkBar = '';
+    if (draftCount >= 3) {
+      bulkBar = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;padding:8px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px">' +
+        '<span style="font-size:11px;color:#92400e;flex:1"><b>' + draftCount + ' doelen</b> wachten op je akkoord — in één keer afhandelen:</span>' +
+        '<button onclick="acBulkDrafts(this, \'start\')" style="padding:4px 12px;background:#16a34a;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">▶ Start alles</button>' +
+        '<button onclick="acBulkDrafts(this, \'delete\')" style="padding:4px 12px;background:#fff;color:#dc2626;border:1px solid #fecaca;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Verwijder alles</button></div>';
+    }
     var html = '<div class="section-card" style="margin-bottom:16px;border:2px solid #6366f1;background:linear-gradient(135deg,#eef2ff,#fff)">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
       '<h3 style="font-size:15px;font-weight:800;color:#312e81">\u{1F4E5} Vandaag — wacht op jou (' + items.length + ')</h3>' +
-      '<span style="font-size:11px;color:#64748b">' + (data.counts.errors ? data.counts.errors + ' fout(en) · ' : '') + 'klik = klaar</span></div>';
+      '<span style="font-size:11px;color:#64748b">' + (data.counts.errors ? data.counts.errors + ' fout(en) · ' : '') + 'klik = klaar · ververst elke 30s</span></div>' + bulkBar;
     items.forEach(function(it, idx){
       var meta = _acKindMeta[it.kind] || { icon: '•', color: '#64748b', label: it.kind };
       var when = it.created_at ? '<span style="color:#94a3b8;font-size:10px;flex-shrink:0">' + escHtml(String(it.created_at).slice(0,10)) + '</span>' : '';
@@ -396,6 +425,48 @@ function loadActionCenter() {
   }).catch(function(e){
     el.innerHTML = '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px;margin-bottom:16px;font-size:12px;color:#991b1b">Actiecentrum laden mislukt: ' + escHtml(e.message) + '</div>';
   });
+}
+
+var _digestLoaded = false;
+function loadDigest() {
+  if (_digestLoaded) return;
+  var el = document.getElementById('digest-panel');
+  if (!el) return;
+  el.innerHTML = '<div style="color:#64748b">Laden...</div>';
+  fetch('/api/action-center/digest').then(function(r){return r.json();}).then(function(d){
+    _digestLoaded = true;
+    el.innerHTML = '<div class="strategist-analyse-content">' + mdToHtml(d.markdown || '') + '</div>';
+  }).catch(function(e){
+    el.innerHTML = '<div style="color:#ef4444">Rapport laden mislukt: ' + escHtml(e.message) + '</div>';
+  });
+}
+
+function acBulkDrafts(btn, mode) {
+  var drafts = _acLastItems.filter(function(i){ return i.kind === 'goal_draft'; });
+  if (!drafts.length) return;
+  var msg = mode === 'start'
+    ? 'Alle ' + drafts.length + ' wachtende doelen bevestigen en starten? (Publiceren blijft achter de Wachtrij-gate.)'
+    : 'Alle ' + drafts.length + ' draft-doelen definitief verwijderen?';
+  if (!confirm(msg)) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Bezig... 0/' + drafts.length; }
+  var done = 0;
+  var next = function(i) {
+    if (i >= drafts.length) { loadActionCenter(); loadActivityLogs(); return; }
+    var id = drafts[i].id;
+    var p;
+    if (mode === 'start') {
+      p = fetch('/api/goals/confirm', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({goal_id:id}) })
+        .then(function(){ return fetch('/api/goals/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({goal_id:id}) }); });
+    } else {
+      p = fetch('/api/goals/' + encodeURIComponent(id), { method:'DELETE' });
+    }
+    p.catch(function(e){ console.error('[Actiecentrum bulk]', id, e); }).finally(function(){
+      done++;
+      if (btn) btn.textContent = 'Bezig... ' + done + '/' + drafts.length;
+      next(i + 1);
+    });
+  };
+  next(0);
 }
 
 function acAction(btn, action, project) {

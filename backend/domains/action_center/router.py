@@ -31,3 +31,10 @@ def dismiss(body: DismissBody):
 @router.get("/feed")
 def feed(limit: int = Query(25, ge=1, le=100)):
     return service.outcome_feed(limit)
+
+
+@router.get("/digest")
+def digest():
+    """Het ochtendrapport, on demand (zelfde inhoud als de 07:00-mail)."""
+    from . import digest as digest_service
+    return digest_service.build_digest()

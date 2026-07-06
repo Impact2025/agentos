@@ -1,0 +1,136 @@
+{
+  "plan_summary": "Ontwikkel een contentkalender met 4 blogposts op specifieke data (6, 9, 13, 16 juli) voor WeAreImpact, gebaseerd op research en SEO, en finaliseer deze na review.",
+  "estimated_duration": "2-3 werkdagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & keyword analyse",
+      "description": "Verzamel inzichten over doelgroep, zoekwoorden en concurrenten om onderwerpen te onderbouwen.",
+      "tasks": [
+        {
+          "id": "F1T1",
+          "title": "Doelgroepanalyse uitvoeren",
+          "description": "Analyseer bestaande bezoekersdata (Google Search Console, analytics) om te bepalen welke thema's aanslaan bij de doelgroep van WeAreImpact.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "F1T2",
+          "title": "Keyword research voor 4 blogposts",
+          "description": "Gebruik SEO-tools (bijv. Ahrefs, Semrush) om relevante long-tail zoekwoorden te identificeren die passen bij de missie van WeAreImpact.",
+          "skill": "seo",
+          "dependencies": [
+            "F1T1"
+          ]
+        },
+        {
+          "id": "F1T3",
+          "title": "Concurrentieanalyse uitvoeren",
+          "description": "Bekijk 3-5 concurrerende impact-blogs en noteer welke onderwerpen en formats goed presteren.",
+          "skill": "research",
+          "dependencies": [
+            "F1T1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Contentstrategie & onderwerpen",
+      "description": "Bepaal de 4 onderwerpen, maak outlines en optimaliseer titels voor SEO.",
+      "tasks": [
+        {
+          "id": "F2T1",
+          "title": "4 onderwerpen definitief maken",
+          "description": "Selecteer op basis van research de 4 meest kansrijke onderwerpen voor de blogposts, gekoppeld aan de doelen van WeAreImpact.",
+          "skill": "content-writer",
+          "dependencies": [
+            "F1T2",
+            "F1T3"
+          ]
+        },
+        {
+          "id": "F2T2",
+          "title": "Outlines per blogpost schrijven",
+          "description": "Schrijf voor elk onderwerp een korte outline met intro, kernpunten, conclusie en call-to-action.",
+          "skill": "content-writer",
+          "dependencies": [
+            "F2T1"
+          ]
+        },
+        {
+          "id": "F2T3",
+          "title": "Titels en meta descriptions optimaliseren",
+          "description": "Stel voor elke post een SEO-vriendelijke titel en meta description op, inclusief doelzoekwoord.",
+          "skill": "seo",
+          "dependencies": [
+            "F2T2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Contentkalender documenteren",
+      "description": "Maak de daadwerkelijke contentkalender aan en vul deze met alle details voor de 4 posts.",
+      "tasks": [
+        {
+          "id": "F3T1",
+          "title": "Contentkalender template aanmaken",
+          "description": "Maak een gestandaardiseerd overzicht in de projecttool (bijv. Notion, Airtable) met kolommen voor datum, titel, outline, status, auteur, keywords.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "id": "F3T2",
+          "title": "Kalender vullen met de 4 posts",
+          "description": "Voeg de 4 blogpost-entries toe met de gekozen data (6, 9, 13, 16 juli) en vul alle velden in (titel, outline, keywords, interne link suggesties).",
+          "skill": "content-writer",
+          "dependencies": [
+            "F3T1",
+            "F2T3"
+          ]
+        },
+        {
+          "id": "F3T3",
+          "title": "SEO-elementen toevoegen",
+          "description": "Voeg per post voorgestelde interne links, gerelateerde tags en een CTA naar de hoofdpagina van WeAreImpact toe.",
+          "skill": "seo",
+          "dependencies": [
+            "F3T2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Review & finalisatie",
+      "description": "Laat de kalender controleren, pas feedback toe en publiceer deze in het gedeelde projectoverzicht.",
+      "tasks": [
+        {
+          "id": "F4T1",
+          "title": "Contentkalender review door editor",
+          "description": "Vraag een content-editor om de volledige kalender te beoordelen op consistentie, toon en juistheid van data.",
+          "skill": "content-editor",
+          "dependencies": [
+            "F3T3"
+          ]
+        },
+        {
+          "id": "F4T2",
+          "title": "Feedback verwerken",
+          "description": "Pas de kalender aan op basis van ontvangen feedback en check of alle velden correct zijn.",
+          "skill": "content-editor",
+          "dependencies": [
+            "F4T1"
+          ]
+        },
+        {
+          "id": "F4T3",
+          "title": "Kalender publiceren in teamomgeving",
+          "description": "Zet de definitieve contentkalender klaar in het gedeelde projectmanagement systeem en stel notificaties in voor de schrijfdeadlines.",
+          "skill": "publisher",
+          "dependencies": [
+            "F4T2"
+          ]
+        }
+      ]
+    }
+  ]
+}

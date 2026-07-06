@@ -21,3 +21,4 @@ requests-oauthlib>=2.0.0
 Pillow>=10.4.0
 psycopg2-binary>=2.9.0
 markdown>=3.6
+pytest>=8.0.0  # dev: smoke-tests (tests/)

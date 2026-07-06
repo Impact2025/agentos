@@ -70,7 +70,8 @@ REPORT_EMAIL_TO: str = os.getenv("REPORT_EMAIL_TO", "v.munster@weareimpact.nl")
 
 BASE_DIR = Path(__file__).parent.parent.parent
 DATA_DIR = BASE_DIR / "data"
-DB_PATH = DATA_DIR / "agentos.db"
+# AGENTOS_DB_PATH override: tests draaien tegen een wegwerp-database.
+DB_PATH = Path(os.getenv("AGENTOS_DB_PATH", str(DATA_DIR / "agentos.db")))
 
 DATA_DIR.mkdir(exist_ok=True)
 
