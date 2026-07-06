@@ -1,0 +1,78 @@
+{
+  "plan_summary": "Controleer of de vier SEO-kansen uit het voltooide doel 'Uitwerken 4 SEO-kansen WeAreImpact' daadwerkelijk zijn verwerkt. Zo niet, maak een nieuw running doel met exact deze kansen als actiepunten en stel prioriteit in op kritiek.",
+  "estimated_duration": "1 dag",
+  "phases": [
+    {
+      "title": "Fase 1: Verificatie van het voltooide doel",
+      "description": "Open het voltooide doel en beoordeel per kans of deze is verwerkt. Documenteer de bevindingen en neem een besluit.",
+      "tasks": [
+        {
+          "title": "Open voltooide goal in Obsidian",
+          "description": "Navigeer naar de goal 'Uitwerken 4 SEO-kansen WeAreImpact' en open het bestand.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Analyseer voltooiingsstatus per kans",
+          "description": "Controleer voor elk van de vier kansen of er een afgeronde taak of notitie van verwerking aanwezig is. Noteer per kans de status (verwerkt/niet verwerkt).",
+          "skill": "analyst",
+          "dependencies": [
+            "task-3ee42994-Open-voltooide-goal-in-Obsidian"
+          ]
+        },
+        {
+          "title": "Documenteer bevindingen",
+          "description": "Schrijf een beknopt overzicht van welke kansen wel en niet zijn verwerkt, inclusief eventuele relevante details uit de goal.",
+          "skill": "content-editor",
+          "dependencies": [
+            "task-3ee42994-Analyseer-voltooiingsstatus-per-kans"
+          ]
+        },
+        {
+          "title": "Neem besluit over heropening",
+          "description": "Bepaal op basis van de documentatie of de vier kansen volledig zijn verwerkt. Indien niet volledig, ga naar Fase 2. Indien wel volledig, sluit dit plan af zonder verdere actie.",
+          "skill": "content-judge",
+          "dependencies": [
+            "task-3ee42994-Documenteer-bevindingen"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Creëer nieuw running doel met actiepunten",
+      "description": "Indien de kansen niet volledig zijn verwerkt, maak een nieuw doel aan met de vier oorspronkelijke SEO-kansen als concrete actiepunten, voorzien van prioriteit en projectkoppeling.",
+      "tasks": [
+        {
+          "title": "Maak nieuw goal-object aan",
+          "description": "Creëer in Obsidian een nieuw goal-bestand met titel 'Uitwerken 4 SEO-kansen WeAreImpact (herzien)' en voeg metadata toe voor project en prioriteit.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Definieer de vier actiepunten",
+          "description": "Schrijf voor elke kans een concrete actietaak (bijv. 'Optimaliseer pagina X', 'Schrijf artikel Y', 'Plaats interne links') en neem deze op als subtaken in het nieuwe goal.",
+          "skill": "content-editor",
+          "dependencies": [
+            "task-3ee42994-Maak-nieuw-goal-object-aan"
+          ]
+        },
+        {
+          "title": "Stel prioriteit in en koppel aan project",
+          "description": "Zet de prioriteit op 'kritiek' en koppel het goal aan het project 'WeAreImpact' via de juiste metadata of tag.",
+          "skill": "publisher",
+          "dependencies": [
+            "task-3ee42994-Definieer-de-vier-actiepunten"
+          ]
+        },
+        {
+          "title": "Voeg onderlinge afhankelijkheden toe",
+          "description": "Analyseer of bepaalde actiepunten logische volgorde of afhankelijkheden hebben en voeg deze als dependencies toe in de taakstructuur.",
+          "skill": "analyst",
+          "dependencies": [
+            "task-3ee42994-Stel-prioriteit-in-en-koppel-aan-project"
+          ]
+        }
+      ]
+    }
+  ]
+}

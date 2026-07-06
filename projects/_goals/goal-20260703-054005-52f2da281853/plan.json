@@ -1,0 +1,96 @@
+{
+  "plan_summary": "Door een content-audit, optimalisatie van meta descriptions en interne links, en verdieping van sleutelcontent, worden de zoekposities van Bewaardvoorjou verbeterd van gemiddeld 19,8 naar een hogere ranking.",
+  "estimated_duration": "3 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Contentaudit & Strategie",
+      "description": "Analyseer huidige prestatie en identificeer optimalisatiekansen via GSC en on-page analyse.",
+      "tasks": [
+        {
+          "title": "Contentaudit van bestaande pagina's",
+          "description": "Analyseer GSC-gegevens en voer een on-page audit uit (meta, interne links, contentdiepte) voor alle geïndexeerde pagina's.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Interne linkstructuur in kaart brengen",
+          "description": "Maak een visuele kaart van huidige interne links en identificeer ontbrekende links tussen gerelateerde onderwerpen (bijv. veilig digitaal familiearchief en andere pagina's).",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Meta-descripties evalueren",
+          "description": "Beoordeel de bestaande meta descriptions van de 10 belangrijkste pagina's op zoekwoordgebruik en klikratio-potentieel.",
+          "skill": "seo",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Contentoptimalisatie",
+      "description": "Pas de gevonden verbeteringen toe op de content: herschrijf meta's, voeg interne links toe en verdiep de pagina-inhoud.",
+      "tasks": [
+        {
+          "title": "Meta descriptions herschrijven",
+          "description": "Schrijf voor 5–10 pagina's nieuwe meta descriptions die relevante zoekwoorden bevatten en de doorklikratio verbeteren.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Interne links toevoegen en navigatie verbeteren",
+          "description": "Voeg ontbrekende interne links toe tussen pagina's (minimaal 15 nieuwe links) en update het navigatiemenu waar nodig.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Contentdiepte vergroten op 3 kernpagina's",
+          "description": "Voeg extra subheadings, praktijkvoorbeelden of FAQ-secties toe aan de pagina's met het hoogste potentieel om de gemiddelde positie te verbeteren.",
+          "skill": "content-editor",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Publicatie & Kwaliteitscontrole",
+      "description": "Implementeer alle wijzigingen op de live site en controleer op fouten of inconsistenties.",
+      "tasks": [
+        {
+          "title": "Wijzigingen doorvoeren op live site",
+          "description": "Publiceer alle aangepaste meta descriptions, interne links en contentwijzigingen. Controleer op gebroken links.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Kwaliteitscontrole uitgevoerde optimalisaties",
+          "description": "Loop alle aangepaste pagina's na op leesbaarheid, consistentie en correcte implementatie van SEO-richtlijnen.",
+          "skill": "content-judge",
+          "dependencies": []
+        },
+        {
+          "title": "Pagina's opnieuw indexeren via Indexing API",
+          "description": "Dien de geüpdatete pagina's in bij Google via de Indexing API om herindexering te versnellen.",
+          "skill": "analyst",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Monitoring & Bijsturing",
+      "description": "Volg de prestaties gedurende twee weken en bepaal of extra aanpassingen nodig zijn.",
+      "tasks": [
+        {
+          "title": "Positiemonitoring van geoptimaliseerde pagina's",
+          "description": "Houd dagelijks de gemiddelde positie en impressies bij via GSC en Google Search Console (minimaal 2 weken).",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Analyseren van resultaten en eventuele bijsturing",
+          "description": "Evalueer welke pagina's verbeterd zijn en identificeer nog onderpresterende pagina's voor een tweede optimalisatieronde.",
+          "skill": "research",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

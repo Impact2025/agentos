@@ -1,0 +1,118 @@
+{
+  "plan_summary": "Analyseer GSC-data voor bewaardvoorjou om zoekprestaties, content gaps en optimalisatiekansen te identificeren, met een actieplan voor SEO-verbetering en monitoring.",
+  "estimated_duration": "2-3 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Data extractie en voorbereiding",
+      "description": "Exporteer en structureer GSC-data voor de afgelopen 12 maanden, bereken basis-KPI's.",
+      "tasks": [
+        {
+          "id": 1,
+          "title": "GSC-data exporteren",
+          "description": "Exporteer query-, pagina- en apparaatdata uit Google Search Console voor de afgelopen 12 maanden.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "id": 2,
+          "title": "Data opschonen en basis-KPI's berekenen",
+          "description": "Verwijder irrelevante queries, bereken gemiddelde CTR, positie en impressies per maand, en maak een overzicht van top-100 queries.",
+          "skill": "analyst",
+          "dependencies": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Diepteanalyse en gap-analyse",
+      "description": "Analyseer query-pagina-relaties, identificeer prestatieveranderingen en content gaps.",
+      "tasks": [
+        {
+          "id": 3,
+          "title": "Query-pagina-prestatieanalyse",
+          "description": "Analyseer per levensfasethema (bv. verhalen, herinneringen) de CTR en positie, identificeer dalingen en stijgingen.",
+          "skill": "seo",
+          "dependencies": [
+            2
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Content gap-analyse",
+          "description": "Vergelijk GSC-queries met bestaande content op bewaardvoorjou.nl, identificeer onderwerpen met hoge impressies maar lage klikken of ontbrekende pagina's.",
+          "skill": "research",
+          "dependencies": [
+            3
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Prioritering van kansen",
+          "description": "Bepaal op basis van volume, positie en intentie de top 10 prioritaire optimalisatie- en contentkansen.",
+          "skill": "seo",
+          "dependencies": [
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Strategische aanbevelingen",
+      "description": "Formuleer concrete optimalisatievoorstellen en een actieplan voor nieuwe content.",
+      "tasks": [
+        {
+          "id": 6,
+          "title": "Optimalisatievoorstellen bestaande pagina's",
+          "description": "Stel voor minimaal 5 prioritaire pagina's verbeteringen voor in meta-tags, headers, interne links en contentstructuur.",
+          "skill": "content-editor",
+          "dependencies": [
+            5
+          ]
+        },
+        {
+          "id": 7,
+          "title": "Actieplan nieuwe content thema's",
+          "description": "Maak een plan voor 3 nieuwe artikelen of pagina's op basis van de top content gaps, inclusief zoekwoorden en structuur.",
+          "skill": "content-writer",
+          "dependencies": [
+            5
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Implementatie en monitoring",
+      "description": "Voer optimalisaties uit, publiceer nieuwe content en stel monitoring in.",
+      "tasks": [
+        {
+          "id": 8,
+          "title": "Optimaliseer prioritaire pagina's",
+          "description": "Pas meta-descriptions, titels en headers aan volgens de aanbevelingen uit fase 3.",
+          "skill": "content-editor",
+          "dependencies": [
+            6
+          ]
+        },
+        {
+          "id": 9,
+          "title": "Publiceer nieuwe content",
+          "description": "Schrijf en publiceer de 3 nieuwe artikelen volgens het actieplan.",
+          "skill": "content-writer",
+          "dependencies": [
+            7
+          ]
+        },
+        {
+          "id": 10,
+          "title": "GSC-monitoring instellen",
+          "description": "Stel periodieke rapportage in (wekelijks) en configureer alerts voor significante dalingen in CTR of positie.",
+          "skill": "analyst",
+          "dependencies": [
+            9
+          ]
+        }
+      ]
+    }
+  ]
+}

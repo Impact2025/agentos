@@ -1,0 +1,134 @@
+{
+  "plan_summary": "Open het draft‑doel, definieer en publiceer twee seizoensgebonden levensverhaal‑artikelen met interne linking naar de kennisbank.",
+  "estimated_duration": "2-3 werkdagen",
+  "phases": [
+    {
+      "title": "Fase 1: Draft‑doel activeren & Strategische input",
+      "description": "Het bestaande draft‑doel activeren, de content‑strategie voor de seizoensartikelen bepalen en zoekwoord‑kansen vastleggen.",
+      "tasks": [
+        {
+          "title": "Draft‑doel openen en status updaten",
+          "description": "Open het enige draft‑doel in Obsidian, wijzig status naar 'running' en wijs toe aan Content Writer Agent.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Strategische briefing opstellen",
+          "description": "Formuleer de doelstelling: ‘Publiceer 2 seizoensgebonden levensverhaal‑artikelen (herfst & winter) met interne linking naar de kennisbank’.",
+          "skill": "analyst",
+          "dependencies": [
+            "Draft‑doel openen en status updaten"
+          ]
+        },
+        {
+          "title": "Zoekwoord‑gap analyse voor herfst‑ en winter‑topic",
+          "description": "Gebruik de content‑gap tabel en GSC‑data om zoekwoorden met hoog volume/intent voor ‘herfst levensverhaal’ en ‘winter levensverhaal’ te identificeren.",
+          "skill": "research",
+          "dependencies": [
+            "Strategische briefing opstellen"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content creatie",
+      "description": "Schrijf de twee seizoensartikelen volgens de strategie en optimaliseer voor SEO.",
+      "tasks": [
+        {
+          "title": "Outline herfst‑levensverhaal artikel",
+          "description": "Maak een gestructureerde outline met sub‑koppen, story‑hooks en punten voor interne links naar relevante kennisbank‑artikelen.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Zoekwoord‑gap analyse voor herfst‑ en winter‑topic"
+          ]
+        },
+        {
+          "title": "Outline winter‑levensverhaal artikel",
+          "description": "Maak een gestructureerde outline met sub‑koppen, story‑hooks en punten voor interne links naar relevante kennisbank‑artikelen.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Zoekwoord‑gap analyse voor herfst‑en winter‑topic"
+          ]
+        },
+        {
+          "title": "Volledig artikel herfst schrijven",
+          "description": "Schrijf het volledige artikel op basis van de outline, neem relevante statistieken en praktijkvoorbeelden op.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Outline herfst‑levensverhaal artikel"
+          ]
+        },
+        {
+          "title": "Volledig artikel winter schrijven",
+          "description": "Schrijf het volledige artikel op basis van de outline, neem relevante statistieken en praktijkvoorbeelden op.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Outline winter‑levensverhaal artikel"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Redactie & SEO-optimalisatie",
+      "description": "Controleren, verbeteren en SEO‑klaar maken van beide artikelen.",
+      "tasks": [
+        {
+          "title": "Content review & edit herfstartikel",
+          "description": "Controleer op leesbaarheid, consistentie en interne linking; voer correcties uit.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Volledig artikel herfst schrijven"
+          ]
+        },
+        {
+          "title": "Content review & edit winterartikel",
+          "description": "Controleer op leesbaarheid, consistentie en interne linking; voer correcties uit.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Volledig artikel winter schrijven"
+          ]
+        },
+        {
+          "title": "SEO‑optimalisatie beide artikelen",
+          "description": "Pas meta‑title, meta‑description, header‑structuur en relevante keyword‑dichtheid toe; valideer interne links naar de kennisbank.",
+          "skill": "seo",
+          "dependencies": [
+            "Content review & edit herfstartikel",
+            "Content review & edit winterartikel"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie & Monitoring",
+      "description": "Publiceer de artikelen, registreer het resultaat en monitor performance.",
+      "tasks": [
+        {
+          "title": "Artikel herfst publiceren",
+          "description": "Upload het geoptimaliseerde artikel naar het CMS, stel publicatiedatum (herfst) in en voeg tagging toe.",
+          "skill": "publisher",
+          "dependencies": [
+            "SEO‑optimalisatie beide artikelen"
+          ]
+        },
+        {
+          "title": "Artikel winter publiceren",
+          "description": "Upload het geoptimaliseerde artikel naar het CMS, stel publicatiedatum (winter) in en voeg tagging toe.",
+          "skill": "publisher",
+          "dependencies": [
+            "SEO‑optimalisatie beide artikelen"
+          ]
+        },
+        {
+          "title": "Performance monitoring instellen",
+          "description": "Configureer GSC‑ en GA‑rapporten om klikken, impressies en CTR voor beide artikelen te volgen; stel alerts voor dalende prestaties.",
+          "skill": "analyst",
+          "dependencies": [
+            "Artikel herfst publiceren",
+            "Artikel winter publiceren"
+          ]
+        }
+      ]
+    }
+  ]
+}

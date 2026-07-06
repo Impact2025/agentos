@@ -1,0 +1,145 @@
+{
+  "plan_summary": "Research, ontwerp, productie en lancering van Feature X voor Bewaardvoorjou, met focus op gebruikersbehoeften, video-content en SEO.",
+  "estimated_duration": "4-5 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Strategie",
+      "description": "Verzamelen van inzichten over doelgroep, concurrentie en technische haalbaarheid.",
+      "tasks": [
+        {
+          "id": "F1T1",
+          "title": "Doelgroepanalyse op basis van GSC-data en enquêtes",
+          "description": "Analyseer zoekgedrag en behoeften van bestaande bezoekers via Google Search Console en stuur een korte enquête.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "F1T2",
+          "title": "Concurrentieanalyse van vergelijkbare features",
+          "description": "Inventariseer vergelijkbare functionaliteiten bij concurrenten en identificeer unieke proposities.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "F1T3",
+          "title": "Technische haalbaarheidscheck",
+          "description": "Overleg met ontwikkelaars over benodigde API's, CMS-aanpassingen en performance-impact.",
+          "skill": "analyst",
+          "dependencies": [
+            "F1T1",
+            "F1T2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Ontwerp & Content",
+      "description": "Opstellen van user stories, wireframes en SEO-geoptimaliseerde teksten.",
+      "tasks": [
+        {
+          "id": "F2T1",
+          "title": "User stories en functioneel ontwerp opstellen",
+          "description": "Schrijf use cases en wireframes voor de kernfunctionaliteit van Feature X.",
+          "skill": "designer",
+          "dependencies": [
+            "F1T3"
+          ]
+        },
+        {
+          "id": "F2T2",
+          "title": "Wireframes en UI-ontwerp maken",
+          "description": "Ontwerp visuele mockups voor de feature-pagina en interactie-elementen.",
+          "skill": "designer",
+          "dependencies": [
+            "F2T1"
+          ]
+        },
+        {
+          "id": "F2T3",
+          "title": "SEO-geoptimaliseerde inhoud schrijven",
+          "description": "Schrijf de uitlegtekst, call-to-action en metadata voor Feature X, afgestemd op long-tail zoekwoorden.",
+          "skill": "content-writer",
+          "dependencies": [
+            "F2T1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Productie (Video en Design)",
+      "description": "Creëren van visuele en video-content voor Feature X, inclusief redactie en optimalisatie.",
+      "tasks": [
+        {
+          "id": "F3T1",
+          "title": "Video script schrijven voor uitlegfeature",
+          "description": "Schrijf een kort script dat de werking en voordelen van Feature X demonstreert.",
+          "skill": "content-writer",
+          "dependencies": [
+            "F2T2",
+            "F2T3"
+          ]
+        },
+        {
+          "id": "F3T2",
+          "title": "Video opnemen (voice-over en screencast)",
+          "description": "Neem de uitlegvideo op met voice-over en screencast van de feature.",
+          "skill": "video-director",
+          "dependencies": [
+            "F3T1"
+          ]
+        },
+        {
+          "id": "F3T3",
+          "title": "Video editen en ondertitelen",
+          "description": "Bewerk de video, voeg ondertiteling toe en exporteer in geschikt formaat.",
+          "skill": "video-builder",
+          "dependencies": [
+            "F3T2"
+          ]
+        },
+        {
+          "id": "F3T4",
+          "title": "SEO-optimalisatie van video (titel, beschrijving, tags)",
+          "description": "Optimaliseer de videometadata voor vindbaarheid op YouTube en de eigen site.",
+          "skill": "seo",
+          "dependencies": [
+            "F3T3"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Lancering & Evaluatie",
+      "description": "Publicatie van de feature, outreach naar de doelgroep en monitoring van resultaten.",
+      "tasks": [
+        {
+          "id": "F4T1",
+          "title": "Publiceren van feature-pagina en video op Bewaardvoorjou",
+          "description": "Zet de content live via het CMS, inclusief metadata en interne links.",
+          "skill": "publisher",
+          "dependencies": [
+            "F3T4"
+          ]
+        },
+        {
+          "id": "F4T2",
+          "title": "Outreach naar nieuwsbrief en relevante Facebookgroepen",
+          "description": "Stuur een aankondiging naar abonnees en deel in communities voor 65+ doelgroep.",
+          "skill": "outreach",
+          "dependencies": [
+            "F4T1"
+          ]
+        },
+        {
+          "id": "F4T3",
+          "title": "Eerste prestatie-analyse (views, klikken, conversies)",
+          "description": "Meet de eerste 2 weken na lancering: pageviews, videoweergaves, CTR en interacties.",
+          "skill": "analyst",
+          "dependencies": [
+            "F4T1"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+{
+  "plan_summary": "Zet het draft-doel om naar running status en koppel het aan het bestaande running doel 'Seizoenscontent publiceren' door validatie, statuswijziging, koppeling aan het doel, integratie in de planning en communicatie.",
+  "estimated_duration": "0.5 dag",
+  "phases": [
+    {
+      "title": "Fase 1: Validatie en analyse van het draft-doel",
+      "description": "Identificeer het draft-doel, valideer de uitkomst en check voor conflicten met andere doelen.",
+      "tasks": [
+        {
+          "title": "Identificeer het draft-doel in het doelenoverzicht",
+          "description": "Zoek het draft-doel met de exacte naam 'Zet draft‑doel om naar running met uitkomst ‘Publiceer 2 seizoensartikelen en 1 …’' en noteer de ID en metadata.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Valideer de uitkomst van het draft-doel",
+          "description": "Controleer of de geplande uitkomst 'Publiceer 2 seizoensartikelen en 1 ...' specifiek, meetbaar en afgestemd is op het bestaande running doel 'Seizoenscontent publiceren'. Signaleer eventuele inconsistenties.",
+          "skill": "content-judge",
+          "dependencies": [
+            "F1T1"
+          ]
+        },
+        {
+          "title": "Analyseer overlap met andere lopende doelen",
+          "description": "Check of het draft-doel overlapt met of conflicteert met andere running doelen in het project. Stem indien nodig af met de projectmanager.",
+          "skill": "analyst",
+          "dependencies": [
+            "F1T2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Statuswijziging en koppeling",
+      "description": "Wijzig de status van het draft-doel naar running en koppel het aan het bestaande running doel 'Seizoenscontent publiceren'.",
+      "tasks": [
+        {
+          "title": "Wijzig status van draft-doel naar 'running'",
+          "description": "Pas in het doelenbeheersysteem de status van het draft-doel aan naar 'running'. Voeg indien nodig een opmerking toe over de wijziging.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Koppel het doel aan 'Seizoenscontent publiceren'",
+          "description": "Voeg een relationele link of afhankelijkheid toe tussen het zojuist omgezette doel en het bestaande running doel 'Seizoenscontent publiceren'.",
+          "skill": "publisher",
+          "dependencies": [
+            "F2T1"
+          ]
+        },
+        {
+          "title": "Update metadata en eigenaar",
+          "description": "Vul indien nodig de eigenaar, prioriteit en deadline aan op basis van de context van het running doel.",
+          "skill": "content-editor",
+          "dependencies": [
+            "F2T2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Integratie in projectplanning",
+      "description": "Neem het doel op in de actieve sprint of projectboard en stel notificaties in voor de eerste stappen.",
+      "tasks": [
+        {
+          "title": "Voeg doel toe aan de huidige sprint",
+          "description": "Plaats het nieuwe running doel in de juiste sprint backlock of projectboard van 'Bewaardvoorjou'.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Stel een notificatie in voor de eerste mijlpaal",
+          "description": "Maak een herinnering of taak aan voor de deadline van het eerste artikel (uit de uitkomst van het doel).",
+          "skill": "publisher",
+          "dependencies": [
+            "F3T1"
+          ]
+        },
+        {
+          "title": "Documenteer wijzigingen in het projectlogboek",
+          "description": "Schrijf een korte update in het projectlogboek over de omzetting van het draft-doel en de koppeling.",
+          "skill": "content-writer",
+          "dependencies": [
+            "F3T1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Communicatie en afronding",
+      "description": "Informeer het team over de wijziging en zorg voor afstemming.",
+      "tasks": [
+        {
+          "title": "Stuur een teamupdate via het communicatiekanaal",
+          "description": "Plaats een bericht in het projectkanaal (bijv. Slack) dat het draft-doel is omgezet naar running en gekoppeld is aan 'Seizoenscontent publiceren'.",
+          "skill": "outreach",
+          "dependencies": []
+        },
+        {
+          "title": "Bevestig met projectmanager",
+          "description": "Vraag de projectmanager om akkoord dat de wijziging correct is uitgevoerd en het doel klaar is voor uitvoering.",
+          "skill": "outreach",
+          "dependencies": [
+            "F4T1"
+          ]
+        },
+        {
+          "title": "Markeer de omzettingsactie als voltooid",
+          "description": "Sluit de taak af in het takenbeheersysteem of noteer de voltooiingsdatum in het projectlogboek.",
+          "skill": "publisher",
+          "dependencies": [
+            "F4T2"
+          ]
+        }
+      ]
+    }
+  ]
+}

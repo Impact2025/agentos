@@ -1,0 +1,88 @@
+{
+  "plan_summary": "Onderzoek concurrentie en E-E-A-T-kaders, schrijf drie long-tail artikelen over levensverhaal vastleggen, optimaliseer ze redactioneel en SEO, publiceer en monitor de prestaties.",
+  "estimated_duration": "5-7 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Strategie",
+      "description": "In kaart brengen van relevante long-tail queries, concurrentieanalyse en vaststellen van E-E-A-T-richtlijnen voor de artikelen.",
+      "tasks": [
+        {
+          "title": "Zoekwoord- en concurrentieanalyse",
+          "description": "Analyseer long-tail varianten ('hoe leg ik mijn levensverhaal vast', 'levensverhaal schrijven voor kinderen', 'digitaal levensverhaal maken') in GSC en SEMrush; identificeer top 5 concurrenten en hun E-E-A-T-signalen.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Doelgroep- en E-E-A-T-analyse",
+          "description": "Definieer primaire doelgroep (ouderen, kinderen/familie) en stel E-E-A-T-invalshoek A vast: toon ervaring met begeleiding, gebruiksvriendelijkheid en privacy; maak contentbrief voor 3 artikelen.",
+          "skill": "research",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content Creatie",
+      "description": "Schrijven van de drie artikelen volgens de opgestelde contentbrief, elk met een unieke long-tail focus.",
+      "tasks": [
+        {
+          "title": "Schrijf artikel 'Hoe leg ik mijn levensverhaal vast?'",
+          "description": "Schrijf een artikel van 1500-2000 woorden dat stap-voor-stap uitlegt hoe iemand (met name ouderen) zijn levensverhaal kan vastleggen met Bewaard Voor Jou; benadruk eenvoud, AI-ondersteuning en emotionele impact.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf artikel 'Levensverhaal schrijven voor kinderen'",
+          "description": "Schrijf een artikel van 1200-1500 woorden gericht op het vastleggen van een levensverhaal als nalatenschap voor kinderen; focus op blijvende herinneringen, eenvoudige tools en persoonlijke anekdotes.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf artikel 'Digitaal levensverhaal maken'",
+          "description": "Schrijf een artikel van 1200-1500 woorden over de voordelen van een digitaal versus analoog levensverhaal; leg uit hoe Bewaard Voor Jou multimedia (video, audio, tekst) combineert en veilig bewaart.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Redactie & Optimalisatie",
+      "description": "Redactionele review, E-E-A-T-versterking en SEO-optimalisatie van de drie artikelen voordat ze worden gepubliceerd.",
+      "tasks": [
+        {
+          "title": "Redactionele review",
+          "description": "Controleer alle artikelen op toon, helderheid, E-E-A-T-signalen (expertise, betrouwbaarheid via praktijkvoorbeelden), interne consistentie en leesbaarheid (B1-niveau).",
+          "skill": "content-editor",
+          "dependencies": []
+        },
+        {
+          "title": "SEO-optimalisatie",
+          "description": "Optimaliseer titels, meta descriptions, heading-structuur, interne links en voeg relevante long-tail variaties toe; verbeter laadtijd en mobiele weergave indien nodig.",
+          "skill": "seo",
+          "dependencies": [
+            "Redactionele review"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie & Monitoring",
+      "description": "Publiceren van de artikelen op de site en het opzetten van prestatiemonitoring om de impact op impressies en posities te meten.",
+      "tasks": [
+        {
+          "title": "Publiceer artikelen",
+          "description": "Plaats de drie geoptimaliseerde artikelen in het CMS, zorg voor juiste URL-structuur (/levensverhaal-vastleggen-zonder-computerkurken, etc.) en voeg eventuele bijbehorende afbeeldingen toe.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Monitor prestaties",
+          "description": "Zet GSC- en GA4-dashboards op om dagelijkse impressies, klikken en posities van de long-tail zoekwoorden te volgen; rapporteer na 2 weken eerste resultaten.",
+          "skill": "analyst",
+          "dependencies": [
+            "Publiceer artikelen"
+          ]
+        }
+      ]
+    }
+  ]
+}

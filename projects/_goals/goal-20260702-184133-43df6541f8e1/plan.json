@@ -1,0 +1,117 @@
+{
+  "plan_summary": "Analyseer bestaande content, schrijf en optimaliseer nieuwe teksten op B1-niveau, voer SEO-tweaks door, publiceer en meet de resultaten.",
+  "estimated_duration": "2-3 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Content-audit & strategie",
+      "description": "Inventariseren van huidige pagina's, toonanalyse en bepalen van verbeterpunten.",
+      "tasks": [
+        {
+          "title": "Audit bestaande pagina's op toon, B1-niveau en kernboodschap",
+          "description": "Beoordeel elke pagina op warmte, empathie en leesbaarheid. Markeer pagina's die herschreven moeten worden.",
+          "skill": "content-judge",
+          "dependencies": []
+        },
+        {
+          "title": "Analyseer GSC-data en zoekwoordenkansen",
+          "description": "Gebruik Google Search Console en keyword tools om presterende en kansrijke zoektermen te identificeren.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Stel prioriteitenlijst op voor te herschrijven pagina's",
+          "description": "Combineer de audituitkomsten met de data-analyse en rangschik pagina's op impact en urgentie.",
+          "skill": "research",
+          "dependencies": [
+            1,
+            2
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content-creatie & optimalisatie",
+      "description": "Herschrijven van prioritaire pagina's met focus op leesbaarheid, SEO en merkidentiteit.",
+      "tasks": [
+        {
+          "title": "Schrijf nieuwe teksten voor de top 5-pagina's",
+          "description": "Gebruik de resultaten uit fase 1 om elke pagina te herschrijven in warme, empathische B1-stijl, inclusief long-tail zoekwoorden.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Voeg ontbrekende interne links en CTA's toe",
+          "description": "Zorg voor logische doorverwijzingen naar andere relevante pagina's en duidelijke call-to-actions zoals 'Bewaar jouw verhaal'.",
+          "skill": "seo",
+          "dependencies": [
+            1
+          ]
+        },
+        {
+          "title": "Optimaliseer metadata, alt-teksten en koppenstructuur",
+          "description": "Pas title-tags, meta descriptions en heading tags aan met focus op long-tail zoekwoorden en leesbaarheid.",
+          "skill": "seo",
+          "dependencies": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Redactie & kwaliteitscontrole",
+      "description": "Nalezen, redigeren en consistentie waarborgen van alle herschreven pagina's.",
+      "tasks": [
+        {
+          "title": "Redigeer alle teksten op consistentie, stijl en foutloosheid",
+          "description": "Controleer toon, grammatica, spelling en B1-niveau. Zorg dat de merkstem overal herkenbaar is.",
+          "skill": "content-editor",
+          "dependencies": []
+        },
+        {
+          "title": "Controleer of SEO-richtlijnen correct zijn toegepast",
+          "description": "Controleer of de SEO-optimalisaties uit fase 2 correct zijn geïmplementeerd en of er geen zoekwoordenontkenning is.",
+          "skill": "seo",
+          "dependencies": [
+            1
+          ]
+        },
+        {
+          "title": "Laatste check op beeldmateriaal en visuele ondersteuning",
+          "description": "Zorg dat bij elke pagina passende, empathische afbeeldingen (of aanwijzingen voor designer) worden toegevoegd.",
+          "skill": "designer",
+          "dependencies": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie & monitoring",
+      "description": "Nieuwe content live zetten en resultaten volgen.",
+      "tasks": [
+        {
+          "title": "Publiceer alle herschreven pagina's in de juiste volgorde",
+          "description": "Update de pagina's in de productieomgeving, test of alles correct werkt (geen 404's, juiste redirects).",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Stel monitoring in en meet eerste resultaten",
+          "description": "Configureer dashboards in Google Analytics en Search Console. Verzamel na 1 week de eerste data over sessies, klikken en posities.",
+          "skill": "analyst",
+          "dependencies": [
+            1
+          ]
+        },
+        {
+          "title": "Rapporteer bevindingen en stel een vervolgplan op",
+          "description": "Schrijf een korte rapportage met aanbevelingen voor de volgende iteratie (bijv. nieuwe onderwerpen, A/B-testing).",
+          "skill": "analyst",
+          "dependencies": [
+            2
+          ]
+        }
+      ]
+    }
+  ]
+}

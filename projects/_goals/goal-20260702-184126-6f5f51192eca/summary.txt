@@ -1,0 +1,1 @@
+GA4 property opzetten, koppelen met Google Search Console, dashboards inrichten en een monitoringsroutine opzetten voor continue data-analyse.

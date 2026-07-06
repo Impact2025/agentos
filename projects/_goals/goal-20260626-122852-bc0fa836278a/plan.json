@@ -1,0 +1,157 @@
+{
+  "plan_summary": "Een 30-dagen marketingcampagne voor WeAreImpact, een SaaS-product voor zorginstellingen, gericht op het genereren van 50 leads via research, contentcreatie, gerichte outreach en optimalisatie.",
+  "estimated_duration": "30 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Strategie",
+      "description": "In deze fase wordt de basis gelegd door doelgroep-, concurrentie- en keywordanalyses, waarna een leadmagnet wordt gekozen.",
+      "tasks": [
+        {
+          "id": "F1T1",
+          "title": "Doelgroepanalyse uitvoeren",
+          "description": "Analyseer de doelgroep via GSC-data en CRM-gegevens om inzichten te krijgen in de zorginstellingen.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "F1T2",
+          "title": "Concurrentieanalyse uitvoeren",
+          "description": "Voer een concurrentieanalyse uit voor zorg-SaaS-marketingcampagnes om best practices en gaten te identificeren.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "F1T3",
+          "title": "Keywordonderzoek met SEMrush",
+          "description": "Voer een keywordonderzoek uit voor zorg-gerelateerde termen met SEMrush, gebruikmakend van doelgroepinzichten.",
+          "skill": "seo",
+          "dependencies": [
+            "F1T1",
+            "F1T2"
+          ]
+        },
+        {
+          "id": "F1T4",
+          "title": "Leadmagnet bepalen",
+          "description": "Bepaal de leadmagnet (bijv. een whitepaper of webinar) op basis van de keywordanalyse en concurrentie-inzichten.",
+          "skill": "content-writer",
+          "dependencies": [
+            "F1T3"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content Creatie",
+      "description": "Creëer de benodigde content en middelen voor de campagne, zoals een whitepaper, landingspagina, video en email-copy.",
+      "tasks": [
+        {
+          "id": "F2T1",
+          "title": "Whitepaper schrijven",
+          "description": "Schrijf een whitepaper over efficiëntie in zorginstellingen, gebaseerd op de leadmagnet en onderzoek.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "id": "F2T2",
+          "title": "Landingspagina ontwerpen",
+          "description": "Ontwerp een landingspagina met een lead-capture formulier, gebaseerd op de whitepaper.",
+          "skill": "designer",
+          "dependencies": [
+            "F2T1"
+          ]
+        },
+        {
+          "id": "F2T3",
+          "title": "Promotievideo maken",
+          "description": "Maak een korte promotievideo die de waarde van de whitepaper en het product benadrukt.",
+          "skill": "video-builder",
+          "dependencies": [
+            "F2T1"
+          ]
+        },
+        {
+          "id": "F2T4",
+          "title": "Email-copy voor nurturereeks schrijven",
+          "description": "Schrijf een reeks emails voor lead nurturing, gebruikmakend van de landingspagina en whitepaper.",
+          "skill": "content-writer",
+          "dependencies": [
+            "F2T2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Distributie & Outreach",
+      "description": "Zet de campagnes live via LinkedIn, Google Ads, email-outreach en PR om leads te genereren.",
+      "tasks": [
+        {
+          "id": "F3T1",
+          "title": "LinkedIn-advertentiecampagne opzetten",
+          "description": "Richt een LinkedIn-advertentiecampagne in gericht op zorgprofessionals, met de video en landingspagina.",
+          "skill": "outreach",
+          "dependencies": []
+        },
+        {
+          "id": "F3T2",
+          "title": "Google Ads-campagne inrichten",
+          "description": "Richt een Google Ads-campagne in met de keywords uit het onderzoek, leidend naar de landingspagina.",
+          "skill": "seo",
+          "dependencies": [
+            "F1T3"
+          ]
+        },
+        {
+          "id": "F3T3",
+          "title": "Email-outreach naar zorgprofessionals",
+          "description": "Voer een gerichte email-outreach uit via LinkedIn Sales Navigator, met de nurture-reeks.",
+          "skill": "outreach",
+          "dependencies": [
+            "F2T4"
+          ]
+        },
+        {
+          "id": "F3T4",
+          "title": "PR-bericht publiceren op zorgblog",
+          "description": "Publiceer een PR-bericht of gastblog op een vooraanstaand zorgblog, verwijzend naar de whitepaper.",
+          "skill": "publisher",
+          "dependencies": [
+            "F2T1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Analyse & Optimalisatie",
+      "description": "Monitor de campagneresultaten, voer A/B-tests uit en stel een optimalisatierapport op voor verbetering.",
+      "tasks": [
+        {
+          "id": "F4T1",
+          "title": "Lead tracking en conversie-analyse",
+          "description": "Implementeer lead tracking in de CRM en analyseer conversies per kanaal.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "id": "F4T2",
+          "title": "A/B-testen van landingspagina",
+          "description": "Voer A/B-tests uit op de landingspagina (bijv. knoppen, kopij) om conversies te optimaliseren.",
+          "skill": "analyst",
+          "dependencies": [
+            "F3T3"
+          ]
+        },
+        {
+          "id": "F4T3",
+          "title": "Rapportage en optimalisatie-aanbevelingen",
+          "description": "Stel een eindrapport op met bevindingen en aanbevelingen voor vervolgcampagnes.",
+          "skill": "analyst",
+          "dependencies": [
+            "F4T1",
+            "F4T2"
+          ]
+        }
+      ]
+    }
+  ]
+}

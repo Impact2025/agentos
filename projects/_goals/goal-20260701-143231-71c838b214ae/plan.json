@@ -1,0 +1,137 @@
+{
+  "plan_summary": "Plan voor het publiceren van 2 seizoensartikelen en 1 thema-artikel voor BewaardVoorJou, gebaseerd op data-gedreven research, SEO-analyse en redactionele kwaliteitscontrole.",
+  "estimated_duration": "1 week",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Strategie",
+      "description": "Basis leggen met doelgroep- en concurrentieanalyse, en een contentkalender opstellen.",
+      "tasks": [
+        {
+          "id": "f1t1",
+          "title": "Doelgroepanalyse uitvoeren via GSC-data en enquêtes",
+          "description": "Analyseer huidige bezoekersdata en verzamel inzichten over de 65+ doelgroep.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "f1t2",
+          "title": "SEO-zoekwoordenanalyse voor 3 artikelen",
+          "description": "Identificeer zoekwoorden en trends voor 2 seizoens- en 1 thema-artikel.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "id": "f1t3",
+          "title": "Contentkalender opstellen met onderwerpen en deadlines",
+          "description": "Bepaal concrete onderwerpen, planning en toewijzing op basis van analyse.",
+          "skill": "content-writer",
+          "dependencies": [
+            "f1t1",
+            "f1t2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content Creatie",
+      "description": "Schrijven van de artikelen en maken van visuele ondersteuning.",
+      "tasks": [
+        {
+          "id": "f2t1",
+          "title": "Schrijf 2 seizoensartikelen (bijv. zomer & herfst)",
+          "description": "Creëer long-form artikelen die aansluiten bij de belevingswereld van 65+.",
+          "skill": "content-writer",
+          "dependencies": [
+            "f1t3"
+          ]
+        },
+        {
+          "id": "f2t2",
+          "title": "Schrijf 1 thema-artikel (bijv. 'Digitale nalatenschap voor senioren')",
+          "description": "Thema-artikel dat diepgaand ingaat op een relevant onderwerp.",
+          "skill": "content-writer",
+          "dependencies": [
+            "f1t3"
+          ]
+        },
+        {
+          "id": "f2t3",
+          "title": "Maak bijpassende afbeeldingen en illustraties",
+          "description": "Ontwerp visuele elementen die de artikelen versterken en toegankelijk maken.",
+          "skill": "designer",
+          "dependencies": [
+            "f2t1",
+            "f2t2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Review & Optimalisatie",
+      "description": "Redactionele controle, SEO-aanpassingen en eindbeoordeling.",
+      "tasks": [
+        {
+          "id": "f3t1",
+          "title": "Redactionele review en correcties",
+          "description": "Controleer artikelen op taal, stijl, consistentie en doelgroep-geschiktheid.",
+          "skill": "content-editor",
+          "dependencies": [
+            "f2t1",
+            "f2t2"
+          ]
+        },
+        {
+          "id": "f3t2",
+          "title": "SEO-optimalisatie (titels, meta-descriptions, headings)",
+          "description": "Pas SEO-elementen aan op basis van zoekwoordenonderzoek.",
+          "skill": "seo",
+          "dependencies": [
+            "f3t1"
+          ]
+        },
+        {
+          "id": "f3t3",
+          "title": "Eindbeoordeling door content-judge",
+          "description": "Beoordeel of artikelen voldoen aan kwaliteits- en merkrichtlijnen.",
+          "skill": "content-judge",
+          "dependencies": [
+            "f3t2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie & Promotie",
+      "description": "Publiceren op website en actief promoten onder de doelgroep.",
+      "tasks": [
+        {
+          "id": "f4t1",
+          "title": "Publiceer artikelen met juiste categorieën en tags",
+          "description": "Plaats de artikelen live op de website en zorg voor correcte metadata.",
+          "skill": "publisher",
+          "dependencies": [
+            "f3t3"
+          ]
+        },
+        {
+          "id": "f4t2",
+          "title": "Promoot via nieuwsbrief en sociale media",
+          "description": "Stuur mailings naar abonnees en deel berichten op relevante kanalen.",
+          "skill": "outreach",
+          "dependencies": [
+            "f4t1"
+          ]
+        },
+        {
+          "id": "f4t3",
+          "title": "Monitor prestaties en stel rapport op",
+          "description": "Analyseer klikken, impressies en gedrag via GSC, eventueel met aanbevelingen.",
+          "skill": "analyst",
+          "dependencies": [
+            "f4t1"
+          ]
+        }
+      ]
+    }
+  ]
+}

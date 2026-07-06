@@ -1,0 +1,18 @@
+{
+  "plan_summary": "Een gestructureerde marketingcampagne voor WeAreImpact bestaande uit onderzoek, contentcreatie, campagne-uitrol en optimalisatie, gericht op het genereren van 50 leads in 30 dagen via whitepaper, LinkedIn en e-mailmarketing.",
+  "estimated_duration": "30 dagen",
+  "phases": [
+    {
+      "title": "Uitvoering",
+      "description": "Automatisch gegenereerd plan voor: Lanceer een marketingcampagne voor een SaaS-product voor zorginstellingen. Doel: 50 leads in 30 dagen.",
+      "tasks": [
+        {
+          "title": "Lanceer een marketingcampagne voor een SaaS-product voor zorginstellingen. Doel: 50 leads in 30 dagen.",
+          "description": "Voer uit: Lanceer een marketingcampagne voor een SaaS-product voor zorginstellingen. Doel: 50 leads in 30 dagen.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,126 @@
+{
+  "plan_summary": "Plan voor het starten van Fase 2 van Bijeen: backlink & outreach fundering. Het omvat onderzoek, contentcreatie, outreach en monitoring van 7 nieuwe SEO-kansen.",
+  "estimated_duration": "3-4 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Prioritering",
+      "description": "Identificeren en prioriteren van de 7 SEO-kansen op basis van data-analyse.",
+      "tasks": [
+        {
+          "title": "Gap-analyse concurrenten en zoekwoorden uitvoeren",
+          "description": "Analyseer concurrenten en zoekwoordmogelijkheden via GSC en SEO-tools.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "7 SEO-kansen vaststellen met contentideeën",
+          "description": "Selecteer de zeven meest kansrijke onderwerpen en werk contentideeën uit.",
+          "skill": "seo",
+          "dependencies": [
+            "Gap-analyse concurrenten en zoekwoorden uitvoeren"
+          ]
+        },
+        {
+          "title": "Prioritering en contentplanning maken",
+          "description": "Bepaal volgorde van implementatie en maak een tijdlijn.",
+          "skill": "analyst",
+          "dependencies": [
+            "7 SEO-kansen vaststellen met contentideeën"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content Creatie",
+      "description": "Schrijven en vormgeven van de content voor de zeven kansen.",
+      "tasks": [
+        {
+          "title": "Schrijven van vier long-form artikelen",
+          "description": "Schrijf gedetailleerde artikelen voor de eerste vier kansen, met oog voor SEO en tone-of-voice.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijven van drie aanvullende artikelen",
+          "description": "Schrijf de overige drie artikelen voor de resterende kansen.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Ontwerpen van visuele assets",
+          "description": "Maak afbeeldingen, grafieken en infographics die de artikelen ondersteunen.",
+          "skill": "designer",
+          "dependencies": [
+            "Schrijven van vier long-form artikelen",
+            "Schrijven van drie aanvullende artikelen"
+          ]
+        },
+        {
+          "title": "Redactie en SEO-optimalisatie van alle content",
+          "description": "Editeer de artikelen, optimaliseer meta-data en interne links.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Schrijven van vier long-form artikelen",
+            "Schrijven van drie aanvullende artikelen",
+            "Ontwerpen van visuele assets"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Outreach & Publicatie",
+      "description": "Publiceren van de content en actief werven van backlinks via outreach.",
+      "tasks": [
+        {
+          "title": "Outreach-lijst en templates voorbereiden",
+          "description": "Stel een lijst samen van relevante websites, bloggers en media voor backlinkverwerving, en maak outreach-sjablonen.",
+          "skill": "outreach",
+          "dependencies": []
+        },
+        {
+          "title": "Alle content publiceren op de website",
+          "description": "Plaats de artikelen en assets live op de website volgens de planning.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Outreach uitvoeren naar geselecteerde contacten",
+          "description": "Verstuur gepersonaliseerde berichten met verwijzing naar de nieuwe content.",
+          "skill": "outreach",
+          "dependencies": [
+            "Outreach-lijst en templates voorbereiden",
+            "Alle content publiceren op de website"
+          ]
+        },
+        {
+          "title": "Opvolging van outreach en backlinkbeheer",
+          "description": "Volg reacties op, onderhoud contact en beheer verkregen backlinks in een tool.",
+          "skill": "outreach",
+          "dependencies": [
+            "Outreach uitvoeren naar geselecteerde contacten"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Monitoring & Optimalisatie",
+      "description": "Meten van de impact van de acties en bijsturen waar nodig.",
+      "tasks": [
+        {
+          "title": "Tracking opzetten voor backlinks en verkeer",
+          "description": "Configureer Google Analytics, Looker Studio en backlink-monitoring tools om resultaten te volgen.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Evaluatie en optimalisatie na twee weken",
+          "description": "Analyseer de eerste resultaten en pas content of outreach-strategie aan indien nodig.",
+          "skill": "seo",
+          "dependencies": [
+            "Tracking opzetten voor backlinks en verkeer"
+          ]
+        }
+      ]
+    }
+  ]
+}

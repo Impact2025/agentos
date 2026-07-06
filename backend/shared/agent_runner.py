@@ -1,0 +1,401 @@
+"""
+Agentic loop — orkestreert multi-step tool use via Hermes (lokaal / OpenRouter / Ollama).
+
+Emits dicts via async generator:
+  {"type": "tool_start",  "name": "...", "input": {...}}
+  {"type": "tool_result", "name": "...", "output": "...", "error": false}
+  {"type": "text",        "text": "..."}
+"""
+import json
+import asyncio
+import httpx
+from typing import AsyncGenerator, List, Dict, Optional, Tuple
+
+from .config import (
+    OPENROUTER_API_KEY, HERMES_MODEL, HERMES_FALLBACK_MODELS,
+    OLLAMA_BASE_URL, OLLAMA_MODEL,
+    HERMES_LOCAL_URL, HERMES_LOCAL_KEY,
+    OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL,
+    hermes_backend,
+)
+from ..tools import TOOLS, TOOL_MAP
+
+MAX_ITERATIONS = 8
+
+
+class _BackendUnavailable(RuntimeError):
+    """Backend is niet bereikbaar (connection error of timeout)."""
+
+
+def _fallback_chain(backend: str, model: str) -> List[str]:
+    """Modelketen voor automatische 429-fallback.
+
+    Alleen de OpenRouter-backend heeft fallbacks (gratis modellen worden daar
+    rate-limited). Lokaal/Ollama hebben één vast model van de gateway.
+    """
+    if backend != "openrouter":
+        return [model]
+    chain = [model]
+    for fb in HERMES_FALLBACK_MODELS:
+        if fb and fb not in chain:
+            chain.append(fb)
+    return chain
+
+
+def _is_rate_limited(status_code: int, body: Optional[dict] = None) -> bool:
+    """429 komt soms direct, soms ingepakt in een 200-body (OpenRouter proxy)."""
+    if status_code == 429:
+        return True
+    if status_code == 200 and isinstance(body, dict):
+        err = body.get("error") or {}
+        if isinstance(err, dict) and err.get("code") == 429:
+            return True
+    return False
+
+
+def _cloud_fallback_chain(skip: str) -> List[str]:
+    """Geeft beschikbare cloud-backends terug, de primaire overgeslagen."""
+    chain: List[str] = []
+    if skip != "openmodel" and OPENMODEL_API_KEY:
+        chain.append("openmodel")
+    if skip != "openrouter" and OPENROUTER_API_KEY:
+        chain.append("openrouter")
+    return chain
+
+
+async def _run_cloud_backend(
+    backend: str,
+    messages: List[Dict],
+    system_prompt: str,
+    max_tokens: int,
+    model_override: Optional[str],
+) -> tuple:
+    """Voer één cloud-backend uit en buffer de events.
+    Geeft (events, had_error, error_msg) terug."""
+    events: List[Dict] = []
+    error_msg = ""
+    try:
+        if backend == "openmodel":
+            gen = _openmodel_loop(messages, system_prompt, max_tokens, model_override)
+        else:
+            gen = _openai_loop(messages, system_prompt, max_tokens, backend,
+                               model_override=model_override, use_tools=False)
+        async for event in gen:
+            events.append(event)
+            if event.get("type") == "error":
+                error_msg = event.get("message", "onbekende fout")
+                return events, True, error_msg
+    except _BackendUnavailable as exc:
+        return [], True, str(exc)
+    return events, False, ""
+
+
+async def run_agent(
+    messages: List[Dict],
+    system_prompt: str,
+    agent: str = "hermes",
+    max_tokens: int = 4096,
+    model_override: str = None,
+    use_tools: bool = True,
+) -> AsyncGenerator[Dict, None]:
+    backend = hermes_backend()
+    if not backend:
+        yield {"type": "error", "message": "Geen backend geconfigureerd. Controleer HERMES_LOCAL_URL of OPENROUTER_API_KEY in .env"}
+        return
+
+    # Primaire backend — stream direct door (geen buffer)
+    primary_error: Optional[str] = None
+    if backend == "openmodel":
+        events, had_error, err = await _run_cloud_backend("openmodel", messages, system_prompt, max_tokens, model_override)
+        if not had_error:
+            for event in events:
+                yield event
+            return
+        primary_error = err
+    else:
+        try:
+            async for event in _openai_loop(messages, system_prompt, max_tokens, backend,
+                                            model_override=model_override, use_tools=use_tools):
+                yield event
+            return
+        except _BackendUnavailable as exc:
+            primary_error = str(exc)
+
+    # Primaire backend mislukt — doorloop de cloud-fallback keten
+    for fb in _cloud_fallback_chain(skip=backend):
+        yield {"type": "fallback", "model": fb, "reason": primary_error or "backend niet beschikbaar"}
+        events, had_error, err = await _run_cloud_backend(fb, messages, system_prompt, max_tokens, model_override)
+        if not had_error:
+            for event in events:
+                yield event
+            return
+        primary_error = err  # voor volgende iteratie
+
+    yield {"type": "error", "message": primary_error or "Alle backends onbereikbaar"}
+
+
+# ── OpenModel / Anthropic-compatible loop ─────────────────────────────────────
+
+async def _openmodel_loop(
+    messages: List[Dict],
+    system_prompt: str,
+    max_tokens: int,
+    model_override: str = None,
+) -> AsyncGenerator[Dict, None]:
+    """Streaming loop voor OpenModel.ai (Anthropic-compatible API).
+
+    Gebruikt de Anthropic SDK met een aangepaste base_url zodat het dezelfde
+    wire-protocol spreekt als claude_service.py, maar via OpenModel's gratis tier.
+    Tool use wordt niet ondersteund via deze backend — gebruik use_tools=False.
+    """
+    import anthropic as _sdk
+    model = model_override or OPENMODEL_MODEL
+    client = _sdk.AsyncAnthropic(
+        api_key=OPENMODEL_API_KEY,
+        base_url=OPENMODEL_BASE_URL,
+    )
+    try:
+        async with client.messages.stream(
+            model=model,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            messages=messages,
+        ) as stream:
+            async for text in stream.text_stream:
+                yield {"type": "text", "text": text}
+            msg = await stream.get_final_message()
+            u = msg.usage
+            yield {
+                "type": "usage", "model": model,
+                "prompt_tokens": u.input_tokens,
+                "completion_tokens": u.output_tokens,
+                "total_tokens": u.input_tokens + u.output_tokens,
+            }
+    except Exception as exc:
+        yield {"type": "error", "message": f"OpenModel fout: {exc}"}
+
+
+# ── OpenAI-compatible agent loop (Hermes lokaal / OpenRouter / Ollama) ──────
+
+def _openai_headers_and_url(backend: str):
+    if backend == "local":
+        return (
+            f"{HERMES_LOCAL_URL.rstrip('/')}/chat/completions",
+            {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {HERMES_LOCAL_KEY}",
+            },
+            "hermes-agent",
+        )
+    if backend == "ollama":
+        return (
+            f"{OLLAMA_BASE_URL.rstrip('/')}/chat/completions",
+            {"Content-Type": "application/json"},
+            OLLAMA_MODEL,
+        )
+    return (
+        "https://openrouter.ai/api/v1/chat/completions",
+        {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "HTTP-Referer": "http://localhost:1250",
+            "X-Title": "Agent OS",
+        },
+        HERMES_MODEL,
+    )
+
+
+async def _openai_loop(
+    messages: List[Dict],
+    system_prompt: str,
+    max_tokens: int,
+    backend: str,
+    model_override: str = None,
+    use_tools: bool = True,
+) -> AsyncGenerator[Dict, None]:
+    # Token optimalisatie: strip ruis en truncate voor lange context
+    from .token_optimizer import optimize_prompt_messages, truncate_to_token_budget
+    if system_prompt:
+        system_prompt = truncate_to_token_budget(system_prompt, 3000)
+    optimized_messages = optimize_prompt_messages(messages)
+
+    url, headers, model = _openai_headers_and_url(backend)
+    if model_override:
+        model = model_override
+    chain = _fallback_chain(backend, model)
+    active_model = chain[0]
+    openai_tools = [t.to_openai() for t in TOOLS] if use_tools else []
+    full_messages = [{"role": "system", "content": system_prompt}] + list(optimized_messages)
+
+    for _ in range(MAX_ITERATIONS):
+        payload = {
+            "messages": full_messages,
+            "max_tokens": max_tokens,
+        }
+        # Tools alleen meesturen als ze gebruikt mogen worden; zwakke modellen
+        # lekken anders tool-call-syntax in pure contenttaken.
+        if openai_tools:
+            payload["tools"] = openai_tools
+            payload["tool_choice"] = "auto"
+
+        try:
+            data, used_model = await _post_with_fallback(
+                url, headers, payload, chain, active_model
+            )
+        except _AllRateLimited as exc:
+            yield {"type": "error", "message": str(exc)}
+            return
+        if used_model != active_model:
+            active_model = used_model
+            yield {"type": "fallback", "model": used_model, "reason": "429 rate-limit"}
+        model = active_model
+
+        usage = data.get("usage") or {}
+        if usage:
+            yield {"type": "usage", "model": model, **{
+                k: usage.get(k, 0) for k in ("prompt_tokens", "completion_tokens", "total_tokens")
+            }}
+
+        # Sommige backends/proxies geven bij een fout een 200-body zónder 'choices'
+        # (bijv. {"error": {...}}). Niet hard crashen — meld het netjes als error-event.
+        choices = data.get("choices")
+        if not choices:
+            err = data.get("error")
+            detail = (err.get("message") if isinstance(err, dict) else err) or "geen 'choices' in API-respons"
+            yield {"type": "error", "message": f"Modelfout: {detail}"}
+            return
+        choice = choices[0]
+        msg = choice["message"]
+        finish_reason = choice.get("finish_reason", "stop")
+        tool_calls = msg.get("tool_calls") or []
+
+        if not tool_calls:
+            # Laatste stap — stream de tekst
+            text = msg.get("content") or ""
+            if text:
+                async for event in _stream_openai_text(url, headers, chain, active_model, full_messages, max_tokens):
+                    yield event
+            break
+
+        # Tekst die de agent schrijft vlak vóór een tool-aanroep is zijn 'Thought'
+        # (denkproces) — apart gemarkeerd zodat Mission Control de logica kan mappen.
+        if msg.get("content"):
+            yield {"type": "thought", "text": msg["content"]}
+
+        full_messages.append(msg)
+
+        # Tools uitvoeren
+        for tc in tool_calls:
+            fn = tc["function"]
+            tool_name = fn["name"]
+            try:
+                tool_input = json.loads(fn.get("arguments", "{}"))
+            except json.JSONDecodeError:
+                tool_input = {}
+
+            yield {"type": "tool_start", "name": tool_name, "input": tool_input}
+
+            tool = TOOL_MAP.get(tool_name)
+            if tool:
+                try:
+                    result = await tool.run(**tool_input)
+                    output = result.output
+                    is_error = result.error
+                except Exception as exc:  # noqa: BLE001 — een tool-crash mag de run niet slopen
+                    output = f"Tool '{tool_name}' faalde: {exc}"
+                    is_error = True
+            else:
+                output = f"Tool '{tool_name}' niet gevonden"
+                is_error = True
+
+            yield {"type": "tool_result", "name": tool_name, "output": output, "error": is_error}
+            full_messages.append({"role": "tool", "tool_call_id": tc["id"], "content": output})
+
+
+class _AllRateLimited(RuntimeError):
+    """Geen enkel model in de keten was beschikbaar (allemaal 429)."""
+
+
+def _order_models(chain: List[str], active: str) -> List[str]:
+    """Begin bij het laatst werkende model, dan de rest van de keten."""
+    return [active] + [m for m in chain if m != active]
+
+
+async def _post_with_fallback(
+    url: str, headers: Dict, payload: Dict, chain: List[str], active: str
+) -> Tuple[Dict, str]:
+    """POST naar de chat-completions endpoint; schakel bij 429 door naar het
+    volgende model in de keten. Retourneert (responsebody, gebruikt-model)."""
+    order = _order_models(chain, active)
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for model in order:
+            try:
+                resp = await client.post(url, json={**payload, "model": model}, headers=headers)
+            except (httpx.ConnectError, httpx.TimeoutException) as exc:
+                err = str(exc) or type(exc).__name__
+                raise _BackendUnavailable(f"{type(exc).__name__}: {err}") from exc
+            body: Optional[dict] = None
+            if resp.headers.get("content-type", "").startswith("application/json"):
+                try:
+                    body = resp.json()
+                except json.JSONDecodeError:
+                    body = None
+            if _is_rate_limited(resp.status_code, body):
+                continue
+            resp.raise_for_status()
+            return (body if body is not None else resp.json()), model
+    raise _AllRateLimited(
+        "Alle modellen rate-limited (429): " + ", ".join(order)
+    )
+
+
+async def _stream_openai_text(
+    url: str, headers: Dict, chain: List[str], active: str,
+    messages: List[Dict], max_tokens: int,
+) -> AsyncGenerator[Dict, None]:
+    order = _order_models(chain, active)
+    base_payload = {
+        "messages": messages, "max_tokens": max_tokens, "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for idx, model in enumerate(order):
+            try:
+                async with client.stream(
+                    "POST", url, json={**base_payload, "model": model}, headers=headers
+                ) as resp:
+                    if resp.status_code == 429:
+                        continue  # rate-limited — probeer het volgende model
+                    resp.raise_for_status()
+                    if idx > 0:
+                        yield {"type": "fallback", "model": model, "reason": "429 rate-limit"}
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        raw = line[6:].strip()
+                        if raw == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(raw)
+                            # Usage komt (bij include_usage) in een laatste chunk zonder choices.
+                            usage = chunk.get("usage")
+                            if usage:
+                                yield {"type": "usage", "model": model, **{
+                                    k: usage.get(k, 0) for k in ("prompt_tokens", "completion_tokens", "total_tokens")
+                                }}
+                            choices = chunk.get("choices") or []
+                            if choices:
+                                text = choices[0].get("delta", {}).get("content") or ""
+                                if text:
+                                    yield {"type": "text", "text": text}
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            continue
+                    return  # stream voltooid
+            except (httpx.ConnectError, httpx.TimeoutException) as exc:
+                err = str(exc) or type(exc).__name__
+                raise _BackendUnavailable(f"{type(exc).__name__}: {err}") from exc
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:
+                    continue
+                raise
+    yield {"type": "error", "message": "Alle modellen rate-limited (429): " + ", ".join(order)}

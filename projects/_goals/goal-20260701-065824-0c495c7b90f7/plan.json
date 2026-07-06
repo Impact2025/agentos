@@ -1,0 +1,18 @@
+{
+  "plan_summary": "Update the Dashboard project backlog by extracting current items, defining clear open tasks with descriptions and estimates, prioritizing them, and publishing the revised backlog for team use.",
+  "estimated_duration": "3-4 days",
+  "phases": [
+    {
+      "title": "Uitvoering",
+      "description": "Automatisch gegenereerd plan voor: Update het project backlog met openstaande taken",
+      "tasks": [
+        {
+          "title": "Update het project backlog met openstaande taken",
+          "description": "Voer uit: Update het project backlog met openstaande taken",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

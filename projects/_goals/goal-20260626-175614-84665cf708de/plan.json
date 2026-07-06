@@ -1,0 +1,119 @@
+{
+  "plan_summary": "Optimaliseer kennisbank-pagina's door analyse, contentverbetering, implementatie en monitoring om gemiddelde positie van 34 naar 15 te brengen binnen 30 dagen.",
+  "estimated_duration": "30 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Strategie",
+      "description": "Analyseer huidige prestaties, identificeer kansen en stel een prioriteitenlijst en optimalisatieplan op.",
+      "tasks": [
+        {
+          "title": "Analyseer huidige prestaties via GSC en analytics",
+          "description": "Verzamel data over posities, klikken, impressies en gedrag van kennisbank-pagina's via Google Search Console en site-analytics.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Identificeer kansen voor interne links en content gaps",
+          "description": "Breng ontbrekende interne links en onderwerpen in kaart op basis van de huidige structuur en zoekvolumes.",
+          "skill": "seo",
+          "dependencies": [
+            "task1"
+          ]
+        },
+        {
+          "title": "Stel prioriteitenlijst op van pagina's om aan te pakken",
+          "description": "Rangschik pagina's op potentieel (huidige positie, zoekvolume, impact) en bepaal de top-10 voor optimalisatie.",
+          "skill": "analyst",
+          "dependencies": [
+            "task2"
+          ]
+        },
+        {
+          "title": "Maak een content-verbeterplan met metadata-optimalisatie",
+          "description": "Stel per prioritaire pagina concrete verbeteringen voor titels, meta descriptions, headings en interne linkstrategie.",
+          "skill": "seo",
+          "dependencies": [
+            "task3"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content-verbetering",
+      "description": "Schrijf en redigeer content, optimaliseer interne links en metadata volgens het plan.",
+      "tasks": [
+        {
+          "title": "Schrijf nieuwe/verbeterde content voor prioritaire pagina's",
+          "description": "Creëer rijke, informatieve content die aansluit op zoekintentie en de bestaande tekst versterkt.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Optimaliseer interne links",
+          "description": "Voeg relevante interne links toe naar andere kennisbank-pagina's en relevante artikelen, aansluitend op de linkstrategie.",
+          "skill": "content-editor",
+          "dependencies": [
+            "task1"
+          ]
+        },
+        {
+          "title": "Verbeter metadata (title, description, headings)",
+          "description": "Pas titels, meta descriptions en H1/H2-headings aan volgens SEO-richtlijnen en de prioriteitenlijst.",
+          "skill": "seo",
+          "dependencies": [
+            "task1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Implementatie en publicatie",
+      "description": "Laat de verbeteringen controleren en publiceer de geoptimaliseerde pagina's.",
+      "tasks": [
+        {
+          "title": "Review content en links door content-judge",
+          "description": "Controleer de kwaliteit, consistentie en juistheid van de nieuwe content en interne links.",
+          "skill": "content-judge",
+          "dependencies": []
+        },
+        {
+          "title": "Voer laatste SEO-check uit",
+          "description": "Valideer metadata, headings en linkstructuur met een SEO-tool om technische fouten te voorkomen.",
+          "skill": "seo",
+          "dependencies": [
+            "task1"
+          ]
+        },
+        {
+          "title": "Publiceer de bijgewerkte pagina's",
+          "description": "Zet de goedgekeurde wijzigingen live op de website en update eventuele sitemaps.",
+          "skill": "publisher",
+          "dependencies": [
+            "task1",
+            "task2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Monitoring en optimalisatie",
+      "description": "Meet de impact en voer waar nodig bijsturingen uit om het doel te behalen.",
+      "tasks": [
+        {
+          "title": "Monitor positieveranderingen na 7 en 14 dagen",
+          "description": "Volg de gemiddelde posities in GSC en signaleer afwijkingen of verbeteringen.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Pas waar nodig aan op basis van data",
+          "description": "Voer kleine optimalisaties door (aanpassen tekst, links of metadata) op pagina's die nog niet voldoende stijgen.",
+          "skill": "seo",
+          "dependencies": [
+            "task1"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+De vorige aangemaakte uitvoerbestanden staan nog niet in de gedeelde workspace: er is alleen `C:\Users\v_mun\Documents\agentos-workspace\input-concept-uitvaartongelicht.md` aanwezig. Om de controle uit te voeren, moet ik eerst dat bronbestand lezen en daarna `01_concept-outline.md` controleren of genereren als basis. Wil je dat ik die stap nu direct doe?

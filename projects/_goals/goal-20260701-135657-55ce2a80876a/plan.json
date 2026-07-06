@@ -1,0 +1,18 @@
+{
+  "plan_summary": "Plan voor: Strategist prioriteit (kritiek): Zet draft-doel om naar running met uitkomst \"Publiceer 2 seizoensartikelen en 1 thema-artikel\", koppel content-agent.",
+  "estimated_duration": "1-2 dagen",
+  "phases": [
+    {
+      "title": "Uitvoering",
+      "description": "Automatisch gegenereerd plan voor: Strategist prioriteit (kritiek): Zet draft-doel om naar running met uitkomst \"Publiceer 2 seizoensartikelen en 1 thema-artikel\", koppel content-agent.",
+      "tasks": [
+        {
+          "title": "Strategist prioriteit (kritiek): Zet draft-doel om naar running met uitkomst \"Publiceer 2 seizoensartikelen en 1 thema-artikel\", koppel content-agent.",
+          "description": "Voer uit: Strategist prioriteit (kritiek): Zet draft-doel om naar running met uitkomst \"Publiceer 2 seizoensartikelen en 1 thema-artikel\", koppel content-agent.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

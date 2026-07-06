@@ -1,0 +1,18 @@
+{
+  "plan_summary": "Plan voor: Lanceer een marketingcampagne voor een SaaS-product voor zorginstellingen. Doel: 50 leads in 30 dagen.",
+  "estimated_duration": "1-2 dagen",
+  "phases": [
+    {
+      "title": "Uitvoering",
+      "description": "Automatisch gegenereerd plan voor: Lanceer een marketingcampagne voor een SaaS-product voor zorginstellingen. Doel: 50 leads in 30 dagen.",
+      "tasks": [
+        {
+          "title": "Lanceer een marketingcampagne voor een SaaS-product voor zorginstellingen. Doel: 50 leads in 30 dagen.",
+          "description": "Voer uit: Lanceer een marketingcampagne voor een SaaS-product voor zorginstellingen. Doel: 50 leads in 30 dagen.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

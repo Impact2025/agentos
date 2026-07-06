@@ -1,0 +1,119 @@
+{
+  "plan_summary": "Herzie en optimaliseer de website content van Bewaard Voor Jou op basis van audit en SEO-analyse, met focus op warme, empathische B1-teksten.",
+  "estimated_duration": "3 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Inventarisatie & Analyse",
+      "description": "Bestaande content en zoekwoorden in kaart brengen om prioriteiten te stellen.",
+      "tasks": [
+        {
+          "id": "1.1",
+          "title": "Content audit uitvoeren",
+          "description": "Inventariseer alle bestaande pagina's, beoordeel kwaliteit, toon en SEO-vriendelijkheid.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "1.2",
+          "title": "Keyword- en concurrentieanalyse",
+          "description": "Analyseer zoekwoorden en concurrentie voor relevante onderwerpen m.b.v. GSC en tools.",
+          "skill": "seo",
+          "dependencies": [
+            "1.1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Contentcreatie",
+      "description": "Schrijven en redigeren van nieuwe en herziene teksten.",
+      "tasks": [
+        {
+          "id": "2.1",
+          "title": "Schrijven van paginateksten",
+          "description": "Schrijf of herschrijf de belangrijkste pagina's (home, over ons, thema's) op B1-niveau met warme toon.",
+          "skill": "content-writer",
+          "dependencies": [
+            "1.1",
+            "1.2"
+          ]
+        },
+        {
+          "id": "2.2",
+          "title": "Redactie en B1-check",
+          "description": "Redigeer teksten op leesbaarheid, empathie en consistentie met merkidentiteit.",
+          "skill": "content-editor",
+          "dependencies": [
+            "2.1"
+          ]
+        },
+        {
+          "id": "2.3",
+          "title": "Eindbeoordeling content",
+          "description": "Laat een inhoudelijk beoordelaar de teksten controleren op juistheid en toon.",
+          "skill": "content-judge",
+          "dependencies": [
+            "2.2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Vormgeving",
+      "description": "Ontwerpen van visuele elementen die de content ondersteunen.",
+      "tasks": [
+        {
+          "id": "3.1",
+          "title": "Ontwerp hoofdvormgeving",
+          "description": "Ontwerp headers, banners en achtergrondafbeeldingen die de sfeer van Bewaard Voor Jou versterken.",
+          "skill": "designer",
+          "dependencies": [
+            "2.1"
+          ]
+        },
+        {
+          "id": "3.2",
+          "title": "Ontwerp ondersteunende visuals",
+          "description": "Maak infographics, iconen en illustraties voor thema-pagina's en blogposts.",
+          "skill": "designer",
+          "dependencies": [
+            "3.1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie & Optimalisatie",
+      "description": "Technische implementatie, publicatie en meting van resultaten.",
+      "tasks": [
+        {
+          "id": "4.1",
+          "title": "SEO-optimalisatie uitvoeren",
+          "description": "Verwerk meta-tags, alt-teksten, interne links en technische SEO.",
+          "skill": "seo",
+          "dependencies": [
+            "3.2"
+          ]
+        },
+        {
+          "id": "4.2",
+          "title": "Publiceren van pagina's",
+          "description": "Plaats de bijgewerkte pagina's in het CMS en controleer weergave.",
+          "skill": "publisher",
+          "dependencies": [
+            "4.1"
+          ]
+        },
+        {
+          "id": "4.3",
+          "title": "Meten en optimaliseren",
+          "description": "Zet GA4 en eventueel GSC-metingen op om prestaties te volgen en stel verbeterpunten vast.",
+          "skill": "analyst",
+          "dependencies": [
+            "4.2"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,177 @@
+{
+  "plan_summary": "Zes fasen om PootGelukkig content naar wereldklasse te tillen. Van blog uitbreiden tot GSC-analyse.",
+  "estimated_duration": "5-7 dagen",
+  "phases": [
+    {
+      "title": "Blog uitbreiden naar 40+",
+      "description": "Schrijf 12 nieuwe blog artikelen voor de ontbrekende topics: asiel-diergedrag, hondentraining, kattengedrag senioren, asielvrijwilliger worden, asieladministratie, adoptietips specifiek per provincie, dierverzorging winter, reizen met asieldier, asiel-vs-fokker uitgebreid, vermiste dieren, dier-en-verhuizing, asielvrijwilliger-dagboek",
+      "tasks": [
+        {
+          "title": "Onderzoek content gaps via concurrentie-analyse",
+          "description": "Analyseer welke onderwerpen concurrenten (Verhuisdieren, Dierenbescherming) behandelen die PootGelukkig mist",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf 6 nieuwe blog artikelen (batch 1)",
+          "description": "asiel-diergedrag, hondentraining-basis, kattengedrag-senioren, asielvrijwilliger-worden, adoptietips-per-provincie, dierverzorging-winter",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Publiceer batch 1 + IndexNow ping",
+          "description": "Upload naar Neon DB, genereer cover images, push naar GitHub",
+          "skill": "content-writer",
+          "dependencies": [
+            "Schrijf 6 nieuwe blog artikelen (batch 1)"
+          ]
+        },
+        {
+          "title": "Schrijf 6 nieuwe blog artikelen (batch 2)",
+          "description": "reizen-met-asieldier, asiel-vs-fokker-diepgaand, vermiste-dieren-wat-te-doen, dier-en-verhuizing, asielvrijwilliger-dagboek, senior-hond-adopteren",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Publiceer batch 2 + IndexNow ping",
+          "description": "Upload naar DB, genereer cover images, push naar GitHub",
+          "skill": "content-writer",
+          "dependencies": [
+            "Schrijf 6 nieuwe blog artikelen (batch 2)"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Interne linking matrix",
+      "description": "Optimaliseer interne linking tussen blog, KB en marketing pagina's",
+      "tasks": [
+        {
+          "title": "Analyseer huidige interne links per pagina",
+          "description": "Check alle 53 contentitems + 6 marketing pagina's op linking gaten",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Bouw pillar pages cluster (3 pillars)",
+          "description": "Identificeer pillar pages en voeg links toe naar alle cluster artikelen",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer huidige interne links per pagina"
+          ]
+        },
+        {
+          "title": "Voeg bottom-of-article links toe aan alle artikelen",
+          "description": "Elk artikel minimaal 3 interne links naar gerelateerde artikelen",
+          "skill": "content-writer",
+          "dependencies": [
+            "Bouw pillar pages cluster (3 pillars)"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Meta descriptions optimaliseren",
+      "description": "Alle bestaande blog meta descriptions checken en waar nodig aanpassen naar 150-160 chars",
+      "tasks": [
+        {
+          "title": "Scan alle 28 blog meta descriptions",
+          "description": "Check lengte, zoekwoordgebruik, CTA per artikel",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf 15-20 verbeterde meta descriptions",
+          "description": "Focus op artikelen onder 140 chars of zonder actiewoord",
+          "skill": "content-writer",
+          "dependencies": [
+            "Scan alle 28 blog meta descriptions"
+          ]
+        },
+        {
+          "title": "Batch update in DB + deploy",
+          "description": "Update meta_description veld in Neon DB, push naar GitHub",
+          "skill": "content-writer",
+          "dependencies": [
+            "Schrijf 15-20 verbeterde meta descriptions"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "KB cover images genereren",
+      "description": "Genereer en deploy cover images voor de 23 KB artikelen zonder afbeelding",
+      "tasks": [
+        {
+          "title": "Genereer 12 KB cover images (batch 1)",
+          "description": "FAL image generation voor de eerste helft van de KB slugs",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Genereer 11 KB cover images (batch 2)",
+          "description": "FAL image generation voor de resterende KB slugs",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Deploy + IndexNow",
+          "description": "Push images naar GitHub, wacht op Vercel deploy, ping zoekmachines",
+          "skill": "content-writer",
+          "dependencies": [
+            "Genereer 12 KB cover images (batch 1)",
+            "Genereer 11 KB cover images (batch 2)"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "GSC-data analyse & rapportage",
+      "description": "Analyseer Search Console data voor content gap identificatie",
+      "tasks": [
+        {
+          "title": "GSC koppeling controleren",
+          "description": "Controleer of GSC-serviceaccount toegang heeft tot sc-domain:pootgelukkig.nl",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Top queries en posities analyseren",
+          "description": "Welke zoekwoorden genereren traffic, welke posities kunnen verbeteren?",
+          "skill": "seo",
+          "dependencies": [
+            "GSC koppeling controleren"
+          ]
+        },
+        {
+          "title": "Rapporteer content gaps en kansen",
+          "description": "Op basis van GSC-data + concurrentie-analyse: welke content mist nog?",
+          "skill": "seo",
+          "dependencies": [
+            "Top queries en posities analyseren"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Eindrapportage & optimalisatie",
+      "description": "Alles samenbrengen in een eindrapport",
+      "tasks": [
+        {
+          "title": "SEO-score rapport per artikel",
+          "description": "Genereer per blog artikel een SEO-score (0-10) met verbeterpunten",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Eindrapport schrijven",
+          "description": "Samenvatting van alle gedane werk, resultaten, volgende stappen",
+          "skill": "content-writer",
+          "dependencies": [
+            "SEO-score rapport per artikel"
+          ]
+        }
+      ]
+    }
+  ]
+}

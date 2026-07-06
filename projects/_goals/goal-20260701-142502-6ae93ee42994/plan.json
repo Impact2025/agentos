@@ -1,0 +1,78 @@
+{
+  "plan_summary": "Analyseer 4 SEO-kansen via GSC- en concurrentieonderzoek, schrijf 2 gerichte artikelen, optimaliseer 2 bestaande pagina's en rond het GA4-dashboard af voor continue monitoring binnen project WeAreImpact.",
+  "estimated_duration": "3-4 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Kansenidentificatie",
+      "description": "Identificeer 4 concrete SEO-kansen op basis van data en stel een contentplan op.",
+      "tasks": [
+        {
+          "title": "Voer SEO-kansenanalyse uit",
+          "description": "Analyseer GSC- en zoekwoorddata, concurrentie en sitestructuur om 4 kansrijke onderwerpen te bepalen voor nieuwe artikelen en optimalisatie van bestaande pagina's.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Stel contentplan op",
+          "description": "Prioriteer de 4 kansen en definieer per kans de aanpak: 2 artikelen (titels, structuren) en 2 bestaande pagina's die geoptimaliseerd moeten worden.",
+          "skill": "research",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Artikelproductie",
+      "description": "Schrijf 2 nieuwe artikelen gebaseerd op de geselecteerde SEO-kansen.",
+      "tasks": [
+        {
+          "title": "Schrijf artikel 1",
+          "description": "Maak een diepgaand artikel voor de eerste SEO-kans, optimaliseer titel, headers, meta en gebruik relevante interne links.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf artikel 2",
+          "description": "Maak een diepgaand artikel voor de tweede SEO-kans, met dezelfde optimalisatierichtlijnen.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Pagina-optimalisatie",
+      "description": "Optimaliseer 2 bestaande pagina's op basis van de geïdentificeerde kansen.",
+      "tasks": [
+        {
+          "title": "Optimaliseer pagina 1",
+          "description": "Herzie titel, meta description, headers, content en interne links van de eerste bestaande pagina om beter aan te sluiten bij de SEO-kans.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Optimaliseer pagina 2",
+          "description": "Herzie titel, meta description, headers, content en interne links van de tweede bestaande pagina om beter aan te sluiten bij de SEO-kans.",
+          "skill": "seo",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Dashboard & Monitoring",
+      "description": "Rond het GA4-dashboard af en koppel de juiste data voor prestatiemonitoring.",
+      "tasks": [
+        {
+          "title": "Configureer GA4-dashboard",
+          "description": "Zet in Google Analytics 4 een dashboard op met KPI's zoals organische traffic, conversies, CTR en positie voor de 4 SEO-kansen.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Koppel GSC-data en stel rapporten in",
+          "description": "Integreer Google Search Console met GA4, maak aangepaste rapporten voor monitoring van de SEO-prestaties en voeg doelen/events toe.",
+          "skill": "analyst",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

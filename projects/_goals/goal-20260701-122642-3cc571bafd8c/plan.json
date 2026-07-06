@@ -1,0 +1,130 @@
+{
+  "plan_summary": "Plan voor het systematisch afhandelen van bugfixes voor het Bijeen-project: van inventarisatie en prioritering tot uitvoering, testen en uitrol.",
+  "estimated_duration": "1 week",
+  "phases": [
+    {
+      "title": "Fase 1: Bug Inventarisatie & Prioritering",
+      "description": "Verzamel, categoriseer en prioritize bugs, voer root-cause-analyse uit voor de belangrijkste",
+      "tasks": [
+        {
+          "id": "t1",
+          "title": "Verzamel en categoriseer bugmeldingen",
+          "description": "Haal bugs op uit gebruikersfeedback, analytics en support-tickets; groepeer per type (inhoud, layout, functionaliteit)",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "id": "t2",
+          "title": "Prioriteer bugs op impact en frequentie",
+          "description": "Wijs urgentie toe (kritiek, hoog, medium, laag) en stel een fix-roadmap op voor de komende sprint",
+          "skill": "analyst",
+          "dependencies": [
+            "t1"
+          ]
+        },
+        {
+          "id": "t3",
+          "title": "Root-cause-analyse voor top-5 bugs",
+          "description": "Identificeer onderliggende oorzaken van de meest kritische bugs met behulp van logs, user-sessies en code-inspectie",
+          "skill": "research",
+          "dependencies": [
+            "t2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Inhoudelijke & SEO-bugfixes",
+      "description": "Los fouten op in kennisbankartikelen, links en metadata",
+      "tasks": [
+        {
+          "id": "t4",
+          "title": "Corrigeer feitelijke onjuistheden in artikelen",
+          "description": "Pas onjuiste data, namen jaartallen of stappen aan op basis van bronnen",
+          "skill": "content-editor",
+          "dependencies": []
+        },
+        {
+          "id": "t5",
+          "title": "Herstel gebroken interne en externe links",
+          "description": "Vervang dode links door correcte URL's; voeg indien nodig redirects toe",
+          "skill": "seo",
+          "dependencies": [
+            "t4"
+          ]
+        },
+        {
+          "id": "t6",
+          "title": "Verbeter alt-teksten en metadata",
+          "description": "Vul ontbrekende alt-tags in bij afbeeldingen; optimaliseer title- en meta-descriptions",
+          "skill": "seo",
+          "dependencies": [
+            "t4"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Design- & UX-bugfixes",
+      "description": "Los visuele en gebruiksvriendelijkheidsproblemen op",
+      "tasks": [
+        {
+          "id": "t7",
+          "title": "Herstel layout-problemen op mobiel",
+          "description": "Los overlappende elementen, verschoven kolommen en te kleine knoppen op in de mobiele weergave",
+          "skill": "designer",
+          "dependencies": []
+        },
+        {
+          "id": "t8",
+          "title": "Verbeter navigatie-menu en breadcrumbs",
+          "description": "Maak het menu intuïtiever, voeg ontbrekende items toe en zorg voor consistente breadcrumbs",
+          "skill": "designer",
+          "dependencies": [
+            "t7"
+          ]
+        },
+        {
+          "id": "t9",
+          "title": "Consolideer typografie en kleurgebruik",
+          "description": "Pas lettertypes, groottes en kleuren aan zodat ze overal consistent zijn met de merkstijl",
+          "skill": "designer",
+          "dependencies": [
+            "t8"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Testen & Uitrol",
+      "description": "Verifieer alle fixes, zet ze live en monitor op regressies",
+      "tasks": [
+        {
+          "id": "t10",
+          "title": "Uitvoeren van regressietesten op alle fixes",
+          "description": "Controleer of de opgeloste bugs niet opnieuw optreden en of er geen nieuwe problemen zijn ontstaan",
+          "skill": "content-judge",
+          "dependencies": []
+        },
+        {
+          "id": "t11",
+          "title": "Uitrol van fixes naar productieomgeving",
+          "description": "Plaats de goedgekeurde wijzigingen op de live server via het deploymentproces",
+          "skill": "publisher",
+          "dependencies": [
+            "t10"
+          ]
+        },
+        {
+          "id": "t12",
+          "title": "Monitor live-omgeving op regressies",
+          "description": "Gedurende 24-48 uur controleren of er geen nieuwe bugs verschijnen en of de fixes stabiel blijven",
+          "skill": "analyst",
+          "dependencies": [
+            "t11"
+          ]
+        }
+      ]
+    }
+  ]
+}

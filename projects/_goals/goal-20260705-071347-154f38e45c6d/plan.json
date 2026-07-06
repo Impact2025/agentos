@@ -1,0 +1,18 @@
+{
+  "plan_summary": "Creëer 12 SEO-geoptimaliseerde kennisbankartikelen voor BewaardVoorJou.nl over de thema's levensverhaal (ouderenzorg/reminiscentie) en baby/geboorte. Elk artikel is geschreven in de ik-vorm van Vincent van Munster, in HTML, met duale CTA, minimaal 800 woorden, 3+ H2-koppen, E-E-A-T blockquote, cijfer openingszin, en 'Wat neem je mee'-blok. Publicatiedata worden gespreid over jan-jun 2026 via API-publicatie, git push, IndexNow ping, gevolgd door GSC-check na 48 uur.",
+  "estimated_duration": "6-8 weken (inclusief spreiding publicatie over 6 maanden)",
+  "phases": [
+    {
+      "title": "Uitvoering",
+      "description": "Automatisch gegenereerd plan voor: reëer 10 tot 12 SEO-geoptimaliseerde kennisbank- en blogartikelen voor bewaardvoorjou.nl, verspreid over de thema's levensverhaal (ouderenzorg/reminiscentie) en baby/geboorte. Elk artikel is geschreven in de ik-vorm van Vincent van Munster, in HTML-formaat (geen Markdown), met een duale CTA (consument naar bewaardvoorjou.nl, organisatie naar weareimpact.nl). Elk artikel bevat minimaal 800 woorden, 3+ H2-koppen, minstens 1 interne link naar een ander KB-artikel, minstens 1 externe bronlink, een opening met een hard cijfer/pijnpunt, een E-E-A-T blockquote met Vincent's ervaring (Stichting de Baan, vader-casus, of privacy-expertise), en een \"Wat neem je mee\"-blok met 3 punten. Publicatiedata worden verspreid over jan-jun 2026. Na creatie wordt elk artikel via de API gepubliceerd (POST /api/v1/blog + publish), gevolgd door een git push en IndexNow ping. De GSC wordt 48 uur later gecheckt op indexering.",
+      "tasks": [
+        {
+          "title": "reëer 10 tot 12 SEO-geoptimaliseerde kennisbank- en blogartikelen voor bewaardvoorjou.nl, verspreid over de thema's levensverhaal (ouderenzorg/reminiscentie) en baby/geboorte. Elk artikel is geschreven in de ik-vorm van Vincent van Munster, in HTML-formaat (geen Markdown), met een duale CTA (consument naar bewaardvoorjou.nl, organisatie naar weareimpact.nl). Elk artikel bevat minimaal 800 woorden, 3+ H2-koppen, minstens 1 interne link naar een ander KB-artikel, minstens 1 externe bronlink, een opening met een hard cijfer/pijnpunt, een E-E-A-T blockquote met Vincent's ervaring (Stichting de Baan, vader-casus, of privacy-expertise), en een \"Wat neem je mee\"-blok met 3 punten. Publicatiedata worden verspreid over jan-jun 2026. Na creatie wordt elk artikel via de API gepubliceerd (POST /api/v1/blog + publish), gevolgd door een git push en IndexNow ping. De GSC wordt 48 uur later gecheckt op indexering.",
+          "description": "Voer uit: reëer 10 tot 12 SEO-geoptimaliseerde kennisbank- en blogartikelen voor bewaardvoorjou.nl, verspreid over de thema's levensverhaal (ouderenzorg/reminiscentie) en baby/geboorte. Elk artikel is geschreven in de ik-vorm van Vincent van Munster, in HTML-formaat (geen Markdown), met een duale CTA (consument naar bewaardvoorjou.nl, organisatie naar weareimpact.nl). Elk artikel bevat minimaal 800 woorden, 3+ H2-koppen, minstens 1 interne link naar een ander KB-artikel, minstens 1 externe bronlink, een opening met een hard cijfer/pijnpunt, een E-E-A-T blockquote met Vincent's ervaring (Stichting de Baan, vader-casus, of privacy-expertise), en een \"Wat neem je mee\"-blok met 3 punten. Publicatiedata worden verspreid over jan-jun 2026. Na creatie wordt elk artikel via de API gepubliceerd (POST /api/v1/blog + publish), gevolgd door een git push en IndexNow ping. De GSC wordt 48 uur later gecheckt op indexering.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

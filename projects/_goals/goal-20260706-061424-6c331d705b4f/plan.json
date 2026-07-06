@@ -1,0 +1,143 @@
+{
+  "plan_summary": "Implementatie van 7 SEO-kansen door middel van data-analyse, contentcreatie, optimalisatie en monitoring, met een gefaseerde aanpak van research tot publicatie.",
+  "estimated_duration": "3-4 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Analyse & Planning",
+      "description": "Verzamel data, prioriteer kansen en stel een contentkalender op voor de 7 kansen.",
+      "tasks": [
+        {
+          "title": "Verzamel en analyseer GSC- en GA4-data per kans",
+          "description": "Exporteer organische zoekdata en pagina-prestaties voor elk van de 7 kansen uit Google Search Console en GA4.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Stel prioriteitenlijst op op basis van potentieel",
+          "description": "Wijs scores toe op basis van zoekvolume, klikfrequentie en conversiepotentieel om de volgorde van aanpak te bepalen.",
+          "skill": "analyst",
+          "dependencies": [
+            "F1-T1"
+          ]
+        },
+        {
+          "title": "Identificeer content gaps en optimalisatiekansen",
+          "description": "Vergelijk bestaande content met de top-10 concurrenten per kans en noteer missende onderwerpen of verbeterpunten.",
+          "skill": "research",
+          "dependencies": [
+            "F1-T2"
+          ]
+        },
+        {
+          "title": "Maak een contentkalender voor alle 7 kansen",
+          "description": "Plan de creatie of optimalisatie van content per kans, inclusief deadlines en verantwoordelijke personen.",
+          "skill": "content-writer",
+          "dependencies": [
+            "F1-T3"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Contentcreatie & Optimalisatie",
+      "description": "Ontwikkel nieuwe content en optimaliseer bestaande pagina's volgens de vastgestelde kalender.",
+      "tasks": [
+        {
+          "title": "Schrijf nieuwe blogposts voor de hoogste prioriteit kansen",
+          "description": "Schrijf 3-5 nieuwe artikelen voor de top-3 kansen, afgestemd op de keyword-strategie en zoekintentie.",
+          "skill": "content-writer",
+          "dependencies": [
+            "F1-T4"
+          ]
+        },
+        {
+          "title": "Optimaliseer bestaande content voor overige kansen",
+          "description": "Verbeter meta descriptions, headings, interne links en voeg relevante zoekwoorden toe aan de pagina's van kansen 4 t/m 7.",
+          "skill": "seo",
+          "dependencies": [
+            "F1-T4"
+          ]
+        },
+        {
+          "title": "Ontwikkel visuele assets (infographics, afbeeldingen)",
+          "description": "Maak afbeeldingen en infographics die de content ondersteunen en de gebruikerservaring versterken.",
+          "skill": "designer",
+          "dependencies": [
+            "F2-T1",
+            "F2-T2"
+          ]
+        },
+        {
+          "title": "Produceer korte video's voor twee kansen",
+          "description": "Maak uitlegvideo's van 1-2 minuten per kans om zowel SEO (YouTube) als gebruikersbetrokkenheid te vergroten.",
+          "skill": "video-builder",
+          "dependencies": [
+            "F2-T3"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Review & SEO-optimalisatie",
+      "description": "Beoordeel, redigeer en optimaliseer alle nieuwe en aangepaste content voor publicatie.",
+      "tasks": [
+        {
+          "title": "Redactionele beoordeling van nieuwe content",
+          "description": "Controleer alle nieuwe artikelen op leesbaarheid, feiten, toon en structuur; pas aan waar nodig.",
+          "skill": "content-editor",
+          "dependencies": [
+            "F2-T1",
+            "F2-T2"
+          ]
+        },
+        {
+          "title": "Technische SEO-optimalisatie (meta, alt, intern linken)",
+          "description": "Voeg geoptimaliseerde title tags, meta descriptions, alt-teksten en interne links toe aan alle pagina's.",
+          "skill": "seo",
+          "dependencies": [
+            "F3-T1"
+          ]
+        },
+        {
+          "title": "Eindbeoordeling en goedkeuring door content-judge",
+          "description": "Beoordeel de volledige kwaliteit, consistentie en SEO-vriendelijkheid voordat de content wordt vrijgegeven.",
+          "skill": "content-judge",
+          "dependencies": [
+            "F3-T2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie & Monitoring",
+      "description": "Publiceer de content, voer outreach uit en meet de resultaten om het effect van de kansen te valideren.",
+      "tasks": [
+        {
+          "title": "Publiceer alle content op de website",
+          "description": "Zet de goedgekeurde artikelen, video's en bijgewerkte pagina's live op de productieomgeving.",
+          "skill": "publisher",
+          "dependencies": [
+            "F3-T3"
+          ]
+        },
+        {
+          "title": "Voer outreach uit voor backlinks en signalen",
+          "description": "Benader relevante websites en influencers in de niche om links naar de nieuwe content te verkrijgen.",
+          "skill": "outreach",
+          "dependencies": [
+            "F4-T1"
+          ]
+        },
+        {
+          "title": "Monitor prestaties na 2 weken en rapporteer",
+          "description": "Analyseer organische bezoeken, posities en conversies per kans; stel een beknopt rapport op met aanbevelingen.",
+          "skill": "analyst",
+          "dependencies": [
+            "F4-T1",
+            "F4-T2"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "plan_summary": "Plan de uitrol van een nieuwe functionaliteit op Bewaardvoorjou, met voorbereiding, contentcreatie, testen en lancering.",
+  "estimated_duration": "1 week",
+  "phases": [
+    {
+      "title": "Fase 1: Voorbereiding",
+      "description": "Verzamel vereisten, analyseer infrastructuur en stel plan op",
+      "tasks": [
+        {
+          "id": "t1",
+          "title": "Verzamel vereisten en functionele wensen",
+          "description": "Interview stakeholders om vereisten voor de nieuwe functionaliteit te verzamelen",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "t2",
+          "title": "Analyseer huidige website-infrastructuur",
+          "description": "Bekijk technische beperkingen en integratiemogelijkheden met bestaande systemen",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "t3",
+          "title": "Stel implementatieplan en risicoanalyse op",
+          "description": "Maak tijdlijn, benodigde resources en documenteer risico's en mitigatie",
+          "skill": "analyst",
+          "dependencies": [
+            "t1",
+            "t2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content & Design",
+      "description": "Creëer uitlegmateriaal, video en ontwerp landingspagina",
+      "tasks": [
+        {
+          "id": "t1",
+          "title": "Schrijf uitlegtekst en nieuwsbrief",
+          "description": "Schrijf heldere instructie over de nieuwe functie en een aankondigingsbericht voor de nieuwsbrief",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "id": "t2",
+          "title": "Maak demo-video van nieuwe functie",
+          "description": "Producer een korte video die de functionaliteit demonstreert voor oudere gebruikers",
+          "skill": "video-builder",
+          "dependencies": [
+            "t1"
+          ]
+        },
+        {
+          "id": "t3",
+          "title": "Ontwerp visuele elementen en landingspagina",
+          "description": "Ontwerp een aantrekkelijke landingspagina met duidelijke call-to-action en bijpassende visuals",
+          "skill": "designer",
+          "dependencies": [
+            "t1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Test & Goedkeuring",
+      "description": "Test functionaliteit, redigeer content en controleer SEO",
+      "tasks": [
+        {
+          "id": "t1",
+          "title": "Voer QA-test uit op functionaliteit",
+          "description": "Test de nieuwe functionaliteit op verschillende apparaten en browsers, rapporteer bugs",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "id": "t2",
+          "title": "Laat content redigeren en goedkeuren",
+          "description": "Laat de geschreven tekst en video redigeren door een content-editor en verkrijg goedkeuring",
+          "skill": "content-editor",
+          "dependencies": [
+            "t1"
+          ]
+        },
+        {
+          "id": "t3",
+          "title": "Controleer SEO-instellingen en metadata",
+          "description": "Optimaliseer meta-titels, beschrijvingen en alt-teksten voor de landingspagina",
+          "skill": "seo",
+          "dependencies": [
+            "t2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Lancering & Monitoring",
+      "description": "Publiceer, kondig aan en volg de eerste resultaten",
+      "tasks": [
+        {
+          "id": "t1",
+          "title": "Publiceer landingspagina en activeer functie",
+          "description": "Zet de nieuwe landingspagina live en schakel de functionaliteit in voor alle gebruikers",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "id": "t2",
+          "title": "Verstuur aankondiging via e-mail en sociale media",
+          "description": "Stuur de nieuwsbrief en plaats berichten op relevante sociale kanalen (bv. Facebook voor 65+)",
+          "skill": "outreach",
+          "dependencies": [
+            "t1"
+          ]
+        },
+        {
+          "id": "t3",
+          "title": "Monitor gebruikersgedrag en verzamel feedback",
+          "description": "Analyseer bezoekersstatistieken en eventuele meldingen; verzamel feedback voor optimalisatie",
+          "skill": "analyst",
+          "dependencies": [
+            "t2"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,112 @@
+{
+  "plan_summary": "Activeer 4 bestaande SEO-kansen door analyse, prioritering, contentcreatie, optimalisatie en publicatie met monitoring.",
+  "estimated_duration": "3-4 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Strategie",
+      "description": "Analyseer de 4 kansen op zoekvolume, intentie en concurrentie, prioriteer ze en stel per kans een contentbrief op.",
+      "tasks": [
+        {
+          "title": "Doelgroep- en zoekwoordanalyse voor de 4 kansen",
+          "description": "Analyseer GSC-data en voer keyword research uit om volume, intentie en concurrentie per kans te bepalen.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Prioritering van kansen op impact en effort",
+          "description": "Bepaal op basis van de analyse welke kansen het meest renderen en zet ze in volgorde van prioriteit.",
+          "skill": "analyst",
+          "dependencies": [
+            "task-1-1"
+          ]
+        },
+        {
+          "title": "Contentbrief per prioritaire kans opstellen",
+          "description": "Schrijf voor elke kans een gedetailleerde contentbrief met doel, zoekwoorden, structuur en call-to-action.",
+          "skill": "content-writer",
+          "dependencies": [
+            "task-1-2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Contentcreatie",
+      "description": "Schrijf voor elk van de 4 kansen de hoofdcontent volgens de opgestelde brief.",
+      "tasks": [
+        {
+          "title": "Content voor kans A schrijven",
+          "description": "Schrijf een SEO-geoptimaliseerd artikel of landingspagina voor de hoogst prioriteerde kans.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Content voor kans B schrijven",
+          "description": "Schrijf de content voor de tweede kans.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Content voor kans C schrijven",
+          "description": "Schrijf de content voor de derde kans.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Content voor kans D schrijven",
+          "description": "Schrijf de content voor de vierde kans.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Optimalisatie & Redactie",
+      "description": "Optimaliseer de geschreven content voor SEO en voer eindredactie uit voor consistentie en kwaliteit.",
+      "tasks": [
+        {
+          "title": "SEO-optimalisatie van alle content",
+          "description": "Voeg meta-titels, -beschrijvingen, alt-teksten, interne links en gestructureerde data toe aan elke contentpagina.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Eindredactie en kwaliteitscontrole",
+          "description": "Controleer alle content op toon, spelling, grammatica en merkconsistentie; pas aan waar nodig.",
+          "skill": "content-editor",
+          "dependencies": [
+            "task-3-1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie & Monitoring",
+      "description": "Publiceer de geoptimaliseerde content, stel tracking in en voer outreach uit voor zichtbaarheid.",
+      "tasks": [
+        {
+          "title": "Publicatie van content op de website",
+          "description": "Plaats alle pagina's live met correcte URL-structuur en metadata.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Tracking instellen in GA4 en GSC",
+          "description": "Voeg de nieuwe pagina's toe aan monitoring en stel doelen en events in voor prestatiemeting.",
+          "skill": "analyst",
+          "dependencies": [
+            "task-4-1"
+          ]
+        },
+        {
+          "title": "Outreach voor minstens 2 kansen",
+          "description": "Deel de content via social media, nieuwsbrief en relevante communities om linkbuilding en zichtbaarheid te stimuleren.",
+          "skill": "outreach",
+          "dependencies": [
+            "task-4-1"
+          ]
+        }
+      ]
+    }
+  ]
+}

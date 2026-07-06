@@ -1,0 +1,77 @@
+{
+  "plan_summary": "Heropen het bugfix-doel in Bijeen.app, prioriteer bugs, wijs een developer toe, voer fixes uit en valideer de resultaten.",
+  "estimated_duration": "2-3 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Prioritering",
+      "description": "Inventariseer en prioriteer openstaande bugs uit de backlog.",
+      "tasks": [
+        {
+          "title": "Inventariseer openstaande bugs uit de backlog",
+          "description": "Verzamel alle openstaande bugmeldingen uit de projectmanagement tool en categoriseer ze.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Prioriteer bugs op basis van impact en urgentie",
+          "description": "Analyseer de bugs en geef ze een prioriteit (kritisch, hoog, medium) op basis van impact op gebruiker en frequentie.",
+          "skill": "analyst",
+          "dependencies": [
+            "Inventariseer openstaande bugs uit de backlog"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Doelbeheer & Toewijzing",
+      "description": "Heropen het bestaande bugfix-doel, zet op 'running' en wijs een developer toe.",
+      "tasks": [
+        {
+          "title": "Heropen het doel 'Actiepunt: Bugfixes afhandelen' en wijzig status naar 'Running'",
+          "description": "Zoek het oorspronkelijke doel op in het projectmanagementsysteem, heropen het en wijzig de status van 'draft' of 'gepauzeerd' naar 'running'.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Wijs een developer toe aan het doel",
+          "description": "Ken een geschikte developer toe (of meerdere) aan het doel om de geprioriteerde bugs op te lossen.",
+          "skill": "analyst",
+          "dependencies": [
+            "Prioriteer bugs op basis van impact en urgentie",
+            "Heropen het doel 'Actiepunt: Bugfixes afhandelen' en wijzig status naar 'Running'"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Uitvoering & Afronding",
+      "description": "Implementeer de bugfixes, test de oplossingen en documenteer de resultaten.",
+      "tasks": [
+        {
+          "title": "Implementeer bugfixes voor de hoogste prioriteit bugs",
+          "description": "Los de kritieke en hoog-prioritaire bugs op volgens de prioritering. Dit omvat code-aanpassingen, UI-fixes of configuratiewijzigingen.",
+          "skill": "analyst",
+          "dependencies": [
+            "Wijs een developer toe aan het doel"
+          ]
+        },
+        {
+          "title": "Valideer de fixes door middel van tests",
+          "description": "Voer functionele tests uit (handmatig of geautomatiseerd) om te verifiëren dat de bugs zijn opgelost en geen nieuwe problemen veroorzaken.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Implementeer bugfixes voor de hoogste prioriteit bugs"
+          ]
+        },
+        {
+          "title": "Documenteer de opgeloste bugs en sluit het doel af",
+          "description": "Schrijf een korte release note of changelog over de opgeloste bugs, update de status van het doel naar 'voltooid' en voeg de documentatie toe aan de kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Valideer de fixes door middel van tests"
+          ]
+        }
+      ]
+    }
+  ]
+}

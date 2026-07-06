@@ -1,0 +1,1 @@
+Setup GA4 property, configure tracking, define key events, build reports and dashboards, and establish ongoing monitoring for WeAreImpact.

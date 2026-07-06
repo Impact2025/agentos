@@ -1,0 +1,1 @@
+Voer een complete technische SEO audit uit op bewaardvoorjou.nl in vier chronologische fasen: GSC-data ophalen en analyseren, domein- en canonical-fixes doorvoeren, RSS-feed en schema-validatie implementeren, en ten slotte meta descriptions optimaliseren en eindverificatie uitvoeren.

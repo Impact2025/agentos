@@ -1,0 +1,112 @@
+{
+  "plan_summary": "GA4 property opzetten, koppelen met Google Search Console, dashboards inrichten en een monitoringsroutine opzetten voor continue data-analyse.",
+  "estimated_duration": "1-2 weken voor initiële setup, daarna doorlopende monitoring",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Strategie",
+      "description": "Bepaal bedrijfsdoelen, KPI's en inventariseer bestaande analytics-installaties.",
+      "tasks": [
+        {
+          "title": "Inventariseren van bedrijfsdoelen en KPI's",
+          "description": "Verzamel marketing- en conversiedoelen die via GA4 moeten worden gemeten.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Controleren huidige Google Analytics eigenschappen",
+          "description": "Onderzoek of er een oude UA-property is, welke data gemigreerd moet worden en welke gebruikers toegang nodig hebben.",
+          "skill": "research",
+          "dependencies": [
+            "Inventariseren van bedrijfsdoelen en KPI's"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Technische Implementatie",
+      "description": "Richt de GA4-property in, configureer data streams en koppel externe tools.",
+      "tasks": [
+        {
+          "title": "GA4-property aanmaken en web data stream configureren",
+          "description": "Maak een nieuwe GA4-property aan, voeg een web data stream toe met correcte meet-id.",
+          "skill": "designer",
+          "dependencies": []
+        },
+        {
+          "title": "Koppelen van Google Search Console",
+          "description": "Koppel de GSC-property aan GA4 om zoekdata te importeren.",
+          "skill": "seo",
+          "dependencies": [
+            "GA4-property aanmaken en web data stream configureren"
+          ]
+        },
+        {
+          "title": "Instellen van conversiedoelen en gebeurtenissen",
+          "description": "Definieer en implementeer key events (conversies) en aangepaste gebeurtenissen zoals formulierinzendingen of aankopen.",
+          "skill": "analyst",
+          "dependencies": [
+            "GA4-property aanmaken en web data stream configureren"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Dashboard & Rapportage Inrichting",
+      "description": "Ontwerp overzichtelijke dashboards en standaardrapporten voor stakeholders.",
+      "tasks": [
+        {
+          "title": "Ontwerpen van aangepaste dashboards",
+          "description": "Maak in GA4 dashboards die de belangrijkste KPI’s (verkeer, conversies, gebruikersgedrag) weergeven.",
+          "skill": "designer",
+          "dependencies": [
+            "Instellen van conversiedoelen en gebeurtenissen"
+          ]
+        },
+        {
+          "title": "Rapportages voor marketing en content prestaties",
+          "description": "Stel rapporten in voor kanalen, landingspagina's en contentprestaties op basis van GSC-koppeling.",
+          "skill": "analyst",
+          "dependencies": [
+            "Koppelen van Google Search Console"
+          ]
+        },
+        {
+          "title": "Documentatie schrijven over GA4-instellingen",
+          "description": "Leg alle configuraties, filters en rapporten vast voor kennisoverdracht en onderhoud.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Ontwerpen van aangepaste dashboards"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Monitoring & Optimalisatie",
+      "description": "Start de cyclische monitoring, signaleer afwijkingen en stuur bij op basis van data.",
+      "tasks": [
+        {
+          "title": "Periodieke data-analyse uitvoeren",
+          "description": "Controleer wekelijks/maandelijks GA4-data op trends, afwijkingen en dalingen.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Aanbevelingen doen op basis van GA4-rapporten",
+          "description": "Stel op basis van de analyse concrete verbeteracties voor (bijv. landingspagina's optimaliseren of campagnes aanpassen).",
+          "skill": "research",
+          "dependencies": [
+            "Periodieke data-analyse uitvoeren"
+          ]
+        },
+        {
+          "title": "Publiceren van maandelijkse GA4-rapportage",
+          "description": "Stel een beknopt maandrapport samen en deel het met relevante stakeholders.",
+          "skill": "publisher",
+          "dependencies": [
+            "Aanbevelingen doen op basis van GA4-rapporten"
+          ]
+        }
+      ]
+    }
+  ]
+}

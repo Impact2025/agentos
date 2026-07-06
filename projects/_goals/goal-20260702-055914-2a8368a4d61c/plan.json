@@ -1,0 +1,101 @@
+{
+  "plan_summary": "Identificeer en evalueer het draft-doel 'PootGelukkig SEO & Content optimalisatie — Fase 3', vergelijk met het running doel, en voer merge of verwijdering uit, gevolgd door validatie en rapportage.",
+  "estimated_duration": "2 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Identificatie",
+      "description": "Verkrijg de status en details van het draft-doel en identificeer het overeenkomstige running doel.",
+      "tasks": [
+        {
+          "id": "f1t1",
+          "title": "Status opvragen van draft-doel",
+          "description": "Vraag de status en volledige details op van het draft-doel 'PootGelukkig SEO & Content optimalisatie — Fase 3' via het interne agensysteem (bijv. door ID op te vragen uit de status).",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "f1t2",
+          "title": "Running doel identificeren",
+          "description": "Identificeer het corresponderende running doel (bijv. 'Kennisbank SEO optimalisatie' of een ander lopend project) en noteer de subtiele verschillen in scope, taken en prioriteit.",
+          "skill": "research",
+          "dependencies": [
+            "f1t1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Analyse & Besluitvorming",
+      "description": "Analyseer de overlap tussen draft en running doel en neem een beslissing over merge of verwijdering.",
+      "tasks": [
+        {
+          "id": "f2t1",
+          "title": "Overlap-analyse uitvoeren",
+          "description": "Vergelijk de subtaken, doelstellingen en timing van het draft-doel met die van het running doel. Bepaal de mate van overlap en of unieke waarde aanwezig is.",
+          "skill": "analyst",
+          "dependencies": [
+            "f1t2"
+          ]
+        },
+        {
+          "id": "f2t2",
+          "title": "Beslissing nemen: merge of verwijderen",
+          "description": "Op basis van de analyse, beslis of het draft-doel gemerged moet worden met het running doel (unieke taken toevoegen) of dat het verwijderd moet worden (geen overlap of lagere prioriteit).",
+          "skill": "content-judge",
+          "dependencies": [
+            "f2t1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Uitvoering",
+      "description": "Voer de gekozen actie uit: merge of verwijdering, met bijbehorende administratieve handelingen.",
+      "tasks": [
+        {
+          "id": "f3t1",
+          "title": "Merge uitvoeren (indien van toepassing)",
+          "description": "Als merge nodig is: voeg de unieke taken en configuratie uit het draft-doel toe aan het running doel, pas eventuele afhankelijkheden aan, en markeer het draft-doel als voltooid of gearchiveerd.",
+          "skill": "content-editor",
+          "dependencies": [
+            "f2t2"
+          ]
+        },
+        {
+          "id": "f3t2",
+          "title": "Verwijdering uitvoeren (indien van toepassing)",
+          "description": "Als verwijdering de voorkeur heeft: verwijder het draft-doel definitief uit het systeem en archiveer de bijbehorende data (indien nodig voor historie).",
+          "skill": "publisher",
+          "dependencies": [
+            "f2t2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Validatie & Rapportage",
+      "description": "Controleer de correcte uitvoering en documenteer de wijzigingen.",
+      "tasks": [
+        {
+          "id": "f4t1",
+          "title": "Validatie van uitvoering",
+          "description": "Controleer of het draft-doel niet meer zichtbaar is in het systeem en of het running doel correct is bijgewerkt (geen dubbele taken, consistentie).",
+          "skill": "analyst",
+          "dependencies": [
+            "f3t1",
+            "f3t2"
+          ]
+        },
+        {
+          "id": "f4t2",
+          "title": "Rapportage opstellen",
+          "description": "Documenteer de genomen stappen, de beslissing en de uitkomst in het projectlogboek. Stel een korte rapportage op voor de strategist met aanbevelingen voor de toekomst.",
+          "skill": "content-writer",
+          "dependencies": [
+            "f4t1"
+          ]
+        }
+      ]
+    }
+  ]
+}

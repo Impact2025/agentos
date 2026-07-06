@@ -1,0 +1,1 @@
+Update the Dashboard project backlog by extracting current items, defining clear open tasks with descriptions and estimates, prioritizing them, and publishing the revised backlog for team use.

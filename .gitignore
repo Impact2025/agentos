@@ -1,0 +1,38 @@
+# Secrets — nooit committen
+.env
+google-credentials.json
+*.pem
+*.key
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# Databases & runtime-data
+data/*.db
+data/*.db.bak*
+database.db
+*.pid
+
+# Logs & procesuitvoer
+*.log
+*.out
+*.err
+agentos.err
+_out.txt
+
+# Door agents gegenereerde werkruimtes (staan in Obsidian/DB als bron van waarheid)
+workspaces/
+app/uploads/
+
+# Build-artefacten
+frontend/tailwind.css
+
+# OS
+Thumbs.db
+.DS_Store
+backend/data/

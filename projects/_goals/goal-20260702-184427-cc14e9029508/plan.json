@@ -1,0 +1,118 @@
+{
+  "plan_summary": "GA4 opzetten en monitoren voor WeAreImpact: van property-aanmaak via datakoppelingen naar volledige rapportage en periodieke monitoring.",
+  "estimated_duration": "5-7 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Property-configuratie en datastroom",
+      "description": "Creëer de GA4-property, stel webstream in, configureer privacyinstellingen en koppel Google Ads en Search Console.",
+      "tasks": [
+        {
+          "title": "GA4-property aanmaken en webstream configureren",
+          "description": "Maak een nieuwe GA4-property voor WeAreImpact aan, voeg een webstream toe met correcte URL en meet-ID.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Privacy- en gegevensinstellingen configureren",
+          "description": "Stel de bewaartermijn voor data, cookietoestemming (Consent Mode) en gegevensfilter (intern verkeer) in.",
+          "skill": "content-judge",
+          "dependencies": [
+            "GA4-property aanmaken en webstream configureren"
+          ]
+        },
+        {
+          "title": "Google Ads- en Search Console-koppeling",
+          "description": "Koppel bestaande Google Ads- en Search Console-accounts aan de GA4-property voor import van kosten en zoekdata.",
+          "skill": "seo",
+          "dependencies": [
+            "Privacy- en gegevensinstellingen configureren"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Events en conversies inrichten",
+      "description": "Implementeer standaard- en aangepaste events, markeer conversies en test de dataverzameling.",
+      "tasks": [
+        {
+          "title": "Standaard- en aangepaste events implementeren",
+          "description": "Zet recommended events (page_view, scroll, click) en aangepaste events (form_lead, video_start) klaar via GTM of direct in GA4.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Conversies definiëren en markeren",
+          "description": "Markeer events zoals 'purchase' en 'sign_up' als conversies; stel conversie-waardes in indien nodig.",
+          "skill": "analyst",
+          "dependencies": [
+            "Standaard- en aangepaste events implementeren"
+          ]
+        },
+        {
+          "title": "Real-time test en validatie",
+          "description": "Gebruik de DebugView en real-time rapporten om te controleren of events correct binnenkomen en conversies doorschieten.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Conversies definiëren en markeren"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Dashboards en standaardrapporten bouwen",
+      "description": "Maak overzichtelijke dashboards en rapportages voor dagelijkse monitoring, inclusief acquisitie-, gedrags- en conversierapporten.",
+      "tasks": [
+        {
+          "title": "Standaardrapporten en verkenningen instellen",
+          "description": "Structureer de standaardraportages (gebruikers, verkeersbronnen, pagina's, conversies) en voeg aangepaste verkenningen (user explorer, funnel) toe.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Dashboard bouwen in Looker Studio (optioneel)",
+          "description": "Maak een visueel dashboard in Looker Studio met KPI's: gebruikers, sessies, bounce rate, conversieratio, omzet (indien van toepassing).",
+          "skill": "designer",
+          "dependencies": [
+            "Standaardrapporten en verkenningen instellen"
+          ]
+        },
+        {
+          "title": "Doelgroepen en segmenten aanmaken",
+          "description": "Creëer vooraf gedefinieerde segmenten (bijv. 'Nieuwe bezoekers', 'Mobiel verkeer') en sla ze op voor hergebruik in rapporten.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Dashboard bouwen in Looker Studio (optioneel)"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Monitoring en optimalisatiecyclus",
+      "description": "Stel een periodiek monitoringsschema op, voer wekelijkse controles uit en pas tracking aan op basis van bevindingen.",
+      "tasks": [
+        {
+          "title": "Wekelijks monitoringsschema opstellen",
+          "description": "Definieer een checklist met meetbare KPI's (doel: 10% groei in organisch verkeer) en planning voor wekelijkse of maandelijkse reviews.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Eerste wekelijkse controle uitvoeren",
+          "description": "Analyseer de eerste week aan data: check of events correct lopen, onverwachte dalingen, en noteer verbeterpunten.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Wekelijks monitoringsschema opstellen"
+          ]
+        },
+        {
+          "title": "Optimalisaties doorvoeren op basis van data",
+          "description": "Pas events aan (toevoegen/verwijderen), verbeter conversie-tracking of voeg nieuwe rapporten toe naar aanleiding van de controle.",
+          "skill": "analyst",
+          "dependencies": [
+            "Eerste wekelijkse controle uitvoeren"
+          ]
+        }
+      ]
+    }
+  ]
+}

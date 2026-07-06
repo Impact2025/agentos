@@ -1,0 +1,106 @@
+{
+  "plan_summary": "Inventariseer, prioriteer, werk bij en valideer de project backlog voor Bijeen, met concrete taken voor analyse en uitvoering.",
+  "estimated_duration": "3-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Inventarisatie & Analyse",
+      "description": "Haal de huidige backlog op en analyseer ontbrekende of verouderde informatie.",
+      "tasks": [
+        {
+          "title": "Backlog exporteren en categoriseren",
+          "description": "Exporteer alle open tickets uit de projectmanagement tool (Jira/Notion) en categoriseer op type (bug, feature, taak).",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Missing fields inventariseren",
+          "description": "Identificeer per item welke velden (prioriteit, schatting, labels) ontbreken en maak een lijst van incomplete tickets.",
+          "skill": "analyst",
+          "dependencies": [
+            "1.1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Prioritering & Beoordeling",
+      "description": "Verzamel stakeholder input en bepaal prioriteiten voor de items.",
+      "tasks": [
+        {
+          "title": "Stakeholder input ophalen",
+          "description": "Benoem contactpersonen en verzamel per team/afdeling de gewenste prioriteit en context voor openstaande tickets.",
+          "skill": "outreach",
+          "dependencies": []
+        },
+        {
+          "title": "Prioriteiten toewijzen",
+          "description": "Wijs op basis van input en urgentie een prioriteit (P1-P4) toe aan elk ticket en leg bedrijfsimpact vast.",
+          "skill": "content-judge",
+          "dependencies": [
+            "2.1"
+          ]
+        },
+        {
+          "title": "Dependencies tussen tickets in kaart brengen",
+          "description": "Identificeer en documenteer onderlinge afhankelijkheden tussen tickets (bijv. blokkerende of geblokkeerde items).",
+          "skill": "analyst",
+          "dependencies": [
+            "2.2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Backlog Bijwerken",
+      "description": "Vul ontbrekende informatie in, pas status aan en voeg bevindingen toe aan de tickets.",
+      "tasks": [
+        {
+          "title": "Ontbrekende details toevoegen",
+          "description": "Schrijf voor elk incomplete ticket duidelijke beschrijvingen, acceptatiecriteria en eventuele technische notities.",
+          "skill": "content-writer",
+          "dependencies": [
+            "1.2"
+          ]
+        },
+        {
+          "title": "Status actualiseren",
+          "description": "Werk de status van tickets bij (bijv. Backlog, In progress, Blocked) op basis van de laatste stand van zaken.",
+          "skill": "content-editor",
+          "dependencies": [
+            "3.1"
+          ]
+        },
+        {
+          "title": "Labels en schattingen herzien",
+          "description": "Voeg correcte labels (sprint, component) en herzie story points/uren waar nodig op basis van nieuwe inzichten.",
+          "skill": "analyst",
+          "dependencies": [
+            "3.2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Validatie & Oplevering",
+      "description": "Laat de bijgewerkte backlog controleren door een senior en sluit het proces af.",
+      "tasks": [
+        {
+          "title": "Review door lead/PM",
+          "description": "Laat de projectleider of senior de updates steekproefsgewijs controleren op volledigheid en consistentie.",
+          "skill": "content-judge",
+          "dependencies": [
+            "3.3"
+          ]
+        },
+        {
+          "title": "Eindrapport en communicatie",
+          "description": "Stel een overzicht op van wijzigingen en verstuur een samenvatting naar de betrokken teams.",
+          "skill": "publisher",
+          "dependencies": [
+            "4.1"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,130 @@
+{
+  "plan_summary": "Setup GA4 property, configure tracking, define key events, build reports and dashboards, and establish ongoing monitoring for WeAreImpact.",
+  "estimated_duration": "10-12 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: GA4 property & basisinstallatie",
+      "description": "Instellen van GA4-property, data streams en tagging op de website.",
+      "tasks": [
+        {
+          "title": "GA4-property aanmaken en data streams configureren",
+          "description": "Maak een nieuwe GA4-property aan voor WeAreImpact en configureer web-data stream (meet-ID).",
+          "skill": "analyst",
+          "dependencies": [],
+          "id": "p1_task1"
+        },
+        {
+          "title": "GA4-tag implementeren via Google Tag Manager",
+          "description": "Voeg de GA4-meet-ID toe aan GTM-container en publiceer de container op de website.",
+          "skill": "analyst",
+          "dependencies": [
+            "p1_task1"
+          ],
+          "id": "p1_task2"
+        },
+        {
+          "title": "Gegevensverzameling valideren met Realtime en DebugView",
+          "description": "Controleer of gebeurtenissen binnenkomen in GA4 Realtime en gebruik DebugView om tagging te valideren.",
+          "skill": "analyst",
+          "dependencies": [
+            "p1_task2"
+          ],
+          "id": "p1_task3"
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Key events & conversies definiëren",
+      "description": "Bepaal belangrijke gebruikersacties, zet custom events op en map deze naar GA4-conversies.",
+      "tasks": [
+        {
+          "title": "Belangrijke gebruikersacties identificeren en conversie‑events definiëren",
+          "description": "Analyseer de website om key actions (bijv. donatieformulier indienen, nieuwsbrief aanmelden) te definiëren als GA4‑events.",
+          "skill": "analyst",
+          "dependencies": [],
+          "id": "p2_task1"
+        },
+        {
+          "title": "Custom events implementeren in GTM",
+          "description": "Maak GTM‑triggers en tags voor de gedefinieerde events (bijv. form submit, button click).",
+          "skill": "analyst",
+          "dependencies": [
+            "p2_task1"
+          ],
+          "id": "p2_task2"
+        },
+        {
+          "title": "Events koppelen aan GA4‑conversies en testen",
+          "description": "In GA4 configureer elke custom event als conversie en verifieer met testverkeer.",
+          "skill": "analyst",
+          "dependencies": [
+            "p2_task2"
+          ],
+          "id": "p2_task3"
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Rapporten & dashboards opbouwen",
+      "description": "Standaardrapporten maken, custom explorations bouwen en een visueel dashboard ontwerpen.",
+      "tasks": [
+        {
+          "title": "Standaard acquisitie‑ en betrokkenheidsrapporten instellen",
+          "description": "Configureer GA4‑rapporten voor verkeer sources, sessies en betrokkenheidsmetrieken.",
+          "skill": "analyst",
+          "dependencies": [],
+          "id": "p3_task1"
+        },
+        {
+          "title": "Custom exploration voor de donatiefunnel maken",
+          "description": "Bouw een exploration die de stappen van landingspagina → donatieformulier → voltooid donatie visualiseert.",
+          "skill": "analyst",
+          "dependencies": [
+            "p3_task1"
+          ],
+          "id": "p3_task2"
+        },
+        {
+          "title": "Dashboard‑ontwerp maken in Looker Studio (of GA4‑dashboard)",
+          "description": "Ontwerp een overzichtelijk dashboard met kernmetrieken en funnel‑visualisatie voor stakeholders.",
+          "skill": "designer",
+          "dependencies": [
+            "p3_task2"
+          ],
+          "id": "p3_task3"
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Monitoring & optimalisatie",
+      "description": "Waakzaamheid waarborgen via automatische checks, maandelijkse reviews en actiegerichte aanbevelingen.",
+      "tasks": [
+        {
+          "title": "Wekelijkse data‑health check automatiseren (e‑mail alert)",
+          "description": "Stel een automatische check in die geen data of anomalieën signaleert en een waarschuwing stuurt.",
+          "skill": "analyst",
+          "dependencies": [],
+          "id": "p4_task1"
+        },
+        {
+          "title": "Maandelijkse performance review en insights‑document opstellen",
+          "description": "Analyseer maandelijkse trends, bereik en conversies, en vat bevindingen samen in een kort rapport.",
+          "skill": "analyst",
+          "dependencies": [
+            "p4_task1"
+          ],
+          "id": "p4_task2"
+        },
+        {
+          "title": "Optimalisatie‑aanbevelingen formuleren en tracking‑plan bijwerken",
+          "description": "Op basis van de review acties voorstellen (bijv. event‑toevoegingen, audience‑aanpassingen) en het implementatieplan updaten.",
+          "skill": "analyst",
+          "dependencies": [
+            "p4_task2"
+          ],
+          "id": "p4_task3"
+        }
+      ]
+    }
+  ]
+}

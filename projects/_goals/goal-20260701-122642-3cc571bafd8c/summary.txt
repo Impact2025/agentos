@@ -1,0 +1,1 @@
+Plan voor het systematisch afhandelen van bugfixes voor het Bijeen-project: van inventarisatie en prioritering tot uitvoering, testen en uitrol.

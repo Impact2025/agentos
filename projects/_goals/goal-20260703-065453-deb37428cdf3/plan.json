@@ -1,0 +1,115 @@
+{
+  "plan_summary": "Identificeer, prioriteer, los op en test bugs op Bewaardvoorjou, met focus op gebruikersfeedback en technische analyse.",
+  "estimated_duration": "3-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Inventarisatie & Prioritering",
+      "description": "Verzamel alle bekende bugs, categoriseer op ernst en impact, en stel een prioriteitenlijst op.",
+      "tasks": [
+        {
+          "title": "Verzamel bug-rapporten uit feedbackformulier en ondersteunings-e-mails",
+          "description": "Exporteer en cluster alle meldingen van de afgelopen 30 dagen uit het contactformulier en de support inbox.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Analyseer server- en applicatielogs op foutmeldingen",
+          "description": "Doorzoek de laatste 7 dagen aan logs (error, warning) en identificeer terugkerende technische fouten.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Prioriteer bugs op basis van gebruiksimpact en herstelbaarheid",
+          "description": "Maak een prioriteitenmatrix (P1-P4) met inbreng van de productowner en noteer kritieke functionaliteiten.",
+          "skill": "analyst",
+          "dependencies": [
+            "Verzamel bug-rapporten uit feedbackformulier en ondersteunings-e-mails",
+            "Analyseer server- en applicatielogs op foutmeldingen"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Oplossen & Aanpassen",
+      "description": "Voer de benodigde fixes uit: technisch, inhoudelijk en vormgevend, volgens de prioriteitenlijst.",
+      "tasks": [
+        {
+          "title": "Herstel kritieke UI/UX-bugs (layout, navigatie, formulieren)",
+          "description": "Pas CSS/JS aan voor gebroken lay-outs, niet-werkende knoppen en invalid-formuliervalidatie.",
+          "skill": "designer",
+          "dependencies": []
+        },
+        {
+          "title": "Corrigeer inhoudelijke fouten (teksten, links, metadata)",
+          "description": "Wijzig verouderde of incorrecte content, repareer dode links en pas SEO-tags aan waar nodig.",
+          "skill": "content-editor",
+          "dependencies": []
+        },
+        {
+          "title": "Los backend- en dataproblemen op (404, cache, databasefouten)",
+          "description": "Herstel niet-werkende endpoints, vernieuw de cache-instellingen en voer datamigraties uit voor ontbrekende velden.",
+          "skill": "analyst",
+          "dependencies": [
+            "Herstel kritieke UI/UX-bugs (layout, navigatie, formulieren)",
+            "Corrigeer inhoudelijke fouten (teksten, links, metadata)"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Testen & Kwaliteitscontrole",
+      "description": "Doorloop alle herstelde functionaliteiten en valideer dat de fixes geen neveneffecten veroorzaken.",
+      "tasks": [
+        {
+          "title": "Voer regressietests uit op alle herstelde bugs",
+          "description": "Test handmatig elk P1-P2 item volgens testcases; controleer of de fout niet terugkeert.",
+          "skill": "content-judge",
+          "dependencies": []
+        },
+        {
+          "title": "Controleer laadsnelheid en SEO-aspecten na aanpassingen",
+          "description": "Meet paginasnelheid via Lighthouse en controleer of meta-tags en structured data correct zijn.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Documenteer de opgeloste bugs en eventuele resterende risico's",
+          "description": "Schrijf een changelog per bug en noteer of er nog gedragingen zijn die extra monitoring vereisen.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Voer regressietests uit op alle herstelde bugs",
+            "Controleer laadsnelheid en SEO-aspecten na aanpassingen"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Uitrol & Nazorg",
+      "description": "Implementeer de fixes in de productieomgeving, communiceer naar gebruikers en monitor de stabiliteit.",
+      "tasks": [
+        {
+          "title": "Deploy alle goedgekeurde fixes naar de productieomgeving",
+          "description": "Zet de wijzigingen via de CI/CD-pipeline live op de productiesite, inclusief een terugdraaiplan.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Stel een monitoring-dashboard in voor de herstelde functionaliteiten",
+          "description": "Configureer uptime- en error-monitoring (bv. Sentry, Google Analytics) voor de aangepaste onderdelen.",
+          "skill": "analyst",
+          "dependencies": [
+            "Deploy alle goedgekeurde fixes naar de productieomgeving"
+          ]
+        },
+        {
+          "title": "Informeer gebruikers via een beknopte blogpost of melding",
+          "description": "Publiceer een kort bericht over de verbeteringen en bedank voor de feedback, inclusief contactmogelijkheid.",
+          "skill": "outreach",
+          "dependencies": [
+            "Stel een monitoring-dashboard in voor de herstelde functionaliteiten"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,124 @@
+{
+  "plan_summary": "Het bijwerken van de Bewaardvoorjou backlog door inventarisatie, prioritering, aanvulling en publicatie in 4 fasen.",
+  "estimated_duration": "4-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Inventarisatie & Analyse",
+      "description": "Breng de huidige backlog in kaart, categoriseer items en analyseer status en prioriteit.",
+      "tasks": [
+        {
+          "title": "Huidige backlog inventariseren en categoriseren",
+          "description": "Verzamel alle openstaande, lopende en voltooide items uit het projectbeheer-systeem en categoriseer op type (feature, bug, content, SEO) en status.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Status- en prioriteitsanalyse uitvoeren",
+          "description": "Analyseer de huidige prioriteitstelling op basis van deadlines, afhankelijkheden en bedrijfsdoelen; identificeer knelpunten.",
+          "skill": "analyst",
+          "dependencies": [
+            "Huidige backlog inventariseren en categoriseren"
+          ]
+        },
+        {
+          "title": "Verouderde of irrelevante items markeren",
+          "description": "Beoordeel items die niet langer relevant zijn, zoals verouderde features of taken zonder duidelijke eigenaar, en markeer voor verwijdering of archivering.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Huidige backlog inventariseren en categoriseren"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Herziening & Prioritering",
+      "description": "Herzie de volgorde en status van alle items op basis van analyse en bedrijfsdoelen.",
+      "tasks": [
+        {
+          "title": "Nieuwe prioriteitstelling opstellen",
+          "description": "Wijs op basis van de analyse een nieuwe prioriteit (urgent, hoog, midden, laag) toe aan elk item, rekening houdend met projectroadmap.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Status- en prioriteitsanalyse uitvoeren"
+          ]
+        },
+        {
+          "title": "Statussen bijwerken (voltooid, uitgesteld, afgewezen)",
+          "description": "Wijzig de statussen van items in het systeem, zoals het markeren van voltooide taken en het verplaatsen van uitgestelde items naar een aparte lijst.",
+          "skill": "publisher",
+          "dependencies": [
+            "Nieuwe prioriteitstelling opstellen"
+          ]
+        },
+        {
+          "title": "Recente inzichten en data verwerken",
+          "description": "Voeg op basis van recente GSC-data, foutmeldingen of gebruikersfeedback nieuwe notities en context toe aan relevante items.",
+          "skill": "analyst",
+          "dependencies": [
+            "Nieuwe prioriteitstelling opstellen"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Aanvulling & Verfijning",
+      "description": "Vul ontbrekende details aan en zorg voor consistentie in de backlog items.",
+      "tasks": [
+        {
+          "title": "Ontbrekende taakbeschrijvingen schrijven",
+          "description": "Schrijf duidelijke, actiegerichte beschrijvingen voor items die nog geen of onvolledige omschrijving hebben.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Statussen bijwerken"
+          ]
+        },
+        {
+          "title": "Labels en tags toevoegen voor vindbaarheid",
+          "description": "Voeg categorie-tags, prioriteitslabels en relevante trefwoorden toe om filtering en zoeken te verbeteren.",
+          "skill": "seo",
+          "dependencies": [
+            "Ontbrekende taakbeschrijvingen schrijven"
+          ]
+        },
+        {
+          "title": "Consistentie in formulering controleren",
+          "description": "Loop alle beschrijvingen na en corrigeer inconsistenties in toon, terminologie en detailniveau.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Ontbrekende taakbeschrijvingen schrijven"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie & Communicatie",
+      "description": "Publiceer de bijgewerkte backlog en stel het team op de hoogte van de wijzigingen.",
+      "tasks": [
+        {
+          "title": "Backlog publiceren in projectdashboard",
+          "description": "Werk de centrale backlogweergave (bijv. Trello, Jira, of Obsidian) bij met alle wijzigingen en nieuwe prioritering.",
+          "skill": "publisher",
+          "dependencies": [
+            "Labels en tags toevoegen voor vindbaarheid"
+          ]
+        },
+        {
+          "title": "Samenvatting voor teamcommunicatie opstellen",
+          "description": "Schrijf een beknopte update (wijzigingen, nieuwe prioriteiten, verwijderde items) voor de wekelijkse standup of Slack.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Backlog publiceren in projectdashboard"
+          ]
+        },
+        {
+          "title": "Verouderde items archiveren",
+          "description": "Verplaats gemarkeerde irrelevante items naar een archiefsectie of -lijst, zodat de actieve backlog overzichtelijk blijft.",
+          "skill": "designer",
+          "dependencies": [
+            "Backlog publiceren in projectdashboard"
+          ]
+        }
+      ]
+    }
+  ]
+}

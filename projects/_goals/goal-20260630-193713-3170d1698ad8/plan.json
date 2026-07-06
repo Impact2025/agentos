@@ -1,0 +1,92 @@
+{
+  "plan_summary": "Identify and remove the duplicate draft goal, verify the remaining running goal's tasks, add a meta‑title optimization task if needed, and confirm the cleanup.",
+  "estimated_duration": "1 dag",
+  "phases": [
+    {
+      "title": "Fase 1: Duplicate en running goal lokaliseren",
+      "description": "Zoek in de Goals‑DB naar de duplicate draft‑entiteit en de bijbehorende running‑goal.",
+      "tasks": [
+        {
+          "title": "Query duplicate draft‑entiteit op naam",
+          "description": "Voer een DB‑query uit voor alle entiteiten met de exacte naam 'PootGelukkig SEO & Content optimalisatie — Fase 3' en status 'draft'.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Identificeer de running‑goal met dezelfde naam",
+          "description": "Zoek naar de entiteit met dezelfde naam maar status 'running' (niet‑draft).",
+          "skill": "analyst",
+          "dependencies": [
+            "Query duplicate draft‑entiteit op naam"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Taakstatus van de running goal controleren",
+      "description": "Controleer of de running goal nog relevante taken heeft.",
+      "tasks": [
+        {
+          "title": "Ophalen taken gekoppeld aan de running goal",
+          "description": "Haalt alle taken op die gelinkt zijn aan de running goal uit de Goals‑DB.",
+          "skill": "analyst",
+          "dependencies": [
+            "Identificeer de running‑goal met dezelfde naam"
+          ]
+        },
+        {
+          "title": "Evaluatie of takenlijst leeg is",
+          "description": "Bepaal of de opgehaalde takenlijst geen taken bevat; zo ja, markeer als leeg.",
+          "skill": "analyst",
+          "dependencies": [
+            "Ophalen taken gekoppeld aan de running goal"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Taak toevoegen indien nodig",
+      "description": "Als de running goal geen taken heeft, maak de nieuwe SEO‑taak aan en koppel deze.",
+      "tasks": [
+        {
+          "title": "Maak taak 'Optimaliseer meta‑titels voor de top‑10 adoptiepagina’s' aan",
+          "description": "Voeg een nieuwe taakrecord toe met titel, beschrijving en status 'todo'.",
+          "skill": "seo",
+          "dependencies": [
+            "Evaluatie of takenlijst leeg is"
+          ]
+        },
+        {
+          "title": "Koppel nieuwe taak aan de running goal",
+          "description": "Voeg een verwijzing van de running goal naar de nieuw aangemaakte taak toe.",
+          "skill": "analyst",
+          "dependencies": [
+            "Maak taak 'Optimaliseer meta‑titels voor de top‑10 adoptiepagina’s' aan"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Duplicate draft‑entiteit verwijderen en afronden",
+      "description": "Verwijder de duplicate draft‑entiteit en controleer dat alleen de running goal overblijft.",
+      "tasks": [
+        {
+          "title": "Verwijder duplicate draft‑entiteit uit de Goals‑DB",
+          "description": "Voer een delete‑operatie uit op de entiteit die in fase 1 is geïdentificeerd als duplicate draft.",
+          "skill": "analyst",
+          "dependencies": [
+            "Koppel nieuwe taak aan de running goal"
+          ]
+        },
+        {
+          "title": "Controleer eindstatus: alleen running goal over",
+          "description": "Verifieer dat geen andere draft‑entiteit met dezelfde naam bestaat en dat de running goal aanwezig is (met eventueel nieuwe taak).",
+          "skill": "analyst",
+          "dependencies": [
+            "Verwijder duplicate draft‑entiteit uit de Goals‑DB"
+          ]
+        }
+      ]
+    }
+  ]
+}

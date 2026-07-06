@@ -1,0 +1,102 @@
+{
+  "plan_summary": "Rond het GA4-monitoringdashboard af en start een nieuw doel voor het uitwerken van 4 SEO-kansen, gebaseerd op GSC-analyse.",
+  "estimated_duration": "5-7 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: GA4 Dashboard afronden",
+      "description": "Controleer de GA4-configuratie, bouw een monitoring dashboard en valideer de data voor SEO-metrics.",
+      "tasks": [
+        {
+          "title": "Controleer GA4 property en data streams",
+          "description": "Verifieer dat de GA4-property correct is aangemaakt en alle benodigde data streams (web, app) actief zijn.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Bouw monitoring dashboard voor SEO metrics",
+          "description": "Maak een GA4-dashboard met kaarten voor organische sessies, gemiddelde positie, CTR en landingspagina-prestaties.",
+          "skill": "designer",
+          "dependencies": [
+            "Controleer GA4 property en data streams"
+          ]
+        },
+        {
+          "title": "Valideer dashboard met testdata",
+          "description": "Controleer of de dashboard-widgets correct data tonen door te vergelijken met GSC-rapporten en stel eventuele filters bij.",
+          "skill": "analyst",
+          "dependencies": [
+            "Bouw monitoring dashboard voor SEO metrics"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: SEO-kansen identificeren",
+      "description": "Exporteer GSC-data, analyseer keyword gaps en selecteer de 4 meest kansrijke onderwerpen.",
+      "tasks": [
+        {
+          "title": "Exporteer GSC-data laatste 6 maanden",
+          "description": "Download query- en paginadata uit Google Search Console voor de periode jan-jun 2026.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Analyseer keyword gaps en kansen",
+          "description": "Identificeer zoekwoorden met hoge impressies maar lage CTR, of pagina’s die net buiten top 10 vallen.",
+          "skill": "seo",
+          "dependencies": [
+            "Exporteer GSC-data laatste 6 maanden"
+          ]
+        },
+        {
+          "title": "Selecteer top 4 SEO-kansen met rationale",
+          "description": "Kies op basis van volume, relevantie en haalbaarheid de 4 meest impactvolle kansen en documenteer de onderbouwing.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Analyseer keyword gaps en kansen"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Nieuw doel aanmaken",
+      "description": "Maak het strategische doel 'Uitwerken 4 SEO-kansen' aan en voeg de geselecteerde kansen toe als concrete subtaken.",
+      "tasks": [
+        {
+          "title": "Maak nieuw doel aan in projectmanagementsysteem",
+          "description": "Creëer een nieuw doel met titel 'Uitwerken 4 SEO-kansen', stel deadline en owner in.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Voeg 4 kansen toe als subtaken met beschrijving en deadline",
+          "description": "Elke kans krijgt een eigen subtaak met een uitwerking: doel, beoogde actie, en link naar GA4-dashboard.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Maak nieuw doel aan in projectmanagementsysteem"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Monitoring integreren",
+      "description": "Koppel het GA4-dashboard aan het nieuwe doel en stel wekelijkse rapportages in om de voortgang te volgen.",
+      "tasks": [
+        {
+          "title": "Koppel GA4-dashboard aan nieuwe doeltracking",
+          "description": "Voeg conversieevents of gebeurtenissen toe in GA4 die de vooruitgang van de 4 kansen meten.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Stel wekelijkse rapportage in met alerts",
+          "description": "Automatiseer een wekelijkse e-mail met dashboard-screenshot en stel drempelwaarde-alerts in voor significante afwijkingen.",
+          "skill": "outreach",
+          "dependencies": [
+            "Koppel GA4-dashboard aan nieuwe doeltracking"
+          ]
+        }
+      ]
+    }
+  ]
+}

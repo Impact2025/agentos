@@ -1,0 +1,110 @@
+{
+  "plan_summary": "Ontwikkel Feature X voor het Dashboard volgens specificaties door onderzoek, ontwerp, ontwikkeling, test en deployment in vier opeenvolgende fasen.",
+  "estimated_duration": "5-7 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Ontwerp",
+      "description": "Inventariseren van vereisten en maken van ontwerpen",
+      "tasks": [
+        {
+          "title": "Stakeholderinterviews houden",
+          "description": "Doelgroep- en belanghebbendeninterviews uitvoeren om functionele wensen te verzamelen",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Functionele vereisten documenteren",
+          "description": "Vereisten specificeren op basis van interviewoutput en bestaande specificaties",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Wireframes ontwerpen",
+          "description": "Lage-fideliteit wireframes maken voor de Feature X UI",
+          "skill": "designer",
+          "dependencies": [
+            "Functionele vereisten documenteren"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Ontwikkeling",
+      "description": "Implementeren van frontend- en backendcomponenten",
+      "tasks": [
+        {
+          "title": "UI-componenten bouwen",
+          "description": "React-componenten ontwikkelen overeenkomstig de wireframes",
+          "skill": "designer",
+          "dependencies": []
+        },
+        {
+          "title": "Backend API-integratie realiseren",
+          "description": "Endpointen aansluiten en dataopslag voor Feature X configureren",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Eenheidstests schrijven",
+          "description": "Jest-tests schrijven voor zowel frontend- als backendlogica",
+          "skill": "analyst",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Test & Validatie",
+      "description": "Functionele testen uitvoeren en resultaten vastleggen",
+      "tasks": [
+        {
+          "title": "Interne functionele test uitvoeren",
+          "description": "QA-team laat de feature tegen de vereisten testen",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Gebruikersacceptatietest (UAT) plannen en uitvoeren",
+          "description": "Selecteren van testgebruikers, scénarios opstellen en feedback verzamelen",
+          "skill": "content-judge",
+          "dependencies": []
+        },
+        {
+          "title": "Testrapport opstellen",
+          "description": "Resultaten van interne test en UAT samenvatten en actiepunten definiëren",
+          "skill": "content-judge",
+          "dependencies": [
+            "Gebruikersacceptatietest (UAT) plannen en uitvoeren"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Deploy & Monitoring",
+      "description": "Release voorbereiden, productie plaatsen en monitoring instellen",
+      "tasks": [
+        {
+          "title": "Release notes en deployplan schrijven",
+          "description": "Documentatie van nieuwe feature en rollback-procedure opstellen",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Deploy naar productie uitvoeren",
+          "description": "Feature X via CI/CD pipeline naar productie omgeving pushen",
+          "skill": "publisher",
+          "dependencies": [
+            "Release notes en deployplan schrijven"
+          ]
+        },
+        {
+          "title": "Monitoring en alerting instellen",
+          "description": "Logs, metrics en alerts configureren voor Feature X in productie",
+          "skill": "analyst",
+          "dependencies": [
+            "Deploy naar productie uitvoeren"
+          ]
+        }
+      ]
+    }
+  ]
+}

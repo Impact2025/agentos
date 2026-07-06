@@ -1,0 +1,62 @@
+{
+  "plan_summary": "Creëer linkbare contentassets (checklist, onderzoeksrapport, infographic-brief) en bereid outreach voor met research en draft-pitches voor gastblogs, podcasts en LinkedIn, zonder enige externe verzending.",
+  "estimated_duration": "3-4 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Contentassets bouwen (prioriteit vandaag)",
+      "description": "Werk bestaande kennisbankcontent om tot op zichzelf staande, deelbare assets en stel een creative brief op voor een infographic.",
+      "tasks": [
+        {
+          "title": "Omzetten kennisbankpagina naar linkable asset",
+          "description": "Herwerk de 'Complete checklist welzijnsevenement' tot een op zichzelf staand, goed gestileerd document (publiceerbare pagina) dat extern kan worden gedeeld. Let op keyword-cannibalization ten opzichte van andere Bijeen-content.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijven onderzoeksrapport administratieve last",
+          "description": "Schrijf een kort publiceerbaar rapport (pagina/PDF) op basis van bestaande cijfers uit BIJEEN_KEYWORD_RESEARCH.md (4,2u administratie/evenement, 38% afhaakgrens, 30-50% AI-besparing, 49% vrijwilligersparticipatie). Voorzie van bronvermelding.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Opstellen creative brief infographic SROI",
+          "description": "Stel een korte creative brief op voor een infographic met SROI-cijfers (€1,50-6 per geïnvesteerde euro), geschikt voor uitwerking in Canva. Beschrijf doel, doelgroep, kerncijfers, visuele stijl en tone-of-voice.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Outreach voorbereiding (drafts, niet verzenden)",
+      "description": "Onderzoek geschiktheid van platformen voor gastblogs en podcasts, en schrijf pitch-drafts voor Vincent. Alles blijft in draftvorm voor handmatige review.",
+      "tasks": [
+        {
+          "title": "Onderzoek gastblogmogelijkheden MOgroep, Sociaal Werk Nederland, VNG",
+          "description": "Bepaal per organisatie of ze gastblogs accepteren, vind contactpersoon of indieningskanaal. Lever per organisatie: contactgegevens/kanaal + status (ja/nee/onbekend).",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijven pitch-mail-draft voor gastblog per organisatie",
+          "description": "Schrijf per organisatie (MOgroep, Sociaal Werk Nederland, VNG) een pitch-mail-draft met concreet artikelvoorstel en invalshoek, gebaseerd op bestaande Bijeen-content. Niet verzenden.",
+          "skill": "outreach",
+          "dependencies": [
+            "Onderzoek gastblogmogelijkheden MOgroep, Sociaal Werk Nederland, VNG"
+          ]
+        },
+        {
+          "title": "Onderzoek relevante podcasts en schrijf pitch-mail-draft voor Vincent",
+          "description": "Vind Nederlandse podcasts over welzijn/sociaal domein/AI. Schrijf een pitch-mail-draft voor Vincent als gast, met voorstel en relevantie. Niet verzenden.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijven 3 LinkedIn-post-drafts (thought leadership)",
+          "description": "Schrijf 3 LinkedIn-post-drafts volgens het bestaande ritme in BIJEEN_CONTENT_CALENDAR.md, die linken naar bijeen.app content. Gebruik de Bijeen tone-of-voice en vermijd keyword-cannibalization. Alleen tekst, niet plaatsen.",
+          "skill": "outreach",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

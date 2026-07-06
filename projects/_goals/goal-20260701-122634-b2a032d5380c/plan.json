@@ -1,0 +1,147 @@
+{
+  "plan_summary": "Ontwikkeling van een gebruikersverhalen-functie op Bijeen, van onderzoek tot lancering en evaluatie.",
+  "estimated_duration": "4-6 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Strategie",
+      "description": "In kaart brengen van doelgroep, concurrenten en SEO-kansen voor de gebruikersverhalen-functie.",
+      "tasks": [
+        {
+          "title": "Doelgroepanalyse uitvoeren via GSC-data en enquêtes",
+          "description": "Analyseer bestaande bezoekersdata en stel korte enquête op om behoeften en gebruikersprofielen te identificeren.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Concurrentieanalyse van vergelijkbare platforms",
+          "description": "Onderzoek 3-5 platforms die gebruikersverhalen aanbieden; noteer best practices en valkuilen.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "SEO-kansen in kaart brengen voor gebruikersverhalen",
+          "description": "Gebruik keyword research tools om relevante long-tail zoekwoorden te identificeren voor deze functie.",
+          "skill": "seo",
+          "dependencies": [
+            "Doelgroepanalyse uitvoeren via GSC-data en enquêtes",
+            "Concurrentieanalyse van vergelijkbare platforms"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Ontwerp & Voorbereiding",
+      "description": "Ontwerpen van de upload- en redactieflow, schrijven van instructies en instellen van de publicatieworkflow.",
+      "tasks": [
+        {
+          "title": "Ontwerp upload- en redactieflow",
+          "description": "Maak wireframes en stroomdiagram voor het indienen en bewerken van gebruikersverhalen in de CMS-omgeving.",
+          "skill": "designer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf instructies en voorbeeldinhoud",
+          "description": "Maak een duidelijke gids voor gebruikers en schrijf 2 voorbeeldverhalen om kwaliteit te waarborgen.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Stel redactierichtlijnen en beoordelingscriteria op",
+          "description": "Bepaal criteria voor goedkeuring (toon, lengte, volledigheid) en leg deze vast in een intern document.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Schrijf instructies en voorbeeldinhoud"
+          ]
+        },
+        {
+          "title": "Configureer publicatieworkflow in CMS",
+          "description": "Zet de stappen ‘inzending → beoordeling → bewerken → SEO-check → publicatie’ klaar in het systeem.",
+          "skill": "publisher",
+          "dependencies": [
+            "Stel redactierichtlijnen en beoordelingscriteria op"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Productie & Optimalisatie",
+      "description": "Verzamelen, redigeren, beoordelen en optimaliseren van de eerste vijf gebruikersverhalen.",
+      "tasks": [
+        {
+          "title": "Verzamel eerste 5 gebruikersverhalen",
+          "description": "Benader bestaande contacten en plaats oproep op sociale media om aan eerste inzendingen te komen.",
+          "skill": "outreach",
+          "dependencies": []
+        },
+        {
+          "title": "Redigeer en verbeter verhalen",
+          "description": "Bewerk binnengekomen verhalen op helderheid, stijl en consistentie met de redactierichtlijnen.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Verzamel eerste 5 gebruikersverhalen"
+          ]
+        },
+        {
+          "title": "Beoordeel inhoudelijke kwaliteit",
+          "description": "Toets elke versie aan de beoordelingscriteria en keur goed of wijs af met feedback.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Redigeer en verbeter verhalen"
+          ]
+        },
+        {
+          "title": "Pas SEO-optimalisatie toe",
+          "description": "Voeg relevante zoekwoorden, meta descriptions en alt-teksten toe aan de goedgekeurde verhalen.",
+          "skill": "seo",
+          "dependencies": [
+            "Beoordeel inhoudelijke kwaliteit"
+          ]
+        },
+        {
+          "title": "Publiceer verhalen op website",
+          "description": "Zet de verhalen live volgens de ingestelde workflow en controleer weergave op mobiel en desktop.",
+          "skill": "publisher",
+          "dependencies": [
+            "Pas SEO-optimalisatie toe"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Lancering & Evaluatie",
+      "description": "Uitrollen van de functie naar breder publiek, monitoren van prestaties en itereren op basis van feedback.",
+      "tasks": [
+        {
+          "title": "Outreach naar relevante doelgroepen",
+          "description": "Stuur nieuwsbrief en berichten naar partners, oud-deelnemers en vergelijkbare communities.",
+          "skill": "outreach",
+          "dependencies": []
+        },
+        {
+          "title": "Publiceer aankondigingsblog",
+          "description": "Schrijf een blogpost die de nieuwe functie introduceert en de eerste verhalen uitlicht.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Outreach naar relevante doelgroepen"
+          ]
+        },
+        {
+          "title": "Monitor analytics en stuur bij",
+          "description": "Volg wekelijks paginaweergaven, instroom van inzendingen en gebruikersgedrag; identificeer knelpunten.",
+          "skill": "analyst",
+          "dependencies": [
+            "Publiceer aankondigingsblog"
+          ]
+        },
+        {
+          "title": "Verzamel feedback en optimaliseer workflow",
+          "description": "Vraag bij inzenders en redacteuren naar ervaringen, pas proces aan waar nodig.",
+          "skill": "analyst",
+          "dependencies": [
+            "Monitor analytics en stuur bij"
+          ]
+        }
+      ]
+    }
+  ]
+}

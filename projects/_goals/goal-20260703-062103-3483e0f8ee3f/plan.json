@@ -1,0 +1,116 @@
+{
+  "plan_summary": "Voer een content audit uit, optimaliseer meta descriptions en interne links, breid contentdiepte uit, en monitor de impact op zoekposities.",
+  "estimated_duration": "2-3 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Content Audit & Strategie",
+      "description": "Analyseer huidige prestaties via GSC, voer een volledige content audit uit en stel prioriteiten.",
+      "tasks": [
+        {
+          "title": "GSC-data-analyse",
+          "description": "Analyseer Google Search Console-data om zwak presterende pagina's en queries te identificeren.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Content audit",
+          "description": "Beoordeel alle pagina's op interne links, meta descriptions, contentlengte en structuur.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Prioriteitenlijst opstellen",
+          "description": "Stel een rangorde van pagina's op die de meeste optimalisatie nodig hebben op basis van audit en GSC-data.",
+          "skill": "analyst",
+          "dependencies": [
+            "GSC-data-analyse",
+            "Content audit"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Meta Descriptions & Interne Links",
+      "description": "Herschrijf meta descriptions en verbeter de interne linkstructuur.",
+      "tasks": [
+        {
+          "title": "Meta descriptions herschrijven",
+          "description": "Schrijf pakkende, zoekwoordrijke meta descriptions voor de prioritaire pagina's.",
+          "skill": "content-editor",
+          "dependencies": []
+        },
+        {
+          "title": "Interne linkstructuur verbeteren",
+          "description": "Voeg relevante interne links toe tussen gerelateerde pagina's en optimaliseer anchor-teksten.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Wijzigingen reviewen en testen",
+          "description": "Controleer of alle aanpassingen correct zijn en test de gebruikerservaring.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Meta descriptions herschrijven",
+            "Interne linkstructuur verbeteren"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Contentdiepte Uitbreiden",
+      "description": "Identificeer en vul content gaps om diepgang en autoriteit te vergroten.",
+      "tasks": [
+        {
+          "title": "Diepgang toevoegen aan bestaande pagina's",
+          "description": "Schrijf extra secties, uitgebreidere uitleg en voorbeelden voor pagina's met te korte content.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Multimedia toevoegen",
+          "description": "Voeg relevante afbeeldingen, infographics of video's toe ter ondersteuning van de content.",
+          "skill": "designer",
+          "dependencies": [
+            "Diepgang toevoegen aan bestaande pagina's"
+          ]
+        },
+        {
+          "title": "Headings en structuur optimaliseren",
+          "description": "Verbeter de hiërarchie van headings (H1, H2, H3) voor leesbaarheid en SEO.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Diepgang toevoegen aan bestaande pagina's"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie & Monitoring",
+      "description": "Publiceer alle updates en volg de prestaties om het effect te meten.",
+      "tasks": [
+        {
+          "title": "Updates live zetten",
+          "description": "Publiceer alle verbeterde pagina's en zorg dat ze correct worden weergegeven.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Rankings en clicks monitoren",
+          "description": "Volg na twee weken de gemiddelde positie en klikken via GSC.",
+          "skill": "analyst",
+          "dependencies": [
+            "Updates live zetten"
+          ]
+        },
+        {
+          "title": "Resultaten rapporteren en bijsturen",
+          "description": "Stel een rapport op met de behaalde vooruitgang en plan eventuele vervolgoptimalisaties.",
+          "skill": "analyst",
+          "dependencies": [
+            "Rankings en clicks monitoren"
+          ]
+        }
+      ]
+    }
+  ]
+}

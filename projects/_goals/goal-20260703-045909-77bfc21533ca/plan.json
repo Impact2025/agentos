@@ -1,0 +1,98 @@
+{
+  "plan_summary": "Inventariseer, prioriteer, valideer en werk de bestaande backlog van Bewaardvoorjou bij om een actuele, uitvoerbare planning te krijgen.",
+  "estimated_duration": "1-2 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Inventarisatie & Analyse",
+      "description": "Verzamel alle openstaande backlog-items uit bronnen en analyseer voltooiingsstatus, skills en doorlooptijd.",
+      "tasks": [
+        {
+          "title": "Inventariseer openstaande backlog-items uit Redmine en GitHub Issues",
+          "description": "Exporteer alle open taken en bugs uit Redmine en GitHub Issues; categoriseer per skill (content, seo, video, etc.).",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Analyseer voltooidheidsgraad en doorlooptijd per skill",
+          "description": "Bereken percentage voltooide taken per skill en gemiddelde doorlooptijd; identificeer knelpunten.",
+          "skill": "analyst",
+          "dependencies": [
+            "Inventariseer openstaande backlog-items uit Redmine en GitHub Issues"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Prioritering & Planning",
+      "description": "Stel prioriteiten op basis van strategische waarde, urgentie en afhankelijkheden; wijs geschatte tijdsinvestering toe.",
+      "tasks": [
+        {
+          "title": "Bepaal prioriteit per backlog-item op basis van impact/urgency",
+          "description": "Gebruik MoSCoW of RICE om items te prioriteren; focus op items die bijdragen aan SEO en gebruikersgroei (65+ doelgroep).",
+          "skill": "content-judge",
+          "dependencies": []
+        },
+        {
+          "title": "Wijs skill-eigenaren en geschatte uren toe per taak",
+          "description": "Ken per geprioriteerd item een verantwoordelijke skill (research, content-writer, publisher, enz.) en een realistische urenschatting toe.",
+          "skill": "analyst",
+          "dependencies": [
+            "Bepaal prioriteit per backlog-item op basis van impact/urgency"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Validatie & Goedkeuring",
+      "description": "Valideer de nieuwe backlog-indeling met stakeholders en verkrijg formele goedkeuring voor de planning.",
+      "tasks": [
+        {
+          "title": "Presenteer voorstel aan projectteam en content-eigenaren",
+          "description": "Overleg in een korte sync (of async via Notion) om prioriteiten, skill-toewijzingen en uren te valideren.",
+          "skill": "outreach",
+          "dependencies": [
+            "Wijs skill-eigenaren en geschatte uren toe per taak"
+          ]
+        },
+        {
+          "title": "Documenteer definitieve goedkeuring en leg vast in backlog-tool",
+          "description": "Verwerk feedback, update prioriteiten en markeer items als 'goedgekeurd' in Redmine/GitHub.",
+          "skill": "publisher",
+          "dependencies": [
+            "Presenteer voorstel aan projectteam en content-eigenaren"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Bijwerken & Communicatie",
+      "description": "Werk de backlog bij in het projectmanagement systeem en stel teamleden op de hoogte van de nieuwe planning.",
+      "tasks": [
+        {
+          "title": "Archiveer verouderde of afgewezen backlog-items",
+          "description": "Verplaats items die niet meer prioriteit hebben naar een 'archief'-status of sluit ze af met motivatie.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Documenteer definitieve goedkeuring en leg vast in backlog-tool"
+          ]
+        },
+        {
+          "title": "Maak nieuwe sprintborden en filters per skill aan",
+          "description": "Stel in het projectmanagement bord (bijv. Redmine) weergaven in op skill-type en prioriteit; voeg labels toe.",
+          "skill": "designer",
+          "dependencies": [
+            "Archiveer verouderde of afgewezen backlog-items"
+          ]
+        },
+        {
+          "title": "Stuur update-notificatie naar alle teamleden",
+          "description": "Verstuur een Slack- of e-mailbericht met samenvatting van gewijzigde prioriteiten en nieuwe werkwijze.",
+          "skill": "outreach",
+          "dependencies": [
+            "Maak nieuwe sprintborden en filters per skill aan"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "plan_summary": "Voer doelgroep- en zoekvolume-analyse uit voor 5 seizoensgebonden thema's (Moederdag, Opa/Oma-dag, Sinterklaas, oudjaarsavond, voorjaar), genereer en prioriteer blogonderwerpen specifiek voor de 65+ doelgroep van Bewaard Voor Jou, en documenteer de uiteindelijke titels, rationale en focus keywords.",
+  "estimated_duration": "5-7 werkdagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Dataverzameling",
+      "description": "Verzamel inzichten over de doelgroep, zoekvolumes en concurrentie voor seizoensgebonden thema's.",
+      "tasks": [
+        {
+          "id": "1.1",
+          "title": "Doelgroepanalyse uitvoeren",
+          "description": "Analyseer de 65+ doelgroep van Bewaard Voor Jou op basis van Google Search Console data, demografische profielen en eerdere contentprestaties. Identificeer interesses en taalgebruik rondom familiaire feestdagen.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "1.2",
+          "title": "Zoekvolume-analyse voor seizoensthema's",
+          "description": "Voer keyword research uit voor de thema's Moederdag, Opa/Oma-dag, Sinterklaas, oudjaarsavond en voorjaar. Focus op zoekvolumes en variaties relevant voor 65-plussers (bv. 'cadeau voor oma', 'oudejaarsavond alleen').",
+          "skill": "seo",
+          "dependencies": [
+            "1.1"
+          ]
+        },
+        {
+          "id": "1.3",
+          "title": "Concurrentie-inventarisatie",
+          "description": "Inventariseer bestaande blogposts van concurrenten (bv. andere lifestyle-sites voor senioren) over deze thema's. Noteer gaten en kansen voor unieke invalshoeken.",
+          "skill": "research",
+          "dependencies": [
+            "1.1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Ideegeneratie & Prioritering",
+      "description": "Genereer 5 blogonderwerpen (één per thema), bepaal focus keywords en prioriteer op basis van data uit fase 1.",
+      "tasks": [
+        {
+          "id": "2.1",
+          "title": "Brainstorm per thema",
+          "description": "Bedenk per seizoensthema (Moederdag, Opa/Oma-dag, Sinterklaas, oudjaarsavond, voorjaar) 2-3 mogelijke blogonderwerpen die aansluiten bij de 65+ doelgroep. Gebruik inzichten uit de doelgroepanalyse.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "id": "2.2",
+          "title": "Focus keywords toewijzen",
+          "description": "Koppel aan elk brainstormonderwerp een primair focus keyword op basis van zoekvolume-analyse (fase 1). Kies keywords met hoog volume en relevantie voor 65+.",
+          "skill": "seo",
+          "dependencies": [
+            "2.1"
+          ]
+        },
+        {
+          "id": "2.3",
+          "title": "Prioriteer en selecteer top 5",
+          "description": "Beoordeel de gegenereerde onderwerpen op zoekvolume, relevantie voor 65+ en concurrentiekansen. Selecteer het beste onderwerp voor elk thema, totaal 5.",
+          "skill": "content-judge",
+          "dependencies": [
+            "2.2"
+          ]
+        },
+        {
+          "id": "2.4",
+          "title": "Titel, rationale en keyword documenteren",
+          "description": "Schrijf voor elk geselecteerd onderwerp de definitieve titel, een korte rationale (waarom dit onderwerp werkt voor de doelgroep) en het focus keyword.",
+          "skill": "content-writer",
+          "dependencies": [
+            "2.3"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Redactie & Kwaliteitscontrole",
+      "description": "Controleer de consistentie, toon en SEO-kwaliteit van de 5 onderwerpen en lever een einddocument op.",
+      "tasks": [
+        {
+          "id": "3.1",
+          "title": "Content-redactie review",
+          "description": "Controleer of alle titels, rationales en keywords consistent zijn met de Bewaard Voor Jou-richtlijnen en de 65+ doelgroep. Pas waar nodig aan op toon en helderheid.",
+          "skill": "content-editor",
+          "dependencies": [
+            "2.4"
+          ]
+        },
+        {
+          "id": "3.2",
+          "title": "Eindcontrole en documentatie",
+          "description": "Voer een laatste controle uit op SEO-aspecten (keyword density, titellengte) en maak een overzichtelijk document met de 5 onderwerpen voorzien van alle details. Leg vast voor eventuele publicatie.",
+          "skill": "analyst",
+          "dependencies": [
+            "3.1"
+          ]
+        }
+      ]
+    }
+  ]
+}

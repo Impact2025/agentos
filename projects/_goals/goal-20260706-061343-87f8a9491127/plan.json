@@ -1,0 +1,70 @@
+{
+  "plan_summary": "Finaliseer de drafts van Fase 1 via SEO- en content-agent, en start vervolgens de backlink outreach voor Fase 2.",
+  "estimated_duration": "3-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Finaliseren Fase 1 drafts",
+      "description": "Doorloop SEO-optimalisatie, content-redactie, goedkeuring en publicatie-voorbereiding van de Fase 1 drafts.",
+      "tasks": [
+        {
+          "title": "SEO-optimalisatie van Fase 1 drafts",
+          "description": "Pas on-page SEO-aanbevelingen toe op alle drafts: meta tags, interne links, zoekwoordintegratie.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Content redactie en consistentiecheck",
+          "description": "Controleer toon, stijl, grammatica en consistentie met merkrichtlijnen.",
+          "skill": "content-editor",
+          "dependencies": [
+            "SEO-optimalisatie van Fase 1 drafts"
+          ]
+        },
+        {
+          "title": "Eindbeoordeling en goedkeuring",
+          "description": "Beoordeel of alle drafts voldoen aan kwaliteitsnormen en keur ze goed voor publicatie.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Content redactie en consistentiecheck"
+          ]
+        },
+        {
+          "title": "Publicatieklaar maken en archiveren",
+          "description": "Zet goedgekeurde drafts in het publicatiesysteem klaar voor livegang.",
+          "skill": "publisher",
+          "dependencies": [
+            "Eindbeoordeling en goedkeuring"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Start backlink outreach Fase 2",
+      "description": "Bereid de outreach voor en verstuur de eerste golf backlink-verzoeken.",
+      "tasks": [
+        {
+          "title": "Identificeer backlink-mogelijkheden",
+          "description": "Stel een lijst samen van relevante websites, blogs en partners uit de niche voor backlink-acquisitie.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf gepersonaliseerde outreach-pitches",
+          "description": "Ontwikkel op maat gemaakte outreach-e-mails voor elke kansrijke website.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Identificeer backlink-mogelijkheden"
+          ]
+        },
+        {
+          "title": "Verstuur eerste golf outreach-mails",
+          "description": "Stuur de pitches uit via een gepland schema en log de reacties.",
+          "skill": "outreach",
+          "dependencies": [
+            "Schrijf gepersonaliseerde outreach-pitches"
+          ]
+        }
+      ]
+    }
+  ]
+}

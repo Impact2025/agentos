@@ -1,0 +1,78 @@
+{
+  "plan_summary": "Voer een complete technische SEO audit uit op bewaardvoorjou.nl in vier chronologische fasen: GSC-data ophalen en analyseren, domein- en canonical-fixes doorvoeren, RSS-feed en schema-validatie implementeren, en ten slotte meta descriptions optimaliseren en eindverificatie uitvoeren.",
+  "estimated_duration": "3-4 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Analyse",
+      "description": "Verzamel Google Search Console-data via het hermes-analytics service account en voer een grondige analyse uit van domeinvarianten, merkprestaties en zoekopdrachten met lage CTR.",
+      "tasks": [
+        {
+          "title": "GSC-data ophalen via hermes-analytics",
+          "description": "Gebruik het hermes-analytics service account om GSC-data te exporteren voor bewaardvoorjou.nl, inclusief alle beschikbare metrics en dimensies.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Analyseer www vs non-www, brand vs non-brand, sitemap index ratio en top-20 queries met lage CTR",
+          "description": "Bereken de verhouding tussen www en non-www verkeer, brand vs non-brand ratio, sitemap index ratio, en identificeer de top-20 queries met posities onder 10 en een CTR lager dan 3%.",
+          "skill": "analyst",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Domein & Canonical Fixes",
+      "description": "Los de belangrijkste technische knelpunten op door een www→non-www redirect toe te voegen en alle canonical URLs en metadataBase te corrigeren naar het non-www domein.",
+      "tasks": [
+        {
+          "title": "www→non-www 301 redirect in Next.js middleware",
+          "description": "Voeg in src/middleware.ts bovenaan de auth-logic een 301 redirect toe van www.bewaardvoorjou.nl naar bewaardvoorjou.nl. Na implementatie git push en deploy naar Railway.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Fix canonical URLs en metadataBase in layout.tsx",
+          "description": "Controleer en pas canonical URLs en metadataBase aan in layout.tsx. Zorg dat alle schema.org Organization/WebSite URLs verwijzen naar het non-www domein. Deploy na wijzigingen.",
+          "skill": "seo",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: RSS & Schema Validatie",
+      "description": "Implementeer een RSS-feed op /blog/rss met autodiscovery, en valideer en fix de schema.org markup op de belangrijkste pagina's met de Rich Results Test.",
+      "tasks": [
+        {
+          "title": "Implementeer RSS feed op /blog/rss met autodiscovery",
+          "description": "Maak een RSS-feed aan op het pad /blog/rss en voeg een autodiscovery <link> tag toe in de head van alle blogpagina's. Na implementatie git push en deploy.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Valideer en fix schema.org markup op kernpagina's",
+          "description": "Gebruik Google Rich Results Test om BlogPosting, FAQPage, Product en BreadcrumbList te valideren op de homepage, blogartikelen, landingspagina's en kennisbank. Herstel eventuele fouten en deploy.",
+          "skill": "seo",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Meta Descriptions & Eindverificatie",
+      "description": "Optimaliseer meta descriptions voor de top-5 striking distance queries op basis van de GSC-analyse, en voer een eindverificatie uit met web_extract en een 24-uurs GSC-check.",
+      "tasks": [
+        {
+          "title": "Optimaliseer meta descriptions voor top-5 striking distance queries",
+          "description": "Selecteer uit fase 1 de top-5 queries met posities 7-15, minstens 100 impressies en CTR <3%. Herschrijf de meta descriptions van de corresponderende pagina's met een sterke CTA en focus op de query. Na elke aanpassing git push en deploy.",
+          "skill": "content-editor",
+          "dependencies": []
+        },
+        {
+          "title": "Eindverificatie: web_extract, GSC check na 24 uur",
+          "description": "Git push alle wijzigingen, deploy naar Railway, voer een web_extract uit om technische SEO-elementen te controleren, en plan een check in GSC na 24 uur om de impact te meten.",
+          "skill": "seo",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}
