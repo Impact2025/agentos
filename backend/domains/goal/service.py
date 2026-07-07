@@ -307,7 +307,10 @@ _DECOMPOSITION_PROMPT_TEMPLATE = (
     "- Taken binnen een fase mogen afhankelijk zijn van elkaar (dependencies)\n"
     "- Fasen lopen altijd chronologisch (fase 2 start pas als fase 1 klaar is)\n"
     "- Elke taak heeft 1 skill (research | content-writer | content-editor | content-judge | seo | video-builder | video-director | outreach | publisher | analyst | designer)\n"
-    "- Wees concreet: geen 'onderzoek doen' maar 'doelgroep-analyse uitvoeren op basis van GSC-data'\n\n"
+    "- Wees concreet: geen 'onderzoek doen' maar 'doelgroep-analyse uitvoeren op basis van GSC-data'\n"
+    "- SPLITS grote deliverables op: elk artikel, elke blogpost, elke pagina, elke checklist en elk template is een EIGEN content-writer taak (geen enkele reuzentaak met alles erin)\n"
+    "- Voor elk artikel/landingspagina/dat gepubliceerd moet worden, voeg een APARTE taak toe met skill 'publisher' (deze staged het klaar in de Wachtrij ter review - de mens keurt pas goed)\n"
+    "- Zet afhankelijkheden tussen taken die elkaars output gebruiken (bv. content-editor na content-writer, analyst na research)\n\n"
     "Antwoord UITSLUITEND in JSON-formaat (geen markdown):\n"
     '{{\n'
     '  "plan_summary": "Korte samenvatting van het plan (1-2 zinnen)",\n'
@@ -452,12 +455,172 @@ async def decompose_goal(objective: str, project: str = "WeAreImpact") -> Dict[s
         system = _DECOMPOSITION_SYSTEM
 
     prompt = _DECOMPOSITION_PROMPT_TEMPLATE.format(objective=objective, project=project)
-    raw = await _stream_text(system, prompt, max_tokens=3000)
+    raw = await _stream_text(system, prompt, max_tokens=6000)
 
     logger.info(f"Goal decompositie RAW ({len(raw)} chars): {raw[:500]}")
 
     plan = _parse_llm_plan(raw, objective)
+    # Safeguard: te algemene plannen (1 fase, 1 taak) bij complexe doelen
+    # leveren een onleesbare blob op en geen publisher-taak. In plaats van
+    # opnieuw de LLM te bellen (die opnieuw kan falen), bouwen we een
+    # DETERMINISTISCH plan op basis van trefwoorden in de doelstelling.
+    # Dat produceert GARANDEERD een bruikbare, gesplitste structuur.
+    if _is_trivial_plan(plan, objective):
+        logger.info("Plan te algemeen - deterministisch plan opbouwen uit doelstelling")
+        plan = _deterministic_plan(objective, project)
     return plan
+
+
+def _deterministic_plan(objective: str, project: str) -> Dict[str, Any]:
+    """Bouw een gesplitst plan op basis van trefwoorden in de doelstelling.
+
+    Deze fallback garandeert dat we nooit met een 1-blob eindigen: elk
+    herkenbaar deliverable wordt een eigen taak, met publisher-taken voor
+    alles dat gepubliceerd moet worden. Werkt zonder LLM, dus altijd betrouwbaar.
+
+    Trefwoorden -> taken:
+      - "artikel"/"blog"/"post"/"pagina"/"longread" -> per stuk content-writer + publisher
+      - "checklist"/"lead-magnet"/"one-pager"/"gids"/"template"/"rapport" -> content-writer
+      - "outreach"/"backlink"/"gastblog"/"gastcolumn" -> research + outreach
+      - "analyseer"/"scan"/"inventariseer"/"meet" -> analyst of research
+      - "redactioneel plan" -> content-editor
+    """
+    obj = (objective or "").lower()
+    title_root = (project or "het project").strip()
+
+    # Tel hoeveel artikelen/blogs/pagina's expliciet genoemd zijn
+    import re as _re
+    def _count(pattern):
+        m = _re.search(pattern, obj)
+        if not m:
+            return 0
+        num = m.group(1)
+        if num in ("een", "1", "één"):
+            return 1
+        try:
+            return int(num)
+        except ValueError:
+            return 1
+
+    n_articles = _count(r"(\d+|\w+)\s+(?:artikel|blog|blogpost|pagina|post|longread)")
+    n_articles = max(n_articles, 1 if any(w in obj for w in ("artikel", "blog", "blogpost", "pagina", "longread", "reeks", "series")) else 0)
+
+    phases: List[Dict[str, Any]] = []
+    tasks_research = []
+    tasks_write = []
+    tasks_publish = []
+    tasks_outreach = []
+    tasks_analyst = []
+    tasks_editor = []
+
+    # Research-fase (altijd zinvol bij content/outreach)
+    research_title = ""
+    if any(w in obj for w in ("gsc", "data", "analyse", "scan", "inventaris", "content-gap", "cannibal")):
+        research_title = f"Analyseer beschikbare data voor {title_root}"
+        tasks_research.append({
+            "title": research_title,
+            "description": f"Gebruik GSC-data, content-gap-analyse en bestaande kennisbank om de aanpak voor {title_root} te onderbouwen. Lever een beknopt meetplan/analyse (geen live analytics-calls).",
+            "skill": "analyst", "dependencies": [],
+        })
+
+    # Artikelen / blogs / pagina's
+    if n_articles > 0:
+        for i in range(n_articles):
+            write_title = f"Schrijf artikel {i+1} voor {title_root}"
+            t = {
+                "title": write_title,
+                "description": f"Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor {title_root}. Baseer op de research-output en bestaande kennisbank.",
+                "skill": "content-writer",
+                "dependencies": [research_title] if research_title else [],
+            }
+            tasks_write.append(t)
+            tasks_publish.append({
+                "title": f"Publiceer artikel {i+1} ({title_root})",
+                "description": f"Stage artikel {i+1} in de Wachtrij ter review (mens keurt pas goed).",
+                "skill": "publisher", "dependencies": [write_title],
+            })
+
+    # Checklists / lead-magnets / one-pagers / gidsen / templates / rapporten
+    if any(w in obj for w in ("checklist", "lead-magnet", "lead magnet", "one-pager", "gids", "template", "rapport", "overzicht")):
+        tasks_write.append({
+            "title": f"Maak ondersteunend document (checklist/gids/template) voor {title_root}",
+            "description": f"Schrijf het ondersteunende document (checklist, lead-magnet, one-pager, gids of template) dat hoort bij {title_root}.",
+            "skill": "content-writer", "dependencies": [research_title] if research_title else [],
+        })
+
+    # Outreach / backlinks / gastblogs
+    if any(w in obj for w in ("outreach", "backlink", "gastblog", "gastcolumn", "guest")):
+        outreach_research_title = f"Identificeer backlink-bronnen voor {title_root}"
+        tasks_research.append({
+            "title": outreach_research_title,
+            "description": f"Zoek 20 relevante, haalbare backlink-bronnen voor {title_root} (welzijnskoepels, VNG, brancheverenigingen, ANBI-directory's, partners).",
+            "skill": "research", "dependencies": [],
+        })
+        tasks_outreach.append({
+            "title": f"Schrijf outreach-concepten voor {title_root}",
+            "description": f"Schrijf per bron een gepersonaliseerde outreach-tekst + gastblog-voorstel. Concepten voor menselijke goedkeuring, geen auto-versturen.",
+            "skill": "outreach", "dependencies": [outreach_research_title],
+        })
+
+    # Redactioneel plan
+    if "redactioneel" in obj or "editor" in obj:
+        tasks_editor.append({
+            "title": f"Redactioneel plan & kwaliteitscontrole ({title_root})",
+            "description": f"Stel een redactioneel plan op en controleer de geschreven content op toon, spelfouten en consistentie voor {title_root}.",
+            "skill": "content-editor", "dependencies": [],
+        })
+
+    # Bouw fasen op
+    if tasks_research:
+        phases.append({"title": "Fase 1: Research & analyse", "description": "", "tasks": tasks_research})
+    if tasks_write:
+        phases.append({"title": "Fase 2: Content creatie", "description": "", "tasks": tasks_write})
+    if tasks_outreach:
+        phases.append({"title": "Fase 3: Outreach", "description": "", "tasks": tasks_outreach})
+    if tasks_editor:
+        phases.append({"title": "Fase 4: Redactie & planning", "description": "", "tasks": tasks_editor})
+    if tasks_publish:
+        phases.append({"title": "Fase 5: Publicatie (review-gate)", "description": "Alle artikelen staged in de Wachtrij voor menselijke goedkeuring.", "tasks": tasks_publish})
+
+    # Altijd minimaal 1 fase met 1 zinvolle taak (nooit een blob)
+    if not phases:
+        phases.append({
+            "title": "Uitvoering",
+            "description": "",
+            "tasks": [{
+                "title": f"Werk het doel uit voor {title_root}",
+                "description": objective,
+                "skill": "content-writer", "dependencies": [],
+            }],
+        })
+
+    return {
+        "plan_summary": f"Deterministisch plan voor: {objective[:160]}",
+        "estimated_duration": "2-5 dagen",
+        "phases": phases,
+    }
+    return plan
+
+
+def _is_trivial_plan(plan: Dict[str, Any], objective: str) -> bool:
+    """Detecteer een te algemeen plan (1 fase, 1 taak) bij een complex doel.
+
+    Een enkele taak voor een doel met meerdere deliverables (artikelen, blogs,
+    checklists, outreach, templates) leidt tot een onleesbare blob en geen
+    publisher-taak -> niets belandt in de Wachtrij. We decomponeren dan over.
+    """
+    phases = plan.get("phases", [])
+    if len(phases) != 1:
+        return False
+    tasks = phases[0].get("tasks", [])
+    if len(tasks) != 1:
+        return False
+    obj = (objective or "").lower()
+    indicators = ["artikel", "blog", "pagina", "reeks", "longread", "checklist",
+                  "lead", "gids", "rapport", "outreach", "template", "series",
+                  "kennis", "blogpost", "one-pager", "use-case", "conversie"]
+    score = sum(1 for w in indicators if w in obj)
+    return len(objective or "") > 120 or score >= 2
 
 
 # ── Infinite Context helpers ─────────────────────────────────────────
@@ -825,6 +988,110 @@ async def create_and_plan(title: str, objective: str, project: str = "WeAreImpac
     }
 
 
+def _infer_missing_deps(goal_id: str) -> int:
+    """Koppel publisher/editor-taken zonder deps aan hun content-writer taak.
+
+    Voorkomt dat publishers lege content publiceren of editors
+    niet-bestaande artikelen editen wanneer de LLM de dependencies
+    wegliet. Matching op de gemeenschappelijke 'core' in de titel
+    (bijv. "Publiceer artikel: Vrijwilligersbeheer..." <-> "Schrijf
+    artikel: Vrijwilligersbeheer...").
+
+    Return: aantal gekoppelde taken.
+    """
+    with get_conn() as conn:
+        tasks = conn.execute(
+            "SELECT id, title, skill, status, dependencies FROM goal_tasks WHERE goal_id = ?",
+            (goal_id,),
+        ).fetchall()
+
+        writers = {}  # core -> task_id
+        for t in tasks:
+            if t["skill"] == "content-writer":
+                core = _article_core(t["title"])
+                if core:
+                    writers[core] = t["id"]
+
+        linked = 0
+        for t in tasks:
+            if t["skill"] not in ("publisher", "content-editor", "content-judge"):
+                continue
+            deps = json.loads(t["dependencies"]) if t["dependencies"] else []
+            if deps:
+                continue  # al gekoppeld, niet overschrijven
+            core = _article_core(t["title"])
+            if not core:
+                continue
+            # Exacte match, anders substring-match op de kortste core
+            target = writers.get(core)
+            if not target:
+                for wcore, wid in writers.items():
+                    if core in wcore or wcore in core:
+                        target = wid
+                        break
+            if target and target != t["id"]:
+                conn.execute(
+                    "UPDATE goal_tasks SET dependencies = ?, status = 'pending', updated_at = ? WHERE id = ?",
+                    (json.dumps([target]), _now(), t["id"]),
+                )
+                linked += 1
+    return linked
+
+
+def _article_core(title: str) -> str:
+    """Haal de artikel-core uit een taaktitel voor dependency-matching.
+
+    'Schrijf artikel: Vrijwilligersbeheer in de praktijk' ->
+    'vrijwilligersbeheer in de praktijk'. Werkt ook voor 'Publiceer
+    artikel 1 voor WeAreImpact' -> 'artikel 1 voor weareimpact'.
+    """
+    if not title:
+        return ""
+    t = title.lower()
+    # Verwijder veelgebruikte prefixes
+    t = re.sub(r"^(schrijf|publiceer|redigeer|bepaal|review en redigeer|maak)\s*", "", t)
+    t = re.sub(r"^(artikel|blog|post|pagina|gids|checklist|template|one-pager|document)\s*", "", t)
+    t = t.replace("artikel:", "").replace(":", "").strip()
+    # Verwijder project-suffix "voor weareimpact"/"voor bijeen" (niets
+    # unieks) maar HOUD het nummer ("artikel 1") voor onderscheid
+    return t
+
+
+def _normalize_dep_refs(goal_id: str, phase_id: str, self_task_id: str,
+                         refs: List[str], title_index: Dict[Tuple[str, str], str]) -> List[str]:
+    """Los dependency-referenties op naar echte task-id's.
+
+    refs kunnen zijn: een echte task-id, een placeholder ("t1", "f1t2"), of
+    (een deel van) een taaktitel. Echte id's blijven; de rest proberen we op
+    titel te matchen (eigen fase eerst, dan hele goal). Onopgeloste refs
+    worden verwijderd zodat een taak nooit permanent geblokkeerd raakt.
+    """
+    out: List[str] = []
+    for ref in refs or []:
+        if not ref:
+            continue
+        ref = str(ref).strip()
+        with get_conn() as conn:
+            exists = conn.execute("SELECT 1 FROM goal_tasks WHERE id = ?", (ref,)).fetchone()
+        if exists:
+            out.append(ref)
+            continue
+        key = (phase_id, ref.lower())
+        if key in title_index and title_index[key] != self_task_id:
+            out.append(title_index[key])
+            continue
+        found = None
+        for (pid, t), tid in title_index.items():
+            if tid == self_task_id:
+                continue
+            if ref.lower() in t or t in ref.lower():
+                found = tid
+                break
+        if found:
+            out.append(found)
+    return out
+
+
 def confirm_plan(goal_id: str) -> Dict[str, Any]:
     """Gebruiker heeft het plan goedgekeurd → schrijf fasen/taken naar DB + start executie."""
     workspace_dir = GOALS_WORKSPACE / goal_id
@@ -837,6 +1104,9 @@ def confirm_plan(goal_id: str) -> Dict[str, Any]:
 
     phase_ids: List[str] = []
     total_tasks = 0
+    # Verzamel (phase_id, task_title) -> task_id zodat dependency-refs
+    # (die de LLM vaak als titel geeft) opgelost kunnen worden.
+    _task_title_index: Dict[Tuple[str, str], str] = {}
 
     with get_conn() as conn:
         for p_idx, phase_data in enumerate(phases):
@@ -851,13 +1121,22 @@ def confirm_plan(goal_id: str) -> Dict[str, Any]:
             for t_idx, task_data in enumerate(phase_data.get("tasks", [])):
                 task_id = f"t-{_id()}"
                 deps = task_data.get("dependencies", [])
+                deps = _normalize_dep_refs(goal_id, phase_id, task_id, deps, _task_title_index)
                 status = "ready" if not deps else "pending"
                 conn.execute(
                     "INSERT INTO goal_tasks (id, goal_id, phase_id, title, description, skill, status, dependencies, created_at, updated_at, ord) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (task_id, goal_id, phase_id, task_data["title"], task_data.get("description", ""),
                      task_data.get("skill", "content-writer"), status, json.dumps(deps), now, now, t_idx + 1),
                 )
+                _task_title_index[(phase_id, (task_data["title"] or "").strip().lower())] = task_id
                 total_tasks += 1
+
+        # Post-pass: publisher/editor-taken zonder dependencies automatisch
+        # koppelen aan de bijbehorende content-writer taak. De LLM zet niet
+        # altijd deps bij mooie multi-taak plannen, waardoor publishers
+        # lege content publiceren en editors niet-bestaande artikelen
+        # editen. Deze inferrence voorkomt dat (zie Use-case doel).
+        _infer_missing_deps(goal_id)
 
         # Update goal metadata
         conn.execute(
@@ -893,6 +1172,32 @@ def _get_ready_tasks(goal_id: str) -> List[Dict[str, Any]]:
     return [dict(t) for t in tasks]
 
 
+def _resolve_dep_by_title(goal_id: str, ref: str, dep_status: Dict[str, str]) -> Optional[str]:
+    """Los een onherkenbare dependency-ref op via title-matching.
+
+    De LLM-decompositie kent de echte task-id's niet en gebruikt vaak de
+    taaktitel (of een deel ervan) als referentie. Match die tegen de titels
+    van voltooide/actieve taken in dezelfde goal.
+    """
+    ref_l = (ref or "").strip().lower()
+    if len(ref_l) < 3:
+        return None
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, title, status FROM goal_tasks WHERE goal_id = ?",
+            (goal_id,),
+        ).fetchall()
+    best = None
+    for r in rows:
+        t = (r["title"] or "").lower()
+        if ref_l == t or ref_l in t or t in ref_l:
+            best = r["id"]
+            break
+    if best is None:
+        return None
+    return dep_status.get(best)
+
+
 def _resolve_dependencies(task: Dict[str, Any]) -> bool:
     """Check of alle dependencies van een taak 'completed' zijn.
 
@@ -917,7 +1222,11 @@ def _resolve_dependencies(task: Dict[str, Any]) -> bool:
     for dep_id in deps:
         s = dep_status.get(dep_id)
         if s is None:
-            continue  # Onherkende referentie — negeren, niet blokkeren
+            # Onherkende referentie: probeer op titel te matchen (de LLM
+            # verzint vaak een placeholder zoals "t1" of de taaktitel zelf).
+            s = _resolve_dep_by_title(task["goal_id"], dep_id, dep_status)
+            if s is None:
+                continue  # Niet te herleiden - negeren, niet blokkeren
         if s == "failed" or s == "skipped":
             # Dependency failed — deze taak kan niet doorgaan
             return False
@@ -955,8 +1264,13 @@ async def _execute_task(goal_id: str, task: Dict[str, Any]) -> str:
 
     started = time.perf_counter()
 
+    # Verzamel resultaten van eerdere taken in dit doel als context
+    # (lost de "ontbrekende invoer"-fouten op bij afhankelijke taken).
+    prior_results = _build_prior_results_context(goal_id, task_id)
     try:
-        result, artifact, next_step = await _route_by_skill(skill, title, description, goal_id)
+        result, artifact, next_step = await _route_by_skill(
+            skill, title, description, goal_id, prior_results=prior_results,
+        )
         duration_ms = int((time.perf_counter() - started) * 1000)
         _update_task(task_id, status="completed", result=result, duration_ms=duration_ms, finished_at=_now())
         event_bus.publish({
@@ -1022,8 +1336,49 @@ class _RetryLater(Exception):
     pass
 
 
+
+def _build_prior_results_context(goal_id: str, current_task_id: str = "") -> str:
+    """Verzamel resultaten van reeds-voltooide taken in dezelfde goal en
+    zet ze om in een compacte, leesbare context-blok voor de volgende taak.
+
+    Dit is de kernfix voor de "ontbrekende invoer"-fouten: een taak die de
+    output van een eerdere taak (research, analyse, geschreven content)
+    nodig heeft, krijgt die nu mee in de prompt in plaats van te moeten
+    raden. Output wordt ingekort zodat de prompt niet explodeert.
+    """
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, title, skill, result FROM goal_tasks "
+                "WHERE goal_id = ? AND status = 'completed' AND result IS NOT NULL "
+                "AND length(result) > 50 ORDER BY ord ASC",
+                (goal_id,),
+            ).fetchall()
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    blocks = []
+    for r in rows:
+        rid = r["id"]
+        if rid == current_task_id:
+            continue
+        res = r["result"] or ""
+        # Strip de CONCEPT/MEETPLAN-banner zodat de ontvanger schone input krijgt.
+        # De banner staat altijd op de eerste regel(s), voorafgegaan door "> ".
+        # Verwijder alles vanaf de eerste "> "-regel tot aan de eerste lege regel.
+        res = re.sub(r"^\s*> .*?(\n\n|\Z)", "", res, flags=re.DOTALL)
+        # Inkrimpen: max 1200 chars per taak-resultaat, behoud kop + staart
+        if len(res) > 1200:
+            res = res[:900] + "\n\n[... midden weggelaten ...]\n\n" + res[-300:]
+        blocks.append(f"### {r['skill']}: {r['title']}\n{res}")
+    if not blocks:
+        return ""
+    return "\n\n".join(blocks)
+
 async def _route_by_skill(
-    skill: str, title: str, description: str, goal_id: str
+    skill: str, title: str, description: str, goal_id: str,
+    prior_results: str = "",
 ) -> Tuple[str, str, str]:
     """Routeer een taak naar de juiste skill/agent op basis van het type.
 
@@ -1037,6 +1392,14 @@ async def _route_by_skill(
     """
     # ── READ: Haal context uit Obsidian ────────────────────────────
     project = _resolve_goal_project(goal_id)
+
+    # Merk-/projectverankering: voorkomt dat een taak het verkeerde merk
+    # noemt (bv. "Agent OS" i.p.v. Bijeen). Staat altijd bovenaan de prompt.
+    brand_line = (
+        f"\n\nMERK & PROJECT (verplicht, ga hier strikt van uit): je werkt voor "
+        f"het merk/project **{project or 'het aangegeven project'}**. Noem "
+        f"dit merk bij voorkeur bij naam; verzin geen ander merk of product.\n"
+    )
 
     # ── Publisher: ECHTE actie — stage het artikel in de Wachtrij ──
     # In plaats van een LLM-concept dat nergens landt, gaat het artikel uit
@@ -1070,10 +1433,18 @@ async def _route_by_skill(
         obsidian_ctx = ""
 
     system_prompt = (
-        f"Je bent een {SKILL_DESCRIPTIONS.get(skill, 'AI-assistent')} in het Agent OS team. "
+        f"Je bent een {SKILL_DESCRIPTIONS.get(skill, 'AI-assistent')} die werkt voor het merk/project **{project or 'het aangegeven project'}**. "
         f"Voer de volgende taak uit. Lever een concreet, bruikbaar eindproduct in Markdown. "
-        f"Schrijf in het Nederlands."
+        f"Schrijf in het Nederlands. Noem waar relevant het merk/project bij naam; verzin geen ander merk of product."
     )
+    system_prompt += brand_line
+    if prior_results:
+        system_prompt += (
+            "\n\n## Eerdere resultaten uit dit doel (verplichte context)\n"
+            "Hieronder staan de uitkomsten van eerdere taken in HETZELFDE doel. "
+            "Gebruik deze als bronmateriaal - baseer je werk hierop en herhaal ze niet:\n\n"
+            + prior_results
+        )
     if obsidian_ctx:
         system_prompt += "\n\n" + obsidian_ctx
 
@@ -1132,10 +1503,12 @@ async def _route_by_skill(
                 logger.warning(f"Claude-synthese mislukt voor taak '{title}' — terugval op Hermes: {e}")
 
     if not result:
-        # Hermes-terugval. Research/analyse krijgt échte tools (websearch,
-        # Google Analytics, Obsidian) zodat de agent zelf data kan ophalen;
-        # schrijfwerk blijft tool-loos (kleine modellen + tools = flaky).
-        agentic = skill in _RESEARCH_SKILLS or skill in _DATA_SKILLS or skill == "seo"
+        # Hermes-terugval. Alleen research (websearch) en seo krijgen échte
+        # tools; analyst en _DATA_SKILLS krijgen de data deterministisch via
+        # _real_analytics_context (zie hierboven) en draaien tool-LOOS - zo
+        # voorkomen we ConnectError/timeout-crashes bij het extern pollen van
+        # analytics. Schrijfwerk blijft ook tool-loos (kleine modellen + tools = flaky).
+        agentic = skill in _RESEARCH_SKILLS or skill == "seo"
         full = ""
         async for chunk in agent_service.run_agent(
             messages=[{"role": "user", "content": user_prompt}],
