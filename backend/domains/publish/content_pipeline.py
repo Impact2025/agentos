@@ -296,6 +296,7 @@ async def review_and_improve(site: Dict, keyword: str, html_body: str,
     is gehaald of de rondes op zijn. Retourneert (html_body, review)."""
     from ...shared.config import CONTENT_MIN_SCORE
     review = await _review_article(site, keyword, html_body)
+    best_html, best_review = html_body, review
     rounds = 0
     while review["score"] < CONTENT_MIN_SCORE and rounds < max_rounds and review["feedback"]:
         rounds += 1
@@ -303,7 +304,11 @@ async def review_and_improve(site: Dict, keyword: str, html_body: str,
                     rounds, max_rounds, review["score"], CONTENT_MIN_SCORE, site["name"])
         html_body = await _optimize_article(site, keyword, html_body, review["feedback"])
         review = await _review_article(site, keyword, html_body)
-    return html_body, review
+        # Houd de beste versie vast: een herschrijfronde kan ook verslechteren,
+        # en dan willen we niet de mindere laatste versie opleveren.
+        if review["score"] > best_review["score"]:
+            best_html, best_review = html_body, review
+    return best_html, best_review
 
 
 async def _optimize_article(site: Dict, keyword: str, html_body: str, feedback: str) -> str:
