@@ -1,0 +1,32 @@
+{
+  "plan_summary": "Deterministisch plan voor: De huidige ZZP/opdrachten-scanner (ma/do 07:00) levert alleen een lijst in projects/weareimpact/zzp-opdrachten. Maak er een conversie-machine van: analyseer de ",
+  "estimated_duration": "2-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & analyse",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Analyseer beschikbare data voor WeAreImpact",
+          "description": "Gebruik GSC-data, content-gap-analyse en bestaande kennisbank om de aanpak voor WeAreImpact te onderbouwen. Lever een beknopt meetplan/analyse (geen live analytics-calls).",
+          "skill": "analyst",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content creatie",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Maak ondersteunend document (checklist/gids/template) voor WeAreImpact",
+          "description": "Schrijf het ondersteunende document (checklist, lead-magnet, one-pager, gids of template) dat hoort bij WeAreImpact.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor WeAreImpact"
+          ]
+        }
+      ]
+    }
+  ]
+}

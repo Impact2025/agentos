@@ -1,0 +1,54 @@
+{
+  "plan_summary": "Deterministisch plan voor: Bouw een organische lead-funnel voor WeAreImpact rond het thema 'interim programmamanager / projectleider digitale transformatie in het sociaal domein'. Doelgro",
+  "estimated_duration": "2-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & analyse",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Analyseer beschikbare data voor WeAreImpact",
+          "description": "Gebruik GSC-data, content-gap-analyse en bestaande kennisbank om de aanpak voor WeAreImpact te onderbouwen. Lever een beknopt meetplan/analyse (geen live analytics-calls).",
+          "skill": "analyst",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content creatie",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Schrijf artikel 1 voor WeAreImpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor WeAreImpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor WeAreImpact"
+          ]
+        },
+        {
+          "title": "Maak ondersteunend document (checklist/gids/template) voor WeAreImpact",
+          "description": "Schrijf het ondersteunende document (checklist, lead-magnet, one-pager, gids of template) dat hoort bij WeAreImpact.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor WeAreImpact"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 5: Publicatie (review-gate)",
+      "description": "Alle artikelen staged in de Wachtrij voor menselijke goedkeuring.",
+      "tasks": [
+        {
+          "title": "Publiceer artikel 1 (WeAreImpact)",
+          "description": "Stage artikel 1 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 1 voor WeAreImpact"
+          ]
+        }
+      ]
+    }
+  ]
+}

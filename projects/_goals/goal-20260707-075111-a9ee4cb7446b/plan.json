@@ -1,0 +1,93 @@
+{
+  "plan_summary": "Voer een gerichte research- en outreach-ronde uit om 20 relevante backlink-bronnen te identificeren, prioriteren en van gepersonaliseerde outreach-teksten en gastblog-voorstellen te voorzien. Het resultaat is een kant-en-klare set concepten voor Vincent om in te zetten.",
+  "estimated_duration": "3-4 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Bronidentificatie",
+      "description": "Identificeer 20 relevante, haalbare backlink-bronnen en analyseer hun domeinautoriteit en relevantie.",
+      "tasks": [
+        {
+          "title": "Identificeer 20 backlink-bronnen",
+          "description": "Zoek naar welzijnskoepels, VNG, brancheverenigingen, ANBI-directory's en partners van WeAreImpact. Gebruik zoekmachines, databases en bestaande netwerken.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Analyseer domeinautoriteit en relevantie",
+          "description": "Bepaal per bron de domeinautoriteit (DA) en de mate van relevantie voor Bijeen.app. Noteer deze in een overzicht.",
+          "skill": "analyst",
+          "dependencies": [
+            "Identificeer 20 backlink-bronnen"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Prioritering & Strategie",
+      "description": "Prioriteer de bronnen op basis van moeilijkheidsgraad en motivatie, en bepaal per bron de outreach-hoek.",
+      "tasks": [
+        {
+          "title": "Prioriteer bronnen met moeilijkheid en motivatie",
+          "description": "Maak een gerangschikte lijst (hoogste prioriteit eerst) met een score voor moeilijkheid (laag/midden/hoog) en motivatie (waarom deze bron waardevol is).",
+          "skill": "content-judge",
+          "dependencies": [
+            "Analyseer domeinautoriteit en relevantie"
+          ]
+        },
+        {
+          "title": "Bepaal outreach-hoek per bron",
+          "description": "Schrijf per bron een korte notitie met de gepersonaliseerde invalshoek: welk specifiek onderwerp of welke waarde bied je aan (bv. gastblog over gemeentelijk welzijnsbeleid).",
+          "skill": "content-writer",
+          "dependencies": [
+            "Prioriteer bronnen met moeilijkheid en motivatie"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Content Creatie",
+      "description": "Schrijf voor elke bron een gepersonaliseerde outreach-e-mail en een voorstel voor een gastblog of gastcolumn.",
+      "tasks": [
+        {
+          "title": "Schrijf outreach-concepten voor bronnen 1-10",
+          "description": "Stel voor de eerste 10 prioritaire bronnen een persoonlijke e-mail en een concreet voorstel (gastblog/column) op, gebaseerd op de bepaalde hoek. Houd taal kort en overtuigend.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Bepaal outreach-hoek per bron"
+          ]
+        },
+        {
+          "title": "Schrijf outreach-concepten voor bronnen 11-20",
+          "description": "Stel voor de overige 10 bronnen dezelfde soort concepten op, elk uniek en afgestemd op de bron.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Bepaal outreach-hoek per bron"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Review & Oplevering",
+      "description": "Controleer alle concepten op kwaliteit, consistentie en personalisatie, en lever het eindpakket aan Vincent.",
+      "tasks": [
+        {
+          "title": "Review en redigeer alle concepten",
+          "description": "Loop alle outreach-teksten en voorstellen na op spelfouten, toon, aanspreekvorm en of ze de juiste persoonlijke elementen bevatten. Pas aan waar nodig.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Schrijf outreach-concepten voor bronnen 1-10",
+            "Schrijf outreach-concepten voor bronnen 11-20"
+          ]
+        },
+        {
+          "title": "Stel einddeliverable samen en draag over aan Vincent",
+          "description": "Verzamel de geprioriteerde lijst met motivatie en alle 20 outreach-concepten in een overzichtelijk document (bv. Google Doc of Notion). Markeer dat het om concepten gaat, niet automatisch verstuurd.",
+          "skill": "outreach",
+          "dependencies": [
+            "Review en redigeer alle concepten"
+          ]
+        }
+      ]
+    }
+  ]
+}

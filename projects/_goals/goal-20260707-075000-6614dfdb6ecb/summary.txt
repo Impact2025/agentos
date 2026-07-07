@@ -1,0 +1,1 @@
+Deterministisch plan voor: De huidige ZZP/opdrachten-scanner (ma/do 07:00) levert alleen een lijst in projects/weareimpact/zzp-opdrachten. Maak er een conversie-machine van: analyseer de 

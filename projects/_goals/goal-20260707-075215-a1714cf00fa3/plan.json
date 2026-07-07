@@ -1,0 +1,108 @@
+{
+  "plan_summary": "Inventariseer bestaande Bijeen blog en KB-artikelen, schrijf 4 nieuwe use-case artikelen (vrijwilligersbeheer, WMO-rapportage, AVG-proof dataopslag, SROI), redigeer ze met FAQPage en interne links, en publiceer ze in de Wachtrij.",
+  "estimated_duration": "3-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Analyse",
+      "description": "Inventariseren bestaande content en markeren overlap om cannibalization te voorkomen.",
+      "tasks": [
+        {
+          "title": "Inventarisatie bestaande Bijeen content",
+          "description": "Verzamel alle 13 blogartikelen en 24 KB-artikelen, identificeer onderwerpen en markeer overlappende thema's om cannibalization te voorkomen.",
+          "skill": "research",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content Creatie",
+      "description": "Schrijf 4 nieuwe artikelen over concrete use cases, elk als aparte taak.",
+      "tasks": [
+        {
+          "title": "Schrijf artikel: Vrijwilligersbeheer in de praktijk bij ANBI-stichtingen",
+          "description": "Schrijf een diepgaand artikel over vrijwilligersbeheer specifiek voor ANBI-stichtingen, gericht op concrete use cases.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf artikel: WMO-rapportage zonder Excel-hel",
+          "description": "Schrijf een artikel over hoe WMO-rapportage eenvoudiger kan zonder Excel, met praktische voorbeelden.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf artikel: AVG-proof dataopslag binnen de EU voor welzijn",
+          "description": "Schrijf een artikel over AVG-conforme dataopslag in de EU voor welzijnsorganisaties, inclusief best practices.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf artikel: SROI berekenen per evenement",
+          "description": "Schrijf een artikel over het berekenen van Social Return on Investment per evenement, met stappenplan en voorbeeld.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Redactie & Optimalisatie",
+      "description": "Redigeer elk artikel, voeg FAQPage-sectie en interne links naar WeAreImpact toe.",
+      "tasks": [
+        {
+          "title": "Redigeer artikel: Vrijwilligersbeheer in de praktijk bij ANBI-stichtingen",
+          "description": "Redigeer het artikel, voeg FAQPage-sectie met gestructureerde data toe en interne links naar WeAreImpact waar zinvol.",
+          "skill": "content-editor",
+          "dependencies": []
+        },
+        {
+          "title": "Redigeer artikel: WMO-rapportage zonder Excel-hel",
+          "description": "Redigeer het artikel, voeg FAQPage-sectie en interne links toe.",
+          "skill": "content-editor",
+          "dependencies": []
+        },
+        {
+          "title": "Redigeer artikel: AVG-proof dataopslag binnen de EU voor welzijn",
+          "description": "Redigeer het artikel, voeg FAQPage-sectie en interne links toe.",
+          "skill": "content-editor",
+          "dependencies": []
+        },
+        {
+          "title": "Redigeer artikel: SROI berekenen per evenement",
+          "description": "Redigeer het artikel, voeg FAQPage-sectie en interne links toe.",
+          "skill": "content-editor",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie Voorbereiding",
+      "description": "Plaats elk geredigeerd artikel in de Wachtrij voor publicatie.",
+      "tasks": [
+        {
+          "title": "Publiceer artikel: Vrijwilligersbeheer in de praktijk bij ANBI-stichtingen",
+          "description": "Stage het artikel in de Wachtrij ter review, klaar voor menselijke goedkeuring.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Publiceer artikel: WMO-rapportage zonder Excel-hel",
+          "description": "Stage het artikel in de Wachtrij ter review.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Publiceer artikel: AVG-proof dataopslag binnen de EU voor welzijn",
+          "description": "Stage het artikel in de Wachtrij ter review.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Publiceer artikel: SROI berekenen per evenement",
+          "description": "Stage het artikel in de Wachtrij ter review.",
+          "skill": "publisher",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}
