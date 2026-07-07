@@ -302,6 +302,7 @@ async function renderWachtrijTab(el) {
     '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
     '<select id="wachtrij-filter" onchange="wachtrijStatusFilter=this.value;renderWachtrijTab(document.getElementById(\'tab-content\'))" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;background:#fff">' +
     '<option value="pending_review"' + (wachtrijStatusFilter==='pending_review'?' selected':'') + '>Te reviewen</option>' +
+    '<option value="needs_work"' + (wachtrijStatusFilter==='needs_work'?' selected':'') + '>Onder kwaliteitsgrens</option>' +
     '<option value="published"' + (wachtrijStatusFilter==='published'?' selected':'') + '>Gepubliceerd</option>' +
     '<option value="rejected"' + (wachtrijStatusFilter==='rejected'?' selected':'') + '>Afgewezen</option>' +
     '<option value=""' + (wachtrijStatusFilter===''?' selected':'') + '>Alle</option></select>' +
@@ -320,6 +321,7 @@ async function renderWachtrijTab(el) {
       '<p class="opp-query">' + escHtml(job.title) + '</p>' +
       '<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:' + sc + ';font-weight:600">' + st + '</span></div>' +
       '<div class="opp-meta"><span>Zoekwoord: ' + escHtml(job.keyword||'-') + '</span><span style="font-weight:600">SEO-score ' + score + '/100</span></div></div></div>' +
+      renderQcReport(job.qc_report) +
       '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11px;color:#4f46e5;font-weight:600">Blog-voorbeeld</summary>' +
       '<div class="prose-dark" style="margin-top:6px;padding:10px;background:#f8fafc;border-radius:6px;max-height:260px;overflow:auto;font-size:12px">' + (job.blog_html||'') + '</div></details>' +
       '<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px">' +
@@ -340,11 +342,36 @@ async function renderWachtrijTab(el) {
   el.innerHTML = html;
 }
 
+// QC-checklist van de meertraps-generator (outline/secties/links/AI-taal/CTA/keyword)
+function renderQcReport(qc) {
+  if (!qc || typeof qc !== 'object' || !Object.keys(qc).length) return '';
+  var chips = [];
+  function chip(ok, label, fixed) {
+    var bg = ok ? '#dcfce7' : '#fee2e2', fg = ok ? '#166534' : '#b91c1c';
+    return '<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:' + bg + ';color:' + fg + ';font-weight:600">' +
+      (ok ? '✓' : '✗') + ' ' + label + (fixed ? ' (gefixt)' : '') + '</span>';
+  }
+  if (qc.staged === false) {
+    chips.push('<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:#fef3c7;color:#92400e;font-weight:600">single-shot (pipeline-terugval)</span>');
+  } else {
+    if (qc.outline_sections) chips.push(chip(true, qc.outline_sections + ' secties'));
+    if (qc.ai_language) chips.push(chip(qc.ai_language.pass, 'AI-taal', qc.ai_language.fixed));
+    if (qc.cta && qc.cta.configured) chips.push(chip(qc.cta.pass, 'CTA', qc.cta.fixed));
+    if (qc.keyword) chips.push(chip(qc.keyword.pass, 'Zoekwoord', qc.keyword.fixed));
+    if (qc.links) chips.push(chip((qc.links.internal_added||0) > 0, (qc.links.internal_added||0) + ' interne + ' + (qc.links.external_added||0) + ' externe links' + (qc.links.stripped ? ' · ' + qc.links.stripped + ' verzonnen link(s) verwijderd' : '')));
+    if (qc.case_study && qc.case_study.title) chips.push('<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:#e0e7ff;color:#3730a3;font-weight:600">📎 Casestudy: ' + escHtml(qc.case_study.title) + '</span>');
+  }
+  if (!chips.length) return '';
+  return '<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">' + chips.join('') + '</div>';
+}
+
 function renderPublishResult(pr) {
   var parts = [];
   if (pr.netlify && pr.netlify.url) parts.push('Netlify: <a href="' + pr.netlify.url + '" target="_blank">' + pr.netlify.url + '</a>');
   if (pr.gsc && pr.gsc.status) parts.push('GSC: ' + pr.gsc.status);
   if (pr.bing && pr.bing.status_code) parts.push('Bing: ' + pr.bing.status_code);
+  if (pr.indexnow && pr.indexnow.status) parts.push('IndexNow: ' + pr.indexnow.status);
+  if (pr.google_indexing && pr.google_indexing.status) parts.push('Google Indexing: ' + pr.google_indexing.status);
   if (pr.social) {
     Object.keys(pr.social).forEach(function(p) {
       var r = pr.social[p];

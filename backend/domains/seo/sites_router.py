@@ -35,6 +35,9 @@ class SiteUpdate(BaseModel):
     twitter_access_token: Optional[str] = None
     twitter_access_secret: Optional[str] = None
     auto_content_enabled: Optional[bool] = None
+    profile: Optional[str] = None
+    ctas: Optional[str] = None                # JSON-lijst als string
+    content_batch_size: Optional[int] = None
 
 
 @router.get("")

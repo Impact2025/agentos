@@ -1,0 +1,177 @@
+"""Artikel-generator: de deterministische (LLM-vrije) onderdelen — QC-checks,
+linkinvoeging/-validatie, batch-clamping en de sitemap/IndexNow-buildbestanden."""
+import json
+
+import pytest
+
+
+# ── QC: AI-taal ──────────────────────────────────────────────────────────────
+
+def test_ai_language_detects_cliches():
+    from backend.domains.publish.article_writer import check_ai_language
+    html = "<p>In de wereld van SEO is dit een naadloze game-changer.</p>"
+    hits = check_ai_language(html)
+    assert "in de wereld van" in hits
+    assert "game-changer" in hits
+
+
+def test_ai_language_clean_text_passes():
+    from backend.domains.publish.article_writer import check_ai_language
+    assert check_ai_language("<p>Een helder, feitelijk artikel over brood bakken.</p>") == []
+
+
+# ── QC: CTA ──────────────────────────────────────────────────────────────────
+
+def test_cta_check():
+    from backend.domains.publish.article_writer import check_cta
+    ctas = ["Plan een gratis kennismaking → /contact"]
+    assert check_cta("<p>Plan een gratis kennismaking via onze site.</p>", ctas) is True
+    assert check_cta("<p>Niks te zien hier.</p>", ctas) is False
+    # Zonder geconfigureerde CTA's is de check niet van toepassing (pass).
+    assert check_cta("<p>Niks.</p>", []) is True
+
+
+# ── QC: zoekwoord ────────────────────────────────────────────────────────────
+
+def test_keyword_check_pass():
+    from backend.domains.publish.article_writer import check_keyword
+    html = ("<h1>Interim manager inhuren: zo werkt het</h1>"
+            "<p>Een interim manager inhuren begint met een goede intake. "
+            + "Meer context over het proces en de kosten. " * 60
+            + "Wie een interim manager inhuren wil, let op ervaring.</p>")
+    assert check_keyword(html, "interim manager inhuren") == []
+
+
+def test_keyword_check_flags_missing_h1_and_intro():
+    from backend.domains.publish.article_writer import check_keyword
+    html = "<h1>Iets heel anders</h1><p>" + "Vulling zonder het zoekwoord. " * 80 + "</p>"
+    issues = check_keyword(html, "interim manager inhuren")
+    assert any("H1" in i for i in issues)
+    assert any("eerste 100 woorden" in i for i in issues)
+    assert any("minimaal 2" in i for i in issues)
+
+
+def test_keyword_check_flags_stuffing():
+    from backend.domains.publish.article_writer import check_keyword
+    html = "<h1>kaas</h1><p>" + "kaas " * 50 + "</p>"
+    issues = check_keyword(html, "kaas")
+    assert any("te hoog" in i for i in issues)
+
+
+# ── Links: invoegen + valideren ──────────────────────────────────────────────
+
+def test_insert_link_wraps_free_text():
+    from backend.domains.publish.article_writer import insert_link
+    html = "<p>Lees ook ons stuk over lokale seo voor bakkers.</p>"
+    out, ok = insert_link(html, "lokale seo", "https://x.nl/lokale-seo/")
+    assert ok is True
+    assert '<a href="https://x.nl/lokale-seo/">lokale seo</a>' in out
+
+
+def test_insert_link_skips_headings_and_existing_anchors():
+    from backend.domains.publish.article_writer import insert_link
+    html = ('<h2>Alles over lokale seo</h2>'
+            '<p>Bekijk <a href="/x">lokale seo</a> hier.</p>')
+    out, ok = insert_link(html, "lokale seo", "https://x.nl/y/")
+    assert ok is False
+    assert out == html  # niets aangepast
+
+
+def test_insert_link_never_touches_tag_attributes():
+    from backend.domains.publish.article_writer import insert_link
+    html = '<img alt="lokale seo grafiek" src="/i.png" /><p>Meer over lokale seo hier.</p>'
+    out, ok = insert_link(html, "lokale seo", "https://x.nl/y/")
+    assert ok is True
+    assert 'alt="lokale seo grafiek"' in out  # attribuut intact
+    assert out.count("<a ") == 1
+
+
+def test_strip_unvetted_links_unwraps_hallucinated_hrefs():
+    from backend.domains.publish.article_writer import strip_unvetted_links
+    html = ('<p>Zie <a href="/verzonnen-pagina">deze gids</a> en '
+            '<a href="https://voorbeeld.nl/bestaat-wel/">echte pagina</a> en '
+            '<a href="/contact">neem contact op</a>.</p>')
+    out, stripped = strip_unvetted_links(
+        html,
+        allowed_urls={"https://voorbeeld.nl/bestaat-wel"},
+        allowed_paths={"/contact"},
+    )
+    assert stripped == 1
+    assert "verzonnen-pagina" not in out
+    assert "deze gids" in out  # ankertekst blijft staan
+    assert '<a href="https://voorbeeld.nl/bestaat-wel/">' in out
+    assert '<a href="/contact">' in out
+
+
+def test_valid_external_rejects_http_and_own_host():
+    from backend.domains.publish.article_writer import _valid_external
+    assert _valid_external("https://www.cbs.nl/cijfers", "weareimpact.nl") is True
+    assert _valid_external("http://onveilig.nl/x", "weareimpact.nl") is False
+    assert _valid_external("https://www.weareimpact.nl/eigen", "weareimpact.nl") is False
+    assert _valid_external("niet-eens-een-url", "weareimpact.nl") is False
+
+
+# ── Batch ────────────────────────────────────────────────────────────────────
+
+def test_batch_size_clamps():
+    from backend.domains.publish.content_pipeline import _batch_size
+    assert _batch_size({"content_batch_size": None}) == 1
+    assert _batch_size({"content_batch_size": 5}) == 5
+    assert _batch_size({"content_batch_size": 99}) == 10
+    assert _batch_size({"content_batch_size": "abc"}) == 1
+
+
+# ── Sitemap + IndexNow-keyfile in de Netlify-build ───────────────────────────
+
+@pytest.fixture()
+def site_with_page():
+    from backend.domains.seo import sites as sites_service
+    from backend.domains.publish import service as publish_service
+    s = sites_service.create_site({"name": "SitemapTest", "base_url": "https://voorbeeld.nl"})
+    publish_service._upsert_page(s["id"], "eerste-artikel", "Eerste artikel", "<h1>Hoi</h1>")
+    yield sites_service.get_site(s["id"])
+    from backend.shared.database import get_conn
+    with get_conn() as c:
+        c.execute("DELETE FROM published_pages WHERE site_id = ?", (s["id"],))
+    sites_service.delete_site(s["id"])
+
+
+def test_build_includes_sitemap_and_indexnow_key(site_with_page):
+    from backend.domains.publish.service import build_site_files
+    files = build_site_files(site_with_page["id"], "SitemapTest",
+                             base_url="https://voorbeeld.nl", indexnow_key="k123")
+    assert "sitemap.xml" in files
+    assert "https://voorbeeld.nl/eerste-artikel/" in files["sitemap.xml"]
+    assert files["k123.txt"] == "k123"
+
+
+def test_build_without_base_url_has_no_sitemap(site_with_page):
+    from backend.domains.publish.service import build_site_files
+    files = build_site_files(site_with_page["id"], "SitemapTest")
+    assert "sitemap.xml" not in files
+    assert "index.html" in files
+
+
+def test_site_base_url_falls_back_to_published_page(site_with_page):
+    from backend.domains.publish.service import _site_base_url, _set_page_url
+    # Zonder base_url én zonder eerdere deploy: geen basis bekend.
+    assert _site_base_url({"id": site_with_page["id"], "base_url": ""}) == ""
+    # Na een deploy is de basis afleidbaar uit de opgeslagen pagina-URL.
+    _set_page_url(site_with_page["id"], "eerste-artikel", "https://sitemaptest.netlify.app/eerste-artikel/")
+    assert _site_base_url({"id": site_with_page["id"], "base_url": ""}) == "https://sitemaptest.netlify.app"
+
+
+# ── QC-rapport belandt in de content_job en wordt geparsed teruggegeven ──────
+
+def test_create_job_stores_qc_report(site_with_page):
+    from backend.domains.publish import content_pipeline
+    from backend.domains.content_queue.router import _with_parsed_social_copy
+
+    qc = {"staged": True, "ai_language": {"pass": True, "hits": []}}
+    job_id = content_pipeline.create_job(
+        site_with_page["id"], "Titel", "kw", "waarom", "<h1>x</h1>", 85,
+        {}, None, "titel", qc_report=qc, case_study_id="cs-1",
+    )
+    job = _with_parsed_social_copy(content_pipeline.get_job(job_id))
+    assert job["qc_report"]["staged"] is True
+    assert job["case_study_id"] == "cs-1"

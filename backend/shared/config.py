@@ -68,6 +68,17 @@ SMTP_USER: str = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
 REPORT_EMAIL_TO: str = os.getenv("REPORT_EMAIL_TO", "v.munster@weareimpact.nl")
 
+# Google Indexing API (urlNotifications.publish) voor directe indexering na
+# publicatie. Default uit: officieel alleen voor JobPosting/Livestream-content
+# en het service-account moet Owner zijn in Search Console. De nette route
+# (sitemap-submit bij GSC) staat altijd aan.
+GOOGLE_INDEXING_ENABLED: bool = os.getenv("GOOGLE_INDEXING_ENABLED", "0") == "1"
+
+# Kwaliteitsgate voor content (0-100): onder deze score komt een artikel niet
+# in de Wachtrij als publiceerbaar en weigert de publish-API. De pipeline
+# probeert eerst automatisch te verbeteren (max 3 rondes).
+CONTENT_MIN_SCORE: int = int(os.getenv("CONTENT_MIN_SCORE", "80"))
+
 BASE_DIR = Path(__file__).parent.parent.parent
 DATA_DIR = BASE_DIR / "data"
 # AGENTOS_DB_PATH override: tests draaien tegen een wegwerp-database.

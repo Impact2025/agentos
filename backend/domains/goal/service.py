@@ -156,12 +156,24 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str) -> Opt
 
         full_site = sites_service.get_site(site["id"]) or site
 
-        seo_score = 0
+        # Kwaliteitsgate: review → verbeter → review (max 3 rondes). Haalt het
+        # resultaat de grens niet (bv. omdat het een intern rapport of plan is,
+        # geen artikel), dan wordt er NIETS gestaged — de taak valt terug op
+        # een concept en de Wachtrij blijft vrij van niet-publiceerbare items.
+        from ...shared.config import CONTENT_MIN_SCORE
         try:
-            review = await content_pipeline._review_article(full_site, "", html_body)
+            html_body, review = await content_pipeline.review_and_improve(full_site, "", html_body)
             seo_score = int(review.get("score", 0))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Review/verbeter-loop mislukt voor '{title}': {e}")
+            seo_score = 0
+        if seo_score < CONTENT_MIN_SCORE:
+            _log_activity(
+                goal_id, "wachtrij_geweigerd",
+                f"'{title}' haalde {seo_score}/100 (grens {CONTENT_MIN_SCORE}) — "
+                "niet gestaged; resultaat blijft een concept",
+            )
+            return None
 
         social: Dict[str, str] = {}
         try:

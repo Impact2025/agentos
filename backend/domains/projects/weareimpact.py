@@ -752,15 +752,15 @@ def project_content_queue(name: str, status: Optional[str] = Query(None)):
 
 
 @router.post("/{name}/content-queue/run-now")
-async def project_content_queue_run_now(name: str):
+async def project_content_queue_run_now(name: str, count: Optional[int] = Query(None, ge=1, le=10)):
     site = _resolve_site(name)
     if not site:
         raise HTTPException(404, f"Project '{name}' niet gevonden")
     full_site = sites_service.get_site(site["id"])
-    job_id = await content_pipeline.generate_content_job(full_site)
-    if not job_id:
+    job_ids = await content_pipeline.run_content_batch(full_site, count=count)
+    if not job_ids:
         return {"success": False, "detail": "Geen nieuwe kansen — voer eerst een Demand Engine-scan uit."}
-    return {"success": True, "job_id": job_id}
+    return {"success": True, "job_ids": job_ids, "job_id": job_ids[0]}
 
 
 @router.post("/{name}/content-queue/{job_id}/approve")

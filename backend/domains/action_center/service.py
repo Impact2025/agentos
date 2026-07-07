@@ -101,6 +101,32 @@ def build_inbox() -> Dict[str, Any]:
                 ],
             })
 
+        # ── 2a. Content onder de kwaliteitsgrens: verbeteren of afwijzen ─
+        from ...shared.config import CONTENT_MIN_SCORE
+        for j in conn.execute(
+            "SELECT j.id, j.title, j.seo_score, j.created_at, s.name AS site "
+            "FROM content_jobs j LEFT JOIN sites s ON s.id = j.site_id "
+            "WHERE j.status='needs_work' ORDER BY j.created_at DESC"
+        ):
+            if ("content", j["id"]) in skip:
+                continue
+            items.append({
+                "kind": "content_needs_work",
+                "dismiss_kind": "content",
+                "id": j["id"],
+                "title": j["title"],
+                "project": j["site"] or "?",
+                "created_at": j["created_at"],
+                "summary": (
+                    f"Score {j['seo_score']}/100 — onder de kwaliteitsgrens ({CONTENT_MIN_SCORE}). "
+                    "Publiceren is geblokkeerd; laat de agent herschrijven of wijs af."
+                ),
+                "actions": [
+                    {"label": "Verbeter met AI", "type": "content_regenerate", "id": j["id"]},
+                    {"label": "Wijs af", "type": "content_reject", "id": j["id"], "danger": True},
+                ],
+            })
+
         # ── 2b. Wachtrij-jobs waarvan publiceren misging: retry mogelijk ─
         for j in conn.execute(
             "SELECT j.id, j.title, j.error, j.created_at, s.name AS site "

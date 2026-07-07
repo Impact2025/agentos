@@ -393,6 +393,21 @@ CREATE TABLE IF NOT EXISTS seo_suggestions (
     FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_seo_suggestions_site ON seo_suggestions(site_id, type, status);
+
+CREATE TABLE IF NOT EXISTS case_studies (
+    id          TEXT PRIMARY KEY,
+    site_id     TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    summary     TEXT DEFAULT '',            -- korte samenvatting voor prompts/matching
+    body        TEXT DEFAULT '',            -- harde data: cijfers, resultaten, verhaal
+    tags        TEXT DEFAULT '',            -- komma-gescheiden trefwoorden voor matching
+    source_url  TEXT DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'active',  -- active | archived
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_case_studies_site ON case_studies(site_id, status);
 """
 
 
@@ -512,8 +527,23 @@ def _migrate(conn) -> None:
         ("auto_content_enabled",  "ALTER TABLE sites ADD COLUMN auto_content_enabled INTEGER DEFAULT 0"),
         ("external_db_url",       "ALTER TABLE sites ADD COLUMN external_db_url TEXT DEFAULT ''"),
         ("ga4_property_id",       "ALTER TABLE sites ADD COLUMN ga4_property_id TEXT DEFAULT ''"),
+        # Kennisbank (information gain) + batch + directe indexering
+        ("profile",            "ALTER TABLE sites ADD COLUMN profile TEXT DEFAULT ''"),
+        ("ctas",               "ALTER TABLE sites ADD COLUMN ctas TEXT DEFAULT '[]'"),
+        ("content_batch_size", "ALTER TABLE sites ADD COLUMN content_batch_size INTEGER DEFAULT 1"),
+        ("indexnow_key",       "ALTER TABLE sites ADD COLUMN indexnow_key TEXT DEFAULT ''"),
     ):
         if col not in site_cols:
+            conn.execute(ddl)
+
+    # Content-jobs: QC-rapport van de meertraps-generator + gebruikte casestudy,
+    # zodat de Wachtrij per artikel kan tonen welke checks zijn gedaan/gefixt.
+    cj_cols = {row["name"] for row in conn.execute("PRAGMA table_info(content_jobs)").fetchall()}
+    for col, ddl in (
+        ("qc_report",     "ALTER TABLE content_jobs ADD COLUMN qc_report TEXT DEFAULT '{}'"),
+        ("case_study_id", "ALTER TABLE content_jobs ADD COLUMN case_study_id TEXT DEFAULT ''"),
+    ):
+        if cj_cols and col not in cj_cols:
             conn.execute(ddl)
 
     # Social publisher: quote-card afbeelding per gepubliceerde pagina (base64 PNG),

@@ -35,6 +35,7 @@ from .domains.prospecting import router as leads_router
 from .domains.vacancies import router as vacancies_router
 from .domains.seo import router as demand_router
 from .domains.seo import sites_router
+from .domains.seo import knowledge as knowledge_router
 from .domains.delegate import router as delegate_router
 from .domains.loop import router as loops_router
 from .domains.finance import router as finance_router
@@ -138,6 +139,7 @@ app.include_router(leads_router.router)
 app.include_router(vacancies_router.router)
 app.include_router(demand_router.router)
 app.include_router(sites_router.router)
+app.include_router(knowledge_router.router)
 app.include_router(analytics_router.router)
 app.include_router(finance_router.router)
 app.include_router(publish_router.router)

@@ -95,3 +95,44 @@ def fetch_all_known_content(site: Dict) -> List[Dict[str, str]]:
     """Alle bekende bestaande content van een site: externe CMS-database
     (indien geconfigureerd) + live sitemap (altijd, zero-config)."""
     return fetch_external_titles(site) + fetch_live_sitemap_slugs(site)
+
+
+_sitemap_url_cache: Dict[str, Tuple[float, List[str]]] = {}
+
+
+def fetch_live_sitemap_urls(site: Dict) -> List[str]:
+    """Volledige pagina-URL's uit de live sitemap.xml — de linkstap van de
+    artikel-generator heeft absolute URL's nodig (slugs alleen zijn niet
+    genoeg om een geldige interne link te bouwen). Zelfde stille-fallback- en
+    TTL-cache-aanpak als `fetch_live_sitemap_slugs`."""
+    base = (site.get("base_url") or "").strip().rstrip("/")
+    if not base:
+        return []
+    now = time.time()
+    cached = _sitemap_url_cache.get(base)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    urls: List[str] = []
+    try:
+        import httpx
+        fetched: set = set()
+        queue = [f"{base}/sitemap.xml"]
+        while queue and len(fetched) < _MAX_SITEMAP_FILES:
+            sm_url = queue.pop(0)
+            if sm_url in fetched:
+                continue
+            fetched.add(sm_url)
+            resp = httpx.get(sm_url, timeout=10, follow_redirects=True)
+            if resp.status_code != 200:
+                continue
+            for loc in re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", resp.text):
+                if loc.rstrip("/").endswith(".xml"):
+                    queue.append(loc)
+                else:
+                    urls.append(loc)
+    except Exception as e:
+        logger.debug("[external-content] Sitemap-URL's ophalen mislukt voor %s: %s", base, str(e)[:150])
+
+    _sitemap_url_cache[base] = (now + _SITEMAP_TTL_SECONDS, urls)
+    return urls

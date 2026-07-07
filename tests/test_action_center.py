@@ -109,3 +109,23 @@ def test_onopgeloste_live_fout_blijft_staan(conn, clean_tables):
     # Een 'live' van een ANDER artikel lost deze fout niet op
     log_outcome("Bijeen", "live", "'Los artikel' LIVE op https://bijeen.app/blog/y")
     assert any(i["id"] == fout_id for i in build_inbox()["items"])
+
+
+def test_needs_work_job_in_inbox_met_verbeter_actie(conn, clean_tables):
+    """Content onder de kwaliteitsgrens is geen review-item maar een
+    verbeter-item: geen Publiceer-knop, wel Verbeter/Wijs af."""
+    from backend.domains.action_center.service import build_inbox
+
+    _seed_site(conn)
+    conn.execute(
+        "INSERT INTO content_jobs (id, site_id, title, keyword, status, seo_score, created_at) "
+        "VALUES ('job-test-3', 'site-x', 'Zwak artikel', 'kw', 'needs_work', 35, datetime('now'))"
+    )
+    conn.commit()
+
+    items = [i for i in build_inbox()["items"] if i["id"] == "job-test-3"]
+    assert len(items) == 1
+    assert items[0]["kind"] == "content_needs_work"
+    types = {a["type"] for a in items[0]["actions"]}
+    assert "content_regenerate" in types and "content_reject" in types
+    assert "content_approve" not in types

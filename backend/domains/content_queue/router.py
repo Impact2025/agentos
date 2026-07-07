@@ -33,6 +33,10 @@ def _with_parsed_social_copy(job: dict) -> dict:
         job["publish_result"] = json.loads(job.get("publish_result") or "{}")
     except Exception:
         job["publish_result"] = {}
+    try:
+        job["qc_report"] = json.loads(job.get("qc_report") or "{}")
+    except Exception:
+        job["qc_report"] = {}
     return job
 
 
@@ -84,16 +88,17 @@ async def regenerate_content_job(job_id: str):
 
 
 @router.post("/run-now")
-async def run_now(site_id: str = Query(...)):
-    """Handmatig een auto-content-job draaien voor 1 site (buiten het 2x/week-schema om)."""
+async def run_now(site_id: str = Query(...), count: Optional[int] = Query(None, ge=1, le=10)):
+    """Handmatig een content-batch draaien voor 1 site (buiten het 2x/week-schema
+    om). `count` overschrijft de site-instelling content_batch_size."""
     site = sites_service.get_site(site_id)
     if not site:
         raise HTTPException(404, detail="Site niet gevonden")
     try:
-        job_id = await content_pipeline.generate_content_job(site)
-        if not job_id:
+        job_ids = await content_pipeline.run_content_batch(site, count=count)
+        if not job_ids:
             return {"success": False, "detail": "Geen nieuwe kansen — voer eerst een Demand Engine-scan uit."}
-        return {"success": True, "job_id": job_id}
+        return {"success": True, "job_ids": job_ids, "job_id": job_ids[0]}
     except Exception as e:
         logger.exception("run-now mislukt voor site %s", site_id)
         raise HTTPException(500, detail=str(e)[:300])

@@ -29,10 +29,12 @@ from typing import Dict, List, Optional
 
 from ...shared.database import get_conn
 from ..chat import hermes as hermes_service
+from . import article_writer
 from . import service as publish_service
 from ..seo import engine as demand_engine
 from ..seo import external_content as external_content_service
 from ..seo import gsc as gsc_service
+from ..seo import knowledge as knowledge_service
 from ..seo import sites as sites_service
 from ...shared import facebook as facebook_service
 from ...shared import linkedin as linkedin_service
@@ -72,6 +74,25 @@ async def _stream_hermes(system: str, prompt: str, max_tokens: int = 2000) -> st
     ):
         full += chunk
     return full.strip()
+
+
+async def _llm(system: str, prompt: str, max_tokens: int = 2000) -> str:
+    """Beste beschikbare model voor schrijf-/reviewwerk: Claude eerst (direct
+    of via OpenRouter), Hermes als terugval. De lage Wachtrij-scores kwamen
+    grotendeels doordat een klein gratis model zowel schreef als beoordeelde."""
+    from ..chat import claude as claude_service
+    if claude_service.is_configured():
+        try:
+            out = (await claude_service.get_response(
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt=system,
+                max_tokens=max_tokens,
+            )).strip()
+            if out:
+                return out
+        except Exception as e:
+            logger.warning("[content-pipeline] Claude niet beschikbaar (%s) — terugval op Hermes", e)
+    return await _stream_hermes_retry(system, prompt, max_tokens)
 
 
 async def _stream_hermes_retry(system: str, prompt: str, max_tokens: int = 2000, retries: int = 2) -> str:
@@ -221,6 +242,12 @@ async def _write_article(site: Dict, keyword: str, angle: str, rationale: str) -
     write_system = base_prompt
     if vault_context:
         write_system += f"\n\n## Merkcontext uit Obsidian vault (strikte regels)\n{vault_context[:4000]}"
+    knowledge = knowledge_service.get_site_knowledge(site)
+    if knowledge["profile"]:
+        write_system += f"\n\n## Bedrijfsprofiel & USP's\n{knowledge['profile'][:2000]}"
+    if knowledge["ctas"]:
+        write_system += ("\n\n## Call-to-actions (verwerk er één natuurlijk)\n"
+                         + "\n".join(f"- {c}" for c in knowledge["ctas"][:6]))
 
     write_prompt = (
         f"Schrijf een compleet blogartikel voor {project_name}.\n\n"
@@ -233,23 +260,50 @@ async def _write_article(site: Dict, keyword: str, angle: str, rationale: str) -
         "<h2>/<h3> voor tussenkoppen, <p> voor alinea's, <ul>/<li> voor lijsten. "
         "Geen inline CSS of styles."
     )
-    return await _stream_hermes(write_system, write_prompt, max_tokens=4000)
+    # 8000 tokens: een volledig artikel van 1200+ woorden inclusief HTML-markup
+    # werd op 4000 regelmatig mid-zin afgekapt — de reviewer keurde dat terecht af.
+    return await _llm(write_system, write_prompt, max_tokens=8000)
 
 
 async def _review_article(site: Dict, keyword: str, html_body: str) -> Dict:
     review_system = _profile_prompt("SEO Editor") or _FALLBACK_REVIEW_PROMPT
     review_prompt = (
         f"Beoordeel onderstaand blogartikel voor {site['name']}.\n\n"
-        f"Kernzoekwoord: {keyword}\n\nARTIKEL:\n{html_body}"
+        f"Kernzoekwoord: {keyword}\n\n"
+        "Houd de feedback beknopt: maximaal 6 genummerde punten van elk 1-2 zinnen.\n\n"
+        f"ARTIKEL:\n{html_body}"
     )
-    raw = await _stream_hermes_retry(review_system, review_prompt, max_tokens=1200)
+    raw = await _llm(review_system, review_prompt, max_tokens=2500)
     try:
         obj = json.loads(_extract_json(raw))
         score = max(0, min(100, int(round(float(obj.get("score", 50))))))
         feedback = str(obj.get("feedback") or "").strip()
     except Exception:
-        score, feedback = 50, raw[:800]
+        # JSON kapot (meestal: afgekapte lange feedback — de score staat vooraan
+        # en is dan meestal nog intact; regex-redding zodat een geldig oordeel
+        # niet verloren gaat). Geen score vindbaar → 0, zodat het artikel NOOIT
+        # per ongeluk door de kwaliteitsgate glipt (voorheen: stille 50).
+        m = re.search(r'"score"\s*:\s*(\d{1,3})', raw)
+        score = max(0, min(100, int(m.group(1)))) if m else 0
+        fm = re.search(r'"feedback"\s*:\s*"(.*)', raw, re.DOTALL)
+        feedback = (fm.group(1).strip() if fm else raw)[:800]
     return {"score": score, "feedback": feedback}
+
+
+async def review_and_improve(site: Dict, keyword: str, html_body: str,
+                             max_rounds: int = 3) -> tuple:
+    """Review → verbeter → review, tot de kwaliteitsgate (CONTENT_MIN_SCORE)
+    is gehaald of de rondes op zijn. Retourneert (html_body, review)."""
+    from ...shared.config import CONTENT_MIN_SCORE
+    review = await _review_article(site, keyword, html_body)
+    rounds = 0
+    while review["score"] < CONTENT_MIN_SCORE and rounds < max_rounds and review["feedback"]:
+        rounds += 1
+        logger.info("[content-pipeline] Verbeterronde %s/%s (score %s < %s) — %s",
+                    rounds, max_rounds, review["score"], CONTENT_MIN_SCORE, site["name"])
+        html_body = await _optimize_article(site, keyword, html_body, review["feedback"])
+        review = await _review_article(site, keyword, html_body)
+    return html_body, review
 
 
 async def _optimize_article(site: Dict, keyword: str, html_body: str, feedback: str) -> str:
@@ -263,8 +317,31 @@ async def _optimize_article(site: Dict, keyword: str, html_body: str, feedback: 
         f"Kernzoekwoord: {keyword}\n\nORIGINEEL:\n{html_body}\n\n"
         "Lever ALLEEN de verbeterde HTML-body zonder <html>/<head>/<body>."
     )
-    out = await _stream_hermes(optimize_system, prompt, max_tokens=4000)
+    out = await _llm(optimize_system, prompt, max_tokens=8000)
     return out if len(out) > 50 else html_body
+
+
+async def _write_article_best(site: Dict, keyword: str, angle: str,
+                              rationale: str) -> tuple:
+    """Meertraps-generator (outline → secties → opmaak → links → QC) met
+    terugval op de single-shot-schrijver als de pipeline stukloopt.
+    Retourneert (html_body, qc_report, case_study_id)."""
+    knowledge = knowledge_service.get_site_knowledge(site)
+    case_study = knowledge_service.match_case_study(site["id"], keyword, angle)
+    try:
+        html_body, qc_report = await article_writer.write_article_staged(
+            site, keyword, angle, rationale,
+            case_study=case_study,
+            profile=knowledge["profile"], ctas=knowledge["ctas"],
+            brand_context=_vault_context(site["name"]),
+            base_style_prompt=_profile_prompt("SEO Copywriter") or _FALLBACK_WRITE_PROMPT,
+        )
+        return html_body, qc_report, (case_study or {}).get("id", "")
+    except Exception as e:
+        logger.warning("[content-pipeline] Meertraps-generator mislukt (%s) — "
+                       "terugval op single-shot-schrijver", e)
+        html_body = await _write_article(site, keyword, angle, rationale)
+        return html_body, {"staged": False, "fallback_reason": str(e)[:200]}, ""
 
 
 def _extract_title(html_body: str, fallback: str) -> str:
@@ -288,7 +365,7 @@ async def _generate_social_copy(site: Dict, title: str, keyword: str, html_body:
     prompt = (
         f"Titel: {title}\nKernzoekwoord: {keyword}\n\nArtikel (platte tekst):\n{plain}"
     )
-    raw = await _stream_hermes_retry(system, prompt, max_tokens=1500)
+    raw = await _llm(system, prompt, max_tokens=1500)
     try:
         obj = json.loads(_extract_json(raw))
         return {
@@ -306,7 +383,10 @@ async def _generate_social_copy(site: Dict, title: str, keyword: str, html_body:
 
 def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html: str,
                 seo_score: float, social_copy: Dict[str, str], image_bytes: Optional[bytes],
-                slug: str) -> str:
+                slug: str, status: str = "pending_review",
+                qc_report: Optional[Dict] = None, case_study_id: str = "") -> str:
+    """status 'pending_review' = klaar om goed te keuren (score ≥ gate);
+    'needs_work' = onder de kwaliteitsgate — eerst verbeteren of afwijzen."""
     job_id = str(uuid.uuid4())
     image_path = ""
     if image_bytes:
@@ -316,10 +396,11 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
         conn.execute(
             """INSERT INTO content_jobs
                (id, site_id, title, keyword, rationale, status, blog_html, seo_score,
-                social_copy, image_path, slug, publish_result, created_at)
-               VALUES (?, ?, ?, ?, ?, 'pending_review', ?, ?, ?, ?, ?, '{}', ?)""",
-            (job_id, site_id, title, keyword, rationale, blog_html, seo_score,
-             json.dumps(social_copy), image_path, slug, _now()),
+                social_copy, image_path, slug, publish_result, qc_report, case_study_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?)""",
+            (job_id, site_id, title, keyword, rationale, status, blog_html, seo_score,
+             json.dumps(social_copy), image_path, slug,
+             json.dumps(qc_report or {}, ensure_ascii=False), case_study_id, _now()),
         )
     return job_id
 
@@ -370,17 +451,13 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
         keyword, angle, rationale = topic["query"], topic.get("angle", ""), topic.get("rationale", "")
 
     logger.info("[content-pipeline] Schrijven — %s / '%s'", site["name"], keyword)
-    html_body = await _write_article(site, keyword, angle, rationale)
+    html_body, qc_report, case_study_id = await _write_article_best(site, keyword, angle, rationale)
     if not html_body.strip():
         _log_activity(site["name"], "auto-content-mislukt", f"Lege schrijf-response voor '{keyword}'",
                       status="error")
         return None
 
-    review = await _review_article(site, keyword, html_body)
-    if review["score"] < 75 and review["feedback"]:
-        logger.info("[content-pipeline] Optimaliseren (score %s) — %s", review["score"], site["name"])
-        html_body = await _optimize_article(site, keyword, html_body, review["feedback"])
-        review = await _review_article(site, keyword, html_body)
+    html_body, review = await review_and_improve(site, keyword, html_body)
 
     title = _extract_title(html_body, fallback=angle or keyword)
     slug = slugify_title(title)
@@ -388,11 +465,21 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
     social_copy = await _generate_social_copy(site, title, keyword, html_body)
     image_bytes = generate_quote_card(title, site["name"])
 
+    from ...shared.config import CONTENT_MIN_SCORE
+    passed = review["score"] >= CONTENT_MIN_SCORE
     job_id = create_job(site["id"], title, keyword, rationale, html_body,
-                        review["score"], social_copy, image_bytes, slug)
-    _log_activity(site["name"], "auto-content-klaar",
-                  f"'{title}' (SEO-score {review['score']}) klaar voor review",
-                  next_step="Keur goed of wijs af in de Wachtrij")
+                        review["score"], social_copy, image_bytes, slug,
+                        status="pending_review" if passed else "needs_work",
+                        qc_report=qc_report, case_study_id=case_study_id)
+    if passed:
+        _log_activity(site["name"], "auto-content-klaar",
+                      f"'{title}' (SEO-score {review['score']}) klaar voor review",
+                      next_step="Keur goed of wijs af in de Wachtrij")
+    else:
+        _log_activity(site["name"], "auto-content-onder-grens",
+                      f"'{title}' haalde na 3 verbeterrondes {review['score']}/100 "
+                      f"(grens {CONTENT_MIN_SCORE}) — niet publiceerbaar",
+                      next_step="Laat de agent het opnieuw proberen of wijs af (Actiecentrum)")
     return job_id
 
 
@@ -430,12 +517,7 @@ async def create_job_from_listicle(site: Dict, keyword: str, rationale: str,
     if not html_body:
         raise ValueError("Listicle-tekst is leeg — niets om in de wachtrij te zetten.")
 
-    review = await _review_article(site, keyword, html_body)
-    if review["score"] < 75 and review["feedback"]:
-        logger.info("[content-pipeline] Listicle optimaliseren (score %s) — %s",
-                    review["score"], site["name"])
-        html_body = await _optimize_article(site, keyword, html_body, review["feedback"])
-        review = await _review_article(site, keyword, html_body)
+    html_body, review = await review_and_improve(site, keyword, html_body)
 
     title = _extract_title(html_body, fallback=meta_title or keyword)
     if "<h1" not in html_body.lower():
@@ -447,25 +529,52 @@ async def create_job_from_listicle(site: Dict, keyword: str, rationale: str,
     social_copy = await _generate_social_copy(site, title, keyword, html_body)
     image_bytes = generate_quote_card(title, site["name"])
 
+    from ...shared.config import CONTENT_MIN_SCORE
+    passed = review["score"] >= CONTENT_MIN_SCORE
     job_id = create_job(site["id"], title, keyword, rationale, html_body,
-                        review["score"], social_copy, image_bytes, slug)
+                        review["score"], social_copy, image_bytes, slug,
+                        status="pending_review" if passed else "needs_work")
     _log_activity(site["name"], "radar-listicle-in-wachtrij",
-                  f"'{title}' (SEO-score {review['score']}) vanuit Mission Radar klaar voor review")
+                  f"'{title}' (SEO-score {review['score']}) vanuit Mission Radar "
+                  + ("klaar voor review" if passed else f"onder kwaliteitsgrens {CONTENT_MIN_SCORE} — eerst verbeteren"))
     return job_id
 
 
 # ── 2x/week scheduler-job ───────────────────────────────────────────────────
 
+def _batch_size(site: Dict) -> int:
+    """Aantal artikelen per run voor een site (1-10, default 1)."""
+    try:
+        return max(1, min(10, int(site.get("content_batch_size") or 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
+async def run_content_batch(site: Dict, count: Optional[int] = None) -> List[str]:
+    """Genereer `count` content-jobs voor één site (default: de site-instelling
+    content_batch_size). Sequentieel — kostenbeheersing en rate-limits. Stopt
+    zodra de Demand Engine-kansen op zijn."""
+    count = max(1, min(10, count)) if count else _batch_size(site)
+    job_ids: List[str] = []
+    for _ in range(count):
+        job_id = await generate_content_job(site)
+        if not job_id:
+            break  # geen kansen meer — niet blijven proberen
+        job_ids.append(job_id)
+    return job_ids
+
+
 async def run_biweekly_content_job() -> Dict:
-    """Draai voor elke site met auto_content_enabled=1 één content-job."""
+    """Draai voor elke site met auto_content_enabled=1 een content-batch
+    (content_batch_size artikelen, default 1)."""
     results: Dict[str, str] = {}
     for site in sites_service.list_sites():
         full_site = sites_service.get_site(site["id"])
         if not full_site or not full_site.get("auto_content_enabled"):
             continue
         try:
-            job_id = await generate_content_job(full_site)
-            results[site["name"]] = job_id or "geen kansen"
+            job_ids = await run_content_batch(full_site)
+            results[site["name"]] = f"{len(job_ids)} jobs" if job_ids else "geen kansen"
         except Exception as e:
             logger.exception("[content-pipeline] Auto-content mislukt voor %s", site["name"])
             _log_activity(site["name"], "auto-content-fout", str(e)[:300], status="error")
@@ -486,6 +595,15 @@ async def approve_and_publish(job_id: str) -> Dict:
         raise ValueError("Content-job niet gevonden.")
     if job["status"] != "pending_review":
         raise ValueError(f"Job heeft status '{job['status']}', niet 'pending_review'.")
+
+    # Harde kwaliteitsgate: onder de grens wordt er níet gepubliceerd —
+    # ook niet met een handmatige goedkeuring. Eerst verbeteren (regenerate).
+    from ...shared.config import CONTENT_MIN_SCORE
+    if int(job.get("seo_score") or 0) < CONTENT_MIN_SCORE:
+        raise ValueError(
+            f"SEO-score {job.get('seo_score')}/100 ligt onder de kwaliteitsgrens "
+            f"({CONTENT_MIN_SCORE}) — laat de agent het artikel eerst verbeteren of wijs het af."
+        )
 
     site = sites_service.get_site(job["site_id"])
     if not site:
@@ -533,6 +651,16 @@ async def approve_and_publish(job_id: str) -> Dict:
         except Exception as e:
             result["bing"] = {"error": str(e)[:100]}
 
+    # ── Directe indexering van de nieuwe URL (IndexNow + optioneel Google) ──
+    from . import indexing as indexing_service
+    if article_url and article_url.startswith("http"):
+        # Verse site-rij: publish_article kan zojuist een IndexNow-key hebben aangemaakt.
+        fresh_site = sites_service.get_site(site["id"]) or site
+        result["indexnow"] = await indexing_service.submit_indexnow(fresh_site, [article_url])
+        google_result = await indexing_service.submit_google_indexing(article_url)
+        if google_result.get("status") != "uitgeschakeld":
+            result["google_indexing"] = google_result
+
     # ── Social fan-out — alleen platformen met geldige credentials voor deze site ──
     site_name = site["name"]
     if social_copy.get("linkedin") and linkedin_service.is_configured(site_name):
@@ -572,18 +700,16 @@ async def regenerate_job(job_id: str) -> str:
     job = get_job(job_id)
     if not job:
         raise ValueError("Content-job niet gevonden.")
-    if job["status"] != "pending_review":
+    if job["status"] not in ("pending_review", "needs_work"):
         raise ValueError(f"Job heeft status '{job['status']}', kan niet opnieuw gegenereerd worden.")
 
     site = sites_service.get_site(job["site_id"])
     if not site:
         raise ValueError("Site niet gevonden.")
 
-    html_body = await _write_article(site, job["keyword"], "", job["rationale"])
-    review = await _review_article(site, job["keyword"], html_body)
-    if review["score"] < 75 and review["feedback"]:
-        html_body = await _optimize_article(site, job["keyword"], html_body, review["feedback"])
-        review = await _review_article(site, job["keyword"], html_body)
+    html_body, qc_report, case_study_id = await _write_article_best(
+        site, job["keyword"], "", job["rationale"])
+    html_body, review = await review_and_improve(site, job["keyword"], html_body)
 
     title = _extract_title(html_body, fallback=job["title"])
     slug = slugify_title(title)
@@ -592,8 +718,11 @@ async def regenerate_job(job_id: str) -> str:
     import base64
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
 
+    from ...shared.config import CONTENT_MIN_SCORE
     _update_job(
         job_id, title=title, blog_html=html_body, seo_score=review["score"],
         social_copy=json.dumps(social_copy), image_path=image_b64, slug=slug,
+        status="pending_review" if review["score"] >= CONTENT_MIN_SCORE else "needs_work",
+        qc_report=json.dumps(qc_report, ensure_ascii=False), case_study_id=case_study_id,
     )
     return job_id

@@ -141,13 +141,51 @@ _INDEX_TMPL = (
 )
 
 
-def build_site_files(site_id: str, site_name: str) -> Dict[str, Union[str, bytes]]:
+def _site_base_url(site: Dict) -> str:
+    """Absolute basis-URL van de site: ingesteld base_url, anders afgeleid uit
+    een eerder gedeployde pagina-URL (Netlify-URL's zijn stabiel per site)."""
+    base = (site.get("base_url") or "").strip().rstrip("/")
+    if base:
+        return base
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT url FROM published_pages WHERE site_id = ? AND url != '' "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (site["id"],),
+        ).fetchone()
+    if row and row["url"].startswith("http"):
+        parsed = row["url"].split("/", 3)
+        return f"{parsed[0]}//{parsed[2]}"
+    return ""
+
+
+def _sitemap_xml(base_url: str, pages: List[Dict]) -> str:
+    """sitemap.xml voor de statische site — deze wordt na elke publicatie bij
+    Google Search Console ingediend, dus hij moet ook echt bestaan."""
+    entries = [f"  <url><loc>{_html.escape(base_url)}/</loc></url>"]
+    for p in pages:
+        lastmod = (p.get("updated_at") or "")[:10]
+        lastmod_tag = f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
+        entries.append(
+            f"  <url><loc>{_html.escape(base_url)}/{p['slug']}/</loc>{lastmod_tag}</url>"
+        )
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "\n".join(entries) + "\n</urlset>\n"
+    )
+
+
+def build_site_files(site_id: str, site_name: str, base_url: str = "",
+                     indexnow_key: str = "") -> Dict[str, Union[str, bytes]]:
     """Bouw alle bestanden voor de volledige statische site (testbaar zonder netwerk).
 
     Elke pagina met een opgeslagen quote-card (image_b64) krijgt ook een
     `images/{slug}.png`-bestand mee, zodat er een publieke image-url bestaat
     (nodig voor Instagram, dat zelf geen bestanden accepteert — alleen URL's).
-    """
+    Met een bekende `base_url` komt er ook een sitemap.xml mee (die wordt na
+    publicatie bij GSC ingediend); met een `indexnow_key` het key-bestand dat
+    IndexNow op de site-root verwacht."""
     pages = _all_pages_full(site_id)
     files: Dict[str, Union[str, bytes]] = {}
     items = "".join(
@@ -167,6 +205,10 @@ def build_site_files(site_id: str, site_name: str) -> Dict[str, Union[str, bytes
                 files[f'images/{p["slug"]}.png'] = base64.b64decode(p["image_b64"])
             except Exception:
                 pass
+    if base_url:
+        files["sitemap.xml"] = _sitemap_xml(base_url.rstrip("/"), pages)
+    if indexnow_key:
+        files[f"{indexnow_key}.txt"] = indexnow_key
     return files
 
 
@@ -217,7 +259,14 @@ async def publish_article(
     slug = slugify(slug or title)
     _upsert_page(site_id, slug, title.strip(), html_body, image_bytes=image_bytes)
 
-    files = build_site_files(site_id, site.get("name") or "Blog")
+    # Sitemap (voor de GSC-submit) + IndexNow-key-bestand meedeployen. Bij de
+    # allereerste deploy is de basis-URL nog onbekend — dan komt de sitemap
+    # vanaf de tweede publicatie mee (Netlify-URL's zijn stabiel).
+    from . import indexing as indexing_service
+    base_url = _site_base_url(site)
+    indexnow_key = indexing_service.ensure_indexnow_key(site)
+    files = build_site_files(site_id, site.get("name") or "Blog",
+                             base_url=base_url, indexnow_key=indexnow_key)
     zip_bytes = _zip_files(files)
     deploy = await _deploy_zip(site_api_id, token, zip_bytes)
 

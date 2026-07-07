@@ -19,6 +19,7 @@ async function renderInstellingenTab(el) {
   var html = '<h3 style="font-size:15px;font-weight:700;margin-bottom:16px">Instellingen &amp; Beheer</h3>';
 
   html += await renderSitePublishSettings();
+  html += await renderKennisbankSettings();
 
   // ── Agent Profielen tabel ──
   html += '<div class="section-card"><h4 style="font-size:13px;font-weight:600;margin-bottom:8px">Agent Profielen (' + (profiles||[]).length + ')</h4>' +
@@ -135,6 +136,103 @@ async function saveSitePublishSettings(btn) {
     else { var statusEl = document.getElementById('site-settings-status'); if (statusEl) statusEl.textContent = 'Opgeslagen ✓'; renderInstellingenTab(document.getElementById('tab-content')); }
   } catch(e) { alert('Fout: ' + e.message); }
   if (btn) { btn.disabled = false; btn.textContent = 'Opslaan'; }
+}
+
+// ── Kennisbank: profiel/USP's, CTA's, batch-grootte + casestudies per site ──
+async function renderKennisbankSettings() {
+  var site = window._settingsSite;
+  if (!site) return '';
+  var studies = [];
+  try { studies = await (await fetch('/api/knowledge/' + site.id + '/case-studies')).json(); } catch(e) {}
+
+  var ctas = [];
+  try { ctas = JSON.parse(site.ctas || '[]'); } catch(e) {}
+
+  var html = '<div class="section-card" style="margin-bottom:16px">' +
+    '<h4 style="font-size:13px;font-weight:600;margin-bottom:4px">Kennisbank — ' + escHtml(site.name) + '</h4>' +
+    '<p style="font-size:11px;color:#94a3b8;margin-bottom:10px">Dit gaat in élke schrijfopdracht mee (information gain): wie je bent, je CTA\'s en één passende casestudy als bewijs. Hoe concreter, hoe minder generiek de artikelen.</p>' +
+    '<label style="display:block;margin-bottom:8px"><span style="display:block;font-size:11px;color:#64748b;margin-bottom:2px">Profiel &amp; USP\'s (wie ben je, voor wie, waarom jij)</span>' +
+    '<textarea id="kb-profile" rows="4" style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;box-sizing:border-box">' + escHtml(site.profile || '') + '</textarea></label>' +
+    '<label style="display:block;margin-bottom:8px"><span style="display:block;font-size:11px;color:#64748b;margin-bottom:2px">Call-to-actions (één per regel, bv. "Plan een gratis kennismaking → /contact")</span>' +
+    '<textarea id="kb-ctas" rows="3" style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;box-sizing:border-box">' + escHtml(ctas.join('\n')) + '</textarea></label>' +
+    '<label style="display:block;margin-bottom:8px"><span style="display:block;font-size:11px;color:#64748b;margin-bottom:2px">Artikelen per auto-content-run (1-10)</span>' +
+    '<input type="number" id="kb-batch" min="1" max="10" value="' + (site.content_batch_size || 1) + '" style="width:80px;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px" /></label>' +
+    '<button onclick="saveKennisbank(this)" style="padding:6px 16px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Opslaan</button>' +
+    '<span id="kb-status" style="margin-left:10px;font-size:11px;color:#059669"></span>';
+
+  // Casestudies
+  html += '<h5 style="font-size:12px;font-weight:600;margin:16px 0 4px">Casestudies (' + (studies||[]).length + ')</h5>' +
+    '<p style="font-size:11px;color:#94a3b8;margin-bottom:8px">Harde data en resultaten van echte projecten. Bij elk artikel wordt automatisch de best passende casestudy gematcht (op tags/titel).</p>';
+  (studies||[]).forEach(function(cs){
+    html += '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:8px' + (cs.status === 'archived' ? ';opacity:.55' : '') + '">' +
+      '<div style="min-width:0"><div style="font-size:12px;font-weight:600">' + escHtml(cs.title) + (cs.status === 'archived' ? ' <span style="font-weight:400;color:#94a3b8">(gearchiveerd)</span>' : '') + '</div>' +
+      '<div style="font-size:11px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(cs.summary || '') + '</div>' +
+      (cs.tags ? '<div style="font-size:10px;color:#94a3b8">tags: ' + escHtml(cs.tags) + '</div>' : '') + '</div>' +
+      '<div style="flex-shrink:0;display:flex;gap:4px">' +
+      '<button onclick="toggleCaseStudy(\'' + cs.id + '\',\'' + (cs.status === 'archived' ? 'active' : 'archived') + '\')" style="padding:3px 8px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:5px;font-size:10px;cursor:pointer">' + (cs.status === 'archived' ? 'Activeer' : 'Archiveer') + '</button>' +
+      '<button onclick="deleteCaseStudy(\'' + cs.id + '\')" style="padding:3px 8px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:5px;font-size:10px;cursor:pointer">Verwijder</button>' +
+      '</div></div>';
+  });
+  html += '<div style="border:1px dashed #cbd5e1;border-radius:8px;padding:10px;margin-top:8px">' +
+    '<div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px">Nieuwe casestudy</div>' +
+    '<input id="cs-title" placeholder="Titel (bv. Webshop X: +140% organisch verkeer in 6 maanden)" style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;box-sizing:border-box;margin-bottom:6px" />' +
+    '<textarea id="cs-summary" rows="2" placeholder="Korte samenvatting (gaat in de prompt-matching mee)" style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;box-sizing:border-box;margin-bottom:6px"></textarea>' +
+    '<textarea id="cs-body" rows="4" placeholder="Details: concrete cijfers, aanpak, resultaten. De AI gebruikt dit letterlijk als bewijs — verzin niets." style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;box-sizing:border-box;margin-bottom:6px"></textarea>' +
+    '<div style="display:flex;gap:6px"><input id="cs-tags" placeholder="Tags, komma-gescheiden (bv. seo, webshop, linkbuilding)" style="flex:1;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px" />' +
+    '<button onclick="addCaseStudy(this)" style="padding:6px 16px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;flex-shrink:0">Toevoegen</button></div>' +
+    '</div></div>';
+  return html;
+}
+
+async function saveKennisbank(btn) {
+  var site = window._settingsSite; if (!site) return;
+  var ctaLines = (document.getElementById('kb-ctas').value || '').split('\n')
+    .map(function(l){ return l.trim(); }).filter(function(l){ return l; });
+  var body = {
+    profile: document.getElementById('kb-profile').value,
+    ctas: JSON.stringify(ctaLines),
+    content_batch_size: parseInt(document.getElementById('kb-batch').value, 10) || 1,
+  };
+  if (btn) { btn.disabled = true; btn.textContent = 'Opslaan...'; }
+  try {
+    var resp = await fetch('/api/sites/' + site.id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    if (!resp.ok) { var d = await resp.json(); alert('Mislukt: ' + (d.detail || 'onbekende fout')); }
+    else { var el = document.getElementById('kb-status'); if (el) el.textContent = 'Opgeslagen ✓'; }
+  } catch(e) { alert('Fout: ' + e.message); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Opslaan'; }
+}
+
+async function addCaseStudy(btn) {
+  var site = window._settingsSite; if (!site) return;
+  var body = {
+    title: document.getElementById('cs-title').value.trim(),
+    summary: document.getElementById('cs-summary').value.trim(),
+    body: document.getElementById('cs-body').value.trim(),
+    tags: document.getElementById('cs-tags').value.trim(),
+  };
+  if (!body.title) { alert('Titel is verplicht.'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Toevoegen...'; }
+  try {
+    var resp = await fetch('/api/knowledge/' + site.id + '/case-studies', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    if (!resp.ok) { var d = await resp.json(); alert('Mislukt: ' + (d.detail || 'onbekende fout')); }
+    else renderInstellingenTab(document.getElementById('tab-content'));
+  } catch(e) { alert('Fout: ' + e.message); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Toevoegen'; }
+}
+
+async function toggleCaseStudy(csId, newStatus) {
+  try {
+    await fetch('/api/knowledge/case-studies/' + csId, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({status: newStatus}) });
+    renderInstellingenTab(document.getElementById('tab-content'));
+  } catch(e) { alert('Fout: ' + e.message); }
+}
+
+async function deleteCaseStudy(csId) {
+  if (!confirm('Casestudy definitief verwijderen? (Archiveren kan ook — dan blijft hij bewaard.)')) return;
+  try {
+    await fetch('/api/knowledge/case-studies/' + csId, { method: 'DELETE' });
+    renderInstellingenTab(document.getElementById('tab-content'));
+  } catch(e) { alert('Fout: ' + e.message); }
 }
 
 // ═══════════════════════════════════════════════════════════════════

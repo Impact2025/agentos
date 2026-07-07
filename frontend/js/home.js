@@ -106,6 +106,7 @@ var _acKindMeta = {
   goal_ready:    { icon: '▶',    color: '#3b82f6', label: 'Klaar om te starten' },
   goal_failed:   { icon: '✗',    color: '#ef4444', label: 'Vastgelopen doel' },
   content_review:{ icon: '\u{1F4F0}', color: '#8b5cf6', label: 'Content ter review' },
+  content_needs_work: { icon: '\u{1F6E0}\u{FE0F}', color: '#f59e0b', label: 'Onder kwaliteitsgrens' },
   task_approval: { icon: '✓',    color: '#0ea5e9', label: 'Taak wacht op goedkeuring' },
   vacancies:     { icon: '\u{1F4BC}', color: '#10b981', label: 'Opdracht-kansen' },
   leads:         { icon: '\u{1F465}', color: '#10b981', label: 'Nieuwe leads' },
@@ -252,6 +253,9 @@ function acAction(btn, action, project) {
     post('/api/content-queue/' + encodeURIComponent(action.id) + '/approve').then(done).catch(fail);
   } else if (type === 'content_reject') {
     post('/api/content-queue/' + encodeURIComponent(action.id) + '/reject').then(done).catch(fail);
+  } else if (type === 'content_regenerate') {
+    if (btn) btn.textContent = 'Agent herschrijft... (kan even duren)';
+    post('/api/content-queue/' + encodeURIComponent(action.id) + '/regenerate').then(done).catch(fail);
   } else if (type === 'task_approve') {
     fetch('/api/tasks/' + encodeURIComponent(action.id) + '/status', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status:'done'}) })
       .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(done).catch(fail);
