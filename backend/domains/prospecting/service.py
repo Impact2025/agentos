@@ -746,7 +746,10 @@ Status: **{lead.get('status', 'prospect').title()}**
                 body_html=html_body,
             ))
             if result.get("success"):
-                self.update_status(lead_id, "contacted")
+                # Via de funnel zodat contacted_at gestempeld wordt — anders
+                # telt deze verstuurde mail niet mee in de conversieformule.
+                from . import funnel
+                funnel.advance_lead(lead_id, "contacted")
                 return {
                     "status": "sent",
                     "to": target_email,

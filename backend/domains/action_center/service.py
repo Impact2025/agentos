@@ -226,6 +226,31 @@ def build_inbox() -> Dict[str, Any]:
                 ],
             })
 
+        # ── 5b. Outreach-concepten die op jouw verzendklik wachten ──────
+        # De input-kant van de acquisitieformule: de agent schreef het
+        # concept, alleen jij kunt versturen (Wachtrij-gate voor e-mail).
+        for l in conn.execute(
+            "SELECT id, org_name, city, email, outreach_subject, outreach_draft, "
+            "outreach_drafted_at, score FROM leads WHERE status='outreach_review' "
+            "ORDER BY score DESC, outreach_drafted_at DESC"
+        ):
+            if ("outreach", l["id"]) in skip:
+                continue
+            preview = (l["outreach_draft"] or "").replace("\n", " ")[:140]
+            items.append({
+                "kind": "outreach_review",
+                "dismiss_kind": "outreach",
+                "id": l["id"],
+                "title": f"Outreach klaar: {l['org_name']}" + (f" ({l['city']})" if l["city"] else ""),
+                "project": "Leads",
+                "created_at": l["outreach_drafted_at"] or None,
+                "summary": f"‘{l['outreach_subject']}’ — {preview}",
+                "actions": [
+                    {"label": "Verstuur", "type": "outreach_send", "id": l["id"]},
+                    {"label": "Wijs af (lead vervalt)", "type": "outreach_dismiss", "id": l["id"], "danger": True},
+                ],
+            })
+
         # ── 6. Kansen: nieuwe leads (gegroepeerd) ───────────────────────
         leads = conn.execute("SELECT COUNT(*) AS n FROM leads WHERE status='new'").fetchone()
         if leads["n"] and ("leads", "open") not in skip:

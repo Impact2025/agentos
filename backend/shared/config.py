@@ -79,6 +79,11 @@ GOOGLE_INDEXING_ENABLED: bool = os.getenv("GOOGLE_INDEXING_ENABLED", "0") == "1"
 # probeert eerst automatisch te verbeteren (max 3 rondes).
 CONTENT_MIN_SCORE: int = int(os.getenv("CONTENT_MIN_SCORE", "80"))
 
+# Acquisitie-formule (input → output): hoeveel outreach-concepten de agent
+# elke werkdag klaarzet ter review. Er wordt NOOIT automatisch verstuurd —
+# versturen gebeurt alleen na expliciete goedkeuring in het Actiecentrum.
+OUTREACH_DAILY_TARGET: int = int(os.getenv("OUTREACH_DAILY_TARGET", "10"))
+
 BASE_DIR = Path(__file__).parent.parent.parent
 DATA_DIR = BASE_DIR / "data"
 # AGENTOS_DB_PATH override: tests draaien tegen een wegwerp-database.

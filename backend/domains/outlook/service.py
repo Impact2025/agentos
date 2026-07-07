@@ -330,6 +330,17 @@ async def sync_inbox(limit: int = 50) -> List[dict]:
                 now,
             ))
 
+    # Reply-detectie voor de acquisitieformule: inkomende mail van een lead
+    # die we benaderd hebben → status 'replied' (+ uitkomst-kaart voor Vincent).
+    try:
+        from ..prospecting.funnel import mark_replied_if_lead
+        for m in messages:
+            from_addr = (m.get("from") or {}).get("emailAddress", {}).get("address", "")
+            if from_addr:
+                mark_replied_if_lead(from_addr, m.get("receivedDateTime", ""))
+    except Exception as e:
+        log.warning(f"Reply-detectie op leads mislukt: {e}")
+
     return list_emails_db(limit=limit)
 
 

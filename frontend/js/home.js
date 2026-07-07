@@ -256,6 +256,11 @@ function acAction(btn, action, project) {
   } else if (type === 'content_regenerate') {
     if (btn) btn.textContent = 'Agent herschrijft... (kan even duren)';
     post('/api/content-queue/' + encodeURIComponent(action.id) + '/regenerate').then(done).catch(fail);
+  } else if (type === 'outreach_send') {
+    if (!confirm('Deze outreach-mail wordt ECHT verstuurd naar de lead. Doorgaan?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
+    post('/api/leads/' + encodeURIComponent(action.id) + '/outreach-approve').then(done).catch(fail);
+  } else if (type === 'outreach_dismiss') {
+    post('/api/leads/' + encodeURIComponent(action.id) + '/outreach-dismiss').then(done).catch(fail);
   } else if (type === 'task_approve') {
     fetch('/api/tasks/' + encodeURIComponent(action.id) + '/status', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status:'done'}) })
       .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(done).catch(fail);

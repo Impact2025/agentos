@@ -453,6 +453,16 @@ def _migrate(conn) -> None:
         ("tags",             "ALTER TABLE leads ADD COLUMN tags TEXT DEFAULT '[]'"),
         ("hunter_verified",  "ALTER TABLE leads ADD COLUMN hunter_verified INTEGER DEFAULT 0"),
         ("email_status",     "ALTER TABLE leads ADD COLUMN email_status TEXT DEFAULT ''"),
+        # Acquisitie-formule: funnel-tijdstempels (eenmalig gezet — de basis
+        # voor conversiemeting input → output) + outreach-concept achter de gate.
+        ("contacted_at",     "ALTER TABLE leads ADD COLUMN contacted_at TEXT DEFAULT ''"),
+        ("replied_at",       "ALTER TABLE leads ADD COLUMN replied_at TEXT DEFAULT ''"),
+        ("call_at",          "ALTER TABLE leads ADD COLUMN call_at TEXT DEFAULT ''"),
+        ("won_at",           "ALTER TABLE leads ADD COLUMN won_at TEXT DEFAULT ''"),
+        ("lost_at",          "ALTER TABLE leads ADD COLUMN lost_at TEXT DEFAULT ''"),
+        ("outreach_subject", "ALTER TABLE leads ADD COLUMN outreach_subject TEXT DEFAULT ''"),
+        ("outreach_draft",   "ALTER TABLE leads ADD COLUMN outreach_draft TEXT DEFAULT ''"),
+        ("outreach_drafted_at", "ALTER TABLE leads ADD COLUMN outreach_drafted_at TEXT DEFAULT ''"),
     ):
         if col not in lead_cols:
             conn.execute(ddl)

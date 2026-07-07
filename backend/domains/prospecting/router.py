@@ -428,6 +428,114 @@ class OutreachSendRequest(BaseModel):
     custom_message: str = ""
 
 
+class OutreachApproveRequest(BaseModel):
+    subject: str = ""   # optioneel: door Vincent aangepaste onderwerpregel
+    body: str = ""      # optioneel: door Vincent aangepaste mailtekst
+
+
+# ── Acquisitie-formule: batch, review-gate en funnel ──────────────────────────
+
+@router.post("/outreach-batch")
+async def run_outreach_batch(count: int = Query(0, ge=0, le=50)):
+    """Zet nu een batch outreach-concepten klaar ter review (default: dagtarget).
+
+    Verstuurt niets — concepten verschijnen in het Actiecentrum voor goedkeuring."""
+    from . import outreach
+    return await outreach.prepare_outreach_batch(count)
+
+
+@router.get("/outreach-review")
+def list_outreach_review():
+    """Alle outreach-concepten die op menselijke goedkeuring wachten."""
+    from . import outreach
+    leads = _svc.list_leads(status="outreach_review")
+    for lead in leads:
+        lead["target_email"] = outreach.target_email_for(lead)
+    return leads
+
+
+@router.post("/{lead_id}/outreach-approve")
+async def approve_outreach(lead_id: str, body: OutreachApproveRequest = OutreachApproveRequest()):
+    """DE verzendknop: verstuur het goedgekeurde concept via Outlook/Graph.
+
+    Dit is de enige plek waar outreach daadwerkelijk de deur uitgaat.
+    Status → contacted (met tijdstempel: de input telt mee in de formule)."""
+    from . import funnel, outreach
+    from ..outlook import service as outlook
+
+    lead = _svc.get_lead(lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead niet gevonden")
+
+    subject = (body.subject or lead.get("outreach_subject") or "").strip()
+    mail_body = (body.body or lead.get("outreach_draft") or "").strip()
+    if not subject or not mail_body:
+        raise HTTPException(status_code=422, detail="Geen concept aanwezig — draai eerst de outreach-batch.")
+
+    target = outreach.target_email_for(lead)
+    if not target:
+        raise HTTPException(status_code=422, detail="Geen e-mailadres bekend voor deze lead.")
+    if not outlook.is_authenticated():
+        raise HTTPException(
+            status_code=422,
+            detail="Outlook/Graph niet geauthenticeerd — log in via Instellingen → Outlook.",
+        )
+
+    result = await outlook.send_new_email(
+        to=target, subject=subject, body_html=mail_body.replace("\n", "<br>"),
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=f"Versturen mislukt: {result}")
+
+    # Bewaar wat er echt verstuurd is (evt. door Vincent aangepast) als record.
+    from ...shared.database import get_conn
+    from .service import _now
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE leads SET outreach_subject = ?, outreach_draft = ?, updated_at = ? WHERE id = ?",
+            (subject, mail_body, _now(), lead_id),
+        )
+    updated = funnel.advance_lead(lead_id, "contacted")
+
+    from ...shared.outcomes import log_outcome
+    log_outcome(
+        "Leads", "outreach_sent",
+        f"Outreach verstuurd aan {lead['org_name']} ({target}): '{subject}'",
+        next_step="Reply-detectie staat aan — je hoort het zodra ze reageren.",
+    )
+    return {"status": "sent", "to": target, "subject": subject, "lead": updated}
+
+
+@router.post("/{lead_id}/outreach-dismiss")
+def dismiss_outreach(lead_id: str):
+    """Wijs een concept af: de lead gaat naar 'lost' (met tijdstempel).
+
+    Zonder deze zijuitgang zou een afgewezen lead de volgende ochtend gewoon
+    weer in de batch opduiken. Toch nog benaderen? Zet de status handmatig
+    terug via PATCH /api/leads/{id} — dan doet hij weer mee."""
+    from . import funnel
+    lead = _svc.get_lead(lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead niet gevonden")
+    from ...shared.database import get_conn
+    from .service import _now
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE leads SET outreach_subject = '', outreach_draft = '', "
+            "outreach_drafted_at = '', updated_at = ? WHERE id = ?",
+            (_now(), lead_id),
+        )
+    funnel.advance_lead(lead_id, "lost")
+    return {"status": "dismissed", "lead_id": lead_id, "back_to": "lost"}
+
+
+@router.get("/funnel")
+def funnel_overview():
+    """De conversieformule: funnel-standen, ratio's en geleverde inputs (7 dagen)."""
+    from . import funnel
+    return {**funnel.funnel_stats(), "inputs": funnel.input_stats(days=7)}
+
+
 @router.post("/{lead_id}/outreach-send")
 async def send_lead_outreach(lead_id: str, body: OutreachSendRequest = OutreachSendRequest()):
     """

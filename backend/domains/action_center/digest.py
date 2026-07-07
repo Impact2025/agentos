@@ -80,6 +80,7 @@ def build_digest() -> Dict[str, Any]:
             "task_approval": "taak/taken wachten op goedkeuring",
             "vacancies": "vacature-kansen met hoge fit",
             "leads": "nieuwe leads voor eerste contact",
+            "outreach_review": "outreach-concept(en) wachten op je verzendklik",
         }
         for kind, n in sorted(by_kind.items(), key=lambda x: -x[1]):
             lines.append(f"- {n} {kind_labels.get(kind, kind)}")
@@ -102,6 +103,35 @@ def build_digest() -> Dict[str, Any]:
     else:
         lines.append("- (geen opgeleverde resultaten in de afgelopen 24 uur)")
     lines.append("")
+
+    # ── 3b. De formule: input → output, gemeten ──
+    # Sales als conversieformule — je stuurt op de input (verstuurde outreach,
+    # gepubliceerde content) en dit blok laat zien of de cijfers al werken.
+    try:
+        from ...domains.prospecting import funnel as funnel_mod
+        f = funnel_mod.funnel_stats()
+        inp = funnel_mod.input_stats(days=7)
+        lines.append("## 📈 De formule (laatste 7 dagen)")
+        lines.append(
+            f"- Input: {inp['outreach_sent']}/{inp['outreach_target']} outreach verstuurd · "
+            f"{inp['outreach_drafts_ready']} concept(en) wachten op je verzendklik · "
+            f"{inp['content_live']} artikel(en) live"
+        )
+        r = f["reached"]
+        lines.append(
+            f"- Funnel totaal: {r['contacted']} benaderd → {r['replied']} gereageerd → "
+            f"{r['call']} gesprek → {r['won']} klant"
+        )
+        if f["formula"]:
+            lines.append(f"- **Formule: {f['formula']}**")
+        if inp["outreach_sent"] < inp["outreach_target"]:
+            lines.append(
+                f"- ⚡ Onder target: keur wachtende concepten goed of draai een extra batch — "
+                "de output volgt de input."
+            )
+        lines.append("")
+    except Exception:
+        logger.exception("Formule-sectie in ochtendrapport mislukt")
 
     # ── 4. Vandaag gepland ──
     try:

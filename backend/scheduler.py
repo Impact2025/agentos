@@ -37,6 +37,7 @@ _JOB_LABELS = {
     "seo_optimizer_scan": "SEO Optimizer-scan (interne links, CTR, refresh)",
     "radar_sky_scan": "Mission Radar sky-scan (concurrenten & trends, elke 4 uur)",
     "daily_digest": "Ochtendrapport (fouten · wacht-op-jou · gisteren opgeleverd)",
+    "daily_outreach_batch": "Outreach-batch (concepten klaarzetten ter review, ma-vr)",
 }
 
 
@@ -170,6 +171,18 @@ def start_scheduler() -> None:
         run_daily_digest,
         CronTrigger(hour=7, minute=0, timezone=_TZ),
         id="daily_digest",
+        replace_existing=True,
+        misfire_grace_time=6 * 3600,
+        coalesce=True,
+    )
+    # Outreach-batch: elke werkdag concepten klaarzetten voor de beste
+    # onbenaderde leads (OUTREACH_DAILY_TARGET). Verstuurt NOOIT zelf —
+    # concepten wachten in het Actiecentrum op Vincents verzendklik.
+    from .domains.prospecting.outreach import run_daily_outreach_batch
+    _scheduler.add_job(
+        run_daily_outreach_batch,
+        CronTrigger(day_of_week="mon-fri", hour=7, minute=15, timezone=_TZ),
+        id="daily_outreach_batch",
         replace_existing=True,
         misfire_grace_time=6 * 3600,
         coalesce=True,
