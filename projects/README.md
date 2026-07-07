@@ -26,3 +26,4 @@ projects/onze-nieuwe-klant/
 |---|---|
 | bewaardvoorjou | Keepsake-merk voor 65+-doelgroep |
 | steentjebij-steentje | Vastgoed, bouw en hypotheek |
+| daarwebsite | Daar (daar.nl) — vrijwilligersplatform; blog + kennisbank in Neon-database |
