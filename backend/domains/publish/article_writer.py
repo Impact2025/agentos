@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -193,20 +194,88 @@ async def _format_pass(html_body: str) -> str:
 
 # ── Fase 4: Links ────────────────────────────────────────────────────────────
 
+# ── Canonieke URL-allowlist: interne links mogen ALLEEN naar deze bestemmingen.
+# Harde uitsluiting van URLs die in de praktijk 404'en (gehallucineerd door oudere
+# schrijf-runs) — deze mogen nooit meer als interne link worden voorgesteld.
+_BLOCKED_INTERNAL_URLS = {
+    "https://weareimpact.nl/digitalisering-bij-gemeenten",
+    "https://weareimpact.nl/interim-management-sociaal-domein",
+    "https://weareimpact.nl/lego-serious-play-draagvlak",
+    "https://weareimpact.nl/case-digitale-transformatie-welzijn",
+}
+_BLOCKED_INTERNAL_PATHS = {urlparse(u).path.rstrip("/") for u in _BLOCKED_INTERNAL_URLS}
+
+# Optionele grondbron: het gevalideerde URL-register (Obsidian-vault / SEO/
+# url-register-<site>.json). Als die bestaat, worden ALLEEN urls die daarin
+# staan als kandidaat toegelaten — zo kan de sitemap nooit meer kapotte links
+# leveren. Zonder register blijft de sitemap de fallback (minus de blokkades).
+_URL_REGISTER_CACHE: Dict[str, Optional[set]] = {}
+
+
+def _load_url_register(site: Dict) -> Optional[set]:
+    """Laad de gevalideerde URL-set uit het vault-register voor deze site.
+
+    Retourneert een set van genormaliseerde URLs (zonder trailing slash) of
+    None als er geen register is (fallback op sitemap)."""
+    base = (site.get("base_url") or "").strip().rstrip("/").lower()
+    if base in _URL_REGISTER_CACHE:
+        return _URL_REGISTER_CACHE[base]
+    _URL_REGISTER_CACHE[base] = None  # default tenzij we een register vinden
+    try:
+        from pathlib import Path
+        # Zoek het register in de Obsidian-vault (WeAreImpact/SEO/url-register-*.json)
+        vault_root = os.getenv("OBSIDIAN_VAULT_PATH", "")
+        if vault_root:
+            candidates = list(Path(vault_root).rglob("url-register-*.json"))
+            for c in candidates:
+                try:
+                    data = json.loads(c.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                reg_base = (data.get("site") or "").strip().rstrip("/").lower()
+                base_host = base.split("://", 1)[-1].split("/", 1)[0] if base else ""
+                reg_host = reg_base.split("://", 1)[-1].split("/", 1)[0] if reg_base else ""
+                if reg_host and reg_host == base_host:
+                    urls = {u.rstrip("/") for u in data.get("urls", [])}
+                    if urls:
+                        _URL_REGISTER_CACHE[base] = urls
+                        logger.info("[article-writer] URL-register geladen: %d urls uit %s", len(urls), c)
+                        break
+    except Exception as e:
+        logger.debug("[article-writer] URL-register laden mislukt: %s", str(e)[:150])
+    return _URL_REGISTER_CACHE[base]
+
+
+def _is_allowed_internal(url: str, register: Optional[set]) -> bool:
+    u = url.strip().rstrip("/")
+    if u in _BLOCKED_INTERNAL_URLS:
+        return False
+    if urlparse(u).path.rstrip("/") in _BLOCKED_INTERNAL_PATHS:
+        return False
+    if register is not None:
+        return u in register  # register is de enige bron van waarheid
+    return True  # fallback: sitemap (minus blokkades)
+
+
 def _link_candidates(site: Dict) -> List[Dict[str, str]]:
-    """Écht bestaande interne pagina's: eigen published_pages + live sitemap."""
+    """Écht bestaande interne pagina's: eigen published_pages + live sitemap.
+
+    Gefilterd door de canonieke allowlist: bekende 404-URLs worden permanent
+    geweerd, en als er een gevalideerd URL-register bestaat (Obsidian-vault)
+    worden uitsluitend die URLs toegelaten — zo werken interne links altijd."""
     from . import service as publish_service
     from ..seo import external_content
 
+    register = _load_url_register(site)
     seen: set = set()
     candidates: List[Dict[str, str]] = []
     for p in publish_service.list_pages(site["id"]):
         url = (p.get("url") or "").strip()
-        if url and url not in seen:
+        if url and url not in seen and _is_allowed_internal(url, register):
             seen.add(url)
             candidates.append({"url": url, "title": p.get("title") or ""})
     for url in external_content.fetch_live_sitemap_urls(site):
-        if url not in seen:
+        if url not in seen and _is_allowed_internal(url, register):
             seen.add(url)
             slug = url.rstrip("/").rsplit("/", 1)[-1]
             candidates.append({"url": url, "title": slug.replace("-", " ")})

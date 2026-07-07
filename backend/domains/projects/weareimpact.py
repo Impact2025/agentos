@@ -456,10 +456,13 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
     content_dir.mkdir(parents=True, exist_ok=True)
     slug = _slugify(body.title)
 
-    # ── FASE 1: Schrijven (vault-gedreven schrijfstijl via content_pipeline) ──
+    # ── FASE 1: Schrijven (meertraps-generator: outline → secties → opmaak →
+    #    gevalideerde links → QC; valt zelf terug op single-shot bij falen) ──
     logger.info(f"[SEO-pipeline] Fase 1: Schrijven — '{body.title}'")
 
-    html_body = await content_pipeline._write_article(site, body.keyword, body.title, body.rationale)
+    keyword = (body.keyword or body.title).strip()
+    html_body, qc_report, _case_study_id = await content_pipeline._write_article_best(
+        site, keyword, body.title, body.rationale)
     if not html_body:
         raise HTTPException(500, "Kon geen artikel genereren — lege response van Hermes")
 
@@ -471,7 +474,7 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
     logger.info(f"[SEO-pipeline] Fase 2: SEO review — '{body.title}'")
     _set_job(job_id, phase="SEO-kwaliteit beoordelen...", percent=45)
 
-    review = await content_pipeline._review_article(site, body.keyword, html_body)
+    review = await content_pipeline._review_article(site, keyword, html_body)
     seo_score = review["score"] / 10.0  # content_pipeline gebruikt 0-100, hier tonen we 0-10
 
     _set_job(job_id, phase=f"SEO-score {seo_score:.1f}/10 — voorbereiden volgende stap...", percent=60)
@@ -492,14 +495,14 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
                                 f"huidige score {review['score']}/100)...", percent=min(60 + rounds * 10, 90))
 
         optimized_html = await content_pipeline._optimize_article(
-            site, body.keyword, optimized_html, review["feedback"]
+            site, keyword, optimized_html, review["feedback"]
         )
 
         _set_job(job_id, phase=f"Herbeoordelen na optimalisatieronde {rounds}...", percent=min(65 + rounds * 10, 92))
         # Pauze om 429-rate-limit te voorkomen
         await asyncio.sleep(10)
 
-        review = await content_pipeline._review_article(site, body.keyword, optimized_html)
+        review = await content_pipeline._review_article(site, keyword, optimized_html)
         seo_score = review["score"] / 10.0
 
     if rounds:
@@ -520,17 +523,25 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
     from datetime import date
     today = date.today().isoformat()
 
-    # Genereer een korte samenvatting als meta description
-    meta_desc = f"Blog over {body.keyword} — {body.rationale[:150]}" if body.rationale else f"Blog over {body.keyword} voor WeAreImpact.nl"
-    meta_desc = meta_desc[:160]
+    # Titel = de H1 die de generator schreef (pakkender dan het kale zoekwoord).
+    final_title = content_pipeline._extract_title(optimized_html, fallback=body.title.strip())
+
+    # Meta description = eerste alinea van het artikel zelf. NOOIT de rationale —
+    # dat is interne Demand-Engine-analyse ("SEO-kans uit GSC: ...") en die stond
+    # eerder letterlijk als intro op de live site.
+    first_p = re.search(r"<p[^>]*>(.*?)</p>", optimized_html, re.S)
+    meta_desc = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", first_p.group(1))).strip() if first_p else ""
+    if len(meta_desc) < 40:
+        meta_desc = f"Praktische gids over {keyword} — met concrete stappen en voorbeelden."
+    meta_desc = meta_desc[:157].rsplit(" ", 1)[0] + "…" if len(meta_desc) > 157 else meta_desc
 
     word_count = len(optimized_html.split())
 
     full_content = (
         "---\n"
-        f"title: \"{body.title.strip()}\"\n"
+        f"title: \"{final_title}\"\n"
         f"slug: {slug}\n"
-        f"keyword: \"{body.keyword}\"\n"
+        f"keyword: \"{keyword}\"\n"
         f"description: \"{meta_desc}\"\n"
         f"created_at: {today}\n"
         f"word_count: {word_count}\n"
@@ -552,10 +563,10 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
         obsidian_path = _obsidian.write_note(
             project_name=name,
             slug=slug,
-            title=body.title.strip(),
+            title=final_title,
             content_html=optimized_html.strip(),
             metadata={
-                "keyword": body.keyword,
+                "keyword": keyword,
                 "seo_score": round(seo_score, 1),
                 "word_count": word_count,
                 "source": "hermes-suggestie",
@@ -594,21 +605,21 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
                 first_p = re.search(r"<p>(.*?)</p>", optimized_html, re.S)
                 excerpt = re.sub(r"<[^>]+>", "", first_p.group(1)).strip()[:200] if first_p else ""
                 payload = {
-                    "title": body.title.strip(),
+                    "title": final_title,
                     "content": optimized_html.strip(),
                     "excerpt": excerpt,
-                    "metaTitle": body.title.strip()[:60],
+                    "metaTitle": final_title[:60],
                     "metaDescription": meta_desc,
-                    "tags": [body.keyword] if body.keyword else [],
+                    "tags": [keyword] if keyword else [],
                     "status": "published",
                 }
             else:
                 payload = {
-                    "title": body.title.strip(),
+                    "title": final_title,
                     "content": optimized_html.strip(),
                     "slug": slug,
                     "seoDescription": meta_desc,
-                    "tags": [body.keyword] if body.keyword else [],
+                    "tags": [keyword] if keyword else [],
                     "source": "agent-os",
                 }
             try:
@@ -707,7 +718,7 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
     elif site.get("publish_api_url") and site.get("publish_api_key_set"):
         try:
             netlify_result = await publish_service.publish_article(
-                site_id=site_id, title=body.title.strip(),
+                site_id=site_id, title=final_title,
                 html_body=optimized_html.strip(), slug=slug,
             )
         except Exception as e:
@@ -716,12 +727,13 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
 
     return {
         "success": True,
-        "title": body.title.strip(),
+        "title": final_title,
         "local_path": f"content/{slug}.html",
         "slug": slug,
         "word_count": word_count,
         "seo_score": round(seo_score, 1),
         "seo_review": seo_review,
+        "qc_report": qc_report,
         "optimized": rounds > 0,
         "optimization_rounds": rounds,
         "world_class": review["score"] >= WORLD_CLASS_SCORE,
