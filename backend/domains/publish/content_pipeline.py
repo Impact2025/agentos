@@ -712,9 +712,24 @@ async def regenerate_job(job_id: str) -> str:
     if not site:
         raise ValueError("Site niet gevonden.")
 
-    html_body, qc_report, case_study_id = await _write_article_best(
-        site, job["keyword"], "", job["rationale"])
+    old_score = float(job.get("seo_score") or 0)
+    qc_report, case_study_id = {}, None
+    if job["status"] == "needs_work" and (job.get("blog_html") or "").strip() and old_score > 0:
+        # Doorverbeteren vanaf de bestaande versie: een artikel dat al 78 scoort
+        # blanco herschrijven is dobbelen (kan lager uitkomen). De verbeter-loop
+        # start hier met de huidige tekst + verse reviewer-feedback.
+        html_body = job["blog_html"]
+    else:
+        html_body, qc_report, case_study_id = await _write_article_best(
+            site, job["keyword"], "", job["rationale"])
     html_body, review = await review_and_improve(site, job["keyword"], html_body)
+
+    from ...shared.config import CONTENT_MIN_SCORE
+    if review["score"] < old_score:
+        # Nooit een slechtere versie terugschrijven dan er al stond.
+        logger.info("[content-pipeline] Regenerate leverde %s (< bestaande %s) — bestaande versie behouden",
+                    review["score"], old_score)
+        return job_id
 
     title = _extract_title(html_body, fallback=job["title"])
     slug = slugify_title(title)
@@ -723,11 +738,13 @@ async def regenerate_job(job_id: str) -> str:
     import base64
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
 
-    from ...shared.config import CONTENT_MIN_SCORE
-    _update_job(
-        job_id, title=title, blog_html=html_body, seo_score=review["score"],
+    updates = dict(
+        title=title, blog_html=html_body, seo_score=review["score"],
         social_copy=json.dumps(social_copy), image_path=image_b64, slug=slug,
         status="pending_review" if review["score"] >= CONTENT_MIN_SCORE else "needs_work",
-        qc_report=json.dumps(qc_report, ensure_ascii=False), case_study_id=case_study_id,
     )
+    if qc_report or case_study_id:
+        updates["qc_report"] = json.dumps(qc_report, ensure_ascii=False)
+        updates["case_study_id"] = case_study_id
+    _update_job(job_id, **updates)
     return job_id
