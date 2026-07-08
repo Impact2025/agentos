@@ -1,0 +1,18 @@
+{
+  "plan_summary": "Deterministisch plan voor: Per maand 4 goedgekeurde Mission Radar-signalen omzetten in gepubliceerde AEO-listicles op ictusgo.nl via de auto-AEO conveyor (listicle, video, reddit). Human-",
+  "estimated_duration": "2-5 dagen",
+  "phases": [
+    {
+      "title": "Uitvoering",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Werk het doel uit voor ictusgo",
+          "description": "Per maand 4 goedgekeurde Mission Radar-signalen omzetten in gepubliceerde AEO-listicles op ictusgo.nl via de auto-AEO conveyor (listicle, video, reddit). Human-in-the-loop: nooit auto-publiceren, altijd menselijke review-gate.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

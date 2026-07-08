@@ -1,0 +1,32 @@
+{
+  "plan_summary": "Deterministisch plan voor: Mission Radar watchlist voor IctusGo actief opbouwen tot 50+ signalen en wekelijkse scan-rapportage draaien. Concurrenten: teamevents/eventfully/flitz/citygame/",
+  "estimated_duration": "2-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & analyse",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Analyseer beschikbare data voor ictusgo",
+          "description": "Gebruik GSC-data, content-gap-analyse en bestaande kennisbank om de aanpak voor ictusgo te onderbouwen. Lever een beknopt meetplan/analyse (geen live analytics-calls).",
+          "skill": "analyst",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content creatie",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Maak ondersteunend document (checklist/gids/template) voor ictusgo",
+          "description": "Schrijf het ondersteunende document (checklist, lead-magnet, one-pager, gids of template) dat hoort bij ictusgo.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor ictusgo"
+          ]
+        }
+      ]
+    }
+  ]
+}

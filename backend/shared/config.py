@@ -77,7 +77,9 @@ GOOGLE_INDEXING_ENABLED: bool = os.getenv("GOOGLE_INDEXING_ENABLED", "0") == "1"
 # Kwaliteitsgate voor content (0-100): onder deze score komt een artikel niet
 # in de Wachtrij als publiceerbaar en weigert de publish-API. De pipeline
 # probeert eerst automatisch te verbeteren (max 3 rondes).
-CONTENT_MIN_SCORE: int = int(os.getenv("CONTENT_MIN_SCORE", "80"))
+# Wereldklasse-standaard: 85. Een artikel moet écht AEO-/rich-result-klaar zijn
+# (direct-answer + FAQ + E-E-A-T + schone links) om gepubliceerd te worden.
+CONTENT_MIN_SCORE: int = int(os.getenv("CONTENT_MIN_SCORE", "85"))
 
 # ── Mission Radar autonomie ──────────────────────────────────────────────
 # Auto-AEO: na elke sky-scan start de agent zelfstandig een AEO-aanval op de

@@ -129,7 +129,7 @@ _PAGE_TMPL = (
     "<!doctype html><html lang=\"nl\"><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
     "<title>{title}</title><meta name=\"description\" content=\"{desc}\">"
-    "<style>{css}</style></head><body><main class=\"wrap\"><article>{body}</article>"
+    "{json_ld}<style>{css}</style></head><body><main class=\"wrap\"><article>{body}</article>"
     "<p class=\"back\"><a href=\"/\">← Terug naar overzicht</a></p></main></body></html>"
 )
 
@@ -198,8 +198,21 @@ def build_site_files(site_id: str, site_name: str, base_url: str = "",
     )
     for p in pages:
         title = _html.escape(p["title"] or p["slug"])
+        raw_html = p["html"] or ""
+        # JSON-LD (structured data) hoort in <head>; de article_writer hangt
+        # hem onderaan de body. Hier trekken we hem eruit en stoppen hem in
+        # de <head> zodat crawlers hem direct op de juiste plek vinden.
+        json_ld_blocks = re.findall(
+            r'<script type="application/ld\+json">.*?</script>',
+            raw_html, re.IGNORECASE | re.DOTALL,
+        )
+        body_html = re.sub(
+            r'<script type="application/ld\+json">.*?</script>',
+            "", raw_html, flags=re.IGNORECASE | re.DOTALL,
+        ).strip()
+        head_json_ld = "\n".join(json_ld_blocks)
         files[f'{p["slug"]}/index.html'] = _PAGE_TMPL.format(
-            title=title, desc=title, css=_CSS, body=p["html"] or "",
+            title=title, desc=title, css=_CSS, body=body_html, json_ld=head_json_ld,
         )
         if p.get("image_b64"):
             try:

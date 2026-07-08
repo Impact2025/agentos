@@ -130,7 +130,12 @@ async def _make_outline(site: Dict, keyword: str, angle: str, rationale: str,
         "items in de titel (bijv. \"7 …\").\n"
         "Altijd: precies één sectie gebruikt de casestudy als bewijs (use_case_study), tenzij "
         "er geen casestudy is; maximaal 2 secties met include_cta (één halverwege, één aan "
-        "het slot)."
+        "het slot).\n"
+        "VERPLICHT: plan een 'Veelgestelde vragen' (FAQ)-sectie aan het slot (eigen H2) met "
+        "3-5 vragen die de zoeker écht stelt — deze wordt gebruikt voor de FAQ-rich-result en "
+        "AI Overviews. En plan een direct antwoord in de intro: de eerste alinea beantwoordt de "
+        "zoekintentie meteen, zonder opwarming. Gebruik bij harde claims (cijfers, 'onderzoek "
+        "toont') altijd een bronvermelding (externe link of cijfer uit de casestudy)."
     )
     prompt_parts = [
         f"Site: {site['name']} ({site.get('base_url', '')})",
@@ -182,7 +187,16 @@ async def _write_sections(site: Dict, keyword: str, outline: Dict,
         "geen <h1>, geen <html>/<head>/<body>, geen inleidende of afsluitende opmerkingen. "
         "Waar de outline 'use_case_study' zegt: gebruik de concrete cijfers en resultaten "
         "uit de casestudy als bewijs (verzin NIETS erbij). Waar 'include_cta' staat: verwerk "
-        "één van de beschikbare call-to-actions op een natuurlijke, niet-opdringerige manier."
+        "één van de beschikbare call-to-actions op een natuurlijke, niet-opdringerige manier.\n"
+        "\nBELANGRIJK voor wereldklasse-SEO:\n"
+        "- De eerste alinea na de H1 is een DIRECT ANTWOORD op de zoekintentie (40-60 woorden, "
+        "geen opwarming, geen 'in dit artikel'). Dit wordt geciteerd door AI Overviews.\n"
+        "- Sluit af met een FAQ-sectie (<h2>Veelgestelde vragen</h2>) van 3-5 vragen in "
+        "<strong>vraag?</strong>-koppen met een kort, feitelijk antwoord eronder — geschikt "
+        "voor de FAQ-rich-result.\n"
+        "- E-E-A-T: elke harde claim (cijfer, 'onderzoek toont', percentage) krijgt een bron "
+        "of een concreet voorbeeld uit de casestudy. Geen vage vulling ('het is belangrijk', "
+        "'in de huidige maatschappij', 'een belangrijke rol'). Schrijf concreet en voorbeeldrijk."
     )
     if outline.get("format") == "listicle":
         system += (
@@ -433,7 +447,25 @@ async def _link_pass(site: Dict, keyword: str, html_body: str,
     html_body, stripped = strip_unvetted_links(html_body, allowed_urls, allowed_paths)
     report["stripped"] = stripped
 
+    # Internal-link-ARM: rangschik kandidaten op topical overlap met het
+    # artikel (keyword + belangrijkste termen), zodat de linker cluster-relevante
+    # pagina's kiest in plaats van willekeurig. Hoe hoger de overlap, hoe
+    # waardevoller de link voor topical authority.
+    kw_tokens = {t for t in re.findall(r"[a-zà-ü0-9]{4,}", (keyword or "").lower())}
+    article_text = _plain_text(html_body).lower()
+    ranked = []
+    for c in candidates:
+        title_tokens = {t for t in re.findall(r"[a-zà-ü0-9]{4,}", c["title"].lower())}
+        overlap = len(kw_tokens & title_tokens)
+        if not overlap:
+            # valt terug op substring-match van keyword in de titel
+            overlap = 1 if keyword and keyword.lower() in c["title"].lower() else 0
+        ranked.append((overlap, c))
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    candidates = [c for _, c in ranked]
+
     numbered = "\n".join(f"{i + 1}. {c['url']} — {c['title']}" for i, c in enumerate(candidates))
+    internal_budget = max(_MAX_INTERNAL_LINKS, 2 if candidates else 0)
     system = (
         "Je bent een Nederlandse SEO-specialist. Kies voor het artikel passende links. "
         "Interne links: KIES UITSLUITEND uit de genummerde kandidatenlijst, en alleen waar "
@@ -443,7 +475,9 @@ async def _link_pass(site: Dict, keyword: str, html_body: str,
         "Antwoord UITSLUITEND met JSON: "
         '{"internal": [{"anchor": "letterlijke tekst uit artikel", "url": "..."}], '
         '"external": [{"anchor": "letterlijke tekst uit artikel", "url": "https://..."}]}\n'
-        f"Maximaal {_MAX_INTERNAL_LINKS} interne links. Geen kandidaten die passen? Lever lege lijsten."
+        f"Zet bij voorkeur {internal_budget} interne links (ook als de ankers niet perfect zijn, "
+        "kies dan de kandidaat die het dichtst bij de artikel-inhoud ligt). "
+        "Geen kandidaten die passen? Lever lege lijsten."
     )
     prompt = (
         f"Kernzoekwoord: {keyword}\n\n"
@@ -459,7 +493,7 @@ async def _link_pass(site: Dict, keyword: str, html_body: str,
         return html_body, report
 
     candidate_urls = {c["url"] for c in candidates}
-    for item in (picks.get("internal") or [])[:_MAX_INTERNAL_LINKS]:
+    for item in (picks.get("internal") or [])[:internal_budget]:
         url = (item.get("url") or "").strip()
         if url not in candidate_urls:  # gehallucineerde interne URL → strippen
             report["rejected"] += 1
@@ -567,6 +601,24 @@ async def write_article_staged(site: Dict, keyword: str, angle: str, rationale: 
 
     html_body, link_report = await _link_pass(site, keyword, html_body, ctas=ctas)
     qc["links"] = link_report
+
+    # ── Fase 5b: AEO / structured data ──────────────────────────────────────
+    # FAQ extraheren uit de body; als die er (nog) niet is, genereren we hem
+    # niet forcerend (de schrijf-prompts eisen hem al). JSON-LD (Article +
+    # FAQPage) wordt aan de body gehangen zodat de publisher hem in <head> zet.
+    try:
+        from ..seo.enhancements import extract_faq, generate_json_ld
+        faq = extract_faq(html_body)
+        if faq:
+            author = site.get("author") or (profile[:60] if profile else "")
+            json_ld = generate_json_ld(site, keyword, html_body, author=author, faq=faq)
+            html_body = html_body.rstrip() + "\n\n" + json_ld
+            qc["json_ld"] = {"ok": True, "faq_items": len(faq)}
+        else:
+            qc["json_ld"] = {"ok": False, "reason": "geen FAQ-sectie gevonden"}
+    except Exception as e:
+        logger.warning("[article-writer] AEO/JSON-LD-stap mislukt: %s", e)
+        qc["json_ld"] = {"ok": False, "error": str(e)[:150]}
 
     # Deterministische checks → één gecombineerde fix-call indien nodig.
     ai_hits = check_ai_language(html_body)

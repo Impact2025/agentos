@@ -26,6 +26,6 @@ async def test_approve_weigert_onder_de_grens(conn, clean_tables):
     assert str(CONTENT_MIN_SCORE) in str(exc.value)
 
 
-def test_grens_is_80_default():
+def test_grens_is_85_default():
     from backend.shared.config import CONTENT_MIN_SCORE
-    assert CONTENT_MIN_SCORE == 80
+    assert CONTENT_MIN_SCORE == 85

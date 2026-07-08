@@ -287,7 +287,34 @@ async def _review_article(site: Dict, keyword: str, html_body: str) -> Dict:
         score = max(0, min(100, int(m.group(1)))) if m else 0
         fm = re.search(r'"feedback"\s*:\s*"(.*)', raw, re.DOTALL)
         feedback = (fm.group(1).strip() if fm else raw)[:800]
-    return {"score": score, "feedback": feedback}
+
+        # ── Deterministische E-E-A-T / AEO-correctie ────────────────────────────
+        # Voorkomt dat een te milde LLM-beoordeling een niet-wereldklasse-artikel
+        # door de gate loopt. We trekken alleen af (nooit op), en alleen op
+        # harde, parseerbare tekortkomingen.
+        try:
+            from ..seo.enhancements import assess_seo_worldclass
+            a = assess_seo_worldclass(html_body, keyword, site)
+            deductions: List[str] = []
+            if not a["has_direct_answer"]:
+                score -= 5; deductions.append("geen direct antwoord voor AEO")
+            if a["faq_count"] == 0:
+                score -= 5; deductions.append("geen FAQ-sectie (rich result)")
+            if a["ai_language"]:
+                score -= min(len(a["ai_language"]), 3) * 4
+                deductions.append("AI-clichés aanwezig")
+            if a["ee_at_issues"]:
+                score -= min(len(a["ee_at_issues"]), 4) * 5
+                deductions.append("E-E-A-T/bronissue: " + "; ".join(a["ee_at_issues"][:2]))
+            score = max(0, min(100, score))
+            if deductions and not feedback:
+                feedback = "Deterministische SEO-check: " + "; ".join(deductions)
+            elif deductions:
+                feedback = feedback + " | Deterministische SEO-check: " + "; ".join(deductions)
+        except Exception as e:
+            logger.debug("[content-pipeline] E-E-A-T-correctie overgeslagen: %s", str(e)[:120])
+
+        return {"score": score, "feedback": feedback}
 
 
 async def review_and_improve(site: Dict, keyword: str, html_body: str,
