@@ -271,3 +271,139 @@ def assess_seo_worldclass(html_body: str, keyword: str, site: Optional[Dict] = N
         "faq_count": len(faq),
         "worldclass": score >= 85,
     }
+
+
+# ── 5. Backlink-ARM (topical authority) ──────────────────────────────────────
+
+def apply_backlinks(site: Dict, new_slug: str, new_title: str, new_url: str) -> Dict:
+    """Terug-link-ARM: geef bestaande gepubliceerde pagina's (die hetzelfde
+    cluster raken) een link naar het nieuwe artikel, zodat de link-equity
+    die je al hebt gaat stromen naar verse content.
+
+    Veilig & idempotent:
+      - alleen pagina's != nieuw artikel, met lexicale overlap op titel/slug
+      - alleen bij een NATUURLIJKE anker in de bestaande tekst (kopieer
+        letterlijk een bestaande woordgroep als anker)
+      - slaat over als de link er al zit
+      - nooit crashen; rapporteert alleen wat het deed
+    """
+    from ..publish.article_writer import insert_link
+    from ...shared.database import get_conn
+
+    new_tokens = {t for t in re.findall(r"[a-zà-ü0-9]{4,}", (new_title or "").lower())}
+    if not new_tokens:
+        return {"added": 0, "checked": 0, "skipped": 0}
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT slug, title, html FROM published_pages "
+            "WHERE site_id = ? AND slug != ? AND html != ''",
+            (site["id"], new_slug),
+        ).fetchall()
+
+        added = 0
+        checked = 0
+        skipped = 0
+        for r in rows:
+            r = dict(r)
+            checked += 1
+            html = r["html"]
+            # Al gelinkt?
+            if new_url.rstrip("/") in html or f"/{new_slug}/" in html:
+                skipped += 1
+                continue
+            # Overlap op titel/slug — anders geen zinnige backlink.
+            page_tokens = {t for t in re.findall(r"[a-zà-ü0-9]{4,}",
+                                                  ((r["title"] or "") + " " + r["slug"]).lower())}
+            if not (new_tokens & page_tokens):
+                skipped += 1
+                continue
+            # Zoek een natuurlijke anker: een woordgroep in de body die overeenkomt
+            # met een 2-3-gram uit de nieuwe titel.
+            anchor = _find_natural_anchor(html, new_title)
+            if not anchor:
+                skipped += 1
+                continue
+            new_html, ok = insert_link(html, anchor, new_url)
+            if ok:
+                conn.execute(
+                    "UPDATE published_pages SET html = ?, updated_at = ? WHERE slug = ? AND site_id = ?",
+                    (new_html, _now_iso(), r["slug"], site["id"]),
+                )
+                added += 1
+    return {"added": added, "checked": checked, "skipped": skipped}
+
+
+def _find_natural_anchor(html_body: str, target_title: str) -> Optional[str]:
+    """Vind een bestaande woordgroep in de body die als anker kan dienen voor
+    een link naar `target_title`. Zoekt 2-3-grams uit de titel die letterlijk
+    in de body voorkomen. Leeg = geen natuurlijke plek gevonden."""
+    text = _plain_text(html_body)
+    low = text.lower()
+    words = re.findall(r"[a-zà-ü0-9]+", (target_title or "").lower())
+    grams = []
+    for n in (3, 2):
+        for i in range(len(words) - n + 1):
+            grams.append(" ".join(words[i:i + n]))
+    for g in grams:
+        if len(g) >= 6 and re.search(r"\b" + re.escape(g) + r"\b", low):
+            m = re.search(r"\b" + re.escape(g) + r"\b", text, re.IGNORECASE)
+            return m.group(0) if m else None
+    return None
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def validate_json_ld(html_body: str) -> Dict:
+    """Controleer of het artikel valide JSON-LD bevat (Article + FAQPage).
+
+    Geen externe lijvige schema-validator — we doen een pragmatische,
+    afdwingbare check: vindt het <script type=application/ld+json>-blok,
+    parset het als JSON (crash = ongeldig), en verifieert de minimale
+    eisen die Google stelt aan rich results:
+      - @context + @type Article
+      - headline aanwezig
+      - publisher.name aanwezig
+      - bij FAQPage: minimaal 1 Question met naam + acceptedAnswer.text
+    Retourneert {valid, errors, has_faq}.
+    """
+    errors: List[str] = []
+    m = re.search(
+        r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html_body, re.IGNORECASE | re.DOTALL,
+    )
+    if not m:
+        return {"valid": False, "errors": ["geen JSON-LD script-blok gevonden"], "has_faq": False}
+    try:
+        data = json.loads(m.group(1))
+    except Exception as e:
+        return {"valid": False, "errors": [f"JSON-LD is geen geldig JSON: {str(e)[:80]}"], "has_faq": False}
+    if data.get("@type") != "Article" and not (
+        isinstance(data.get("@type"), list) and "Article" in data.get("@type")
+    ):
+        errors.append("JSON-LD @type is niet 'Article'")
+    if not (data.get("headline") or "").strip():
+        errors.append("JSON-LD mist een 'headline'")
+    pub = data.get("publisher") or {}
+    if not (pub.get("name") or "").strip():
+        errors.append("JSON-LD mist publisher.name")
+    has_faq = False
+    me = data.get("mainEntity")
+    if me and me.get("@type") == "FAQPage":
+        qs = me.get("mainEntity") or []
+        has_faq = len(qs) > 0
+        if not qs:
+            errors.append("FAQPage heeft geen vragen")
+        else:
+            for i, q in enumerate(qs):
+                if not (q.get("name") or "").strip():
+                    errors.append(f"FAQ-vraag {i+1} mist een 'name'")
+                    break
+                ans = q.get("acceptedAnswer") or {}
+                if not (ans.get("text") or "").strip():
+                    errors.append(f"FAQ-antwoord {i+1} mist 'text'")
+                    break
+    return {"valid": len(errors) == 0, "errors": errors, "has_faq": has_faq}

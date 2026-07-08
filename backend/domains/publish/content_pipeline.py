@@ -180,10 +180,11 @@ def _slug_tokens(text: str) -> set:
 
 
 def _topic_already_covered(keyword: str, external_titles: List[Dict[str, str]]) -> bool:
-    """True als `keyword` overlapt met een titel/slug die al écht op de site
-    staat (buiten Agent OS om gepubliceerd, bijv. Bijeen/Steentjebijsteentje se
-    eigen Next.js-CMS). Voorkomt dat de Demand Engine een 'nieuwe kans' oppakt
-    die feitelijk al een bestaand artikel is."""
+    """True als `keyword` (vrijwel) identiek is aan een titel/slug die al écht
+    op de site staat. Voorkomt dubbele content, maar is bewust strikt: een
+    échte zoekintentie-variant (bv. 'levensverhaal laten schrijven KOSTEN' vs
+    'levensverhaal vastleggen') telt NIET als covered — die verdient een eigen
+    pagina. Alleen exacte slug-gelijkheid of >=80% token-overlap dismissed."""
     kw_slug = slugify_title(keyword)
     kw_tokens = _slug_tokens(keyword)
     if not kw_slug and not kw_tokens:
@@ -192,11 +193,20 @@ def _topic_already_covered(keyword: str, external_titles: List[Dict[str, str]]) 
         ext_slug = slugify_title(item.get("slug") or item.get("title") or "")
         if not ext_slug:
             continue
-        if kw_slug and (kw_slug in ext_slug or ext_slug in kw_slug):
+        # Exacte slug-gelijkheid → altijd covered.
+        if kw_slug and kw_slug == ext_slug:
             return True
-        ext_tokens = _slug_tokens(item.get("title") or "")
-        if kw_tokens and ext_tokens and kw_tokens <= ext_tokens:
-            return True
+        # Token-overlap: pas dismissen als >=80% van de keyword-tokens ook in de
+        # externe titel zitten (en omgekeerd). Subset-match alleen is te bot:
+        # 'kosten' / 'prijs' / 'ervaringen' zijn echte intentie-verschillen.
+        ext_tokens = _slug_tokens(item.get("title") or "") | _slug_tokens(
+            item.get("slug") or ""
+        )
+        if kw_tokens and ext_tokens:
+            overlap = kw_tokens & ext_tokens
+            if overlap and len(overlap) / len(kw_tokens) >= 0.8 \
+                    and len(overlap) / len(ext_tokens) >= 0.8:
+                return True
     return False
 
 
@@ -262,7 +272,13 @@ async def _write_article(site: Dict, keyword: str, angle: str, rationale: str) -
     )
     # 8000 tokens: een volledig artikel van 1200+ woorden inclusief HTML-markup
     # werd op 4000 regelmatig mid-zin afgekapt — de reviewer keurde dat terecht af.
-    return await _llm(write_system, write_prompt, max_tokens=8000)
+    html_body = await _llm(write_system, write_prompt, max_tokens=8000)
+    if not html_body or not html_body.strip():
+        # Lege schrijf-response — geef een duidelijke fout zodat de meertraps-
+        # generator netjes naar de single-shot-fallback terugvalt (en de batch
+        # niet met een onverwachte None crasht).
+        raise RuntimeError("Lege schrijf-response van het model voor '%s'" % keyword)
+    return html_body
 
 
 async def _review_article(site: Dict, keyword: str, html_body: str) -> Dict:
@@ -274,6 +290,11 @@ async def _review_article(site: Dict, keyword: str, html_body: str) -> Dict:
         f"ARTIKEL:\n{html_body}"
     )
     raw = await _llm(review_system, review_prompt, max_tokens=2500)
+    if not raw:
+        # Lege LLM-response (model gaf niks terug) — nooit crashen, geef een
+        # veilige 0-score zodat het artikel de kwaliteitsgate niet per ongeluk
+        # passeert en de batch niet stilvalt.
+        return {"score": 0, "feedback": "Lege review-response van het model."}
     try:
         obj = json.loads(_extract_json(raw))
         score = max(0, min(100, int(round(float(obj.get("score", 50))))))
@@ -283,10 +304,11 @@ async def _review_article(site: Dict, keyword: str, html_body: str) -> Dict:
         # en is dan meestal nog intact; regex-redding zodat een geldig oordeel
         # niet verloren gaat). Geen score vindbaar → 0, zodat het artikel NOOIT
         # per ongeluk door de kwaliteitsgate glipt (voorheen: stille 50).
-        m = re.search(r'"score"\s*:\s*(\d{1,3})', raw)
+        safe_raw = raw or ""
+        m = re.search(r'"score"\s*:\s*(\d{1,3})', safe_raw)
         score = max(0, min(100, int(m.group(1)))) if m else 0
-        fm = re.search(r'"feedback"\s*:\s*"(.*)', raw, re.DOTALL)
-        feedback = (fm.group(1).strip() if fm else raw)[:800]
+        fm = re.search(r'"feedback"\s*:\s*"(.*)', safe_raw, re.DOTALL)
+        feedback = (fm.group(1).strip() if fm else safe_raw)[:800]
 
         # ── Deterministische E-E-A-T / AEO-correctie ────────────────────────────
         # Voorkomt dat een te milde LLM-beoordeling een niet-wereldklasse-artikel
@@ -323,6 +345,10 @@ async def review_and_improve(site: Dict, keyword: str, html_body: str,
     is gehaald of de rondes op zijn. Retourneert (html_body, review)."""
     from ...shared.config import CONTENT_MIN_SCORE
     review = await _review_article(site, keyword, html_body)
+    if not review:
+        # _review_article gaf None terug (model-fout) — val niet stil, geef een
+        # minimale review zodat het artikel alsnog de wachtrij in gaat.
+        review = {"score": 0, "feedback": "Review kon niet worden uitgevoerd."}
     best_html, best_review = html_body, review
     rounds = 0
     while review["score"] < CONTENT_MIN_SCORE and rounds < max_rounds and review["feedback"]:
@@ -379,14 +405,20 @@ async def _write_article_best(site: Dict, keyword: str, angle: str,
     except Exception as e:
         logger.warning("[content-pipeline] Meertraps-generator mislukt (%s) — "
                        "terugval op single-shot-schrijver", e)
-        html_body = await _write_article(site, keyword, angle, rationale)
+        try:
+            html_body = await _write_article(site, keyword, angle, rationale)
+        except Exception as e2:
+            logger.error("[content-pipeline] Ook single-shot-schrijver faalde voor "
+                         "'%s': %s", keyword, e2)
+            raise
         # De single-shot-schrijver doorloopt nooit _link_pass — de LLM kan dus
         # ongehinderd interne URL's verzinnen. Zonder deze wied-stap belandden
         # die hallucinaties (bv. /iris, /avg-zorg) rechtstreeks live als 404's.
-        html_body, n_stripped = article_writer.strip_unvetted_internal_links(html_body, site)
-        if n_stripped:
-            logger.info("[content-pipeline] Single-shot-fallback: %d ongevette interne link(s) verwijderd",
-                        n_stripped)
+        if html_body:
+            html_body, n_stripped = article_writer.strip_unvetted_internal_links(html_body, site)
+            if n_stripped:
+                logger.info("[content-pipeline] Single-shot-fallback: %d ongevette interne link(s) verwijderd",
+                            n_stripped)
         return html_body, {"staged": False, "fallback_reason": str(e)[:200]}, ""
 
 

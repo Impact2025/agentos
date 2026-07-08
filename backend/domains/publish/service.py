@@ -302,6 +302,22 @@ async def publish_article(
     _upsert_page(site_id, slug, title.strip(), html_body,
                  image_bytes=image_bytes, infographic_bytes=infographic_bytes)
 
+    # Backlink-ARM: bestaande pagina's in hetzelfde cluster krijgen een link
+    # naar dit nieuwe artikel (topical authority). Loopt na de upsert, vóór
+    # de site-rebuild — zo pakt build_site_files de bijgewerkte pagina's mee
+    # in dezelfde deploy. Defensief: geen crash, geen dubbele links.
+    try:
+        from ..seo.enhancements import apply_backlinks
+        from . import indexing as _idx
+        base = _site_base_url(site)
+        new_url = f"{base}/{slug}/" if base else f"/{slug}/"
+        report = apply_backlinks(site, slug, title.strip(), new_url)
+        if report.get("added"):
+            logger.info("[publish] Backlink-ARM: %d bestaande pagina's gelinkt naar %s",
+                        report["added"], slug)
+    except Exception as e:
+        logger.debug("[publish] Backlink-ARM overgeslagen: %s", str(e)[:120])
+
     # Sitemap (voor de GSC-submit) + IndexNow-key-bestand meedeployen. Bij de
     # allereerste deploy is de basis-URL nog onbekend — dan komt de sitemap
     # vanaf de tweede publicatie mee (Netlify-URL's zijn stabiel).
@@ -321,6 +337,19 @@ async def publish_article(
                        if (base and f'images/{slug}-infographic.png' in files) else None)
     logger.info("Gepubliceerd: %s → %s (deploy %s)", slug, page_url, deploy.get("state"))
 
+    # Schema-validator: JSON-LD moet valide zijn zodat Google de rich result
+    # kan uitlezen. Blokkeert niet de deploy (dan zou één kapotte accolade de
+    # hele publicatie stoppen), maar wordt wel gerapporteerd in de UI en log
+    # zodat je het direct ziet en kunt fixen.
+    json_ld_check = {"valid": True, "errors": [], "has_faq": False}
+    try:
+        from ..seo.enhancements import validate_json_ld
+        json_ld_check = validate_json_ld(html_body)
+        if not json_ld_check["valid"]:
+            logger.warning("[publish] JSON-LD ongeldig voor %s: %s", slug, json_ld_check["errors"])
+    except Exception as e:
+        json_ld_check = {"valid": False, "errors": [str(e)[:120]], "has_faq": False}
+
     return {
         "slug": slug,
         "image_url": image_url,
@@ -329,5 +358,6 @@ async def publish_article(
         "url": page_url,
         "site_url": base,
         "deploy_state": deploy.get("state"),
+        "json_ld": json_ld_check,
         "pages": len(files) - 1,  # minus index.html
     }

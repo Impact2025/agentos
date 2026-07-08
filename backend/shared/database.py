@@ -608,6 +608,19 @@ def _migrate(conn) -> None:
         )"""
     )
 
+    # GSC-prestatiemetrics per gepubliceerde pagina (feedback-loop).
+    pp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(published_pages)").fetchall()}
+    for col, ddl in (
+        ("gsc_clicks",       "ALTER TABLE published_pages ADD COLUMN gsc_clicks INTEGER DEFAULT 0"),
+        ("gsc_impressions",  "ALTER TABLE published_pages ADD COLUMN gsc_impressions INTEGER DEFAULT 0"),
+        ("gsc_ctr",          "ALTER TABLE published_pages ADD COLUMN gsc_ctr REAL DEFAULT 0"),
+        ("gsc_position",     "ALTER TABLE published_pages ADD COLUMN gsc_position REAL DEFAULT 0"),
+        ("gsc_top_query",    "ALTER TABLE published_pages ADD COLUMN gsc_top_query TEXT DEFAULT ''"),
+        ("gsc_synced_at",    "ALTER TABLE published_pages ADD COLUMN gsc_synced_at TEXT DEFAULT ''"),
+    ):
+        if col not in pp_cols:
+            conn.execute(ddl)
+
 
 @contextmanager
 def get_conn():

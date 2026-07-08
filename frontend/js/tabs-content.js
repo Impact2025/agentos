@@ -321,6 +321,7 @@ async function renderWachtrijTab(el) {
       '<p class="opp-query">' + escHtml(job.title) + '</p>' +
       '<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:' + sc + ';font-weight:600">' + st + '</span></div>' +
       '<div class="opp-meta"><span>Zoekwoord: ' + escHtml(job.keyword||'-') + '</span><span style="font-weight:600">SEO-score ' + score + '/100</span></div></div></div>' +
+      renderSeoWorldclassBadge(job.seo_worldclass) +
       renderQcReport(job.qc_report) +
       '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11px;color:#4f46e5;font-weight:600">Blog-voorbeeld</summary>' +
       '<div class="prose-dark" style="margin-top:6px;padding:10px;background:#f8fafc;border-radius:6px;max-height:260px;overflow:auto;font-size:12px">' + (job.blog_html||'') + '</div></details>' +
@@ -340,6 +341,24 @@ async function renderWachtrijTab(el) {
       '</div>';
   });
   el.innerHTML = html;
+}
+
+function renderSeoWorldclassBadge(wc) {
+  if (!wc || typeof wc !== 'object') return '';
+  var sc = wc.score || 0;
+  var bg = sc >= 85 ? '#dcfce7' : (sc >= 70 ? '#fef3c7' : '#fee2e2');
+  var fg = sc >= 85 ? '#166534' : (sc >= 70 ? '#92400e' : '#b91c1c');
+  function v(ok, label) {
+    return '<span style="font-size:10px;padding:2px 7px;border-radius:6px;background:' +
+      (ok ? '#dcfce7' : '#fee2e2') + ';color:' + (ok ? '#166534' : '#b91c1c') +
+      ';font-weight:600">' + (ok ? '✓' : '✗') + ' ' + label + '</span>';
+  }
+  return '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">' +
+    '<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:' + bg + ';color:' + fg + ';font-weight:700">Wereldklasse ' + sc + '/100</span>' +
+    v(wc.has_direct_answer, 'Direct-antwoord') +
+    v((wc.faq_count || 0) > 0, 'FAQ (' + (wc.faq_count || 0) + ')') +
+    v((wc.ee_at_issues || []).length === 0, 'E-E-A-T') +
+    '</div>';
 }
 
 // QC-checklist van de meertraps-generator (outline/secties/links/AI-taal/CTA/keyword)

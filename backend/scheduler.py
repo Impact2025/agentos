@@ -19,6 +19,7 @@ from .domains.publish.content_pipeline import run_biweekly_content_job
 from .domains.vacancies.service import run_vacancy_scan_job
 from .domains.seo.optimizer import run_weekly_optimizer_job
 from .domains.radar.service import scan_the_skies
+from .domains.seo.feedback import run_daily_gsc_sync
 from .domains.action_center.digest import run_daily_digest
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ _JOB_LABELS = {
     "goal_autoheal": "Doelen-zelfreparatie (verweesde/dubbele doelen)",
     "vacancy_scan": "Opdrachten-zoekagent (2x/week)",
     "seo_optimizer_scan": "SEO Optimizer-scan (interne links, CTR, refresh)",
+    "gsc_sync": "GSC-feedback-loop (performance → Radar growth-signalen)",
     "radar_sky_scan": "Mission Radar sky-scan (concurrenten & trends, elke 4 uur)",
     "daily_digest": "Ochtendrapport (fouten · wacht-op-jou · gisteren opgeleverd)",
     "daily_outreach_batch": "Outreach-batch (concepten klaarzetten ter review, ma-vr)",
@@ -151,6 +153,18 @@ def start_scheduler() -> None:
         id="seo_optimizer_scan",
         replace_existing=True,
         misfire_grace_time=6 * 3600,  # tot 6u later alsnog inhalen (bv. na slaapstand/herstart)
+        coalesce=True,
+    )
+    # GSC-feedback-loop: dagelijks de pagina-performance ophalen en growth-
+    # signalen terugvoeren naar de Mission Radar. Sluit de cirkel: wat je
+    # publiceert wordt gemeten, en de agent schrijft versterkende content.
+    # Draait alleen als er ten minste één site met GSC-property is.
+    _scheduler.add_job(
+        run_daily_gsc_sync,
+        CronTrigger(hour=6, minute=30, timezone=_TZ),
+        id="gsc_sync",
+        replace_existing=True,
+        misfire_grace_time=6 * 3600,
         coalesce=True,
     )
     # Mission Radar: elke 4 uur de watchlist (concurrenten/keywords/RSS) scannen.

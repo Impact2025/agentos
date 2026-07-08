@@ -37,6 +37,22 @@ def _with_parsed_social_copy(job: dict) -> dict:
         job["qc_report"] = json.loads(job.get("qc_report") or "{}")
     except Exception:
         job["qc_report"] = {}
+    # SEO-wereldklasse-badge: deterministische AEO/E-E-A-T-analyse van het
+    # artikel (geen LLM). Toont in de Wachtrij-UI hoe dicht het stuk bij
+    # 'publish-klaar volgens wereldklasse' zit, vóórdat je op publiceer klikt.
+    try:
+        from ..seo.enhancements import assess_seo_worldclass
+        html = job.get("blog_html") or ""
+        kw = job.get("keyword") or ""
+        site = {}
+        if job.get("site_id"):
+            try:
+                site = sites_service.get_site(job["site_id"]) or {}
+            except Exception:
+                site = {}
+        job["seo_worldclass"] = assess_seo_worldclass(html, kw, site)
+    except Exception:
+        job["seo_worldclass"] = None
     return job
 
 

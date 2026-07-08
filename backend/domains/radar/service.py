@@ -354,16 +354,54 @@ class RadarService:
         signalen. Idempotent: alleen signalen met status 'new' en een score
         boven AEO_AUTO_MIN_SCORE komen in aanmerking, max AEO_AUTO_MAX_PER_SCAN
         per run. Geeft de titels terug van de aangevallen signalen (voor de
-        SSE-feed / log). Doe niets als AEO_AUTO_ATTACK uit staat."""
+        SSE-feed / log). Doe niets als AEO_AUTO_ATTACK uit staat.
+
+        Cluster-diepte-voorkeur: binnen de kandidaten krijgen signalen die het
+       zelfde onderwerp-cluster raken als al gepubliceerde content voorrang.
+        Zo bouwt de agent één silo dicht in plaats van breed te sproeien —
+        topical authority komt van diepte, niet van volume."""
         if not AEO_AUTO_ATTACK:
             return []
         top = [
             s for s in self.list_signals(status="new", limit=50)
             if (s.get("signal_score") or 0) >= AEO_AUTO_MIN_SCORE
         ]
-        # Hoogste scores eerst; een signal kan per scan maar één keer worden
-        # aangevallen (status wordt 'converted' in aeo_attack()).
-        top.sort(key=lambda s: s.get("signal_score", 0), reverse=True)
+        if not top:
+            return []
+
+        # Bouw de set cluster-tokens van reeds gepubliceerde content (per
+        # project) zodat we kunnen meten welke signalen een bestaande silo
+        # verdiepen.
+        cluster_tokens: Dict[str, set] = {}
+        try:
+            from ...shared.database import get_conn as _gc
+            with _gc() as conn:
+                for r in conn.execute(
+                    "SELECT site_id, title, slug FROM published_pages "
+                    "WHERE html != ''"
+                ).fetchall():
+                    r = dict(r)
+                    tok = {t for t in re.findall(r"[a-zà-ü0-9]{4,}",
+                              ((r.get("title") or "") + " " + (r.get("slug") or "")).lower())}
+                    # site_id is hier de project-naam-gelijke key; we indexeren
+                    # op project via de signalen zelf hieronder.
+                    cluster_tokens.setdefault(r.get("site_id") or "", set()).update(tok)
+        except Exception:
+            cluster_tokens = {}
+
+        def _depth_bonus(sig) -> int:
+            kw = (sig.get("keyword") or sig.get("title") or "").lower()
+            kw_tokens = {t for t in re.findall(r"[a-zà-ü0-9]{4,}", kw)}
+            if not kw_tokens:
+                return 0
+            # Match tegen alle bekende clusters (project-loos: NL-sites zijn klein).
+            overlap = 0
+            for toks in cluster_tokens.values():
+                overlap = max(overlap, len(kw_tokens & toks))
+            return overlap
+
+        # Re-rank: diepte (bestaande silo versterken) telt zwaarder dan score.
+        top.sort(key=lambda s: (_depth_bonus(s), s.get("signal_score", 0)), reverse=True)
         attacked: List[str] = []
         for sig in top[: max(0, AEO_AUTO_MAX_PER_SCAN)]:
             try:
