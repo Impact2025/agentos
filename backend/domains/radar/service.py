@@ -29,7 +29,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ...shared.config import TAVILY_API_KEY, OBSIDIAN_VAULT_PATH
+from ...shared.config import (
+    TAVILY_API_KEY, OBSIDIAN_VAULT_PATH,
+    AEO_AUTO_ATTACK, AEO_AUTO_MIN_SCORE, AEO_AUTO_MAX_PER_SCAN,
+)
 from ...shared.database import get_conn
 from ...shared import agent_runner as agent_service
 from ..vacancies import scraper
@@ -87,6 +90,7 @@ class RadarService:
     # ── Watchlist CRUD ───────────────────────────────────────────────────────
 
     def add_watch(self, project: str, label: str, wtype: str, value: str) -> Dict:
+        project = (project or "").strip().lower()
         if wtype not in ("keyword", "competitor", "rss"):
             raise ValueError(f"Ongeldig watch-type '{wtype}'")
         value = value.strip()
@@ -110,6 +114,7 @@ class RadarService:
         return item
 
     def list_watch(self, project: Optional[str] = None) -> List[Dict]:
+        project = (project or "").strip().lower() or None
         with get_conn() as conn:
             if project:
                 rows = conn.execute(
@@ -332,10 +337,48 @@ class RadarService:
 
         yield {"type": "scan_done", "total_saved": total_saved}
 
+        # Autonome vervolgstap: de agent start zelfstandig AEO-aanvallen op de
+        # beste verse signalen (tot aan de Wachtrij-gate). De mens hoeft alleen
+        # nog "publiceer" te klikken. Zacht — faalt nooit de hele scan.
+        if total_saved:
+            try:
+                attacked = self._auto_aeo_top_signals()
+                if attacked:
+                    yield {"type": "auto_aeo", "count": len(attacked),
+                           "signals": attacked}
+            except Exception:
+                log.exception("[radar] Auto-AEO na scan mislukt (niet fataal)")
+
+    def _auto_aeo_top_signals(self) -> List[str]:
+        """Na een scan: start zelfstandig AEO-aanvallen op de beste verse
+        signalen. Idempotent: alleen signalen met status 'new' en een score
+        boven AEO_AUTO_MIN_SCORE komen in aanmerking, max AEO_AUTO_MAX_PER_SCAN
+        per run. Geeft de titels terug van de aangevallen signalen (voor de
+        SSE-feed / log). Doe niets als AEO_AUTO_ATTACK uit staat."""
+        if not AEO_AUTO_ATTACK:
+            return []
+        top = [
+            s for s in self.list_signals(status="new", limit=50)
+            if (s.get("signal_score") or 0) >= AEO_AUTO_MIN_SCORE
+        ]
+        # Hoogste scores eerst; een signal kan per scan maar één keer worden
+        # aangevallen (status wordt 'converted' in aeo_attack()).
+        top.sort(key=lambda s: s.get("signal_score", 0), reverse=True)
+        attacked: List[str] = []
+        for sig in top[: max(0, AEO_AUTO_MAX_PER_SCAN)]:
+            try:
+                self.aeo_attack(sig["id"])
+                attacked.append(sig.get("title", "")[:120])
+            except Exception:
+                log.exception("[radar] Auto-AEO voor signaal %s mislukt", sig.get("id"))
+        if attacked:
+            log.info("[radar] Auto-AEO startte %d aanval(len) op top-signalen", len(attacked))
+        return attacked
+
     def _signal_by_url(self, project: str, url: str) -> Optional[Dict]:
         with get_conn() as conn:
             row = conn.execute(
-                "SELECT * FROM radar_signals WHERE project = ? AND url = ?", (project, url)
+                "SELECT * FROM radar_signals WHERE LOWER(project) = LOWER(?) AND url = ?", (project or "", url)
             ).fetchone()
         return dict(row) if row else None
 
@@ -345,7 +388,7 @@ class RadarService:
                      min_score: Optional[float] = None, limit: int = 100) -> List[Dict]:
         where, params = [], []
         if project:
-            where.append("project = ?"); params.append(project)
+            where.append("LOWER(project) = LOWER(?)"); params.append(project)
         if status:
             where.append("status = ?"); params.append(status)
         if min_score is not None:
@@ -402,7 +445,7 @@ class RadarService:
         return cur.rowcount > 0
 
     def get_stats(self, project: Optional[str] = None) -> Dict:
-        where = "WHERE project = ?" if project else ""
+        where = "WHERE LOWER(project) = LOWER(?)" if project else ""
         params = [project] if project else []
         with get_conn() as conn:
             total = conn.execute(f"SELECT COUNT(*) FROM radar_signals {where}", params).fetchone()[0]
@@ -414,7 +457,7 @@ class RadarService:
             ).fetchone()[0]
             watch_count = conn.execute(
                 "SELECT COUNT(*) FROM radar_watchlist WHERE active = 1" +
-                (" AND project = ?" if project else ""), params,
+                (" AND LOWER(project) = LOWER(?)" if project else ""), params,
             ).fetchone()[0]
         return {
             "total": total,

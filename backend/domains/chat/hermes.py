@@ -62,11 +62,11 @@ async def _stream_for_backend(
         async for chunk in _stream_anthropic(messages, system_prompt, max_tokens):
             yield chunk
     elif backend == "openmodel":
-        # OpenModel.ai is Anthropic Messages API-compatible
-        async for chunk in _stream_anthropic(
-            messages, system_prompt, max_tokens,
-            base_url=OPENMODEL_BASE_URL, api_key=OPENMODEL_API_KEY, model=OPENMODEL_MODEL,
-        ):
+        # OpenModel.ai spreekt het Anthropic Messages-formaat, maar de officiële
+        # anthropic-SDK parseert hun SSE/tekst-blokken niet betrouwbaar (lege
+        # output). Routeer daarom via de eigen OpenAI-compat helper die het
+        # volledige message-object zelf parset (content[].text).
+        async for chunk in _stream_openai_compat(messages, system_prompt, max_tokens, "openmodel"):
             yield chunk
     else:
         async for chunk in _stream_openai_compat(messages, system_prompt, max_tokens, backend):
@@ -136,11 +136,14 @@ async def _stream_openai_compat(
         model = OLLAMA_MODEL
         headers = {"Content-Type": "application/json"}
     elif backend == "openmodel":
-        base_url = OPENMODEL_BASE_URL.rstrip("/") + "/v1"
+        # OpenModel.ai spreekt het Anthropic Messages-formaat (geen OpenAI-compat).
+        # Correcte route is /v1/messages (OpenAI-compat /v1/chat/completions geeft 404).
+        base_url = OPENMODEL_BASE_URL.rstrip("/") + "/v1/messages"
         model = OPENMODEL_MODEL
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {OPENMODEL_API_KEY}",
+            "anthropic-version": "2023-06-01",
         }
     else:
         base_url = "https://openrouter.ai/api/v1"
@@ -151,6 +154,40 @@ async def _stream_openai_compat(
             "HTTP-Referer": "http://localhost:8000",
             "X-Title": "Agent OS",
         }
+
+    if backend == "openmodel":
+        # Anthropic-formaat payload + non-streaming parse (OpenModel streamt niet
+        # als SSE op deze route — antwoord is een volledig message-object).
+        payload = {
+            "model": model,
+            "system": system_prompt,
+            "messages": messages,
+            "max_tokens": max_tokens,
+        }
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            try:
+                resp = await client.post(base_url, json=payload, headers=headers)
+                if resp.status_code == 404:
+                    raise RuntimeError(
+                        f"Model '{model}' niet gevonden (404) op OpenModel. "
+                        "Controleer OPENMODEL_MODEL in .env."
+                    )
+                resp.raise_for_status()
+                data = resp.json()
+                # Anthropic-message: content is een lijst van blokken met .text
+                blocks = data.get("content", [])
+                text = "".join(
+                    b.get("text", "") for b in blocks if isinstance(b, dict)
+                )
+                if text:
+                    yield text
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    raise RuntimeError(
+                        f"Model '{model}' niet gevonden (404) op OpenModel."
+                    )
+                raise
+        return
 
     payload = {
         "model": model,

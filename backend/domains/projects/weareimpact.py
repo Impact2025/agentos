@@ -92,11 +92,7 @@ def project_activity(name: str, limit: int = Query(20, ge=1, le=100)):
 @router.get("/{name}/content")
 def project_content(name: str):
     """Retourneer bestaande content: gepubliceerde paginas + logboek."""
-    site = None
-    for s in sites_service.list_sites():
-        if s["name"].lower() == name.lower():
-            site = s
-            break
+    site = _resolve_site(name)
 
     project_dir = _find_project_dir(name)
     if not project_dir:
@@ -455,7 +451,6 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
     project_dir = _find_project_dir(name)
     content_dir = (project_dir / "content") if project_dir else Path(os.getenv("TEMP", "")) / "agentos-content"
     content_dir.mkdir(parents=True, exist_ok=True)
-    slug = _slugify(body.title)
 
     # ── FASE 1: Schrijven (meertraps-generator: outline → secties → opmaak →
     #    gevalideerde links → QC; valt zelf terug op single-shot bij falen) ──
@@ -534,6 +529,11 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
 
     # Titel = de H1 die de generator schreef (pakkender dan het kale zoekwoord).
     final_title = content_pipeline._extract_title(optimized_html, fallback=body.title.strip())
+    # Slug pas NU bepalen (uit final_title, niet uit het vroege body.title): body.title
+    # wordt hierboven als "angle" aan de schrijver doorgegeven en kan een interne
+    # analysezin zijn (bv. een content-gap-observatie), geen publiceerbare titel — een
+    # slug daarop gebaseerd gaf onleesbare URL's die niets met de uiteindelijke H1 te maken hadden.
+    slug = _slugify(final_title)
 
     # Meta description = eerste alinea van het artikel zelf. NOOIT de rationale —
     # dat is interne Demand-Engine-analyse ("SEO-kans uit GSC: ...") en die stond

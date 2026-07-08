@@ -61,3 +61,43 @@ def ensure_schema() -> None:
     with get_conn() as conn:
         conn.executescript(DDL)
     _schema_ready = True
+
+
+def _list_ready_converted_listicles():
+    """Vind AEO-listicle-taken die klaar zijn om naar de Wachtrij gestaged te
+    worden: de taak heeft status 'done' (Conveyor keurde 'm goed) én het
+    signaal is al 'converted' (aeo_attack heeft de keten aangemaakt).
+
+    Retourneert een lijst van (signal_id, task) tuples. De workspace-basismap
+    van de taak is 'radar-aeo-<slug>' (aangemaakt door aeo_attack); we matchen
+    het signaal via dezelfde slug in radar_signals (obsidian_path) of via de
+    title-slug. Robuust alternatief: als er geen obsidian_path is, zoeken we
+    het 'converted'-signaal waarvan de AEO-listicle-task dezelfde base draagt.
+    """
+    from ...shared.database import get_conn as _gc
+
+    out = []
+    with _gc() as conn:
+        rows = conn.execute(
+            "SELECT * FROM tasks WHERE status = 'done' "
+            "AND workspace_path LIKE 'radar-aeo-%' "
+            "AND workspace_path LIKE '%-listicle.md'"
+        ).fetchall()
+        for t in rows:
+            task = dict(t)
+            wp = task.get("workspace_path") or ""
+            base = wp.rsplit("/", 1)[0] if "/" in wp else ""
+            if not base or not base.startswith("radar-aeo-"):
+                continue
+            # 'radar-aeo-<slug>' → '<slug>'
+            slug = base[len("radar-aeo-"):]
+            sig = conn.execute(
+                "SELECT id FROM radar_signals "
+                "WHERE status = 'converted' "
+                "AND (obsidian_path LIKE ? OR obsidian_path = '') "
+                "ORDER BY created_at DESC LIMIT 1",
+                (f"%/{slug}.md",),
+            ).fetchone()
+            if sig:
+                out.append((sig["id"], task))
+    return out

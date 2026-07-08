@@ -532,7 +532,8 @@ async function renderRadarTab(el) {
     '<div id="radar-watchlist">' + renderRadarWatchlist(watchlist) + '</div>' +
     '<div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9">' +
     '<button id="radar-scan-btn" onclick="runRadarScan()" style="padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">✦ Scan nu de hemel</button>' +
-    '<span style="font-size:10px;color:#94a3b8">Draait ook automatisch elke 4 uur</span></div>' +
+    '<span style="font-size:10px;color:#94a3b8">Draait ook automatisch elke 4 uur</span>' +
+    '<span style="font-size:10px;padding:2px 8px;border-radius:6px;font-weight:600;background:#ecfdf5;color:#16a34a">🤖 Auto-AEO aan</span></div>' +
     '<div id="radar-progress" style="margin-top:8px;max-height:200px;overflow-y:auto"></div></div>';
 
   // ── Signalen ──
@@ -637,6 +638,8 @@ function runRadarScan() {
               progress.innerHTML += '<div style="font-size:11px;color:#ef4444;padding:2px 6px">⚠ ' + escHtml(evt.label||'') + ': ' + escHtml(evt.error||'') + '</div>';
             } else if (evt.type === 'scan_done' && evt.note) {
               progress.innerHTML += '<div style="font-size:11px;color:#92400e;padding:6px;background:#fffbeb;border-radius:6px">' + escHtml(evt.note) + '</div>';
+            } else if (evt.type === 'auto_aeo' && evt.count) {
+              progress.innerHTML += '<div style="font-size:11px;color:#16a34a;padding:6px;background:#ecfdf5;border-radius:6px">🤖 Auto-AEO: ' + evt.count + ' signaal(len) zelfstandig aangevallen — concepten rollen via de Conveyor naar de Wachtrij.</div>';
             }
             progress.scrollTop = progress.scrollHeight;
           } catch(e) {}
@@ -733,6 +736,25 @@ function radarUpdateStatus(id, status) {
     .catch(function(e){ alert('Fout: ' + e.message); });
 }
 
+function showRadarModal(title, bodyHtml) {
+  var overlay = document.getElementById('radar-modal-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'radar-modal-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
+    overlay.onclick = function(e){ if (e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML =
+    '<div style="background:#fff;border-radius:12px;max-width:440px;width:90%;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.25)">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><span style="font-size:20px">🚀</span>' +
+      '<h3 style="margin:0;font-size:15px;color:#1e293b">' + escHtml(title) + '</h3></div>' +
+      bodyHtml +
+      '<div style="margin-top:16px;text-align:right"><button onclick="document.getElementById(\'radar-modal-overlay\').remove()" ' +
+      'style="padding:8px 20px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">OK</button></div>' +
+    '</div>';
+}
+
 async function radarAeoAttack(id, channels, btn) {
   var isFull = !channels;
   if (!confirm(isFull
@@ -743,7 +765,10 @@ async function radarAeoAttack(id, channels, btn) {
     var r = await fetch('/api/radar/signals/' + id + '/aeo-attack', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({channels: channels}) });
     var data = await r.json();
     if (!r.ok) { alert('Fout: ' + (data.detail||r.status)); return; }
-    alert('🚀 ' + data.tasks.length + ' ta' + (data.tasks.length===1?'ak':'ken') + ' aangemaakt in de Conveyor:\n\n' + data.tasks.map(function(t){ return '• ' + t.title + ' (' + t.agent + ')'; }).join('\n') + '\n\nWorkspace: ' + data.workspace);
+    showRadarModal(data.tasks.length + ' ta' + (data.tasks.length===1?'ak':'ken') + ' aangemaakt in de Conveyor',
+      '<div style="font-size:12px;color:#374151;line-height:1.6">' +
+      data.tasks.map(function(t){ return '• <b>' + escHtml(t.title) + '</b> <span style="color:#7c3aed">(' + escHtml(t.agent) + ')</span>'; }).join('<br>') +
+      '</div><div style="margin-top:8px;font-size:10px;color:#94a3b8">Workspace: ' + escHtml(data.workspace) + '</div>');
     loadRadarSignals();
   } catch(e) { alert('Fout: ' + e.message); }
   finally { if (btn) btn.disabled = false; }

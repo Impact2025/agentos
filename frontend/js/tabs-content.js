@@ -392,7 +392,7 @@ async function runWachtrijNow(btn) {
 }
 
 async function approveWachtrijJob(btn, jobId) {
-  if (!confirm('Publiceren + posten naar alle geconfigureerde platformen. Doorgaan?')) return;
+  if (!confirm('Artikel publiceren op de website. Socials lopen best-effort mee (een falend platform, bv. LinkedIn, blokkeert niet). Doorgaan?')) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Publiceren...'; }
   try {
     var resp = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/content-queue/' + jobId + '/approve', { method: 'POST' });

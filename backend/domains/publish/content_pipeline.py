@@ -353,6 +353,13 @@ async def _write_article_best(site: Dict, keyword: str, angle: str,
         logger.warning("[content-pipeline] Meertraps-generator mislukt (%s) — "
                        "terugval op single-shot-schrijver", e)
         html_body = await _write_article(site, keyword, angle, rationale)
+        # De single-shot-schrijver doorloopt nooit _link_pass — de LLM kan dus
+        # ongehinderd interne URL's verzinnen. Zonder deze wied-stap belandden
+        # die hallucinaties (bv. /iris, /avg-zorg) rechtstreeks live als 404's.
+        html_body, n_stripped = article_writer.strip_unvetted_internal_links(html_body, site)
+        if n_stripped:
+            logger.info("[content-pipeline] Single-shot-fallback: %d ongevette interne link(s) verwijderd",
+                        n_stripped)
         return html_body, {"staged": False, "fallback_reason": str(e)[:200]}, ""
 
 
@@ -638,13 +645,93 @@ async def run_biweekly_content_job() -> Dict:
     return results
 
 
+async def _publish_to_project_site(site: Dict, title: str, html_body: str,
+                                    keyword: str, slug: str, seo_score: int) -> Dict:
+    """Publiceer naar de eigen site van een project via de per-project
+    publish-endpoint ({PROJECT}_PUBLISH_URL/_PUBLISH_KEY in .env).
+
+    Dit is dezelfde route als de strategist-service (weareimpact.py) gebruikt
+    voor de 'schrijf artikel'-flow. De content-wachtrij deed die tot nu toe
+    over (die deed alleen Netlify-sites), waardoor Bijeen-artikelen bij een
+    'Goedkeuren & publiceren' níet op de website kwamen — ze bleven hangen in
+    'Te reviewen'.
+
+    Bij een mislukte (of niet-geconfigureerde) publish wordt altijd een dict
+    met 'success': False teruggegeven, nooit een exception, zodat de aanroeper
+    de website-publicatie nooit blokkeert."""
+    import os
+    name = site.get("name", "")
+    env_prefix = re.sub(r"[^A-Z0-9]", "", name.upper())
+    publish_url = os.getenv(f"{env_prefix}_PUBLISH_URL", "").strip()
+    publish_key = os.getenv(f"{env_prefix}_PUBLISH_KEY", "").strip()
+    if not publish_url or not publish_key:
+        return {"success": False,
+                "error": f"Geen {env_prefix}_PUBLISH_URL/_PUBLISH_KEY — site-publicatie overgeslagen"}
+
+    base_url = (site.get("base_url") or "").rstrip("/")
+    # meta-description + excerpt uit de HTML halen
+    text = re.sub(r"<[^>]+>", " ", html_body or "")
+    text = re.sub(r"\s+", " ", text).strip()
+    meta_desc = (text[:155].rstrip() + "…") if len(text) > 155 else text
+    first_p = re.search(r"<p>(.*?)</p>", html_body or "", re.S)
+    excerpt = re.sub(r"<[^>]+>", "", first_p.group(1)).strip()[:200] if first_p else ""
+
+    if env_prefix == "BIJEEN":
+        payload = {
+            "title": title,
+            "content": (html_body or "").strip(),
+            "excerpt": excerpt,
+            "metaTitle": title[:60],
+            "metaDescription": meta_desc,
+            "tags": [keyword] if keyword else [],
+            "status": "published",
+        }
+    else:
+        payload = {
+            "title": title,
+            "content": (html_body or "").strip(),
+            "slug": slug,
+            "seoDescription": meta_desc,
+            "tags": [keyword] if keyword else [],
+            "source": "agent-os",
+        }
+
+    try:
+        import httpx
+        resp = await asyncio.to_thread(
+            httpx.post, publish_url, json=payload,
+            headers={"Authorization": f"Bearer {publish_key}"}, timeout=90,
+        )
+        if resp.status_code in (200, 201):
+            try:
+                data = resp.json()
+            except Exception:
+                data = {}
+            if isinstance(data, dict) and "post" in data:
+                url = f"{base_url}/blog/{data['post'].get('slug', slug)}"
+            elif isinstance(data, dict) and data.get("url"):
+                url = data["url"]
+            else:
+                url = f"{base_url}/blog/{slug}"
+            _log_activity(name, "live", f"'{title}' LIVE op {url}", artifact=url)
+            return {"success": True, "url": url, "status_code": resp.status_code}
+        return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as e:
+        logger.warning(f"Project-site publicatie op {publish_url} mislukt: {e}")
+        return {"success": False, "error": str(e)[:200]}
+
+
 # ── Goedkeuren → publiceren + posten ────────────────────────────────────────
 
 async def approve_and_publish(job_id: str) -> Dict:
-    """Publiceer naar Netlify (indien geconfigureerd), dien de sitemap in bij
-    Google Search Console, en post naar elk platform waarvoor de site
-    credentials heeft. Wordt uitsluitend getriggerd door een menselijke
-    goedkeuring (nooit automatisch)."""
+    """Publiceer naar de website van de site (Netlify óf de per-project
+    publish-endpoint), dien de sitemap in bij Google Search Console, en post
+    naar elk platform waarvoor de site credentials heeft. Wordt uitsluitend
+    getriggerd door een menselijke goedkeuring (nooit automatisch).
+
+    Een falend social-platform (bv. LinkedIn in 'Review in progress') blokkeert
+    de website-publicatie nooit — het wordt als mislukt genoteerd en overgeslagen.
+    """
     job = get_job(job_id)
     if not job:
         raise ValueError("Content-job niet gevonden.")
@@ -675,7 +762,9 @@ async def approve_and_publish(job_id: str) -> Dict:
     image_url = None
     base_url = (site.get("base_url") or "").rstrip("/")
 
-    # ── Netlify (optioneel — sommige sites publiceren elders, bijv. Vercel) ──
+    # ── Website-publicatie ───────────────────────────────────────────────────
+    # Twee routes: Netlify-sites (publish_api_url gevuld) en project-sites die
+    # een eigen {PROJECT}_PUBLISH_URL/_PUBLISH_KEY hebben (bv. bijeen.app).
     if site.get("publish_api_url"):
         try:
             netlify_result = await publish_service.publish_article(
@@ -688,6 +777,18 @@ async def approve_and_publish(job_id: str) -> Dict:
             image_url = netlify_result.get("image_url")
         except Exception as e:
             result["netlify"] = {"error": str(e)[:300]}
+    else:
+        # Project-site via de per-project publish-endpoint (nooit een crash).
+        try:
+            site_result = await _publish_to_project_site(
+                site, job["title"], job["blog_html"], job["keyword"],
+                job["slug"], int(job.get("seo_score") or 0))
+            result["site"] = site_result
+            if site_result.get("url"):
+                article_url = site_result["url"]
+                image_url = site_result.get("image_url")
+        except Exception as e:
+            result["site"] = {"success": False, "error": str(e)[:300]}
     if not article_url and base_url:
         # Best-effort link naar de (elders gehoste) live pagina, voor social-posts.
         article_url = f"{base_url}/blog/{job['slug']}"
@@ -719,23 +820,43 @@ async def approve_and_publish(job_id: str) -> Dict:
         if google_result.get("status") != "uitgeschakeld":
             result["google_indexing"] = google_result
 
-    # ── Social fan-out — alleen platformen met geldige credentials voor deze site ──
+    # ── Social fan-out — best-effort, nooit blokkerend ───────────────────────
+    # Een falend platform (bv. LinkedIn in 'Review in progress' → geen member ID
+    # op te halen) mag de website-publicatie niet afbreken: we noteren het als
+    # mislukt en slaan het over. De mens doet die socials zelf handmatig.
     site_name = site["name"]
+
+    async def _post(platform: str, coro):
+        try:
+            return await coro
+        except Exception as e:
+            logger.warning("Social-post %s overgeslagen (mislukt): %s", platform, e)
+            return {"success": False, "error": str(e)[:200]}
+
     if social_copy.get("linkedin") and linkedin_service.is_configured(site_name):
-        result["social"]["linkedin"] = await linkedin_service.post_update(
-            social_copy["linkedin"], article_url=article_url, site_name=site_name)
+        result["social"]["linkedin"] = await _post(
+            "linkedin",
+            linkedin_service.post_update(
+                social_copy["linkedin"], article_url=article_url, site_name=site_name))
     if social_copy.get("facebook") and facebook_service.is_configured(site_name):
-        result["social"]["facebook"] = await facebook_service.post_update(
-            social_copy["facebook"], article_url=article_url, site_name=site_name)
+        result["social"]["facebook"] = await _post(
+            "facebook",
+            facebook_service.post_update(
+                social_copy["facebook"], article_url=article_url, site_name=site_name))
     if social_copy.get("instagram") and instagram_service.is_configured(site_name):
         if image_url:
-            result["social"]["instagram"] = await instagram_service.post_image(
-                image_url, social_copy["instagram"], site_name=site_name)
+            result["social"]["instagram"] = await _post(
+                "instagram",
+                instagram_service.post_image(
+                    image_url, social_copy["instagram"], site_name=site_name))
         else:
-            result["social"]["instagram"] = {"success": False, "error": "Geen publieke image-url (Netlify niet geconfigureerd)"}
+            result["social"]["instagram"] = {"success": False,
+                "error": "Geen publieke image-url (site publish geeft geen image_url)"}
     if social_copy.get("twitter") and twitter_service.is_configured(site_name):
-        result["social"]["twitter"] = await twitter_service.post_update(
-            social_copy["twitter"], article_url=article_url, site_name=site_name)
+        result["social"]["twitter"] = await _post(
+            "twitter",
+            twitter_service.post_update(
+                social_copy["twitter"], article_url=article_url, site_name=site_name))
 
     _update_job(job_id, status="published", publish_result=json.dumps(result), reviewed_at=_now())
     _log_activity(site_name, "publicatie", f"'{job['title']}' goedgekeurd en gepubliceerd",

@@ -96,6 +96,43 @@ async def _run_agent_for_task(
     return "".join(chunks).strip()
 
 
+def _assess_output(text: str, task: dict) -> dict:
+    """Minimale, LLM-vrije kwaliteitscheck op taak-output.
+
+    Houdt rommel uit de downstream Wachtrij-gate: een te korte of structuurloze
+    tekst wordt 'needs_work' in plaats van 'done'. Dit is een snelle
+    voorfilter — de echte SEO-score (>=80) gebeurt in content_pipeline.
+    """
+    if not text or len(text.strip()) < 200:
+        return {"ok": False, "reason": "output te kort (<200 tekens)"}
+    # Lijst-/artikel-taken horen koppen te hebben; een muur aan platte tekst
+    # is onbruikbaar als SEO-concept.
+    has_heading = any(line.strip().startswith("#") for line in text.splitlines())
+    if not has_heading and (task.get("workspace_path") or "").endswith(
+        ("listicle.md", "reddit.md", "video.md")
+    ):
+        return {"ok": False, "reason": "geen koppen/structuur in concept"}
+    return {"ok": True, "reason": ""}
+
+
+async def _auto_stage_ready_listicles() -> int:
+    """Zodra een AEO-listicle-taak 'done' is, schuif hem zelfstandig door naar
+    de publicatie-wachtrij (pending_review / needs_work). Sluit de AEO-loop
+    zonder dat iemand op 'queue-listicle' hoeft te klikken. Geeft het aantal
+    gestageerde jobs terug. Werkt zacht — een fout logt en telt niet mee."""
+    from ..radar.service import get_service as radar_service
+    from ..radar.models import _list_ready_converted_listicles
+
+    staged = 0
+    for sig_id, task in _list_ready_converted_listicles():
+        try:
+            await radar_service().queue_listicle(sig_id)
+            staged += 1
+        except Exception:
+            logger.exception("Auto-stage van listicle voor signaal %s mislukt", sig_id)
+    return staged
+
+
 def _write_workspace_file(workspace_path: str, content: str) -> Path:
     full_path = DEFAULT_WORKSPACE_ROOT / workspace_path
     full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -147,23 +184,36 @@ async def _execute_task(task: dict) -> dict:
                 logger.warning("Task %s: workspace-bestand schrijven mislukt: %s", task_id, werr)
 
         duration_ms = int((time.perf_counter() - started) * 1000)
-        updated = set_task_status(
-            task_id, "awaiting_approval",
-            result=result_text, error="",
-            finished_at=_now(), duration_ms=duration_ms,
-        )
+        # Eigen kwaliteitscheck: is de output bruikbaar? Minimale drempels
+        # (lengte + structuur) houden rommel uit de downstream Wachtrij-gate.
+        # Bij falen → 'needs_work' (de publicatie-gate weigert die toch <80).
+        quality = _assess_output(result_text, task)
+        if quality["ok"]:
+            updated = set_task_status(
+                task_id, "done",
+                result=result_text, error="",
+                finished_at=_now(), duration_ms=duration_ms,
+            )
+        else:
+            updated = set_task_status(
+                task_id, "needs_work",
+                result=result_text, error=quality["reason"],
+                finished_at=_now(), duration_ms=duration_ms,
+            )
 
         logger.info(
-            "Task %s finished: status=%s duration=%sms",
+            "Task %s finished: status=%s duration=%sms quality=%s",
             task_id,
-            (updated or {}).get("status", "awaiting_approval"),
+            (updated or {}).get("status", "done"),
             duration_ms,
+            "ok" if quality["ok"] else quality["reason"],
         )
         return {
             "task_id": task_id,
-            "status": (updated or {}).get("status", "awaiting_approval"),
+            "status": (updated or {}).get("status", "done"),
             "output": result_text,
             "duration_ms": duration_ms,
+            "quality": quality,
         }
     except Exception as exc:  # noqa: BLE001
         logger.exception("Task %s failed: %s", task_id, exc)
@@ -209,6 +259,14 @@ async def conveyor_loop(
                     result.get("status"),
                     result.get("duration_ms"),
                 )
+                # Zelfstandige doorrol: als een AEO-listicle klaar is, schuif hem
+                # meteen door naar de Wachtrij-gate (menselijke publish-klik).
+                try:
+                    staged = await _auto_stage_ready_listicles()
+                    if staged:
+                        logger.info("Auto-stage: %d listicle(s) naar Wachtrij", staged)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Auto-stage na taak mislukt (niet fataal)")
             else:
                 await asyncio.sleep(poll_interval)
         except Exception as exc:  # noqa: BLE001

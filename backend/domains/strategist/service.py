@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import re
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -259,9 +260,13 @@ def autoheal_goals() -> Dict[str, Any]:
 
 # ── SYSTEEMGEZONDHEID ────────────────────────────────────────────────
 
-def system_health() -> Dict[str, Any]:
+def system_health(project: Optional[str] = None) -> Dict[str, Any]:
     """Geeft een compact overzicht van wat er mis kan zijn, zodat het
-    dashboard problemen kan tonen zonder dat iemand handmatig moet zoeken."""
+    dashboard problemen kan tonen zonder dat iemand handmatig moet zoeken.
+
+    `project` (optioneel): beperk de publish-foutenteller tot één project,
+    zodat een Bijeen-fout niet op het Bewaardvoorjou-dashboard verschijnt.
+    """
     from ...scheduler import get_scheduler_status
 
     all_goals = list_goals(limit=200)
@@ -277,33 +282,57 @@ def system_health() -> Dict[str, Any]:
         if (j.get("last_run") or {}).get("status") in ("error", "missed")
     ]
 
-    # Mislukte live-publicaties (laatste 48u): een artikel dat klaarstond maar
-    # niet live kon (bv. publish-API 401) is een actie-item, geen logregel.
-    publish_failures: List[Dict[str, Any]] = []
+    # ── Live-publicatie-status (laatste 2 dagen) ──────────────────────────
+    # We onderscheiden twee zaken die de oude code op één hoop gooide:
+    #   * live-fout        → de publish-API gaf een échte fout (401, netwerk,
+    #                        exception). Dit is een actie-item.
+    #   * live-overgeslagen→ géén publish-backend geconfigureerd; artikel is
+    #                        bewust alleen lokaal opgeslagen. GEEN fout, wél
+    #                        een config-actie (BEWAARDVOORJOU_PUBLISH_URL/_KEY).
+    # Allebei tellen we pas mee als er daarna géén geslaagde 'live' voor hetzelfde
+    # artikel is gelogd (anders is het al opgelost en blijft het een spookmelding).
+    def _title_of(detail: str) -> str:
+        """Robuuste titel-extractie uit een log-detail, onafhankelijk van
+        apostrofjes in de titel. We pakken de tekst tussen de eerste twee
+        enkele quotes: '...'."""
+        m = re.search(r"'([^']*)'", detail or "")
+        return (m.group(1) if m else (detail or "")).strip()[:60]
+
+    publish_failures: List[Dict[str, Any]] = []   # echte fouten
+    publish_unconfigured: List[Dict[str, Any]] = []  # geen backend
     try:
         with get_conn() as conn:
+            proj_clause, params = "", []
+            if project:
+                proj_clause = "AND project = ? "
+                params = [project]
             rows = conn.execute(
-                "SELECT project, detail, created_at FROM activity_log "
+                "SELECT id, project, action, detail, created_at FROM activity_log "
                 "WHERE action IN ('live-fout', 'live-overgeslagen') "
-                "AND created_at >= datetime('now', '-2 days') "
-                "ORDER BY created_at DESC LIMIT 10",
+                f"AND created_at >= datetime('now', '-2 days') {proj_clause}"
+                "ORDER BY created_at DESC LIMIT 20",
+                params,
             ).fetchall()
         for r in rows:
-            # Alleen melden zolang er daarna geen geslaagde 'live' voor
-            # hetzelfde project+artikel is gelogd.
-            title_part = (r["detail"] or "").split("':")[0].lstrip("'")
+            title = _title_of(r["detail"])
             with get_conn() as conn:
                 fixed = conn.execute(
                     "SELECT 1 FROM activity_log WHERE action='live' AND project=? "
                     "AND detail LIKE ? AND created_at >= ? LIMIT 1",
-                    (r["project"], f"%{title_part[:60]}%", r["created_at"]),
+                    (r["project"], f"%{title}%", r["created_at"]),
                 ).fetchone()
-            if not fixed:
-                publish_failures.append({
-                    "project": r["project"], "detail": r["detail"], "time": r["created_at"],
-                })
+            if fixed:
+                continue  # al opgelost — geen melding
+            entry = {
+                "project": r["project"], "detail": r["detail"],
+                "time": r["created_at"], "action": r["action"],
+            }
+            if r["action"] == "live-fout":
+                publish_failures.append(entry)
+            else:
+                publish_unconfigured.append(entry)
     except Exception:
-        logger.exception("Kon publish-fouten niet ophalen voor health-check")
+        logger.exception("Kon publish-status niet ophalen voor health-check")
 
     issues: List[str] = []
     if stalled_goals:
@@ -313,7 +342,12 @@ def system_health() -> Dict[str, Any]:
     if failed_jobs:
         issues.append(f"{len(failed_jobs)} scheduler-taak(en) zijn recent mislukt of overgeslagen")
     if publish_failures:
-        issues.append(f"{len(publish_failures)} artikel(en) konden niet live gezet worden (publish-fout)")
+        issues.append(f"{len(publish_failures)} artikel(en) konden niet live gezet worden (echte publish-fout)")
+    if publish_unconfigured:
+        issues.append(
+            f"{len(publish_unconfigured)} artikel(en) staan klaar maar zijn niet gepubliceerd — "
+            "geen publish-backend geconfigureerd (zie *.env)"
+        )
     from ...domains.chat import hermes as hermes_service
     if not hermes_service.is_configured():
         issues.append("Geen AI-backend geconfigureerd")
@@ -325,6 +359,7 @@ def system_health() -> Dict[str, Any]:
         "failed_goals": [{"goal_id": g["id"], "title": g["title"], "project": g.get("project", "")} for g in failed_goals],
         "failed_jobs": [{"id": j["id"], "label": j["label"], "last_run": j["last_run"]} for j in failed_jobs],
         "publish_failures": publish_failures,
+        "publish_unconfigured": publish_unconfigured,
         "last_autoheal": _last_autoheal,
         "timestamp": __import__("datetime").datetime.now().isoformat(),
     }

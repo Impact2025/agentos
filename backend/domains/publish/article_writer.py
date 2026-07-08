@@ -587,6 +587,13 @@ async def write_article_staged(site: Dict, keyword: str, angle: str, rationale: 
         try:
             html_body = await _qc_fix(site, keyword, html_body, issues, ctas)
             fixed = True
+            # _qc_fix herschrijft de volledige HTML-body en kan, ondanks de instructie
+            # om links te behouden, gevalideerde interne links laten vallen of nieuwe
+            # verzinnen — net als de SEO-optimalisatieronde in content_pipeline.py.
+            # Zonder deze wied-stap belanden ongevette (mogelijk 404-)links alsnog live.
+            html_body, n_stripped = strip_unvetted_internal_links(html_body, site, ctas=ctas)
+            if n_stripped:
+                logger.info("[article-writer] QC-fix: %d ongevette interne link(s) verwijderd", n_stripped)
         except Exception as e:
             logger.warning("[article-writer] QC-fix mislukt: %s", e)
 

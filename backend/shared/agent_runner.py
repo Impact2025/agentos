@@ -16,7 +16,7 @@ from .config import (
     OLLAMA_BASE_URL, OLLAMA_MODEL,
     HERMES_LOCAL_URL, HERMES_LOCAL_KEY,
     OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL,
-    hermes_backend,
+    hermes_backend, HERMES_LOCAL_FALLBACK,
 )
 from ..tools import TOOLS, TOOL_MAP
 
@@ -131,7 +131,71 @@ async def run_agent(
             return
         primary_error = err  # voor volgende iteratie
 
+    # Alle backends opgebruikt/exhaust — als lokale fallback aanstaat, lever
+    # een deterministische concept-vuller zodat de pijplijn niet stilvalt. De
+    # output is expliciet gemarkeerd als CONCEPT en scoort altijd <80 bij de
+    # SEO-gate, dus hij belandt in 'needs_work' en wordt NOOIT gepubliceerd.
+    if HERMES_LOCAL_FALLBACK:
+        async for event in _local_template_fill(messages, system_prompt):
+            yield event
+        return
+
     yield {"type": "error", "message": primary_error or "Alle backends onbereikbaar"}
+
+
+async def _local_template_fill(messages: List[Dict], system_prompt: str) -> AsyncGenerator[Dict, None]:
+    """Deterministische offline vuller: zet de gebruikersopdracht om in een
+    gestructureerd concept-karkas. Geen LLM — puur patroon/titel-extractie.
+    Altijd duidelijk gemarkeerd als CONCEPT zodat een mens het ziet en de
+    kwaliteitsgate (score >=80) het weigert voor publicatie."""
+    user_text = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            user_text = m.get("content") or ""
+            break
+    # Haal een werktitel uit de opdracht (eerste niet-lege regel na '# ').
+    title = ""
+    for line in user_text.splitlines():
+        line = line.strip()
+        if line.startswith("# "):
+            title = line[2:].strip()
+            break
+    if not title:
+        # Pak de eerste zin die eruit ziet als een titel.
+        for line in user_text.splitlines():
+            line = line.strip()
+            if line and len(line) > 8 and not line.lower().startswith(("titel:", "beschrijving:")):
+                title = line.split("\n")[0][:80]
+                break
+    title = title or "Concept (lokale fallback — geen LLM beschikbaar)"
+
+    out = [
+        f"# {title}",
+        "",
+        "> ⚠️ CONCEPT gegenereerd door lokale fallback — geen LLM-backend beschikbaar.",
+        "> Controleer en schrijf dit uit voordat je het publiceert.",
+        "",
+        "## Inleiding",
+        f"[Automatisch karkas voor: {title}]",
+        "",
+        "## Hoofdpunten",
+        "1. [punt 1 — invullen]",
+        "2. [punt 2 — invullen]",
+        "3. [punt 3 — invullen]",
+        "",
+        "## Afsluiting",
+        "[samenvatting — invullen]",
+        "",
+        "## Veelgestelde vragen",
+        "**Vraag 1?** [antwoord invullen]",
+        "**Vraag 2?** [antwoord invullen]",
+        "",
+        "---",
+        f"_Meta-titel: {title} · _Meta-beschrijving: [invullen, ~155 tekens]_",
+    ]
+    yield {"type": "text", "text": "\n".join(out)}
+    yield {"type": "note", "text": "lokale-fallback-concept (geen LLM)"}
+
 
 
 # ── OpenModel / Anthropic-compatible loop ─────────────────────────────────────

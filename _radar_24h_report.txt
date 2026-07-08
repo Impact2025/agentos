@@ -1,0 +1,65 @@
+# Mission Radar — 24-uur-later analyse
+
+Datum: 2026-07-08 07:36 UTC
+
+## bewaardvoorjou
+- Signalen: 78 → 89  (+11)
+- Nieuw in afgelopen 24u: 11 (scan saved=11)
+- Top-score: 78.3 → 83.2  (+4.9)
+
+  Top-5 vóór scan:
+    • 78.3  Hoe regelen jullie de "digitale erfenis" en wachtwoorden binnen het ..  [digitale erfenis]
+    • 76.2  Hoe bewaak je herinneringen van je kinderen zodat ze ... - Reddit  [herinneringen bewaren voor kinderen]
+    • 75.3  Welke kinderherinneringen moet je bewaren? : r/Parenting - Reddit  [herinneringen bewaren voor kinderen]
+    • 73.6  Hoe leg je jouw eigen levensverhaal vast? : r/Genealogy - Reddit  [levensverhaal vastleggen]
+    • 71.4  Hoe bewaar je herinneringen aan je baby? : r/BabyBumps - Reddit  [herinneringen bewaren voor kinderen]
+
+  Top-5 ná scan (incl. nieuw):
+    • 83.2  Zomerfilmmaand moet eenzaamheid onder Amsterdamse ouderen verminderen  [eenzaamheid onder ouderen]  ⭐NIEUW
+    • 80.5  Eenzaamheid de deur uit: vijf jaar ‘Met je hart’ Doetinchem  [eenzaamheid onder ouderen]  ⭐NIEUW
+    • 78.3  Hoe regelen jullie de "digitale erfenis" en wachtwoorden binnen het ..  [digitale erfenis]
+    • 76.4  Soep tegen eenzaamheid bij ouderen, maar nu Lieke vertrekt zijn er nie  [eenzaamheid onder ouderen]  ⭐NIEUW
+    • 76.2  Hoe bewaak je herinneringen van je kinderen zodat ze ... - Reddit  [herinneringen bewaren voor kinderen]
+
+  Nieuwe signalen (hoogste eerst):
+    + 83.2  Zomerfilmmaand moet eenzaamheid onder Amsterdamse ouderen verminderen  [eenzaamheid onder ouderen]  https://www.rodi.nl/amsterdam-noord/nieuws/499235/zomerfilmm
+    + 80.5  Eenzaamheid de deur uit: vijf jaar ‘Met je hart’ Doetinchem  [eenzaamheid onder ouderen]  https://www.doetinchemsvizier.nl/nieuws/maatschappij/553745/
+    + 76.4  Soep tegen eenzaamheid bij ouderen, maar nu Lieke vertrekt zijn er nie  [eenzaamheid onder ouderen]  https://www.ad.nl/den-haag/soep-tegen-eenzaamheid-bij-oudere
+    + 74.8  Jongeren en ouderen onder één dak: ‘We zien dat het eenzaamheid onder   [eenzaamheid onder ouderen]  https://www.rtvnoord.nl/politiek/1417623/jongeren-en-ouderen
+    + 66.4  Uitvaart.nl - Voor directe hulp na een overlijden (24/7)  [uitvaart.nl]  https://www.uitvaart.nl
+    + 64.5  Teun (85) zit niet eenzaam te wachten op de houten jas, maar hengelt a  [eenzaamheid onder ouderen]  https://www.destentor.nl/apeldoorn/teun-85-zit-niet-eenzaam-
+    + 60.3  Zonder uitvaartondernemer - Uitvaart.nl  [uitvaart.nl]  https://www.uitvaart.nl/regelen/zonder-uitvaartondernemer
+    + 47.3  Eenzaamheid op oudere leeftijd: een "onderstroom" die ouderen richting  [eenzaamheid onder ouderen]  https://www.vietnam.vn/nl/co-don-tuoi-gia-lan-song-ngam-day-
+    + 29.1  Tijd tussen overlijden en de begrafenis of crematie  [uitvaart.nl]  https://www.uitvaart.nl/infotheek/overlijden/tijd-tussen-ove
+    + 26.9  In het crematorium  [uitvaart.nl]  https://www.uitvaart.nl/infotheek/de-plechtigheid/invulling-
+
+## bijeen
+- Signalen: 82 → 96  (+14)
+- Nieuw in afgelopen 24u: 14 (scan saved=14)
+- Top-score: 80.5 → 80.5  (+0.0)
+
+  Top-5 vóór scan:
+    • 80.5  wat is de beste plek om vrijwilligers te werven? : r/volunteer - Reddi  [vrijwilligers werven]
+    • 79.0  Hoe vrijwilligers te werven? : r/volunteer  [vrijwilligers werven]
+    • 71.4  Wat zijn jouw tips/beste praktijken voor het werven/managen van ...  [vrijwilligers werven]
+    • 69.3  Welzijns Subsidie : r/deloitte - Reddit  [subsidie aanvragen welzijn]
+    • 67.2  12 best things to do in the Netherlands this summer 2026 - DutchReview  [welzijnsevenement organiseren]
+
+  Top-5 ná scan (incl. nieuw):
+    • 80.5  wat is de beste plek om vrijwilligers te werven? : r/volunteer - Reddi  [vrijwilligers werven]
+    • 79.0  Hoe vrijwilligers te werven? : r/volunteer  [vrijwilligers werven]
+    • 71.4  Wat zijn jouw tips/beste praktijken voor het werven/managen van ...  [vrijwilligers werven]
+    • 70.1  Vraag voor campagnemanagers: hoe werf je nieuwe vrijwilligers?  [vrijwilligers werven]  ⭐NIEUW
+    • 69.3  Welzijns Subsidie : r/deloitte - Reddit  [subsidie aanvragen welzijn]
+
+  Nieuwe signalen (hoogste eerst):
+    + 70.1  Vraag voor campagnemanagers: hoe werf je nieuwe vrijwilligers?  [vrijwilligers werven]  https://www.reddit.com/r/volunteer/comments/1pcxj72/question
+    + 63.1  Quick Start Guide Eventbrite - Eventbrite Blog  [eventbrite.com]  https://www.eventbrite.com/blogquick-start-guide
+    + 62.1  Uitsplitsing van heksen-Gachapon : r/LoveNikki - Reddit  [welzijnsevenement organiseren]  https://www.reddit.com/r/LoveNikki/comments/1twgc1b/breakdow
+    + 61.2  It’s Now Free to Publish Events on Eventbrite  [eventbrite.com]  https://www.eventbrite.com/blog/free-to-publish-events
+    + 57.8  Eventbrite Pricing and features for Organizers | Eventbrite  [eventbrite.com]  https://www.eventbrite.com/organizer/pricing
+    + 50.0  Wel thuis? - Sociaal Web  [sociaalweb.nl]  https://sociaalweb.nl/wp-content/uploads/po_assets/689015.pd
+    + 37.8  Eventbrite Careers - Welcome to the Briteland  [eventbrite.com]  https://www.eventbrite.com/careers
+    + 35.2  The Eventbrite App - Local Events & Things To Do | Access Tickets | Ev  [eventbrite.com]  https://www.eventbrite.com/consumer/eventbrite-app
+    + 30.6  Monsters Unchained Ritvoertuig! : r/UniversalOrlando - Reddit  [welzijnsevenement organiseren]  https://www.reddit.com/r/UniversalOrlando/comments/1mk9kd4/m
+    + 25.4  Northern Cape becoming the copper gift that just keeps on giving - Pol  [SROI berekenen welzijn]  https://www.polity.org.za/article/northern-cape-becoming-the

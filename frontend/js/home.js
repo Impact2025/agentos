@@ -277,7 +277,11 @@ function loadSystemHealth(elId, btnId) {
   btnId = btnId || 'autoheal-btn';
   var el = document.getElementById(elId);
   if (!el) return;
-  fetch('/api/strategist/health').then(function(r){return r.json();}).then(function(h){
+  // Op het project-dashboard filteren we op dat project, zodat een fout in een
+  // ander project (bv. Bijeen) niet op het Bewaardvoorjou-scherm verschijnt.
+  var projectParam = (elId === 'system-health-panel-proj' && currentProject)
+    ? '?project=' + encodeURIComponent(currentProject) : '';
+  fetch('/api/strategist/health' + projectParam).then(function(r){return r.json();}).then(function(h){
     if (!el || h.error) return;
     if (h.ok) {
       el.innerHTML = '<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#166534;display:flex;align-items:center;gap:8px">' +

@@ -1,0 +1,141 @@
+{
+  "plan_summary": "Produceer en publiceer 3 SEO-artikelen op de hoogste-gap keywords (levensverhaal laten schrijven kosten, biografie laten schrijven, cadeau 70 jaar) via de content-machine en herstel de gedaalde kennisbank-positie (6.0 -> 36.9) naar pagina 1; succes wordt gemeten op GSC-impressies en positie over 30 dagen.",
+  "estimated_duration": "10-14 dagen inclusief 30-dagen meetperiode",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Diagnose",
+      "description": "Bepaal gaps, diagnoseer de kennisbank-daling en stel op basis daarvan de zoekintentie en artikel-outlines vast.",
+      "tasks": [
+        {
+          "title": "Gap-keyword & concurrentie-analyse",
+          "description": "Analyseer GSC-data voor de 3 hoogste-gap keywords (levensverhaal laten schrijven kosten, biografie laten schrijven, cadeau 70 jaar): zoekvolume, positie, impressies en benchmark de top-10 concurrenten op SERP-structuur, content-diepte en interne linkopbouw.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Kennisbank positie-diagnose 6.0 -> 36.9",
+          "description": "Onderzoek de oorzaak van de positiedaling van de kennisbank: controleer GSC-indexering, contentversheid, technische issues (Core Web Vitals, canonicals), verloren backlinks en algoritme-shifts; lever een concrete herstel-checklist op.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Zoekintentie & outline-strategie per keyword",
+          "description": "Bepaal per keyword de zoekintentie (informational/transactional) en stel een SEO-outline op (H1-H3, primair + 3-5 secundaire keywords, meta-title/meta-desc, interne link-doelen) op basis van de concurrentie-analyse uit taak 1.",
+          "skill": "research",
+          "dependencies": [
+            "Gap-keyword & concurrentie-analyse"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content-productie",
+      "description": "Schrijf de 3 artikelen en de herschreven kennisbank-pagina's volgens de vastgestelde outlines en diagnose.",
+      "tasks": [
+        {
+          "title": "Artikel 1: levensverhaal laten schrijven kosten",
+          "description": "Schrijf een 1200-1500 woord SEO-artikel over kostenopbouw van een levensverhaal (pakketten, prijsindicaties, ROI, bespaartips, FAQ) volgens de outline uit taak 3, met natuurlijke interne links naar de kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Zoekintentie & outline-strategie per keyword"
+          ]
+        },
+        {
+          "title": "Artikel 2: biografie laten schrijven",
+          "description": "Schrijf een 1200-1500 woord SEO-artikel over een biografie/levensverhaal laten schrijven (wat het is, het proces, ghostwriting vs. zelf, prijsindicatie, meerwaarde cadeau) volgens de outline uit taak 3.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Zoekintentie & outline-strategie per keyword"
+          ]
+        },
+        {
+          "title": "Artikel 3: cadeau 70 jaar",
+          "description": "Schrijf een 1000-1300 woord SEO-artikel over een levensverhaal uitgeven als 70e verjaardagscadeau (concept, formaten, hoe te beginnen, samen met familieleden, prijsindicatie) volgens de outline uit taak 3.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Zoekintentie & outline-strategie per keyword"
+          ]
+        },
+        {
+          "title": "Kennisbank-herstel naar pagina 1",
+          "description": "Herschrijf en breid de kennisbank-pagina's uit op basis van de diagnose uit taak 2: frisse content, structured data (FAQ/Article schema), EEAT-signalen, interne linkcluster en verbeterde meta om positie 36.9 terug naar pagina 1 (<=10) te brengen.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Kennisbank positie-diagnose 6.0 -> 36.9"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Edit & Kwaliteitscontrole",
+      "description": "Redigeer de 3 artikelen op taal, SEO en feiten zodat ze klaar zijn voor publicatie.",
+      "tasks": [
+        {
+          "title": "Edit artikel 1 (levensverhaal kosten)",
+          "description": "Controleer taal, toon, SEO-on-page (title/meta/headers/keyword-dichtheid), feiten en interne links van artikel 1; lever de geoptimaliseerde eindversie op.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Artikel 1: levensverhaal laten schrijven kosten"
+          ]
+        },
+        {
+          "title": "Edit artikel 2 (biografie)",
+          "description": "Controleer taal, toon, SEO-on-page, feiten en interne links van artikel 2; lever de geoptimaliseerde eindversie op.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Artikel 2: biografie laten schrijven"
+          ]
+        },
+        {
+          "title": "Edit artikel 3 (cadeau 70 jaar)",
+          "description": "Controleer taal, toon, SEO-on-page, feiten en interne links van artikel 3; lever de geoptimaliseerde eindversie op.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Artikel 3: cadeau 70 jaar"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publiceren & Meten",
+      "description": "Stage alle content in de Wachtrij ter review en richt de 30-dagen GSC-monitoring in op impressies en positie.",
+      "tasks": [
+        {
+          "title": "Publiceer artikel 1 (levensverhaal kosten)",
+          "description": "Stage de eindversie van artikel 1 in de content-machine Wachtrij ter review (mens keurt goed) en markeer voor IndexNow/push na goedkeuring.",
+          "skill": "publisher",
+          "dependencies": [
+            "Edit artikel 1 (levensverhaal kosten)"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 2 (biografie)",
+          "description": "Stage de eindversie van artikel 2 in de content-machine Wachtrij ter review en markeer voor IndexNow/push na goedkeuring.",
+          "skill": "publisher",
+          "dependencies": [
+            "Edit artikel 2 (biografie)"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 3 (cadeau 70 jaar)",
+          "description": "Stage de eindversie van artikel 3 in de content-machine Wachtrij ter review en markeer voor IndexNow/push na goedkeuring.",
+          "skill": "publisher",
+          "dependencies": [
+            "Edit artikel 3 (cadeau 70 jaar)"
+          ]
+        },
+        {
+          "title": "Publiceer kennisbank-herstel & start 30-dagen GSC-monitoring",
+          "description": "Stage de herschreven kennisbank-pagina's in de Wachtrij ter review; richt daarna een GSC-dashboard/tracking in op impressies en positie voor alle 4 URLs (3 artikelen + kennisbank) en meet het succes over 30 dagen tegen de baseline (kennisbank 36.9 -> <=10, artikelen nieuw -> zichtbaar).",
+          "skill": "publisher",
+          "dependencies": [
+            "Kennisbank-herstel naar pagina 1",
+            "Publiceer artikel 1 (levensverhaal kosten)",
+            "Publiceer artikel 2 (biografie)",
+            "Publiceer artikel 3 (cadeau 70 jaar)"
+          ]
+        }
+      ]
+    }
+  ]
+}

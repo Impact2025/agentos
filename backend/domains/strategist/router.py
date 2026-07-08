@@ -37,13 +37,29 @@ async def strategist_execute(body: Dict[str, str]) -> Dict[str, Any]:
 
 
 @router.get("/health")
-def strategist_health() -> Dict[str, Any]:
+def strategist_health(project: str = None) -> Dict[str, Any]:
     """Compact systeemgezondheid-overzicht: verweesde/mislukte doelen,
-    scheduler-fouten, laatste autoheal-run."""
+    scheduler-fouten, laatste autoheal-run. Met `project` beperk je de
+    publish-status tot één project (zodat een Bijeen-fout niet op het
+    Bewaardvoorjou-dashboard verschijnt)."""
     try:
-        return service.system_health()
+        return service.system_health(project=project)
     except Exception as e:
         logger.exception("Health-check fout")
+        return {"error": str(e)[:300]}
+
+
+# Per-project health — het project-dashboard roept dit aan i.p.v. de globale
+# check, zodat de Aandachtspunten alleen meldingen voor dát project tonen.
+
+
+@router.get("/projects/{name}/health")
+def strategist_project_health(name: str) -> Dict[str, Any]:
+    """Systeemgezondheid gefilterd op één project."""
+    try:
+        return service.system_health(project=name)
+    except Exception as e:
+        logger.exception("Project health-check fout")
         return {"error": str(e)[:300]}
 
 

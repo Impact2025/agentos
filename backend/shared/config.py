@@ -79,6 +79,24 @@ GOOGLE_INDEXING_ENABLED: bool = os.getenv("GOOGLE_INDEXING_ENABLED", "0") == "1"
 # probeert eerst automatisch te verbeteren (max 3 rondes).
 CONTENT_MIN_SCORE: int = int(os.getenv("CONTENT_MIN_SCORE", "80"))
 
+# ── Mission Radar autonomie ──────────────────────────────────────────────
+# Auto-AEO: na elke sky-scan start de agent zelfstandig een AEO-aanval op de
+# beste verse signalen, tot aan de Wachtrij-gate. De mens hoeft alleen nog
+# "publiceer" te klikken. Zet op "0" om terug te vallen op handmatige AEO.
+AEO_AUTO_ATTACK: bool = os.getenv("AEO_AUTO_ATTACK", "1") == "1"
+# Minimale signaal-score voordat de agent een AEO-aanval durft te starten
+# zonder mens. Hoger = conservatiever (minder vals-positieven in de Wachtrij).
+AEO_AUTO_MIN_SCORE: float = float(os.getenv("AEO_AUTO_MIN_SCORE", "75"))
+# Maximaal aantal auto-AEO-aanvallen per scan-run (kosten/overload-beheersing).
+AEO_AUTO_MAX_PER_SCAN: int = int(os.getenv("AEO_AUTO_MAX_PER_SCAN", "3"))
+
+# ── Lokale fallback ──────────────────────────────────────────────────────
+# Als de primaire Hermes-backend faalt (geen API-key, timeout, 429-exhaust),
+# produceert de agent-runner een deterministische concept-vuller i.p.v. de
+# hele pijplijn te blokkeren. Die concepten scoren altijd < CONTENT_MIN_SCORE,
+# dus ze belanden in 'needs_work' en worden NOOIT automatisch gepubliceerd.
+HERMES_LOCAL_FALLBACK: bool = os.getenv("HERMES_LOCAL_FALLBACK", "1") == "1"
+
 # Acquisitie-formule (input → output): hoeveel outreach-concepten de agent
 # elke werkdag klaarzet ter review. Er wordt NOOIT automatisch verstuurd —
 # versturen gebeurt alleen na expliciete goedkeuring in het Actiecentrum.

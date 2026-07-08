@@ -1,0 +1,327 @@
+
+======================================================================
+ SCAN: bewaardvoorjou
+======================================================================
+[start] 7 actieve watches
+  → watch 'Levensverhaal vastleggen' (keyword)
+      ↳ AI-verrijking: The Last Secrets Of A Dying Man - HuffPost
+      ↳ AI-verrijking: 5 Tips On How I Pivoted From The C-Suite To Executive Content Creator - Yahoo Lifestyle Canada
+      ↳ AI-verrijking: Beware of this website. They have gone above and beyond to ...
+      ↳ AI-verrijking: all subreddits • r/all
+  ✓ Levensverhaal vastleggen: 9 nieuw, 0 overgeslagen, top_score=67.6
+  → watch 'Digitale erfenis' (keyword)
+      ↳ AI-verrijking: Your Online Footprint Is Probably Too Big. Here's How I Recommend Reducing It and Why You Should - CNET
+      ↳ AI-verrijking: John Romero commiserates with ousted id devs as around half the studio reported axed, says he hopes someone is preserving its work like he did before he left - PC Gamer
+      ↳ AI-verrijking: Erfenis verwerpen, word ik op de hoogte gesteld van ... - Reddit
+      ↳ AI-verrijking: How I Cleaned Up the Thousands of Photos and Videos I Had Scattered Across the Internet - CNET
+  ✓ Digitale erfenis: 7 nieuw, 2 overgeslagen, top_score=70.1
+  → watch 'Nalatenschap vastleggen' (keyword)
+      ↳ AI-verrijking: The $1,000 Inheritance at Birth—Inside Trump’s New Bet on Generational Wealth - Realtor.com
+      ↳ AI-verrijking: Can I save taxes by having my parents leave an inheritance to my children? - Los Angeles Times
+      ↳ AI-verrijking: Beleggingsportefeuille bij overlijden : r/beleggen - Reddit
+      ↳ AI-verrijking: Got this email and i think it is a scam. What do you guys ...
+  ✓ Nalatenschap vastleggen: 8 nieuw, 1 overgeslagen, top_score=64.5
+  → watch 'Herinneringen bewaren voor kinderen' (keyword)
+      ↳ AI-verrijking: My Son Found A Hero In Jalen Brunson. I Found A Piece Of My Dad I Thought Was Gone. - HuffPost
+      ↳ AI-verrijking: Goede manier om oude foto's te bewaren : r/nederlands - Reddit
+      ↳ AI-verrijking: Legacy Begins with Stories - The Times of Israel
+      ↳ AI-verrijking: Bewaar jij de dozen van elektronica / huishoudelijke ... - Reddit
+  ✓ Herinneringen bewaren voor kinderen: 7 nieuw, 2 overgeslagen, top_score=67.8
+  → watch 'Eenzaamheid onder ouderen' (keyword)
+      ↳ AI-verrijking: Armoede onder ouderen : r/thenetherlands - Reddit
+      ↳ AI-verrijking: In 2010, a Brigham Young University psychologist named Julianne Holt-Lunstad analyzed 148 separate studies of 300,000 people to compare the mortality risks of various lifestyle factors — and found that chronic loneliness increases a person's risk of dying e - Silicon Canals
+      ↳ AI-verrijking: Eenzaamheid : r/nederlands - Reddit
+      ↳ AI-verrijking: No savings, no choice: older Israelis struggle to retire with dignity - Ynetnews
+  ✓ Eenzaamheid onder ouderen: 9 nieuw, 0 overgeslagen, top_score=68.5
+  → watch 'Concurrent: uitvaart.nl' (competitor)
+  ✓ Concurrent: uitvaart.nl: 0 nieuw, 0 overgeslagen, top_score=0
+  → watch 'Concurrent: levensverhaal.nl' (competitor)
+  ✓ Concurrent: levensverhaal.nl: 0 nieuw, 0 overgeslagen, top_score=0
+[klaar] 40 signalen opgeslagen voor bewaardvoorjou
+
+======================================================================
+ SCAN: bijeen
+======================================================================
+[start] 7 actieve watches
+  → watch 'Welzijnsevenement organiseren' (keyword)
+      ↳ AI-verrijking: 12 best things to do in the Netherlands this summer 2026 - DutchReview
+      ↳ AI-verrijking: Gordon County Celebrates Opening of Northwest Georgia Agriculture & Event Center - Coosa Valley News
+      ↳ AI-verrijking: all subreddits • r/all
+      ↳ AI-verrijking: FILECR IS NOT SAFE!!!!!! : r/Piracy - Reddit
+  ✓ Welzijnsevenement organiseren: 9 nieuw, 0 overgeslagen, top_score=67.2
+  → watch 'Vrijwilligers werven' (keyword)
+      ↳ AI-verrijking: Volunteers work to distribute donations to Colorado residents evacuated from areas near wildfires - CBS News
+      ↳ AI-verrijking: San Gabriel nonprofit helps families in need as back-to-school shopping is ahead - CBS News
+      ↳ AI-verrijking: Quick warning for job seekers: be careful when applying to ...
+      ↳ AI-verrijking: Beware of this website. They have gone above and beyond to ...
+  ✓ Vrijwilligers werven: 8 nieuw, 1 overgeslagen, top_score=59.9
+  → watch 'SROI berekenen welzijn' (keyword)
+      ↳ AI-verrijking: I ranked 69,000 college degree programs by return on ... - Reddit
+      ↳ AI-verrijking: Zoro.to name has been now changed to AniWatch. : r/ZoroZone
+  ✓ SROI berekenen welzijn: 8 nieuw, 1 overgeslagen, top_score=60.0
+  → watch 'Subsidie aanvragen welzijn' (keyword)
+      ↳ AI-verrijking: Oak Park and River Forest students seek $160K for food insecurity initiative - Chicago Tribune
+      ↳ AI-verrijking: 10 Massachusetts Nonprofits Get Solar Grants - CleanTechnica
+      ↳ AI-verrijking: Aviv Foundation grants $1 million to expand operations of Orthodox LGBTQ inclusion group Eshel - eJewishPhilanthropy
+      ↳ AI-verrijking: 220 Miljoen subsidie weggeven en toch iedereen kwaad ... - Reddit
+  ✓ Subsidie aanvragen welzijn: 9 nieuw, 0 overgeslagen, top_score=56.5
+  → watch 'WMO rapportage' (keyword)
+      ↳ AI-verrijking: Germany Atmospheric Sensors - Market Analysis, Forecast, Size, Trends and Insights - IndexBox
+      ↳ AI-verrijking: LIST OF ONLINE CLOTHING SCAM COMPANIES - Reddit
+      ↳ AI-verrijking: IsItBullShit: I found this shopping website but it looked a tiny ... - Reddit
+  ✓ WMO rapportage: 8 nieuw, 1 overgeslagen, top_score=30.3
+  → watch 'Concurrent: Eventbrite' (competitor)
+  ✓ Concurrent: Eventbrite: 0 nieuw, 0 overgeslagen, top_score=0
+  → watch 'Concurrent: Sociaalweb' (competitor)
+  ✓ Concurrent: Sociaalweb: 0 nieuw, 0 overgeslagen, top_score=0
+[klaar] 42 signalen opgeslagen voor bijeen
+
+######################################################################
+ TOP-SIGNALEN bewaardvoorjou (40 opgeslagen)
+######################################################################
+
+• score 70.1 | blog | digitale erfenis
+  titel: Your Online Footprint Is Probably Too Big. Here's How I Recommend Reducing It and Why You Should - CNET
+  url:   https://www.cnet.com/tech/services-and-software/online-footprint-too-big-security-risk-why-how-reduce/
+  hook:  Uw online voetafdruk is niet alleen een veiligheidsrisico, maar ook een erfenis: wie beheert uw digitale nalatenschap als u er niet meer bent?
+  angle: In plaats van enkel te focussen op het verkleinen van je digitale voetafdruk voor privacy, benadrukken wij het belang van het beheren en doorgeven ervan als onderdeel van uw nalatenschap. Veel mensen vergeten dat hun online accounts, foto's en documenten na overlijden verloren gaan of in verkeerde handen vallen. Bewaardvoorjou helpt bij het veiligstellen en overdragen van deze digitale erfenis aan nabestaanden, zodat uw online leven niet zomaar verdwijnt.
+  match: 95
+  titels: ["7 manieren om uw digitale erfenis veilig te stellen en uw online voetafdruk beheersbaar te houden", "Van Facebook tot bankrekening: zo regelt u dat uw nabestaanden toegang krijgen tot uw digitale nalatenschap", "Niet alleen uw huis, ook uw data: waarom een digitaal testament onmisbaar is voor uw online voetafdruk"]
+
+• score 68.5 | reddit | eenzaamheid onder ouderen
+  titel: Armoede onder ouderen : r/thenetherlands - Reddit
+  url:   https://www.reddit.com/r/thenetherlands/comments/40lpog/armoede_onder_ouderen
+  hook:  Ouderen voelen zich vaak eenzaam, niet door een lege portemonnee, maar door een gebrek aan herinneringen die gedeeld worden.
+  angle: Terwijl armoede bij ouderen vaak wordt besproken, vergeten we de emotionele armoede die eenzaamheid veroorzaakt. Wij richten ons op het bewaren van persoonlijke verhalen en herinneringen, waardoor ouderen een tastbare erfenis achterlaten en zich verbonden blijven voelen met hun naasten. Dit unieke perspectief biedt een oplossing die verder gaat dan oppervlakkige contacten.
+  match: 85
+  titels: ["7 manieren waarop het bewaren van herinneringen eenzaamheid bij ouderen kan verminderen", "Hoe het vastleggen van een levensverhaal eenzaamheid bij ouderen tegengaat", "Waarom het bewaren van herinneringen de beste remedie is tegen eenzaamheid onder ouderen"]
+
+• score 67.8 | blog | herinneringen bewaren voor kinderen
+  titel: My Son Found A Hero In Jalen Brunson. I Found A Piece Of My Dad I Thought Was Gone. - HuffPost
+  url:   https://www.huffpost.com/entry/jalen-brunson-childrens-book-family-fandom_n_6a42fdcfe4b0f259890f14cd/amp
+  hook:  Wat als je kind jouw verhalen en passies pas ontdekt op een moment dat jij er niet meer bent?
+  angle: In plaats van te vertrouwen op toevallige triggers zoals een boek of sportheld, kunnen ouders zelf een tastbare herinneringscollectie samenstellen die kinderen later op hun eigen tempo ontdekken. Wij richten ons op het actief bewaren van niet alleen foto's, maar ook stemfragmenten, brieven, voorwerpen en levenslessen – zodat de band met opa of oma nooit echt verloren gaat.
+  match: 90
+  titels: ["7 manieren om herinneringen te bewaren zodat je kind later jouw verhalen echt kan voelen", "Hoe je een herinneringsboek maakt dat je kleinkind nog steeds raakt – ook na jaren", "Van stem tot voorwerp: zo bouw je een digitale erfenis die meer doet dan alleen herinneren"]
+
+• score 67.6 | blog | levensverhaal vastleggen
+  titel: The Last Secrets Of A Dying Man - HuffPost
+  url:   https://www.huffpost.com/entry/dying-cancer-74-letters-secrets_n_6a3af029e4b058c5d1c5a1f4
+  hook:  Wat als je je herinneringen niet alleen bewaart, maar ze ook tot leven brengt voor de mensen van wie je houdt?
+  angle: Waar het originele verhaal focust op een stervende man die afscheidsbrieven schrijft, kiezen wij voor een toegankelijkere, proactieve benadering: het vastleggen van je levensverhaal als een doorlopend project, niet als laatste wens. Wij combineren moderne technologie (Zoom, audio, digitale platforms) met een eenvoudig stappenplan zodat iedereen – gezond of ziek – een blijvend, interactief erfgoed kan achterlaten zonder emotionele last voor nabestaanden.
+  match: 90
+  titels: ["7 manieren om je levensverhaal vast te leggen zonder dat het als een afscheid voelt", "Hoe je een digitaal erfgoed maakt dat generaties overleeft (en niet alleen voor stervenden is)", "Van handgeschreven brieven tot Zoom-opnames: zo vertel je jouw verhaal op een manier die écht blijft hangen"]
+
+• score 66.2 | blog | eenzaamheid onder ouderen
+  titel: In 2010, a Brigham Young University psychologist named Julianne Holt-Lunstad analyzed 148 separate studies of 300,000 people to compare the mortality risks of various lifestyle factors — and found that chronic loneliness increases a person's risk of dying e - Silicon Canals
+  url:   https://siliconcanals.com/d-in-2010-a-brigham-young-university-psychologist-named-julianne-holt-lunstad-analyzed-148-separate-studies-of-300000-people-to-compare-the-mortality-risks-of-various-lifestyle-factors-and-f/
+  hook:  Wist je dat het simpelweg ordenen van oude foto's eenzaamheid bij ouderen met bijna een derde kan verminderen?
+  angle: Waar de oorspronkelijke studie zich richt op het verhoogde sterfterisico door eenzaamheid, kiest Bewaardvoorjou voor een positieve insteek: het actief bewaren en delen van herinneringen als preventief middel. Wij laten zien hoe het terugblikken op gelukkige momenten niet alleen het welzijn vergroot, maar ook biedt wat de wetenschap mist: een haalbare, dagelijkse oplossing die aansluit bij de belevingswereld van ouderen en hun mantelzorgers.
+  match: 90
+  titels: ["7 manieren waarom het bewaren van herinneringen eenzaamheid bij ouderen tegengaat", "Hoe herinneringen delen de gezondheid van ouderen verbetert (volgens de wetenschap)", "Eenzaamheid bij ouderen verminderen? Begin met het ordenen van familiefoto's"]
+
+• score 65.3 | blog | levensverhaal vastleggen
+  titel: 5 Tips On How I Pivoted From The C-Suite To Executive Content Creator - Yahoo Lifestyle Canada
+  url:   https://ca.style.yahoo.com/5-tips-pivoted-c-suite-132306423.html
+  hook:  Wat als AI je helpt om je levensverhaal op te schrijven, maar het toch helemaal jouw stem blijft?
+  angle: Waar het origineel vertelt over een carrièreswitch van C-Suite naar content creator met AI, draaien wij het om: we laten zien hoe juist gewone mensen met AI eenvoudig hun eigen levensverhaal kunnen vastleggen, zonder dat het tijdrovend of ingewikkeld wordt. Bewaardvoorjou helpt daarbij met tools die de authenticiteit bewaren en de drempel verlagen.
+  match: 92
+  titels: ["7 manieren om AI te gebruiken voor het vastleggen van jouw levensverhaal (zonder dat het onpersoonlijk wordt)", "Hoe je met AI in 3 stappen een blijvend familiedossier maakt – zelfs als je geen schrijver bent", "Stop met uitstellen: zo gebruik ik AI om mijn herinneringen te bewaren voor de volgende generatie"]
+
+• score 64.9 | blog | herinneringen bewaren voor kinderen
+  titel: Legacy Begins with Stories - The Times of Israel
+  url:   https://blogs.timesofisrael.com/legacy-begins-with-stories/
+  hook:  Hoe bewaar je herinneringen voor je kinderen zonder dat ze verloren gaan in de digitale chaos?
+  angle: In tegenstelling tot de oorspronkelijke blog, die zich richt op het schrijven van verhalen binnen een specifieke culturele traditie, kiezen wij voor een praktische, tijdloze aanpak. We helpen ouders om herinneringen op een eenvoudige en duurzame manier vast te leggen, zodat kinderen later kunnen terugkijken op hun eigen 'bewaarde schat'. Geen religieuze context, maar universele technieken voor elk gezin.
+  match: 95
+  titels: ["7 manieren om herinneringen voor je kinderen te bewaren die generaties overleven", "Van foto tot traditie: zo maak je een blijvende herinneringscollectie voor je kind", "Waarom het bewaren van verhalen de grootste gift is die je je kind kunt geven (en hoe je begint)"]
+
+• score 64.5 | blog | nalatenschap vastleggen
+  titel: The $1,000 Inheritance at Birth—Inside Trump’s New Bet on Generational Wealth - Realtor.com
+  url:   https://www.realtor.com/news/trends/trump-accounts-generational-wealth-homeownership/
+  hook:  Stel je voor: een erfenis die je zelf bepaalt, zonder te wachten op politieke beloftes – het begint met één simpel document.
+  angle: Terwijl de politiek discussieert over geboortebonnen van $1.000, blijft de echte sleutel tot generatiewelvaart onderbelicht: het zelf vastleggen van je nalatenschap. Wij richten ons op praktische, direct uitvoerbare stappen waarmee je nú je vermogen en wensen overdraagt, zonder afhankelijk te zijn van overheidsregelingen of beurswinsten. Van testament tot digitale erfenis: zo hou jij de regie.
+  match: 82
+  titels: ["7 manieren om je nalatenschap vast te leggen zonder te gokken op de beurs of de politiek", "Hoe u met een eigen erfenisplan generatiewelvaart opbouwt (geen Trump-account nodig)", "Nalatenschap vastleggen: de 5 grootste valkuilen en hoe u ze omzeilt"]
+
+• score 64.1 | blog | digitale erfenis
+  titel: How I Cleaned Up the Thousands of Photos and Videos I Had Scattered Across the Internet - CNET
+  url:   https://www.cnet.com/tech/computing/how-to-organize-your-photos-and-videos/
+  hook:  Wat gebeurt er met al die foto's en video's die je online hebt opgeslagen als jij er niet meer bent?
+  angle: In plaats van alleen op te ruimen voor jezelf, draait het bij digitale nalatenschap om het bewust achterlaten van een georganiseerde herinneringscollectie voor je nabestaanden. Wij laten zien hoe je foto's en video's klaarmaakt voor overdracht, zodat je dierbaren niet worden opgezadeld met een chaotische digitale berg.
+  match: 90
+  titels: ["7 manieren om je digitale foto-erfenis op te ruimen voor je nabestaanden", "Zo zorg je dat je foto's en video's niet verloren gaan in je digitale erfenis", "Digitale nalatenschap: 5 stappen om je online herinneringen overzichtelijk achter te laten"]
+
+• score 63.9 | reddit | digitale erfenis
+  titel: Erfenis verwerpen, word ik op de hoogte gesteld van ... - Reddit
+  url:   https://www.reddit.com/r/juridischadvies/comments/1cztsa5/erfenis_verwerpen_word_ik_op_de_hoogte_gesteld
+  hook:  Stel je voor: je overgrootvader heeft een YouTube-kanaal vol met familierecepten – wat gebeurt daarmee als hij er niet meer is?
+  angle: In plaats van te focussen op het verwerpen van een juridische erfenis, draait het bij digitale nalatenschap om het actief regelen van online accounts, foto's en video's. Wij laten zien hoe je je digitale herinneringen veilig overdraagt aan nabestaanden, zodat niets verloren gaat en je juridische problemen voorkomt.
+  match: 85
+  titels: ["7 manieren om je digitale erfenis te regelen vóór het te laat is", "Digitale nalatenschap: wat gebeurt er met je foto's, crypto en social media na je overlijden?", "Vergeten erfenis: zo voorkom je dat je online accounts verdwijnen of worden gehackt"]
+
+• score 63.8 | reddit | eenzaamheid onder ouderen
+  titel: Eenzaamheid : r/nederlands - Reddit
+  url:   https://www.reddit.com/r/nederlands/comments/148ik1w/eenzaamheid
+  hook:  Wat als het bewaren van je mooiste herinneringen de sleutel is tegen eenzaamheid?
+  angle: Anders dan de Reddit-post die eenzaamheid wil aanpakken met gescheiden leeftijdsgroepen, richten wij ons op het actief bewaren en delen van levensverhalen door ouderen. Door hen te helpen hun herinneringen digitaal vast te leggen, ontstaat niet alleen een blijvend erfgoed, maar ook een natuurlijke brug naar jongere generaties die deze verhalen willen horen – wat leidt tot echte verbinding in plaats van alleen categorieën.
+  match: 85
+  titels: ["7 manieren waarop het bewaren van herinneringen eenzaamheid bij ouderen kan verminderen", "Van stilte naar saamhorigheid: hoe digitale herinneringen ouderen verbinden", "Eenzaamheid in de ouderdom? 5 eenvoudige stappen om je levensverhaal te bewaren en contact te maken"]
+
+• score 62.3 | reddit | nalatenschap vastleggen
+  titel: Got this email and i think it is a scam. What do you guys ...
+  url:   https://www.reddit.com/r/Scams/comments/198zdcj/got_this_email_and_i_think_it_is_a_scam_what_do
+  hook:  Heb je ook wel eens een e-mail gekregen over een erfenis die te mooi lijkt om waar te zijn?
+  angle: Wij gaan verder dan alleen waarschuwen voor scams: we laten zien hoe je écht veilig jouw nalatenschap kunt vastleggen, zodat oplichters geen kans krijgen. De combinatie van praktische herkenningstips en een betrouwbaar alternatief via bewaardvoorjou maakt dit artikel uniek voor wie zijn of haar wensen waterdicht wil regelen.
+  match: 95
+  titels: ["7 manieren om te voorkomen dat je wordt opgelicht bij het regelen van je nalatenschap", "Hoe herken je een nepmail over een erfenis? 5 signalen die je niet mag negeren", "Waarom je nooit moet reageren op onverwachte erfenis-berichten (en wat je wél moet doen)"]
+
+• score 59.1 | reddit | herinneringen bewaren voor kinderen
+  titel: Bewaar jij de dozen van elektronica / huishoudelijke ... - Reddit
+  url:   https://www.reddit.com/r/thenetherlands/comments/17msigm/bewaar_jij_de_dozen_van_elektronica
+  hook:  Wat als je de rommel van tekeningen en knutselwerkjes van je kind omtovert tot een tijdloze schatkist?
+  angle: In plaats van willekeurig dozen vol te proppen met kindertekeningen, kiezen wij voor een methode die én fysiek én digitaal bewaart: scan de liefste creaties en bewaar originelen circulair. Zo geef je later geen rommel, maar een echte tijdscapsule.
+  match: 88
+  titels: ["7 creatieve manieren om herinneringen van je kind te bewaren (zonder dozen vol rommel)", "Waarom je beter nu stopt met het bewaren van elke tekening (en wat wél werkt)", "Van knutselwerk naar familie-erfstuk: zo bewaar je de mooiste momenten duurzaam"]
+
+• score 58.8 | reddit | nalatenschap vastleggen
+  titel: Beleggingsportefeuille bij overlijden : r/beleggen - Reddit
+  url:   https://www.reddit.com/r/beleggen/comments/se57ju/beleggingsportefeuille_bij_overlijden
+  hook:  Je hebt je beleggingen goed geregeld, maar weten je nabestaanden straks nog hoe ze erbij kunnen?
+  angle: In plaats van alleen een testament te laten maken, kun je met een digitaal nalatenschapsplatform ervoor zorgen dat al je financiële gegevens – van beleggingsrekeningen tot cryptowallets – veilig en overzichtelijk worden bewaard en direct toegankelijk zijn voor de juiste personen na overlijden. Dit voorkomt dat erfgenamen kostbare tijd verliezen met zoeken en zorgt voor een soepele afhandeling.
+  match: 85
+  titels: ["7 manieren om te voorkomen dat je beleggingsportefeuille een zwart gat wordt voor nabestaanden", "Waarom een testament alleen niet genoeg is: zo regel je ook je digitale nalatenschap", "De ultieme checklist: wat je nu al moet vastleggen over je beleggingen voor later"]
+
+• score 58.1 | blog | digitale erfenis
+  titel: John Romero commiserates with ousted id devs as around half the studio reported axed, says he hopes someone is preserving its work like he did before he left - PC Gamer
+  url:   https://www.pcgamer.com/gaming-industry/john-romero-commiserates-with-ousted-id-devs-as-around-half-the-company-reported-axed-says-he-hopes-someone-is-preserving-its-work-like-he-did-before-he-left/
+  hook:  Wat als je digitale nalatenschap net zo verloren gaat als oude gamecode?
+  angle: Terwijl John Romero pleit voor het bewaren van id Software's game-erfenis, vergeten de meeste mensen hun eigen digitale nalatenschap. Wij vertalen dat idee naar jouw leven: hoe je jouw persoonlijke bestanden, accounts en herinneringen veiligstelt voor later – zonder dat je een game-ontwikkelaar hoeft te zijn.
+  match: 70
+  titels: ["7 manieren om je digitale erfenis te beschermen (voordat het te laat is)", "Van Quake-code tot familiefoto's: waarom jij net zo moet nadenken over digital preservation als John Romero", "Digitale erfenis voor beginners: 5 stappen om jouw online nalatenschap te bewaren"]
+
+######################################################################
+ TOP-SIGNALEN bijeen (42 opgeslagen)
+######################################################################
+
+• score 67.2 | blog | welzijnsevenement organiseren
+  titel: 12 best things to do in the Netherlands this summer 2026 - DutchReview
+  url:   https://dutchreview.com/culture/best-things-to-do-netherlands-summer-2026/
+  hook:  Wat als je de zomer van 2026 kunt vullen met welzijnsevenementen die écht verbinden, zonder in de massa van WorldPride of de Grand Prix te verdwijnen?
+  angle: Waar DutchReview de grote publiekstrekkers opsomt, richten wij ons op de organisator van kleinschalige, betekenisvolle welzijnsevenementen. We bieden praktische strategieën om data, locatie en thema te kiezen die wél opvallen, en geven tips hoe je met gerichte content de juiste deelnemers aantrekt.
+  match: 90
+  titels: ["7 manieren om in de zomer van 2026 een welzijnsevenement te organiseren dat niet verloren gaat in de drukte", "Waarom kleinschalige welzijnsevenementen de grote evenementen van 2026 overtreffen (en hoe jij er één organiseert)", "Zomer 2026: De ultieme gids voor het organiseren van een verbindend welzijnsevenement in Nederland"]
+
+• score 65.3 | blog | subsidie aanvragen welzijn
+  titel: 10 Massachusetts Nonprofits Get Solar Grants - CleanTechnica
+  url:   https://cleantechnica.com/2026/07/07/10-massachusetts-nonprofits-get-solar-grants/
+  hook:  Welzijnsorganisaties laten jaarlijks duizenden euro's aan onbenutte subsidiepotjes liggen – en dat terwijl de energieprijzen blijven stijgen.
+  angle: In tegenstelling tot het oorspronkelijke bericht, dat vooral opsomt wie in Massachusetts een solar grant kreeg, richten wij ons op Nederlandse welzijnsorganisaties die nog geen verduurzamingssubsidie hebben aangevraagd. Onze unieke invalshoek combineert praktische stappen met voorbeelden van provinciale en landelijke regelingen, zodat lezers direct actie kunnen ondernemen én hun maatschappelijke impact vergroten.
+  match: 85
+  titels: ["7 onverwachte subsidies voor welzijnsorganisaties (en hoe je ze wél binnenhaalt)", "Subsidie voor zonnepanelen als welzijnsorganisatie? Dit stappenplan bespaart je duizenden euro's", "5 verduurzamingssubsidies die jouw welzijnsorganisatie nu nog kan aanvragen"]
+
+• score 62.9 | reddit | subsidie aanvragen welzijn
+  titel: 220 Miljoen subsidie weggeven en toch iedereen kwaad ... - Reddit
+  url:   https://www.reddit.com/r/thenetherlands/comments/s0h69m/220_miljoen_subsidie_weggeven_en_toch_iedereen
+  hook:  Waarom 220 miljoen subsidie niet goed terechtkomt en hoe jij als welzijnsorganisatie wél kans maakt met een slimme aanvraag.
+  angle: In plaats van te klagen over de chaos bij subsidieverstrekkers, bieden wij een praktische gids voor welzijnsinitiatieven die bijeenkomsten organiseren. Onze unieke invalshoek combineert inzichten uit het Reddit-drama (voorportaal vs. wachtrij) met concrete tips om jouw aanvraag te laten opvallen, inclusief hoe je data uit eerdere bijeenkomsten kunt gebruiken als bewijs voor impact.
+  match: 88
+  titels: ["7 manieren om wél subsidie te krijgen voor jouw welzijnsbijeenkomst (en de valkuilen van het voorportaal te vermijden)", "De 5 grootste fouten bij subsidieaanvragen voor welzijnsactiviteiten (van wachtrij tot goedkeuring)", "Subsidie aanvragen voor welzijn in 2025: stappenplan voor een foutloze aanvraag (met voorbeeld uit de praktijk)"]
+
+• score 60.0 | reddit | SROI berekenen welzijn
+  titel: I ranked 69,000 college degree programs by return on ... - Reddit
+  url:   https://www.reddit.com/r/ApplyingToCollege/comments/1bxgol8/i_ranked_69000_college_degree_programs_by_return
+  hook:  Stel je voor dat je de maatschappelijke waarde van een vrijwilligersproject net zo precies kunt berekenen als de winst van een bedrijf – dat is precies wat SROI voor welzijn mogelijk maakt.
+  angle: Waar het Reddit-bericht zich richt op financiële ROI van opleidingen, kijken wij naar de sociale returns van welzijnsinitiatieven. Wij combineren kwantitatieve en kwalitatieve data om de impact op levenskwaliteit, gemeenschapszin en mentaal welzijn te meten. Dit helpt organisaties niet alleen om subsidies te verantwoorden, maar ook om hun programma’s gericht te verbeteren.
+  match: 90
+  titels: ["7 manieren om SROI te berekenen voor welzijnsprojecten (met praktijkvoorbeelden)", "SROI voor welzijn: zo meet je de echte maatschappelijke waarde van jouw initiatief", "Van output naar outcome: een stappenplan voor SROI-berekening in de welzijnssector"]
+
+• score 59.9 | blog | vrijwilligers werven
+  titel: Volunteers work to distribute donations to Colorado residents evacuated from areas near wildfires - CBS News
+  url:   https://www.cbsnews.com/colorado/video/volunteers-work-to-distribute-donations-to-colorado-residents-evacuated-from-areas-near-wildfires/
+  hook:  Hoe mobiliseer je binnen 24 uur een leger aan vrijwilligers bij een ramp?
+  angle: Terwijl de media vaak de heldhaftige inzet laat zien, blijft de praktische organisatie onderbelicht. Wij duiken in de systemen en communicatiestrategieën die ervoor zorgen dat hulp snel en efficiënt op gang komt, van coördinatie tot registratie – precies wat gemeenschappen nodig hebben in een crisis.
+  match: 85
+  titels: ["7 manieren om binnen een dag een vrijwilligersnetwerk te activeren bij een ramp", "Van chaos naar coördinatie: zo werven en inzetten vrijwilligers tijdens een natuurramp", "Vrijwilligers werven in crisistijd: 5 lessen uit de Aspen Acres Fire"]
+
+• score 58.9 | blog | vrijwilligers werven
+  titel: San Gabriel nonprofit helps families in need as back-to-school shopping is ahead - CBS News
+  url:   https://www.cbsnews.com/losangeles/video/san-gabriel-nonprofit-helps-families-in-need-as-back-to-school-shopping-is-ahead/
+  hook:  Back-to-school hulp: de onverwachte sleutel tot een groeiend vrijwilligersteam.
+  angle: In plaats van alleen te berichten over een eenmalige actie, laten we zien hoe jouw organisatie back-to-school evenementen kunt inzetten als krachtige wervingsmotor. Door vrijwilligers actief te betrekken bij het inpakken en uitdelen, creëer je een gemeenschapsgevoel dat hen aan je bindt. Wij geven 7 bewezen methodes om van een eenmalige hulpactie een duurzame vrijwilligersstroom te maken.
+  match: 85
+  titels: ["7 manieren om met een back-to-school actie vrijwilligers te werven (en te behouden)", "Van rugzak vullen tot team bouwen: hoe een schoolstartactie je vrijwilligersbestand vergroot", "Back-to-school vrijwilligers werven: 5 lessen van de meest succesvolle acties"]
+
+• score 57.9 | reddit | vrijwilligers werven
+  titel: Quick warning for job seekers: be careful when applying to ...
+  url:   https://www.reddit.com/r/editors/comments/15ut84j/quick_warning_for_job_seekers_be_careful_when
+  hook:  Let op: deze nep-vacatures voor vrijwilligerswerk kunnen je tijd en vertrouwen kosten – zo herken je ze.
+  angle: Terwijl veel waarschuwingen over oplichting gaan bij betaalde banen, zijn ook vrijwilligersposities steeds vaker doelwit. Wij geven specifieke signalen van fraude bij vrijwilligerswerk, plus een praktische checklist voor zowel organisaties als vrijwilligers om veilig te matchen via platforms als bijeen.
+  match: 85
+  titels: ["7 manieren om nep-vacatures voor vrijwilligerswerk te herkennen (en te vermijden)", "Vrijwilligers gezocht? Zo voorkom je dat oplichters misbruik maken van jouw goede doel", "Veilig vrijwilligerswerk: 5 signalen dat een vacature niet te vertrouwen is"]
+
+• score 56.5 | blog | subsidie aanvragen welzijn
+  titel: Oak Park and River Forest students seek $160K for food insecurity initiative - Chicago Tribune
+  url:   https://www.chicagotribune.com/2026/07/06/oprf-students-feeding-students/
+  hook:  Wist je dat je met één goede subsidieaanvraag een compleet voedselprogramma voor honderden studenten kunt financieren?
+  angle: Waar het Amerikaanse voorbeeld laat zien dat studenten zelf actie ondernemen, ligt de kans in Nederland bij het slim indienen van een welzijnssubsidie. Wij laten zien hoe jij als organisatie of initiatiefnemer stap voor stap een overtuigende aanvraag opstelt, inclusief de valkuilen en succesfactoren uit de praktijk.
+  match: 65
+  titels: ["7 manieren om een welzijnssubsidie te krijgen voor jouw voedselproject (met voorbeeld)", "Van idee naar financiering: zo schrijf je een subsidieaanvraag voor voedselzekerheid op scholen", "Subsidie aanvragen welzijn: 5 fouten die jouw voedselinitiatief laten stranden"]
+
+• score 48.9 | reddit | vrijwilligers werven
+  titel: Beware of this website. They have gone above and beyond to ...
+  url:   https://www.reddit.com/r/Scams/comments/1c47pq2/beware_of_this_website_they_have_gone_above_and
+  hook:  Oplichters richten zich niet alleen op betaalde banen, ook vrijwilligersvacatures worden steeds vaker misbruikt.
+  angle: Waar de trending content waarschuwt voor gewone baanscams, duiken wij in de specifieke valkuilen bij vrijwilligerswerving. Van nep-goededoelen die persoonsgegevens stelen tot 'vrijwilligersreizen' die nooit bestaan – wij geven herkenbare signalen én tips om als organisatie veilig te werven via platforms zoals bijeen.
+  match: 65
+  titels: ["7 manieren om vrijwilligersfraude te herkennen en te voorkomen", "Zo herken je een neppe vrijwilligersvacature: 5 rode vlaggen voor organisaties", "Vrijwilligers werven zonder risico: 3 stappen om oplichting uit te sluiten"]
+
+• score 48.8 | reddit | welzijnsevenement organiseren
+  titel: all subreddits • r/all
+  url:   https://www.reddit.com/r/all-do
+  hook:  Wist je dat 1 op de 5 mensen in je doelgroep mogelijk ADHD heeft—en jouw evenement hen onbedoeld uitsluit?
+  angle: Waar de Reddit-ADHD-gemeenschap zich richt op peer support en informatie, vertalen wij dat naar concrete organisatietips voor welzijnsevenementen. Wij laten zien hoe je met kleine aanpassingen in planning, programmering en communicatie een inclusief event creëert dat écht werkt voor neurodiverse deelnemers.
+  match: 65
+  titels: ["7 manieren om een welzijnsevenement te organiseren dat ook werkt voor mensen met ADHD", "ADHD-vriendelijk evenement organiseren: 5 praktische tips voor een inclusief welzijnsprogramma", "Waarom jouw volgende welzijnsevenement rekening moet houden met ADHD (en hoe je dat doet)"]
+
+• score 46.2 | blog | subsidie aanvragen welzijn
+  titel: Aviv Foundation grants $1 million to expand operations of Orthodox LGBTQ inclusion group Eshel - eJewishPhilanthropy
+  url:   https://ejewishphilanthropy.com/aviv-foundation-grants-1-million-to-expand-operations-of-orthodox-lgbtq-inclusion-group-eshel/
+  hook:  -
+  angle: {
+  "hook": "Wat als een miljoenensubsidie voor één specifieke doelgroep de sleutel is tot het ontsluiten van grotere fondsen voor jouw welzijnsorganisatie?",
+  "angle": "Terwijl veel welzijnsorganisaties worstelen met het binnenhalen van subsidies, laat de recente $1M grant van de Aviv Foundation aan Eshel zien hoe strategisch positioneren en het aanspreken van een niche-doelgroep leidt tot expon
+  match: -1
+  titels: -
+
+• score 45.7 | blog | welzijnsevenement organiseren
+  titel: Gordon County Celebrates Opening of Northwest Georgia Agriculture & Event Center - Coosa Valley News
+  url:   https://coosavalleynews.com/2026/07/gordon-county-celebrates-opening-of-northwest-georgia-agriculture-event-center/
+  hook:  -
+  angle: -
+  match: -1
+  titels: -
+
+• score 37.4 | reddit | welzijnsevenement organiseren
+  titel: FILECR IS NOT SAFE!!!!!! : r/Piracy - Reddit
+  url:   https://www.reddit.com/r/Piracy/comments/198zpd2/filecr_is_not_safe
+  hook:  Is jouw welzijnsevenement eigenlijk wel veilig voor deelnemers — of loop je ongemerkt risico's?
+  angle: Terwijl de originele post waarschuwt voor onveilige downloadpraktijken, draaien wij het om naar de verborgen risico's bij het organiseren van een welzijnsevenement. Denk aan privacy-issues, ongetrainde begeleiders of onveilige locaties. Wij bieden een checklist om die valkuilen te vermijden en het vertrouwen van deelnemers te behouden.
+  match: 40
+  titels: ["7 manieren om onveilige situaties op een welzijnsevenement te voorkomen", "De grootste risico's bij welzijnsevenementen (en hoe je ze oplost)", "Organiseer een veilig welzijnsevenement: 5 valkuilen om te vermijden"]
+
+• score 35.9 | reddit | subsidie aanvragen welzijn
+  titel: Aanvraag tegemoetkoming blokaansluiting : r/nederlands - Reddit
+  url:   https://www.reddit.com/r/nederlands/comments/17ttcbg/aanvraag_tegemoetkoming_blokaansluiting
+  hook:  -
+  angle: -
+  match: -1
+  titels: -
+
+• score 35.4 | reddit | WMO rapportage
+  titel: LIST OF ONLINE CLOTHING SCAM COMPANIES - Reddit
+  url:   https://www.reddit.com/r/FrugalFemaleFashion/comments/bxqjml/list_of_online_clothing_scam_companies
+  hook:  -
+  angle: {"hook": "Je denkt dat alleen online shops oplichten? Ook bij evenementen en bijeenkomsten kun je zomaar honderden euro's kwijt zijn aan nepkaarten.", "angle": "Terwijl Reddit waarschuwt voor kledingwebsites, richten wij ons op oplichting in de evenementenindustrie. Wij bieden een unieke checklistsystematiek specifiek voor het herkennen van frauduleuze bijeenkomsten, van ticketfraude tot nepevents
+  match: -1
+  titels: -
