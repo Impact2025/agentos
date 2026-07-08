@@ -135,3 +135,27 @@ def test_growth_signal_feed_creates_signal():
         assert n2 == 0, "feed_radar is niet idempotent"
     finally:
         fb.collect_growth_signals = orig
+
+
+def test_list_signals_source_filter():
+    """De Radar 'Growth'-tab filtert op source='gsc-growth' via de backend."""
+    import backend.domains.radar.models as rmodels
+    import backend.domains.radar.service as rsvc
+    rmodels.ensure_schema()
+    with get_conn() as conn:
+        conn.execute("DELETE FROM radar_signals")
+        conn.execute(
+            "INSERT INTO radar_signals (id, watch_id, project, keyword, title, url, "
+            "source, snippet, signal_score, ai_angle, status, scanned_at, created_at, "
+            "updated_at) VALUES ('g1','', 'Bijeen','q','Boost','gsc://growth/x','gsc-growth',"
+            "'', 80,'','new','2026-07-08','2026-07-08','2026-07-08')")
+        conn.execute(
+            "INSERT INTO radar_signals (id, watch_id, project, keyword, title, url, "
+            "source, snippet, signal_score, ai_angle, status, scanned_at, created_at, "
+            "updated_at) VALUES ('s1','', 'Bijeen','q2','Scan','https://reddit.com/r/x','reddit',"
+            "'', 70,'','new','2026-07-08','2026-07-08','2026-07-08')")
+    svc = rsvc.RadarService()
+    growth = svc.list_signals(project="Bijeen", source="gsc-growth")
+    assert len(growth) == 1 and growth[0]["id"] == "g1", growth
+    alls = svc.list_signals(project="Bijeen")
+    assert len(alls) == 2, alls

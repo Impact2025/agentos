@@ -545,7 +545,8 @@ async function renderRadarTab(el) {
     '<option value="new"' + (radarStatusFilter==='new'?' selected':'') + '>Nieuw</option>' +
     '<option value="targeted"' + (radarStatusFilter==='targeted'?' selected':'') + '>Getarget</option>' +
     '<option value="converted"' + (radarStatusFilter==='converted'?' selected':'') + '>Geconverteerd</option>' +
-    '<option value="dismissed"' + (radarStatusFilter==='dismissed'?' selected':'') + '>Genegeerd</option></select></div>' +
+    '<option value="dismissed" ' + (radarStatusFilter==='dismissed'?' selected':'') + '>Genegeerd</option>' +
+    '<option value="growth" ' + (radarStatusFilter==='growth'?' selected':'') + '>📈 Growth (GSC)</option></select></div>' +
     '<div id="radar-signals"><div style="text-align:center;color:#94a3b8;padding:16px;font-size:12px">Laden...</div></div></div>';
 
   el.innerHTML = html;
@@ -680,7 +681,12 @@ function renderRadarSkyMap(signals) {
 function loadRadarSignals() {
   var listEl = document.getElementById('radar-signals');
   if (!listEl) return;
-  var url = '/api/radar/sky?project=' + encodeURIComponent(currentProject) + (radarStatusFilter ? '&status=' + radarStatusFilter : '');
+  var url = '/api/radar/sky?project=' + encodeURIComponent(currentProject);
+  if (radarStatusFilter === 'growth') {
+    url += '&source=gsc-growth';
+  } else if (radarStatusFilter) {
+    url += '&status=' + radarStatusFilter;
+  }
   listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:16px;font-size:12px">Laden...</div>';
   fetch(url).then(function(r){return r.json();}).then(function(signals){
     window._radarSignals = signals || [];
@@ -704,7 +710,9 @@ function loadRadarSignals() {
         '<div style="flex:1">' +
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px">' +
         '<a href="' + escHtml(s.url||'#') + '" target="_blank" style="font-weight:600;font-size:13px;color:#1e293b;text-decoration:none">' + escHtml((s.title||'').slice(0,90)) + ' ↗</a>' +
-        '<span style="font-size:10px;padding:2px 8px;border-radius:6px;font-weight:600;background:' + sb[1] + '">' + sb[0] + '</span></div>' +
+        '<span style="font-size:10px;padding:2px 8px;border-radius:6px;font-weight:600;background:' + sb[1] + '">' + sb[0] + '</span>' +
+        (s.source==='gsc-growth' ? '<span style="font-size:10px;padding:2px 8px;border-radius:6px;font-weight:600;background:#dcfce7;color:#166534">📈 Growth</span>' : '') +
+        '</div>' +
         '<div style="font-size:10px;color:#94a3b8">' + escHtml(s.source||'') + (age?' · '+age:'') + ' · keyword: ' + escHtml(s.keyword||'') + (s.obsidian_path ? ' · 📝 in vault' : '') + '</div>' +
         (s.ai_hook ? '<div style="margin-top:6px;font-size:12px;font-weight:600;color:#4338ca">💡 ' + escHtml(s.ai_hook) + '</div>' : '') +
         (s.ai_angle ? '<div style="margin-top:3px;font-size:11px;color:#475569">' + escHtml(s.ai_angle) + '</div>' : '') +

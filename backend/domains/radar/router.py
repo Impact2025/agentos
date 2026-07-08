@@ -68,10 +68,11 @@ def _sse(data: dict) -> str:
 def get_sky(
     project: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
     min_score: Optional[float] = Query(None),
     limit: int = Query(100, le=500),
 ):
-    return get_service().list_signals(project=project, status=status,
+    return get_service().list_signals(project=project, status=status, source=source,
                                       min_score=min_score, limit=limit)
 
 

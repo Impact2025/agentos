@@ -348,16 +348,24 @@ function renderSeoWorldclassBadge(wc) {
   var sc = wc.score || 0;
   var bg = sc >= 85 ? '#dcfce7' : (sc >= 70 ? '#fef3c7' : '#fee2e2');
   var fg = sc >= 85 ? '#166534' : (sc >= 70 ? '#92400e' : '#b91c1c');
+  var okDirect = !!wc.has_direct_answer;
+  var okFaq = (wc.faq_count || 0) > 0;
+  var okEeat = (wc.ee_at_issues || []).length === 0;
+  var ready = (sc >= 85) && okDirect && okFaq && okEeat;
   function v(ok, label) {
     return '<span style="font-size:10px;padding:2px 7px;border-radius:6px;background:' +
       (ok ? '#dcfce7' : '#fee2e2') + ';color:' + (ok ? '#166534' : '#b91c1c') +
       ';font-weight:600">' + (ok ? '✓' : '✗') + ' ' + label + '</span>';
   }
+  var rec = ready
+    ? '<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:#16a34a;color:#fff;font-weight:700">✓ Publiceer</span>'
+    : '<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:#fef3c7;color:#92400e;font-weight:700">⚠ Nog niet wereldklasse</span>';
   return '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">' +
     '<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:' + bg + ';color:' + fg + ';font-weight:700">Wereldklasse ' + sc + '/100</span>' +
-    v(wc.has_direct_answer, 'Direct-antwoord') +
-    v((wc.faq_count || 0) > 0, 'FAQ (' + (wc.faq_count || 0) + ')') +
-    v((wc.ee_at_issues || []).length === 0, 'E-E-A-T') +
+    v(okDirect, 'Direct-antwoord') +
+    v(okFaq, 'FAQ (' + (wc.faq_count || 0) + ')') +
+    v(okEeat, 'E-E-A-T') +
+    rec +
     '</div>';
 }
 
@@ -396,6 +404,19 @@ function renderPublishResult(pr) {
       var r = pr.social[p];
       parts.push((wachtrijPlatformLabels[p]||p) + ': ' + (r.success ? 'gepost' : 'mislukt (' + escHtml((r.error||'').slice(0,80)) + ')'));
     });
+  }
+  if (pr.backlinks) {
+    var bl = pr.backlinks;
+    if (bl.updated > 0) {
+      var targets = (bl.links||[]).slice(0, 3).map(function(l){ return l.target_slug; }).join(', ');
+      parts.push('🔗 Backlink-ARM: ' + bl.updated + ' bestaande pagina' + (bl.updated===1?'':'\'s') +
+                 ' gelinkt' + (targets ? ' → ' + escHtml(targets) : ''));
+    } else {
+      parts.push('🔗 Backlink-ARM: geen overlap');
+    }
+  }
+  if (pr.json_ld) {
+    parts.push('📐 JSON-LD: ' + (pr.json_ld.valid && pr.json_ld.types && pr.json_ld.types.length ? 'geldig (' + (pr.json_ld.types.join('+')) + ')' : 'ongeldig'));
   }
   return parts.join(' · ');
 }

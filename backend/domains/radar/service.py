@@ -219,8 +219,15 @@ class RadarService:
             # het merkwoord (het domein zónder tld) toe zodat de concurrent zijn
             # eigen branded content teruggeeft. `value` is al genormaliseerd naar
             # een kaal domein in add_watch().
+            # VERBREDING (juli 2026): veel NL-teambuilding-concurrenten publiceren
+            # weinig puur branded content, dus voegen we generieke termen toe en
+            # vergroten we de lookback zodat ook oudere landingspagina's boven
+            # komen. Zonder dit bleven 5/8 concurrenten op 0 signalen hangen.
             brand = value.split(".")[0] or value
-            results = self._tavily_search(f"site:{value} {brand}", days=30)
+            results = self._tavily_search(
+                f"site:{value} ({brand} OR teambuilding OR training OR 'team uitje')",
+                days=90,
+            )
         else:  # keyword
             results = self._tavily_search(value)
             results += self._tavily_search(f"site:reddit.com {value}", max_results=3)
@@ -271,7 +278,7 @@ class RadarService:
                 r["signal_score"] = scorer.compute_signal_score(
                     r["title"], r["url"], watch["value"],
                     r.get("published_days_ago", -1), r.get("tavily_score", 0.0),
-                    r.get("source"),
+                    r.get("source"), project=watch["project"],
                 )
             fresh.sort(key=lambda r: r["signal_score"], reverse=True)
 
@@ -423,12 +430,15 @@ class RadarService:
     # ── Signals CRUD ─────────────────────────────────────────────────────────
 
     def list_signals(self, project: Optional[str] = None, status: Optional[str] = None,
-                     min_score: Optional[float] = None, limit: int = 100) -> List[Dict]:
+                     min_score: Optional[float] = None, source: Optional[str] = None,
+                     limit: int = 100) -> List[Dict]:
         where, params = [], []
         if project:
             where.append("LOWER(project) = LOWER(?)"); params.append(project)
         if status:
             where.append("status = ?"); params.append(status)
+        if source:
+            where.append("source = ?"); params.append(source)
         if min_score is not None:
             where.append("signal_score >= ?"); params.append(min_score)
         clause = ("WHERE " + " AND ".join(where)) if where else ""
