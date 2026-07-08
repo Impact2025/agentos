@@ -161,6 +161,59 @@ def test_site_base_url_falls_back_to_published_page(site_with_page):
     assert _site_base_url({"id": site_with_page["id"], "base_url": ""}) == "https://sitemaptest.netlify.app"
 
 
+# ── Listicle-intentie (formaatkeuze meertraps-generator) ────────────────────
+
+def test_listicle_intent_detects_list_keywords():
+    from backend.domains.publish.article_writer import detect_listicle_intent
+    assert detect_listicle_intent("beste crm tools mkb") is True
+    assert detect_listicle_intent("tips voor interim opdrachten") is True
+    assert detect_listicle_intent("10 redenen om te digitaliseren") is True
+    assert detect_listicle_intent("iets", angle="7 opties op een rij") is True
+
+
+def test_listicle_intent_trend_rationale_triggers():
+    from backend.domains.publish.article_writer import detect_listicle_intent
+    assert detect_listicle_intent("hermes desktop", rationale="Trending (Radar-score 82): …") is True
+
+
+def test_listicle_intent_guide_keywords_pass_through():
+    from backend.domains.publish.article_writer import detect_listicle_intent
+    assert detect_listicle_intent("interim manager inhuren") is False
+    assert detect_listicle_intent("wat kost een uitvaartverzekering") is False
+    # 'besteding' mag niet matchen op 'beste' (woordgrens).
+    assert detect_listicle_intent("besteding zorgbudget gemeente") is False
+
+
+# ── Infographic: embed in artikel + mee in de site-build ────────────────────
+
+def test_embed_infographic_lands_before_second_h2():
+    from backend.domains.publish.service import embed_infographic_html
+    html = "<h1>T</h1><h2>Intro</h2><p>a</p><h2>Kern</h2><p>b</p>"
+    out = embed_infographic_html(html, "mijn-artikel", "Mijn artikel")
+    fig_pos = out.find("mijn-artikel-infographic.png")
+    assert 0 < fig_pos < out.find("<h2>Kern</h2>") + len(out)  # figure aanwezig
+    assert out.index("<figure>") < out.index("<h2>Kern</h2>")
+    assert 'alt="Infographic: Mijn artikel"' in out
+    # Idempotent: nogmaals embedden verandert niets.
+    assert embed_infographic_html(out, "mijn-artikel", "Mijn artikel") == out
+
+
+def test_embed_infographic_appends_when_single_section():
+    from backend.domains.publish.service import embed_infographic_html
+    html = "<h1>T</h1><p>enige sectie</p>"
+    out = embed_infographic_html(html, "kort", "Kort & krachtig")
+    assert out.endswith("</figure>\n")
+    assert "Kort &amp; krachtig" in out  # titel wordt ge-escapet
+
+
+def test_build_includes_infographic_png(site_with_page):
+    from backend.domains.publish.service import _upsert_page, build_site_files
+    _upsert_page(site_with_page["id"], "eerste-artikel", "Eerste artikel",
+                 "<h1>Hoi</h1>", infographic_bytes=b"png-bytes")
+    files = build_site_files(site_with_page["id"], "SitemapTest")
+    assert files["images/eerste-artikel-infographic.png"] == b"png-bytes"
+
+
 # ── QC-rapport belandt in de content_job en wordt geparsed teruggegeven ──────
 
 def test_create_job_stores_qc_report(site_with_page):

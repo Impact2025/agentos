@@ -46,6 +46,35 @@ def ensure_indexnow_key(site: Dict) -> str:
     return key
 
 
+async def verify_indexnow(site: Dict) -> Dict:
+    """Controleer of het IndexNow-keybestand écht live staat op de site-root.
+
+    Voor Netlify-sites deployt Agent OS het bestand zelf mee, maar extern
+    gehoste sites (Vercel/eigen CMS) moeten het handmatig plaatsen — zonder
+    dat bestand negeren Bing/Yandex/Naver elke IndexNow-submit stilletjes."""
+    base_url = (site.get("base_url") or "").strip().rstrip("/")
+    key = (site.get("indexnow_key") or "").strip()
+    if not base_url:
+        return {"status": "geen-base-url",
+                "detail": "Site heeft geen base_url — IndexNow niet controleerbaar."}
+    if not key:
+        return {"status": "geen-key",
+                "detail": "Nog geen IndexNow-key — wordt bij de eerste publicatie aangemaakt."}
+    key_url = f"{base_url}/{key}.txt"
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(key_url)
+        if resp.status_code == 200 and resp.text.strip() == key:
+            return {"status": "ok", "key_url": key_url}
+        return {"status": "keyfile-ontbreekt", "key_url": key_url,
+                "status_code": resp.status_code,
+                "detail": f"Verwachtte de key als bestandsinhoud op {key_url} — "
+                          "plaats het bestand op de site-root (extern gehoste site) "
+                          "of publiceer één artikel (Netlify deployt het mee)."}
+    except Exception as e:
+        return {"status": "fout", "key_url": key_url, "detail": str(e)[:200]}
+
+
 async def submit_indexnow(site: Dict, urls: List[str]) -> Dict:
     """Meld URL's aan via IndexNow. Faalt zacht — indexering mag een
     geslaagde publicatie nooit laten mislukken."""

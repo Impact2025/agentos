@@ -210,7 +210,12 @@ class RadarService:
                 r["source"] = "rss"
             return results
         if wtype == "competitor":
-            results = self._tavily_search(f"site:{value}", days=30)
+            # Tavily weigert een 'site:'-query zónder zoekterm — dus voegen we
+            # het merkwoord (het domein zónder tld) toe zodat de concurrent zijn
+            # eigen branded content teruggeeft. `value` is al genormaliseerd naar
+            # een kaal domein in add_watch().
+            brand = value.split(".")[0] or value
+            results = self._tavily_search(f"site:{value} {brand}", days=30)
         else:  # keyword
             results = self._tavily_search(value)
             results += self._tavily_search(f"site:reddit.com {value}", max_results=3)
@@ -841,3 +846,11 @@ async def scan_the_skies() -> None:
         log_outcome("Radar", "sky-scan",
                     f"{saved} nieuwe signalen (concurrenten/trends) opgepikt",
                     next_step="Scan de Radar-tab op signalen die actie verdienen")
+        # Trend-brug: topsignalen direct als Demand Engine-kans klaarzetten,
+        # zodat de contentpijplijn ze meepakt zonder handmatige stap. Faalt
+        # zacht — de sky-scan zelf is dan al geslaagd.
+        try:
+            from ..seo.trends import sync_all_trend_opportunities
+            sync_all_trend_opportunities()
+        except Exception:
+            log.exception("[radar] Trend-sync naar Demand Engine mislukt")

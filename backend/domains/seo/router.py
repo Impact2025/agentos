@@ -1,10 +1,12 @@
 """
 Demand Engine-API — scan een site op zoekwoordkansen en beheer de kansen-lijst.
 
-  POST /api/demand/scan          — draai een GSC-scan voor een site (achtergrond)
-  GET  /api/demand/opportunities — lijst kansen (filter op site_id / status)
+  POST /api/demand/scan            — draai een GSC-scan voor een site (achtergrond)
+  GET  /api/demand/opportunities   — lijst kansen (filter op site_id / status)
   PATCH /api/demand/opportunities/{id} — status bijwerken
-  GET  /api/demand/status        — configuratiestatus
+  POST /api/demand/trend-sync      — Mission Radar-trendsignalen → kansen
+  GET  /api/demand/indexing-status — IndexNow-keyfile-check per site
+  GET  /api/demand/status          — configuratiestatus
 """
 from typing import Optional
 
@@ -13,6 +15,7 @@ from pydantic import BaseModel
 
 from . import engine as demand_engine
 from . import sites as sites_service
+from . import trends as trends_service
 from .gsc import is_configured as gsc_ok, submit_sitemap as gsc_submit_sitemap
 from ...shared.config import GSC_SERVICE_ACCOUNT_PATH
 
@@ -110,6 +113,42 @@ def submit_sitemap_endpoint(body: SitemapSubmitRequest):
     if ok:
         return {"status": "ingediend", "site": body.site_url, "sitemap": body.sitemap_url}
     return {"status": "fout", "detail": detail or "Sitemap indienen mislukt — controleer of de site_url klopt en het service-account toegang heeft"}
+
+
+class TrendSyncRequest(BaseModel):
+    site_id: Optional[str] = None
+
+
+@router.post("/trend-sync")
+def trend_sync(body: TrendSyncRequest):
+    """Zet verse Mission Radar-topsignalen om in Demand Engine-kansen —
+    handmatige trigger naast de automatische sync na elke sky-scan."""
+    if body.site_id:
+        site = sites_service.get_site(body.site_id)
+        if not site:
+            raise HTTPException(status_code=404, detail="Site niet gevonden")
+        return trends_service.sync_trend_opportunities(site)
+    return trends_service.sync_all_trend_opportunities()
+
+
+@router.get("/indexing-status")
+async def indexing_status():
+    """Per site: staat het IndexNow-keybestand live op de site-root? Vooral
+    relevant voor extern gehoste sites, waar Agent OS het niet zelf deployt."""
+    from ..publish import indexing as indexing_service
+    out = []
+    for s in sites_service.list_sites():
+        full = sites_service.get_site(s["id"])
+        if not full:
+            continue
+        out.append({
+            "site_id": full["id"],
+            "name": full["name"],
+            "base_url": full.get("base_url") or "",
+            "gsc_property_set": bool((full.get("gsc_property") or "").strip()),
+            "indexnow": await indexing_service.verify_indexnow(full),
+        })
+    return out
 
 
 @router.get("/status")

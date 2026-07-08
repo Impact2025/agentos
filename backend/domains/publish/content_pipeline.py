@@ -40,7 +40,7 @@ from ...shared import facebook as facebook_service
 from ...shared import linkedin as linkedin_service
 from ...shared import instagram as instagram_service
 from ...shared import twitter as twitter_service
-from ...shared.image_gen import generate_quote_card
+from ...shared.image_gen import generate_infographic, generate_quote_card
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +303,13 @@ async def review_and_improve(site: Dict, keyword: str, html_body: str,
         logger.info("[content-pipeline] Verbeterronde %s/%s (score %s < %s) — %s",
                     rounds, max_rounds, review["score"], CONTENT_MIN_SCORE, site["name"])
         html_body = await _optimize_article(site, keyword, html_body, review["feedback"])
+        # Een herschrijfronde kan gevalideerde interne links laten vallen of nieuwe
+        # verzinnen — die zijn dan niet meer gevet, dus opnieuw wieden vóór de
+        # volgende beoordeling (anders belanden 404-links op de live site).
+        html_body, n_stripped = article_writer.strip_unvetted_internal_links(html_body, site)
+        if n_stripped:
+            logger.info("[content-pipeline] Optimalisatieronde %s: %d ongevette interne link(s) verwijderd",
+                        rounds, n_stripped)
         review = await _review_article(site, keyword, html_body)
         # Houd de beste versie vast: een herschrijfronde kan ook verslechteren,
         # en dan willen we niet de mindere laatste versie opleveren.
@@ -384,28 +391,63 @@ async def _generate_social_copy(site: Dict, title: str, keyword: str, html_body:
         return {"linkedin": title, "facebook": title, "instagram": title, "twitter": title[:260]}
 
 
+async def _generate_article_infographic(site: Dict, title: str, keyword: str,
+                                        html_body: str) -> Optional[bytes]:
+    """Vat het artikel samen in 5-7 infographic-blokken en render die als PNG
+    (1080x1350, per-project stijl). Onderdeel van de 'all bases covered'-
+    aanpak: de afbeelding gaat bij goedkeuring mee de pagina in en rankt in
+    Google Afbeeldingen. Faalt zacht (None) — een artikel zonder infographic
+    is gewoon publiceerbaar."""
+    plain = re.sub(r"<[^>]+>", " ", html_body)
+    plain = re.sub(r"\s+", " ", plain).strip()[:3000]
+    system = (
+        "Je bent een Nederlandstalige infographic-ontwerper. Vat het artikel samen in "
+        "kernpunten. Antwoord UITSLUITEND met JSON, geen markdown of uitleg:\n"
+        '{"title": "infographic-titel (max 60 tekens)", "blocks": [{"heading": "korte kop '
+        '(max 40 tekens)", "text": "één concrete boodschap of tip (max 90 tekens)"}]}\n'
+        "Precies 5 tot 7 blocks. Feitelijk, B1-niveau, alleen punten die écht in het "
+        "artikel staan — geen verzonnen cijfers of bronnen."
+    )
+    prompt = f"Titel: {title}\nKernzoekwoord: {keyword}\n\nArtikel (platte tekst):\n{plain}"
+    try:
+        raw = await _llm(system, prompt, max_tokens=1200)
+        obj = json.loads(_extract_json(raw))
+        blocks = [b for b in (obj.get("blocks") or [])
+                  if isinstance(b, dict) and (b.get("heading") or b.get("text"))][:7]
+        if len(blocks) < 3:
+            raise ValueError(f"te weinig blokken ({len(blocks)})")
+        info_title = str(obj.get("title") or title).strip()
+        return generate_infographic(info_title, blocks, site["name"])
+    except Exception as e:
+        logger.warning("[content-pipeline] Infographic genereren mislukt voor '%s': %s",
+                       title, str(e)[:200])
+        return None
+
+
 # ── Content-jobs CRUD ────────────────────────────────────────────────────────
 
 def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html: str,
                 seo_score: float, social_copy: Dict[str, str], image_bytes: Optional[bytes],
                 slug: str, status: str = "pending_review",
-                qc_report: Optional[Dict] = None, case_study_id: str = "") -> str:
+                qc_report: Optional[Dict] = None, case_study_id: str = "",
+                infographic_bytes: Optional[bytes] = None) -> str:
     """status 'pending_review' = klaar om goed te keuren (score ≥ gate);
     'needs_work' = onder de kwaliteitsgate — eerst verbeteren of afwijzen."""
     job_id = str(uuid.uuid4())
-    image_path = ""
-    if image_bytes:
-        import base64
-        image_path = base64.b64encode(image_bytes).decode("ascii")
+    import base64
+    image_path = base64.b64encode(image_bytes).decode("ascii") if image_bytes else ""
+    infographic_path = base64.b64encode(infographic_bytes).decode("ascii") if infographic_bytes else ""
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO content_jobs
                (id, site_id, title, keyword, rationale, status, blog_html, seo_score,
-                social_copy, image_path, slug, publish_result, qc_report, case_study_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?)""",
+                social_copy, image_path, slug, publish_result, qc_report, case_study_id,
+                infographic_path, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?)""",
             (job_id, site_id, title, keyword, rationale, status, blog_html, seo_score,
              json.dumps(social_copy), image_path, slug,
-             json.dumps(qc_report or {}, ensure_ascii=False), case_study_id, _now()),
+             json.dumps(qc_report or {}, ensure_ascii=False), case_study_id,
+             infographic_path, _now()),
         )
     return job_id
 
@@ -472,10 +514,15 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
 
     from ...shared.config import CONTENT_MIN_SCORE
     passed = review["score"] >= CONTENT_MIN_SCORE
+    # Infographic alleen voor artikelen die de gate halen — een needs_work-
+    # artikel wordt toch herschreven en de blokken zouden verouderen.
+    infographic_bytes = (await _generate_article_infographic(site, title, keyword, html_body)
+                         if passed else None)
     job_id = create_job(site["id"], title, keyword, rationale, html_body,
                         review["score"], social_copy, image_bytes, slug,
                         status="pending_review" if passed else "needs_work",
-                        qc_report=qc_report, case_study_id=case_study_id)
+                        qc_report=qc_report, case_study_id=case_study_id,
+                        infographic_bytes=infographic_bytes)
     if passed:
         _log_activity(site["name"], "auto-content-klaar",
                       f"'{title}' (SEO-score {review['score']}) klaar voor review",
@@ -536,9 +583,12 @@ async def create_job_from_listicle(site: Dict, keyword: str, rationale: str,
 
     from ...shared.config import CONTENT_MIN_SCORE
     passed = review["score"] >= CONTENT_MIN_SCORE
+    infographic_bytes = (await _generate_article_infographic(site, title, keyword, html_body)
+                         if passed else None)
     job_id = create_job(site["id"], title, keyword, rationale, html_body,
                         review["score"], social_copy, image_bytes, slug,
-                        status="pending_review" if passed else "needs_work")
+                        status="pending_review" if passed else "needs_work",
+                        infographic_bytes=infographic_bytes)
     _log_activity(site["name"], "radar-listicle-in-wachtrij",
                   f"'{title}' (SEO-score {review['score']}) vanuit Mission Radar "
                   + ("klaar voor review" if passed else f"onder kwaliteitsgrens {CONTENT_MIN_SCORE} — eerst verbeteren"))
@@ -617,6 +667,8 @@ async def approve_and_publish(job_id: str) -> Dict:
     social_copy = json.loads(job["social_copy"] or "{}")
     import base64
     image_bytes = base64.b64decode(job["image_path"]) if job.get("image_path") else None
+    infographic_bytes = (base64.b64decode(job["infographic_path"])
+                         if job.get("infographic_path") else None)
 
     result: Dict = {"netlify": None, "gsc": None, "bing": None, "social": {}}
     article_url = None
@@ -629,6 +681,7 @@ async def approve_and_publish(job_id: str) -> Dict:
             netlify_result = await publish_service.publish_article(
                 site_id=site["id"], title=job["title"], html_body=job["blog_html"],
                 slug=job["slug"], image_bytes=image_bytes,
+                infographic_bytes=infographic_bytes,
             )
             result["netlify"] = netlify_result
             article_url = netlify_result.get("url")
@@ -737,11 +790,16 @@ async def regenerate_job(job_id: str) -> str:
     image_bytes = generate_quote_card(title, site["name"])
     import base64
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
+    passed = review["score"] >= CONTENT_MIN_SCORE
+    infographic_bytes = (await _generate_article_infographic(site, title, job["keyword"], html_body)
+                         if passed else None)
 
     updates = dict(
         title=title, blog_html=html_body, seo_score=review["score"],
         social_copy=json.dumps(social_copy), image_path=image_b64, slug=slug,
-        status="pending_review" if review["score"] >= CONTENT_MIN_SCORE else "needs_work",
+        status="pending_review" if passed else "needs_work",
+        infographic_path=(base64.b64encode(infographic_bytes).decode("ascii")
+                          if infographic_bytes else ""),
     )
     if qc_report or case_study_id:
         updates["qc_report"] = json.dumps(qc_report, ensure_ascii=False)

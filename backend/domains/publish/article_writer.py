@@ -88,6 +88,27 @@ def _knowledge_block(profile: str, ctas: List[str]) -> str:
 
 # ── Fase 1: Outline ──────────────────────────────────────────────────────────
 
+# Zoekintentie-signalen voor een lijstartikel: "beste X", "tips", "tools",
+# trending onderwerpen etc. Listicles worden voor dit soort zoekwoorden sneller
+# geïndexeerd en vaker geciteerd in AI Overviews (duidelijke, parsebare
+# structuur). De heuristiek is een hint — de outline-stap beslist definitief.
+_LISTICLE_INTENT = re.compile(
+    r"\b(beste|top|tips?|tools?|voorbeelden|manieren|soorten|idee(?:ë|e)n|fouten"
+    r"|checklist|opties|alternatieven|redenen|stappen|trends?|vragen|signalen"
+    r"|listicle|lijstjes?)\b|\b\d{1,2}\b",
+    re.IGNORECASE,
+)
+
+
+def detect_listicle_intent(keyword: str, angle: str = "", rationale: str = "") -> bool:
+    """True als de zoekintentie waarschijnlijk een lijst is. Trend-kansen
+    (Mission Radar) krijgen ook de hint: op een verse trend is een listicle
+    het snelst indexerende formaat."""
+    if _LISTICLE_INTENT.search(f"{keyword} {angle}"):
+        return True
+    return "trend" in (rationale or "").lower()
+
+
 async def _make_outline(site: Dict, keyword: str, angle: str, rationale: str,
                         case_study: Optional[Dict], profile: str, ctas: List[str],
                         brand_context: str) -> Dict:
@@ -96,17 +117,30 @@ async def _make_outline(site: Dict, keyword: str, angle: str, rationale: str,
         "blogartikel dat écht iets toevoegt ('information gain') — geen generieke opsomming "
         "die elke AI kan schrijven, maar een stuk gebouwd rond eigen data en ervaring. "
         "Antwoord UITSLUITEND met JSON:\n"
-        '{"title": "H1 met het zoekwoord er natuurlijk in", "sections": ['
-        '{"heading": "H2-tekst", "goal": "wat deze sectie de lezer oplevert", '
+        '{"title": "H1 met het zoekwoord er natuurlijk in", "format": "listicle" of "gids", '
+        '"sections": [{"heading": "H2-tekst", "goal": "wat deze sectie de lezer oplevert", '
         '"use_case_study": true/false, "include_cta": true/false}]}\n'
-        "Regels: 4-6 secties; precies één sectie gebruikt de casestudy als bewijs "
-        "(use_case_study), tenzij er geen casestudy is; maximaal 2 secties met include_cta "
-        "(één halverwege, één aan het slot)."
+        "Formaatkeuze: kies \"listicle\" wanneer de zoekintentie een lijst of vergelijking is "
+        "(beste X, tips, tools, opties, trending onderwerpen) — een genummerd lijstartikel "
+        "indexeert en rankt daar sneller op. Kies anders \"gids\".\n"
+        "Regels bij \"gids\": 4-6 secties.\n"
+        "Regels bij \"listicle\": 6-10 secties — de eerste sectie is een korte intro (heading "
+        "zonder nummer), daarna elk lijst-item als eigen sectie met genummerde heading "
+        "(\"1. …\", \"2. …\"), en de laatste sectie een conclusie/keuzehulp; zet het aantal "
+        "items in de titel (bijv. \"7 …\").\n"
+        "Altijd: precies één sectie gebruikt de casestudy als bewijs (use_case_study), tenzij "
+        "er geen casestudy is; maximaal 2 secties met include_cta (één halverwege, één aan "
+        "het slot)."
     )
     prompt_parts = [
         f"Site: {site['name']} ({site.get('base_url', '')})",
         f"Kernzoekwoord: {keyword}",
     ]
+    if detect_listicle_intent(keyword, angle, rationale):
+        prompt_parts.append(
+            "Vermoedelijke zoekintentie: lijst/vergelijking — een listicle-indeling "
+            "ligt voor de hand (tenzij de intentie duidelijk anders is)."
+        )
     if angle:
         prompt_parts.append(f"Invalshoek: {angle}")
     if rationale:
@@ -120,10 +154,12 @@ async def _make_outline(site: Dict, keyword: str, angle: str, rationale: str,
     if brand_context:
         prompt_parts.append(f"## Merkcontext\n{brand_context[:2000]}")
 
-    raw = await _llm(system, "\n\n".join(prompt_parts), max_tokens=1200)
+    raw = await _llm(system, "\n\n".join(prompt_parts), max_tokens=1600)
     outline = json.loads(_extract_json(raw))
+    outline["format"] = "listicle" if outline.get("format") == "listicle" else "gids"
     sections = outline.get("sections") or []
-    if not outline.get("title") or not (4 <= len(sections) <= 8):
+    max_sections = 12 if outline["format"] == "listicle" else 8
+    if not outline.get("title") or not (4 <= len(sections) <= max_sections):
         raise ValueError(f"Outline onbruikbaar: title={outline.get('title')!r}, {len(sections)} secties")
     return outline
 
@@ -148,6 +184,13 @@ async def _write_sections(site: Dict, keyword: str, outline: Dict,
         "uit de casestudy als bewijs (verzin NIETS erbij). Waar 'include_cta' staat: verwerk "
         "één van de beschikbare call-to-actions op een natuurlijke, niet-opdringerige manier."
     )
+    if outline.get("format") == "listicle":
+        system += (
+            "\n\nDit is een LISTICLE: houd de genummerde koppen exact zoals in de outline. "
+            "Elk lijst-item is zelfstandig leesbaar en concreet — voor wie is dit item de "
+            "beste keuze, wat levert het op, wat is het addertje. Geen vulling tussen de "
+            "items; de intro is kort (max 3 zinnen naar het eerste item toe)."
+        )
 
     outline_json = json.dumps(outline, ensure_ascii=False)
     cs = _case_study_block(case_study)
@@ -337,6 +380,43 @@ def strip_unvetted_links(html: str, allowed_urls: set, allowed_paths: set) -> Tu
     return out, stripped
 
 
+def strip_unvetted_internal_links(html: str, site: Dict,
+                                  ctas: Optional[List[str]] = None) -> Tuple[str, int]:
+    """Unwrap élke interne <a> die niet naar een geverifieerde bestemming wijst
+    (candidatenlijst + CTA-paden). Externe links blijven onaangeroerd. Draai dit
+    na ÉLKE stap die de volledige HTML herschrijft (bijv. SEO-optimalisatie) —
+    zo'n rewrite kan de gevalideerde links uit `_link_pass` laten vallen of
+    nieuwe interne URL's verzinnen, en die zijn dan niet meer gevet."""
+    candidates = _link_candidates(site)
+    own_host = urlparse((site.get("base_url") or "").strip()).netloc.lower().removeprefix("www.")
+    allowed_urls = {c["url"].rstrip("/") for c in candidates} | {c["url"] for c in candidates}
+    allowed_paths = {urlparse(c["url"]).path.rstrip("/") for c in candidates}
+    for cta in (ctas or []):
+        allowed_paths.update(p.rstrip("/") for p in re.findall(r"(/[a-z0-9\-_/]+)", cta.lower()))
+    allowed_paths.discard("")
+
+    stripped = 0
+
+    def _repl(m: re.Match) -> str:
+        nonlocal stripped
+        href = (m.group(1) or "").strip()
+        if not href or href == "#":
+            stripped += 1
+            return m.group(2)
+        host = urlparse(href).netloc.lower().removeprefix("www.")
+        if host and host != own_host:
+            return m.group(0)  # externe link: hier niet aan komen
+        path = urlparse(href).path.rstrip("/")
+        if href in allowed_urls or href.rstrip("/") in allowed_urls or (path and path in allowed_paths):
+            return m.group(0)
+        stripped += 1
+        return m.group(2)
+
+    out = re.sub(r'<a\b[^>]*?href="([^"]*)"[^>]*>(.*?)</a>', _repl, html,
+                 flags=re.IGNORECASE | re.DOTALL)
+    return out, stripped
+
+
 async def _link_pass(site: Dict, keyword: str, html_body: str,
                      ctas: Optional[List[str]] = None) -> Tuple[str, Dict]:
     report = {"internal_added": 0, "external_added": 0, "rejected": 0}
@@ -473,6 +553,7 @@ async def write_article_staged(site: Dict, keyword: str, angle: str, rationale: 
     outline = await _make_outline(site, keyword, angle, rationale,
                                   case_study, profile, ctas, brand_context)
     qc["outline_sections"] = len(outline["sections"])
+    qc["format"] = outline.get("format", "gids")
 
     html_body = await _write_sections(site, keyword, outline, case_study,
                                       profile, ctas, brand_context, base_style_prompt)

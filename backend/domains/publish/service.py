@@ -50,32 +50,33 @@ def slugify(text: str) -> str:
 # ── Persistence ──────────────────────────────────────────────────────────────
 
 def _upsert_page(site_id: str, slug: str, title: str, html_body: str,
-                  image_bytes: Optional[bytes] = None) -> Dict:
+                  image_bytes: Optional[bytes] = None,
+                  infographic_bytes: Optional[bytes] = None) -> Dict:
     now = _now()
     image_b64 = base64.b64encode(image_bytes).decode("ascii") if image_bytes else None
+    infographic_b64 = base64.b64encode(infographic_bytes).decode("ascii") if infographic_bytes else None
     with get_conn() as conn:
         row = conn.execute(
             "SELECT id, created_at FROM published_pages WHERE site_id = ? AND slug = ?",
             (site_id, slug),
         ).fetchone()
         if row:
+            sets, params = ["title = ?", "html = ?", "updated_at = ?"], [title, html_body, now]
             if image_b64 is not None:
-                conn.execute(
-                    "UPDATE published_pages SET title = ?, html = ?, image_b64 = ?, updated_at = ? WHERE id = ?",
-                    (title, html_body, image_b64, now, row["id"]),
-                )
-            else:
-                conn.execute(
-                    "UPDATE published_pages SET title = ?, html = ?, updated_at = ? WHERE id = ?",
-                    (title, html_body, now, row["id"]),
-                )
+                sets.append("image_b64 = ?")
+                params.append(image_b64)
+            if infographic_b64 is not None:
+                sets.append("infographic_b64 = ?")
+                params.append(infographic_b64)
+            params.append(row["id"])
+            conn.execute(f"UPDATE published_pages SET {', '.join(sets)} WHERE id = ?", params)
             pid = row["id"]
         else:
             pid = str(uuid.uuid4())
             conn.execute(
-                "INSERT INTO published_pages (id, site_id, slug, title, html, image_b64, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (pid, site_id, slug, title, html_body, image_b64 or "", now, now),
+                "INSERT INTO published_pages (id, site_id, slug, title, html, image_b64, infographic_b64, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (pid, site_id, slug, title, html_body, image_b64 or "", infographic_b64 or "", now, now),
             )
     return {"id": pid, "slug": slug, "title": title}
 
@@ -93,7 +94,7 @@ def list_pages(site_id: str) -> List[Dict]:
 def _all_pages_full(site_id: str) -> List[Dict]:
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT slug, title, html, image_b64, updated_at FROM published_pages "
+            "SELECT slug, title, html, image_b64, infographic_b64, updated_at FROM published_pages "
             "WHERE site_id = ? ORDER BY updated_at DESC",
             (site_id,),
         ).fetchall()
@@ -205,11 +206,37 @@ def build_site_files(site_id: str, site_name: str, base_url: str = "",
                 files[f'images/{p["slug"]}.png'] = base64.b64decode(p["image_b64"])
             except Exception:
                 pass
+        if p.get("infographic_b64"):
+            try:
+                files[f'images/{p["slug"]}-infographic.png'] = base64.b64decode(p["infographic_b64"])
+            except Exception:
+                pass
     if base_url:
         files["sitemap.xml"] = _sitemap_xml(base_url.rstrip("/"), pages)
     if indexnow_key:
         files[f"{indexnow_key}.txt"] = indexnow_key
     return files
+
+
+def embed_infographic_html(html_body: str, slug: str, title: str) -> str:
+    """Zet de infographic als <figure> in het artikel — ná de eerste sectie
+    (vóór de tweede <h2>), zodat hij boven de vouw van het inhoudelijke deel
+    zit. Google Afbeeldingen indexeert alleen afbeeldingen die écht in een
+    pagina staan, met alt-tekst en een sprekende bestandsnaam. Idempotent."""
+    src = f"/images/{slug}-infographic.png"
+    if src in (html_body or ""):
+        return html_body
+    alt = _html.escape(f"Infographic: {title}", quote=True)
+    caption = _html.escape(title)
+    figure = (
+        f'\n<figure><img src="{src}" alt="{alt}" width="1080" height="1350" '
+        f'loading="lazy"><figcaption>{caption} — samengevat in beeld</figcaption></figure>\n'
+    )
+    h2s = [m.start() for m in re.finditer(r"<h2[\s>]", html_body, re.IGNORECASE)]
+    if len(h2s) >= 2:
+        pos = h2s[1]
+        return html_body[:pos] + figure + html_body[pos:]
+    return html_body + figure
 
 
 def _zip_files(files: Dict[str, Union[str, bytes]]) -> bytes:
@@ -233,7 +260,7 @@ async def _deploy_zip(site_api_id: str, token: str, zip_bytes: bytes) -> Dict:
 
 async def publish_article(
     site_id: str, title: str, html_body: str, slug: Optional[str] = None,
-    image_bytes: Optional[bytes] = None,
+    image_bytes: Optional[bytes] = None, infographic_bytes: Optional[bytes] = None,
 ) -> Dict:
     """Sla het artikel op, herbouw de site en deploy naar Netlify. Retourneert live-URL."""
     site = sites_service.get_site(site_id)  # volledige rij incl. token
@@ -257,7 +284,10 @@ async def publish_article(
         raise ValueError("Lege artikelinhoud.")
 
     slug = slugify(slug or title)
-    _upsert_page(site_id, slug, title.strip(), html_body, image_bytes=image_bytes)
+    if infographic_bytes:
+        html_body = embed_infographic_html(html_body, slug, title.strip())
+    _upsert_page(site_id, slug, title.strip(), html_body,
+                 image_bytes=image_bytes, infographic_bytes=infographic_bytes)
 
     # Sitemap (voor de GSC-submit) + IndexNow-key-bestand meedeployen. Bij de
     # allereerste deploy is de basis-URL nog onbekend — dan komt de sitemap
@@ -274,11 +304,14 @@ async def publish_article(
     page_url = f"{base}/{slug}/" if base else f"/{slug}/"
     _set_page_url(site_id, slug, page_url)
     image_url = f"{base}/images/{slug}.png" if (base and f'images/{slug}.png' in files) else None
+    infographic_url = (f"{base}/images/{slug}-infographic.png"
+                       if (base and f'images/{slug}-infographic.png' in files) else None)
     logger.info("Gepubliceerd: %s → %s (deploy %s)", slug, page_url, deploy.get("state"))
 
     return {
         "slug": slug,
         "image_url": image_url,
+        "infographic_url": infographic_url,
         "title": title.strip(),
         "url": page_url,
         "site_url": base,

@@ -268,6 +268,7 @@ async def optimize_content_file(name: str, kind: str = Query(...), file: str = Q
     while review["score"] < WORLD_CLASS_SCORE and rounds < MAX_OPTIMIZE_ROUNDS:
         rounds += 1
         optimized_html = await content_pipeline._optimize_article(site, keyword, optimized_html, review["feedback"])
+        optimized_html, _ = content_pipeline.article_writer.strip_unvetted_internal_links(optimized_html, site)
         review = await content_pipeline._review_article(site, keyword, optimized_html)
 
     if meta:
@@ -497,6 +498,14 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
         optimized_html = await content_pipeline._optimize_article(
             site, keyword, optimized_html, review["feedback"]
         )
+        # Een herschrijfronde kan gevalideerde interne links laten vallen of nieuwe
+        # verzinnen — die zijn dan niet meer gevet, dus opnieuw wieden vóór de
+        # volgende beoordeling (anders belanden 404-links op de live site).
+        optimized_html, n_stripped = content_pipeline.article_writer.strip_unvetted_internal_links(
+            optimized_html, site
+        )
+        if n_stripped:
+            logger.info(f"[SEO-pipeline] Optimalisatieronde {rounds}: {n_stripped} ongevette interne link(s) verwijderd")
 
         _set_job(job_id, phase=f"Herbeoordelen na optimalisatieronde {rounds}...", percent=min(65 + rounds * 10, 92))
         # Pauze om 429-rate-limit te voorkomen

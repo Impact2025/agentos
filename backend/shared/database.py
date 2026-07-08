@@ -550,8 +550,11 @@ def _migrate(conn) -> None:
     # zodat de Wachtrij per artikel kan tonen welke checks zijn gedaan/gefixt.
     cj_cols = {row["name"] for row in conn.execute("PRAGMA table_info(content_jobs)").fetchall()}
     for col, ddl in (
-        ("qc_report",     "ALTER TABLE content_jobs ADD COLUMN qc_report TEXT DEFAULT '{}'"),
-        ("case_study_id", "ALTER TABLE content_jobs ADD COLUMN case_study_id TEXT DEFAULT ''"),
+        ("qc_report",        "ALTER TABLE content_jobs ADD COLUMN qc_report TEXT DEFAULT '{}'"),
+        ("case_study_id",    "ALTER TABLE content_jobs ADD COLUMN case_study_id TEXT DEFAULT ''"),
+        # Infographic (base64 PNG) per artikel: gaat bij goedkeuring mee de
+        # pagina in (Google Afbeeldingen + AI Overviews citeren beeldbronnen).
+        ("infographic_path", "ALTER TABLE content_jobs ADD COLUMN infographic_path TEXT DEFAULT ''"),
     ):
         if cj_cols and col not in cj_cols:
             conn.execute(ddl)
@@ -562,6 +565,10 @@ def _migrate(conn) -> None:
     pp_cols = {row["name"] for row in conn.execute("PRAGMA table_info(published_pages)").fetchall()}
     if pp_cols and "image_b64" not in pp_cols:
         conn.execute("ALTER TABLE published_pages ADD COLUMN image_b64 TEXT DEFAULT ''")
+    # Infographic per pagina (base64 PNG) — mee in elke full-site-rebuild als
+    # images/{slug}-infographic.png, en als <figure> in het artikel zelf.
+    if pp_cols and "infographic_b64" not in pp_cols:
+        conn.execute("ALTER TABLE published_pages ADD COLUMN infographic_b64 TEXT DEFAULT ''")
 
     # Opdrachten: leeftijd van de vacature (dagen sinds plaatsing, -1 = onbekend) —
     # gebruikt om verlopen/oude vacatures uit de standaardweergave te filteren.
