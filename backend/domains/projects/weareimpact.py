@@ -406,6 +406,28 @@ class WritePublishRequest(BaseModel):
 # projectonafhankelijk) i.p.v. hier hardcoded WeAreImpact-only prompts te dupliceren.
 _slugify = content_pipeline.slugify_title
 
+def _unwrap_code_fence(html: str) -> str:
+    """Haal een eventuele ```html ... ``` (of ``` ... ```) code-fence eraf.
+
+    De schrijf-pipeline levert soms de echte HTML gewikkeld in een
+    markdown code-block (een sjabloon/voorbeeld i.p.v. echte content).
+    Op de live site zou dat als zichtbaar code-block tonen — dus strippen
+    we de fence en houden de echte HTML over. Als er géén fence staat,
+    blijft de input ongewijzigd.
+    """
+    s = (html or "").strip()
+    # Begin: optioneel '```' + taal (html/markdown/...) op een eigene lijn
+    m = re.match(r"^```[a-z]*\s*\n", s, re.IGNORECASE)
+    if m:
+        s = s[m.end():]
+    # Eind: '```' op een eigene lijn (eventueel met witruimte)
+    end = s.rfind("\n```")
+    if end != -1:
+        s = s[:end].rstrip()
+    elif s.endswith("```"):
+        s = s[:-3].rstrip()
+    return s.strip()
+
 
 # ── Voortgang van artikel-schrijf-jobs (in-memory, gepolld door frontend) ──
 _ARTICLE_JOBS: Dict[str, dict] = {}
@@ -625,19 +647,35 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
             # dedicated /api/publish (incl. socials + indexing), bijeen.app een
             # generieke /api/blog met status-veld.
             if env_prefix == "BIJEEN":
-                # Ook hier eerst de meta-/suggestie-blokken uit de body halen
-                # (anders komen ze als zichtbare H2's onderaan het artikel op
-                # bijeen.app terecht — net als eerder bij weareimpact.nl).
+                # Ook hier eerst de ruwe content schoonmaken vóórdat hij naar
+                # bijeen.app gaat. De AI wikkelt de echte content soms in een
+                # ```html <article>...</article> ``` code-fence (een sjabloon/
+                # voorbeeld i.p.v. echte HTML) en verzint interne links naar
+                # pagina's die niet bestaan. Dat levert op de live site een
+                # artikel dat als code-block toont + "rare links" naar 404's.
+                bijeen_html = optimized_html.strip()
+                # 1) Haal de ```html ... ``` code-fence eraf zodat de echte
+                #    HTML-content overblijft (als die erin zit).
+                bijeen_html = _unwrap_code_fence(bijeen_html)
+                # 2) Meta-/suggestie-blokken strippen (zichtbare H2's).
                 bijeen_html, bijeen_meta_title, bijeen_meta_desc = \
-                    content_pipeline._strip_meta_and_suggestions(optimized_html)
+                    content_pipeline._strip_meta_and_suggestions(bijeen_html)
+                # 3) Verzonnen interne links naar niet-bestaande pagina's
+                #    unwrappen (houdt alleen echte <a href> naar bestaande
+                #    kandidaten / CTA's over).
+                bijeen_html, _n_stripped = \
+                    content_pipeline.article_writer.strip_unvetted_internal_links(
+                        bijeen_html, site)
                 first_p = re.search(r"<p>(.*?)</p>", bijeen_html, re.S)
                 excerpt = re.sub(r"<[^>]+>", "", first_p.group(1)).strip()[:200] if first_p else ""
+                # Meta-titel nooit halverwege afbreken op een '&' (escaped &amp;)
+                _bt = (bijeen_meta_title or final_title or "").replace("&amp;", "&")
                 payload = {
                     "title": final_title,
                     "content": bijeen_html.strip(),
                     "excerpt": excerpt,
-                    "metaTitle": (bijeen_meta_title or final_title)[:60],
-                    "metaDescription": bijeen_meta_desc or meta_desc,
+                    "metaTitle": _bt[:60],
+                    "metaDescription": (bijeen_meta_desc or meta_desc or "").replace("&amp;", "&"),
                     "tags": [keyword] if keyword else [],
                     "status": "published",
                 }
