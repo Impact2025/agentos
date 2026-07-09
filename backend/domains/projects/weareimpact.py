@@ -23,12 +23,22 @@ logger = logging.getLogger(__name__)
 
 # Streefscore (0-100) voor automatische SEO-optimalisatie, en het maximum aantal
 # optimalisatierondes voordat we stoppen (kostenbeheersing + garantie dat het ooit eindigt).
+# Agent OS-eis: de agent MOET de 85%-grens altijd halen. Daarom itereren we door
+# tot de score WORLD_CLASS_SCORE bereikt of het rondemaximum is bereikt. 6 rondes
+# geeft voldoende marge om van ~70 naar 85+ te komen; de harde publish-gate
+# (PUBLISH_MIN_SCORE) blokkeert alsnog alles wat onder de 85 blijft, dus er kan
+# nooit een sub-85 blog live gaan.
 WORLD_CLASS_SCORE = 85
-MAX_OPTIMIZE_ROUNDS = 3
+MAX_OPTIMIZE_ROUNDS = 6
 
 # Harde publicatie-gate (0-10): onder deze score wordt een artikel alleen als
 # concept opgeslagen — géén Netlify-deploy en géén zoekmachine-indiening.
-PUBLISH_MIN_SCORE = 7.0
+# Agent OS-eis: GEEN enkel blog mag onder de 85% (0-100) live gaan in welk
+# project dan ook. De review-score is 0-100; we tonen hem als 0-10
+# (seo_score = score / 10). De gate checkt daarom op 8.5 (== 85/100).
+# Een artikel dat na MAX_OPTIMIZE_ROUNDS de 85 niet haalt, blijft als
+# CONCEPT staan en wordt niet gepubliceerd — de agent moet de lat halen.
+PUBLISH_MIN_SCORE = 8.5
 
 # Frontmatter-velden die met aanhalingstekens worden opgeslagen (vrije tekst met
 # spaties/leestekens); de rest is een kaal getal/woord en blijft ongequote.
@@ -607,18 +617,27 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
         else:
             base_url = site.get("base_url", "").rstrip("/")
             _set_job(job_id, phase=f"Live zetten op {base_url or publish_url}...", percent=97)
+            # Verwijder zichtbare Meta-/Suggestie-blokken uit de body vóórdat
+            # we publiceren (de AI levert die soms als H2's onderaan de tekst).
+            optimized_html, parsed_title, parsed_desc = \
+                content_pipeline._strip_meta_and_suggestions(optimized_html)
             # De blog-API's verschillen per site: weareimpact.nl heeft een
             # dedicated /api/publish (incl. socials + indexing), bijeen.app een
             # generieke /api/blog met status-veld.
             if env_prefix == "BIJEEN":
-                first_p = re.search(r"<p>(.*?)</p>", optimized_html, re.S)
+                # Ook hier eerst de meta-/suggestie-blokken uit de body halen
+                # (anders komen ze als zichtbare H2's onderaan het artikel op
+                # bijeen.app terecht — net als eerder bij weareimpact.nl).
+                bijeen_html, bijeen_meta_title, bijeen_meta_desc = \
+                    content_pipeline._strip_meta_and_suggestions(optimized_html)
+                first_p = re.search(r"<p>(.*?)</p>", bijeen_html, re.S)
                 excerpt = re.sub(r"<[^>]+>", "", first_p.group(1)).strip()[:200] if first_p else ""
                 payload = {
                     "title": final_title,
-                    "content": optimized_html.strip(),
+                    "content": bijeen_html.strip(),
                     "excerpt": excerpt,
-                    "metaTitle": final_title[:60],
-                    "metaDescription": meta_desc,
+                    "metaTitle": (bijeen_meta_title or final_title)[:60],
+                    "metaDescription": bijeen_meta_desc or meta_desc,
                     "tags": [keyword] if keyword else [],
                     "status": "published",
                 }
@@ -733,6 +752,35 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
         except Exception as e:
             logger.info(f"Netlify publish skipped (niet geconfigureerd voor {name}): {e}")
             netlify_result = None
+
+    # ── Kans terugkoppelen met de echte live-URL ─────────────────────
+    # Zodra het artikel daadwerkelijk live staat, koppelen we de URL terug aan de
+    # bijbehorende Demand-Engine-kans (via site_id + query) en zetten die op
+    # 'published' — mét published_at. Zo toont de Kansen-card in de UI een
+    # klikbare live-link ipv alleen de handmatige 'Gepubliceerd'-vink.
+    live_url_final = live_result.get("url") if live_result else None
+    if live_url_final and passed_gate:
+        try:
+            from ..seo import engine as demand_engine
+            with demand_engine.get_conn() as conn:
+                row = conn.execute(
+                    "SELECT id FROM opportunities "
+                    "WHERE site_id = ? AND (query = ? OR query LIKE ?) "
+                    "ORDER BY scanned_at DESC LIMIT 1",
+                    (site_id, keyword, f"{keyword}%"),
+                ).fetchone()
+            if row:
+                demand_engine.update_opportunity(
+                    row["id"],
+                    status="published",
+                    live_url=live_url_final,
+                    published_at=demand_engine._now(),
+                )
+                _log_activity(name, "kans-gelinkt",
+                              f"'{body.title}' gekoppeld aan kans (live: {live_url_final})",
+                              artifact=live_url_final)
+        except Exception as e:
+            logger.warning(f"[SEO-pipeline] Kans-terugkoppeling mislukt (niet kritisch): {e}")
 
     return {
         "success": True,
