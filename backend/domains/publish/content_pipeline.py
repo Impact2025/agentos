@@ -160,6 +160,16 @@ def _vault_context(project_name: str) -> str:
     return ""
 
 
+def _iris_writing_guidance(project_name: str) -> str:
+    """Kennisbank-principes van Iris (GEO/AEO/SEO/merk) voor de schrijf-agent.
+    Defensief: geen kennis of fout = lege string, nooit een crash."""
+    try:
+        from ..iris import knowledge as iris_knowledge
+        return iris_knowledge.guidance_for_writing(project_name)
+    except Exception:
+        return ""
+
+
 def _skill_body(project_name: str) -> str:
     try:
         from ..projects.router import _find_project_dir
@@ -258,6 +268,11 @@ async def _write_article(site: Dict, keyword: str, angle: str, rationale: str) -
     if knowledge["ctas"]:
         write_system += ("\n\n## Call-to-actions (verwerk er één natuurlijk)\n"
                          + "\n".join(f"- {c}" for c in knowledge["ctas"][:6]))
+    # Iris' kennisbank: onderzoek dat Vincent aanleverde (GEO/AEO/SEO) bereikt
+    # hier de schrijf-agent — zo stuurt de manager de agents inhoudelijk aan.
+    iris_guidance = _iris_writing_guidance(project_name)
+    if iris_guidance:
+        write_system += f"\n\n## Kennisbank-principes (Iris — pas toe)\n{iris_guidance}"
 
     write_prompt = (
         f"Schrijf een compleet blogartikel voor {project_name}.\n\n"
@@ -310,40 +325,50 @@ async def _review_article(site: Dict, keyword: str, html_body: str) -> Dict:
         fm = re.search(r'"feedback"\s*:\s*"(.*)', safe_raw, re.DOTALL)
         feedback = (fm.group(1).strip() if fm else safe_raw)[:800]
 
-        # ── Deterministische E-E-A-T / AEO-correctie ────────────────────────────
-        # Voorkomt dat een te milde LLM-beoordeling een niet-wereldklasse-artikel
-        # door de gate loopt. We trekken alleen af (nooit op), en alleen op
-        # harde, parseerbare tekortkomingen.
-        try:
-            from ..seo.enhancements import assess_seo_worldclass
-            a = assess_seo_worldclass(html_body, keyword, site)
-            deductions: List[str] = []
-            if not a["has_direct_answer"]:
-                score -= 5; deductions.append("geen direct antwoord voor AEO")
-            if a["faq_count"] == 0:
-                score -= 5; deductions.append("geen FAQ-sectie (rich result)")
-            if a["ai_language"]:
-                score -= min(len(a["ai_language"]), 3) * 4
-                deductions.append("AI-clichés aanwezig")
-            if a["ee_at_issues"]:
-                score -= min(len(a["ee_at_issues"]), 4) * 5
-                deductions.append("E-E-A-T/bronissue: " + "; ".join(a["ee_at_issues"][:2]))
-            score = max(0, min(100, score))
-            if deductions and not feedback:
-                feedback = "Deterministische SEO-check: " + "; ".join(deductions)
-            elif deductions:
-                feedback = feedback + " | Deterministische SEO-check: " + "; ".join(deductions)
-        except Exception as e:
-            logger.debug("[content-pipeline] E-E-A-T-correctie overgeslagen: %s", str(e)[:120])
+    # ── Deterministische E-E-A-T / AEO-correctie ────────────────────────────
+    # Voorkomt dat een te milde LLM-beoordeling een niet-wereldklasse-artikel
+    # door de gate loopt. We trekken alleen af (nooit op), en alleen op harde,
+    # parseerbare tekortkomingen. Draait op ELKE review — zowel de schone
+    # JSON-parse als de fallback-bocht — zodat de gate altijd sluit. (Voorheen
+    # stond deze correctie per ongeluk binnen de except-branch en werd hij bij
+    # een wél-geldige review nooit uitgevoerd, waardoor te zachte scores de
+    # kwaliteitsgrens passeerden.)
+    try:
+        from ..seo.enhancements import assess_seo_worldclass
+        a = assess_seo_worldclass(html_body, keyword, site)
+        deductions: List[str] = []
+        if not a["has_direct_answer"]:
+            score -= 5; deductions.append("geen direct antwoord voor AEO")
+        if a["faq_count"] == 0:
+            score -= 5; deductions.append("geen FAQ-sectie (rich result)")
+        if a["ai_language"]:
+            score -= min(len(a["ai_language"]), 3) * 4
+            deductions.append("AI-clichés aanwezig")
+        if a["ee_at_issues"]:
+            score -= min(len(a["ee_at_issues"]), 4) * 5
+            deductions.append("E-E-A-T/bronissue: " + "; ".join(a["ee_at_issues"][:2]))
+        score = max(0, min(100, score))
+        if deductions and not feedback:
+            feedback = "Deterministische SEO-check: " + "; ".join(deductions)
+        elif deductions:
+            feedback = feedback + " | Deterministische SEO-check: " + "; ".join(deductions)
+    except Exception as e:
+        logger.debug("[content-pipeline] E-E-A-T-correctie overgeslagen: %s", str(e)[:120])
 
-        return {"score": score, "feedback": feedback}
+    return {"score": score, "feedback": feedback}
 
 
 async def review_and_improve(site: Dict, keyword: str, html_body: str,
-                             max_rounds: int = 3) -> tuple:
-    """Review → verbeter → review, tot de kwaliteitsgate (CONTENT_MIN_SCORE)
-    is gehaald of de rondes op zijn. Retourneert (html_body, review)."""
-    from ...shared.config import CONTENT_MIN_SCORE
+                             max_rounds: int = 6) -> tuple:
+    """Review → verbeter → review, net zo lang tot de kwaliteitsgate
+    (CONTENT_MIN_SCORE) is gehaald. Nooit eerder opgeven dan nodig: een artikel
+    onder de grens mag het dashboard (en Vincents ogen) niet bereiken — de agent
+    blijft zélf aanscherpen. `max_rounds` is alleen een harde veiligheidslimiet
+    (tegen eindeloze LLM-loops); bij de biweekly/regenerate-routes wordt die
+    ruim gezet (zie CONTENT_MAX_ROUNDS) zodat de grens in de praktijk wél gehaald
+    wordt. Retourneert (html_body, review)."""
+    from ...shared.config import CONTENT_MIN_SCORE, CONTENT_MAX_ROUNDS
+    effective_max = max(max_rounds, CONTENT_MAX_ROUNDS)
     review = await _review_article(site, keyword, html_body)
     if not review:
         # _review_article gaf None terug (model-fout) — val niet stil, geef een
@@ -351,10 +376,10 @@ async def review_and_improve(site: Dict, keyword: str, html_body: str,
         review = {"score": 0, "feedback": "Review kon niet worden uitgevoerd."}
     best_html, best_review = html_body, review
     rounds = 0
-    while review["score"] < CONTENT_MIN_SCORE and rounds < max_rounds and review["feedback"]:
+    while review["score"] < CONTENT_MIN_SCORE and rounds < effective_max and review["feedback"]:
         rounds += 1
-        logger.info("[content-pipeline] Verbeterronde %s/%s (score %s < %s) — %s",
-                    rounds, max_rounds, review["score"], CONTENT_MIN_SCORE, site["name"])
+        logger.info("[content-pipeline] Verbeterronde %s (score %s < %s) — %s",
+                    rounds, review["score"], CONTENT_MIN_SCORE, site["name"])
         html_body = await _optimize_article(site, keyword, html_body, review["feedback"])
         # Een herschrijfronde kan gevalideerde interne links laten vallen of nieuwe
         # verzinnen — die zijn dan niet meer gevet, dus opnieuw wieden vóór de
@@ -368,6 +393,17 @@ async def review_and_improve(site: Dict, keyword: str, html_body: str,
         # en dan willen we niet de mindere laatste versie opleveren.
         if review["score"] > best_review["score"]:
             best_html, best_review = html_body, review
+    if best_review["score"] < CONTENT_MIN_SCORE:
+        # Ook na de maximale verbeterrondes nog onder de grens: log het expliciet
+        # en laat de learning-loop er een les van trekken (zie record_under85).
+        logger.warning("[content-pipeline] Artikel '%s' blijft onder grens na %s rondes "
+                       "(beste score %s < %s) — naar needs_work, agent leert hiervan.",
+                       keyword, rounds, best_review["score"], CONTENT_MIN_SCORE)
+        try:
+            from ...domains.publish import learning
+            learning.record_under85(site, keyword, best_review)
+        except Exception as e:
+            logger.debug("[content-pipeline] learning.record_under85 overgeslagen: %s", str(e)[:120])
     return best_html, best_review
 
 
@@ -393,12 +429,19 @@ async def _write_article_best(site: Dict, keyword: str, angle: str,
     Retourneert (html_body, qc_report, case_study_id)."""
     knowledge = knowledge_service.get_site_knowledge(site)
     case_study = knowledge_service.match_case_study(site["id"], keyword, angle)
+    # Iris' kennisbank-principes mee in de merkcontext, zodat de meertraps-
+    # schrijver (outline → secties) de GEO/AEO/SEO-kennis vanaf de eerste stap toepast.
+    brand_context = _vault_context(site["name"])
+    iris_guidance = _iris_writing_guidance(site["name"])
+    if iris_guidance:
+        brand_context = (brand_context + "\n\n## Kennisbank-principes (Iris — pas toe)\n"
+                         + iris_guidance).strip()
     try:
         html_body, qc_report = await article_writer.write_article_staged(
             site, keyword, angle, rationale,
             case_study=case_study,
             profile=knowledge["profile"], ctas=knowledge["ctas"],
-            brand_context=_vault_context(site["name"]),
+            brand_context=brand_context,
             base_style_prompt=_profile_prompt("SEO Copywriter") or _FALLBACK_WRITE_PROMPT,
         )
         return html_body, qc_report, (case_study or {}).get("id", "")
@@ -496,14 +539,47 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
                 seo_score: float, social_copy: Dict[str, str], image_bytes: Optional[bytes],
                 slug: str, status: str = "pending_review",
                 qc_report: Optional[Dict] = None, case_study_id: str = "",
-                infographic_bytes: Optional[bytes] = None) -> str:
+                infographic_bytes: Optional[bytes] = None,
+                dedupe: bool = True) -> str:
     """status 'pending_review' = klaar om goed te keuren (score ≥ gate);
-    'needs_work' = onder de kwaliteitsgate — eerst verbeteren of afwijzen."""
-    job_id = str(uuid.uuid4())
+    'needs_work' = onder de kwaliteitsgate — eerst verbeteren of afwijzen.
+
+    dedupe=True (default): als er al een job voor (site_id, slug) bestaat met
+    status in ('pending_review','needs_work','published','approved') wordt die
+    bijgewerkt in plaats van een nieuwe rij aangemaakt. Voorkomt dat een
+    content-goal in een oneindige loop hetzelfde artikel tientallen keren in de
+    wachtrij dumpt (zie de 17x 'gelukkige hond'-incident)."""
     import base64
-    image_path = base64.b64encode(image_bytes).decode("ascii") if image_bytes else ""
-    infographic_path = base64.b64encode(infographic_bytes).decode("ascii") if infographic_bytes else ""
     with get_conn() as conn:
+        if dedupe:
+            existing = conn.execute(
+                "SELECT id, status FROM content_jobs "
+                "WHERE site_id=? AND slug=? AND status IN "
+                "('pending_review','needs_work','published','approved') "
+                "ORDER BY created_at DESC LIMIT 1",
+                (site_id, slug),
+            ).fetchone()
+            if existing:
+                # Bijwerken: nieuwe body/score, status naar meegegeven waarde
+                # (behalve als de bestaande al 'published' is — dan niet
+                # terugzetten naar pending_review).
+                new_status = status
+                if existing["status"] == "published" and status != "published":
+                    new_status = "published"
+                conn.execute(
+                    "UPDATE content_jobs SET title=?, keyword=?, rationale=?, "
+                    "status=?, blog_html=?, seo_score=?, social_copy=?, slug=?, "
+                    "qc_report=?, case_study_id=? WHERE id=?",
+                    (title, keyword, rationale, new_status, blog_html, seo_score,
+                     json.dumps(social_copy), slug,
+                     json.dumps(qc_report or {}, ensure_ascii=False),
+                     case_study_id, existing["id"]),
+                )
+                return existing["id"]
+
+        job_id = str(uuid.uuid4())
+        image_path = base64.b64encode(image_bytes).decode("ascii") if image_bytes else ""
+        infographic_path = base64.b64encode(infographic_bytes).decode("ascii") if infographic_bytes else ""
         conn.execute(
             """INSERT INTO content_jobs
                (id, site_id, title, keyword, rationale, status, blog_html, seo_score,
@@ -551,10 +627,16 @@ def _update_job(job_id: str, **fields) -> None:
 # ── Genereer één content-job voor één site ──────────────────────────────────
 
 async def generate_content_job(site: Dict, keyword: Optional[str] = None,
-                                angle: str = "", rationale: str = "") -> Optional[str]:
+                                angle: str = "", rationale: str = "",
+                                light_mode: bool = False) -> Optional[str]:
     """Schrijf + review + social copy + afbeelding voor één site, opslaan als
     pending_review content_job. Retourneert het job-id, of None als er geen
-    onderwerp beschikbaar was."""
+    onderwerp beschikbaar was.
+
+    light_mode=True: alleen schrijven + één lichte review (geen verbeterrondes,
+    geen social/infographic). Bedoeld voor de batch-blitz op trage cloud-LLM's
+    (OpenModel) waar de volledige cyclus per artikel te lang duurt.
+    """
     if keyword is None:
         topic = select_topic(site)
         if not topic:
@@ -570,35 +652,43 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
                       status="error")
         return None
 
-    html_body, review = await review_and_improve(site, keyword, html_body)
+    html_body, review = await review_and_improve(site, keyword, html_body,
+                                                  max_rounds=0 if light_mode else 3)
 
     title = _extract_title(html_body, fallback=angle or keyword)
     slug = slugify_title(title)
 
-    social_copy = await _generate_social_copy(site, title, keyword, html_body)
-    image_bytes = generate_quote_card(title, site["name"])
-
-    from ...shared.config import CONTENT_MIN_SCORE
-    passed = review["score"] >= CONTENT_MIN_SCORE
-    # Infographic alleen voor artikelen die de gate halen — een needs_work-
-    # artikel wordt toch herschreven en de blokken zouden verouderen.
-    infographic_bytes = (await _generate_article_infographic(site, title, keyword, html_body)
-                         if passed else None)
-    job_id = create_job(site["id"], title, keyword, rationale, html_body,
-                        review["score"], social_copy, image_bytes, slug,
-                        status="pending_review" if passed else "needs_work",
-                        qc_report=qc_report, case_study_id=case_study_id,
-                        infographic_bytes=infographic_bytes)
-    if passed:
+    if light_mode:
+        # Snel pad voor batch-blitz op trage cloud-LLM: alleen schrijven +
+        # review, geen social/infographic. Een artikel dat de kwaliteitsgrens
+        # (CONTENT_MIN_SCORE) niet haalt, wordt als 'needs_work' aangeboden —
+        # nooit als 'pending_review' (publiceerbaar voorstel). "Alleen voorstellen
+        # boven de 85%" betekent: onder de grens staat het in de verbeter-queue,
+        # niet in de goedkeuringsqueue.
+        from ...shared.config import CONTENT_MIN_SCORE
+        passed = review["score"] >= CONTENT_MIN_SCORE
+        social_copy: Dict[str, str] = {}
+        image_bytes = None
+        infographic_bytes = None
+        create_job(site["id"], title, keyword, rationale, html_body,
+                    review["score"], social_copy, image_bytes, slug,
+                    status="pending_review" if passed else "needs_work",
+                    qc_report=qc_report,
+                    case_study_id=case_study_id)
         _log_activity(site["name"], "auto-content-klaar",
-                      f"'{title}' (SEO-score {review['score']}) klaar voor review",
-                      next_step="Keur goed of wijs af in de Wachtrij")
-    else:
-        _log_activity(site["name"], "auto-content-onder-grens",
-                      f"'{title}' haalde na 3 verbeterrondes {review['score']}/100 "
-                      f"(grens {CONTENT_MIN_SCORE}) — niet publiceerbaar",
-                      next_step="Laat de agent het opnieuw proberen of wijs af (Actiecentrum)")
-    return job_id
+                      f"'{title}' (SEO-score {review['score']}) klaar voor review [light-mode]"
+                      + ("" if passed else f" — onder kwaliteitsgrens {CONTENT_MIN_SCORE}, naar needs_work"),
+                      next_step=("Keur goed of wijs af in de Wachtrij"
+                                 if passed else "Laat de agent eerst verbeteren"))
+        # Haal het zojuist aangemaakte job-id op voor batch-tracking
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT id FROM content_jobs WHERE site_id=? AND slug=? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (site["id"], slug),
+            ).fetchone()
+        return row["id"] if row else None
+
 
 
 # ── Listicle-instroom vanuit Mission Radar ──────────────────────────────────
@@ -620,6 +710,96 @@ def _split_listicle_meta(md_text: str) -> tuple:
     if re.fullmatch(r"\([^)]*\)", meta_title):
         meta_title = ""
     return body, meta_title
+
+
+# ── Meta/suggestie-blokken uit de body zuiveren (voor publicatie) ───────────
+# De SEO Copywriter-prompt dwingt de AI om meta-data en interne-link-suggesties
+# onderaan de body te zetten. Die horen NIET in de leesbare body — meta gaat
+# naar de head/DB-velden (meta_title/meta_description), de interne-link-
+# suggesties zijn een schrijfhulp die we weggooien (de échte interne links
+# zitten inline in de tekst). In de praktijk komen vier varianten voor:
+#   1. HTML-commentaar met dubbele punt:  <!-- Meta-titel: tekst -->
+#   2. HTML-commentaar attribuutvorm:     <!--META title="..." description="..."-->
+#   3. Zichtbare paragraaf:  <p><strong>Meta-titel:</strong> tekst</p>
+#   4. Zichtbare kop:        <h2>Meta-titel</h2><p>tekst</p>
+# Deze functie haalt ze allemaal uit de body en geeft de gevonden meta-waarden
+# terug, zodat de publish-route ze naar de juiste velden kan routeren.
+_META_BLOCK_RE = re.compile(
+    r"<h2[^>]*>\s*(?:meta[- ]?titel|meta[- ]?title|meta[- ]?beschrijving|"
+    r"meta[- ]?description|suggesties? (?:voor )?interne links?)\s*</h2>.*?"
+    r"(?=<h2|$)"
+    r"|<h3[^>]*>\s*(?:meta[- ]?titel|meta[- ]?title|meta[- ]?beschrijving|"
+    r"meta[- ]?description|suggesties? (?:voor )?interne links?)\s*</h3>.*?"
+    r"(?=<h2|<h3|$)"
+    r"|<!--[^-]*\bmeta[- ]?(?:titel|title|beschrijving|description)[^-]*-->"
+    r"|<p>\s*<strong>\s*meta[- ]?(?:titel|title|beschrijving|description)\s*:"
+    r".*?</p>",
+    re.IGNORECASE | re.DOTALL,
+)
+# HTML-commentaar attribuutvorm: <!--META title="..." description="..."-->
+_META_COMMENT_ATTR_RE = re.compile(
+    r"<!\\s*--\\s*META\s+title=\"([^\"]*)\"\s+description=\"([^\"]*)\"\\s*--\\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+# HTML-commentaar dubbele-puntvorm: <!-- Meta-titel: tekst --> / <!-- Meta-description: tekst -->
+_META_COMMENT_COLON_RE = re.compile(
+    r"<!\\s*--\\s*meta[- ]?(titel|title|beschrijving|description)\s*:\\s*(.*?)\\s*--\\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+# Zichtbare paragraaf: <p><strong>Meta-titel:</strong> tekst</p>
+_META_P_COLON_RE = re.compile(
+    r"<p>\s*<strong>\s*meta[- ]?(titel|title|beschrijving|description)\s*:\s*</strong>"
+    r"\s*(.*?)</p>",
+    re.IGNORECASE | re.DOTALL,
+)
+# Zichtbare kop: <h2>Meta-titel</h2><p>tekst</p>
+_META_H_COLON_RE = re.compile(
+    r"<h[23][^>]*>\s*meta[- ]?(titel|title|beschrijving|description)\s*</h[23]>\s*<p>(.*?)</p>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _strip_meta_and_suggestions(html_body: str) -> tuple:
+    """Verwijdert alle Meta-/Suggestie-blokken uit de body en geeft
+    (schone_html, meta_title, meta_description) terug. Als er geen blokken
+    staan, blijft de body ongewijzigd."""
+    if not html_body:
+        return html_body, "", ""
+    meta_title = ""
+    meta_desc = ""
+
+    # 1) attribuutvorm commentaar (nieuwe stijl)
+    mc = _META_COMMENT_ATTR_RE.search(html_body)
+    if mc:
+        meta_title = mc.group(1).strip()
+        meta_desc = mc.group(2).strip()
+        html_body = html_body.replace(mc.group(0), "")
+
+    # 2) dubbele-punt commentaar + 3) zichtbare <p> + 4) zichtbare <h2>/<h3>
+    for kind, val in _META_COMMENT_COLON_RE.findall(html_body):
+        if "titel" in kind.lower() or "title" in kind.lower():
+            meta_title = meta_title or val.strip()
+        else:
+            meta_desc = meta_desc or val.strip()
+    html_body = _META_COMMENT_COLON_RE.sub("", html_body)
+
+    for kind, val in _META_P_COLON_RE.findall(html_body):
+        if "titel" in kind.lower() or "title" in kind.lower():
+            meta_title = meta_title or val.strip()
+        else:
+            meta_desc = meta_desc or val.strip()
+    html_body = _META_P_COLON_RE.sub("", html_body)
+
+    for kind, val in _META_H_COLON_RE.findall(html_body):
+        if "titel" in kind.lower() or "title" in kind.lower():
+            meta_title = meta_title or val.strip()
+        else:
+            meta_desc = meta_desc or val.strip()
+    html_body = _META_H_COLON_RE.sub("", html_body)
+
+    # Laatste vangnet: elke resterende zichtbare/suggestie-kop
+    cleaned = _META_BLOCK_RE.sub("", html_body).strip()
+    return cleaned, meta_title, meta_desc
 
 
 async def create_job_from_listicle(site: Dict, keyword: str, rationale: str,
@@ -671,14 +851,17 @@ def _batch_size(site: Dict) -> int:
         return 1
 
 
-async def run_content_batch(site: Dict, count: Optional[int] = None) -> List[str]:
+async def run_content_batch(site: Dict, count: Optional[int] = None,
+                             light_mode: bool = False) -> List[str]:
     """Genereer `count` content-jobs voor één site (default: de site-instelling
     content_batch_size). Sequentieel — kostenbeheersing en rate-limits. Stopt
-    zodra de Demand Engine-kansen op zijn."""
+    zodra de Demand Engine-kansen op zijn.
+
+    light_mode=True: alleen schrijven + review (zie generate_content_job)."""
     count = max(1, min(10, count)) if count else _batch_size(site)
     job_ids: List[str] = []
     for _ in range(count):
-        job_id = await generate_content_job(site)
+        job_id = await generate_content_job(site, light_mode=light_mode)
         if not job_id:
             break  # geen kansen meer — niet blijven proberen
         job_ids.append(job_id)
@@ -702,6 +885,55 @@ async def run_biweekly_content_job() -> Dict:
             results[site["name"]] = f"fout: {e}"
     logger.info("[content-pipeline] Biweekly content-run klaar: %s", results)
     return results
+
+
+async def run_content_improver_job() -> Dict:
+    """Autonome verbeter-ronde: pak alle artikelen die onder de kwaliteitsgrens
+    zitten (status 'needs_work') en scherp ze zélf aan tot ≥ CONTENT_MIN_SCORE
+    via de verbeter-loop (regenerate_job). De mens ziet ze pas terug als ze wél
+    goed genoeg zijn.
+
+    Werkt incrementeel en defensief: per job proberen we één regenerate; als die
+    de score niet verhoogt, laten we de job staan (de agent leert er in de
+    learning-loop van). Nooit meer dan een beperkt aantal jobs per run, zodat een
+    opstopping de event loop niet blokkeert. Retourneert een kort verslag."""
+    from ...shared.config import CONTENT_MIN_SCORE
+    MAX_JOBS_PER_RUN = int(os.getenv("CONTENT_IMPROVER_MAX_PER_RUN", "5"))
+    improved, still_low, failed = [], [], []
+    jobs = [j for j in list_jobs(status="needs_work")
+            if int(j.get("seo_score") or 0) < CONTENT_MIN_SCORE]
+    # Oudste eerst — die wachten het langst op verbetering.
+    jobs.sort(key=lambda j: j.get("created_at") or "")
+    for j in jobs[:MAX_JOBS_PER_RUN]:
+        try:
+            await regenerate_job(j["id"])
+            refreshed = get_job(j["id"])
+            new_score = int(refreshed.get("seo_score") or 0) if refreshed else 0
+            if refreshed and refreshed.get("status") == "pending_review" and new_score >= CONTENT_MIN_SCORE:
+                improved.append(f"{j['title']} ({new_score})")
+                _log_activity(
+                    refreshed.get("site_id") or "?", "content-verbeterd",
+                    f"'{j['title']}' aangescherpt van {int(j.get('seo_score') or 0)} "
+                    f"naar {new_score} — boven grens, klaar voor review.",
+                    next_step="Wacht in de Wachtrij op Vincents publiceer-klik.",
+                )
+            elif new_score < CONTENT_MIN_SCORE:
+                still_low.append(f"{j['title']} ({new_score})")
+            else:
+                still_low.append(f"{j['title']} (status {refreshed.get('status') if refreshed else '?'})")
+        except Exception as e:
+            logger.warning("[content-pipeline] Verbeter-ronde mislukt voor %s: %s",
+                           j["id"], str(e)[:160])
+            failed.append(f"{j['title']}: {str(e)[:80]}")
+    summary = {
+        "improved": improved,
+        "still_under_threshold": still_low,
+        "failed": failed,
+        "queue_remaining": max(0, len(jobs) - MAX_JOBS_PER_RUN),
+    }
+    logger.info("[content-pipeline] Verbeter-ronde klaar: +%d boven grens, %d nog onder, %d fout, %d in wacht.",
+                len(improved), len(still_low), len(failed), summary["queue_remaining"])
+    return summary
 
 
 async def _publish_to_project_site(site: Dict, title: str, html_body: str,
@@ -728,10 +960,15 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
                 "error": f"Geen {env_prefix}_PUBLISH_URL/_PUBLISH_KEY — site-publicatie overgeslagen"}
 
     base_url = (site.get("base_url") or "").rstrip("/")
-    # meta-description + excerpt uit de HTML halen
+    # Haal de zichtbare Meta-/Suggestie-blokken uit de body vóórdat we
+    # publiceren — die horen niet in de leesbare tekst. Als de AI bruikbare
+    # meta-waarden meeleverde, gebruiken we die liever dan ze uit de body te
+    # halen (die bevat de Meta-titel/-description-koppen zelf).
+    html_body, parsed_title, parsed_desc = _strip_meta_and_suggestions(html_body)
+    # meta-description + excerpt uit de (gezuiverde) HTML halen
     text = re.sub(r"<[^>]+>", " ", html_body or "")
     text = re.sub(r"\s+", " ", text).strip()
-    meta_desc = (text[:155].rstrip() + "…") if len(text) > 155 else text
+    meta_desc = parsed_desc or ((text[:155].rstrip() + "…") if len(text) > 155 else text)
     first_p = re.search(r"<p>(.*?)</p>", html_body or "", re.S)
     excerpt = re.sub(r"<[^>]+>", "", first_p.group(1)).strip()[:200] if first_p else ""
 
@@ -740,7 +977,7 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
             "title": title,
             "content": (html_body or "").strip(),
             "excerpt": excerpt,
-            "metaTitle": title[:60],
+            "metaTitle": (parsed_title or title)[:60],
             "metaDescription": meta_desc,
             "tags": [keyword] if keyword else [],
             "status": "published",
@@ -750,6 +987,7 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
             "title": title,
             "content": (html_body or "").strip(),
             "slug": slug,
+            "seoTitle": (parsed_title or title)[:60],
             "seoDescription": meta_desc,
             "tags": [keyword] if keyword else [],
             "source": "agent-os",
@@ -757,9 +995,13 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
 
     try:
         import httpx
+        # follow_redirects=True: Vercel stuurt non-www → www met een 308; zonder
+        # deze vlag faalt de POST ("HTTP 308: Redirecting") en komt het artikel
+        # niet op de site (terwijl AgentOS de job wél op 'published' zet).
         resp = await asyncio.to_thread(
             httpx.post, publish_url, json=payload,
             headers={"Authorization": f"Bearer {publish_key}"}, timeout=90,
+            follow_redirects=True,
         )
         if resp.status_code in (200, 201):
             try:
