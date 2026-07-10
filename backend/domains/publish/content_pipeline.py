@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -802,6 +803,95 @@ def _strip_meta_and_suggestions(html_body: str) -> tuple:
     return cleaned, meta_title, meta_desc
 
 
+# ── Centrale publish-cleaner ──────────────────────────────────────────────
+# Verwijdert zowel Meta-/Suggestie-blokken als eventuele ```html ... ```
+# code-fences uit de body vóórdat die naar de live site gaat. Zonder deze
+# stap belandt een code-fence (die de schrijver soms meelevert) letterlijk
+# zichtbaar op de pagina — bv. een naakte "html" midden in de intro.
+_CODE_FENCE_RE = re.compile(
+    r"```[a-z]*\s*"          # opening fence + optionele taal-tag (html/md/...)
+    r"(.*?)"                  # de echte inhoud (non-greedy)
+    r"```",                   # sluitende fence
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _unwrap_code_fence(html_body: str) -> str:
+    """Haal een eventuele ```html ... ``` (of ``` ... ```) code-fence eraf.
+
+    Robuust tegen varianten die de oude regex miste: de taal-tag kan direct
+    gevolgd worden door een spatie i.p.v. een newline (bv. '```html <h1>').
+    Als er géén fence staat, blijft de input ongewijzigd.
+    """
+    s = (html_body or "").strip()
+    # Opening: '```' + optionele taal-tag + willekeurige witruimte (incl. spatie)
+    m = re.match(r"^```[a-z]*\s*", s, re.IGNORECASE)
+    if m:
+        s = s[m.end():]
+    # Sluiting: laatste '```' (op eigen regel of aan het eind)
+    end = s.rfind("\n```")
+    if end != -1:
+        s = s[:end].rstrip()
+    elif s.endswith("```"):
+        s = s[:-3].rstrip()
+    return s.strip()
+
+
+def _smart_truncate(text: str, max_len: int) -> str:
+    """Kap af op een woordgrens en voeg een ellipsis toe (geen '... woordE')."""
+    t = (text or "").strip()
+    if len(t) <= max_len:
+        return t
+    cut = t[:max_len]
+    last_space = cut.rfind(" ")
+    if last_space > max_len * 0.5:
+        cut = cut[:last_space]
+    return cut.rstrip() + "…"
+
+
+def _strip_duplicate_header(html: str) -> str:
+    """Verwijder het dubbele headerblok dat sommige generators bovenaan de
+    body zetten. De blogpagina rendert titel, datum en samenvatting ZELF uit
+    de DB, dus een eigen <h1>, 'Door ... Gepubliceerd op ...' byline en
+    '<strong>Samenvatting:</strong>'-paragraaf moeten eruit."""
+    if not html:
+        return html
+    out = html.strip()
+    # 1) HTML-comment meta-blok (<!-- Meta-titel: ... -->) bovenaan.
+    out = re.sub(r"^\s*<!--[\s\S]*?-->\s*", "", out, flags=re.I)
+    # 2) Eerste <h1>...</h1> (site toont titel zelf).
+    out = re.sub(r"^\s*<h1\b[^>]*>[\s\S]*?<\/h1>\s*", "", out, flags=re.I)
+    # 3) Byline-paragraaf met "Gepubliceerd op".
+    out = re.sub(
+        r"^\s*<p\b[^>]*>(?:(?!<\/p>)[\s\S])*?gepubliceerd op[\s\S]*?<\/p>\s*",
+        "",
+        out,
+        flags=re.I,
+    )
+    # 4) Samenvatting-paragraaf (tekst wordt elders als excerpt gebruikt).
+    out = re.sub(
+        r"^\s*<p\b[^>]*>\s*(?:<strong>)?\s*samenvatting\s*:?\s*(?:<\/strong>)?\s*[\s\S]*?<\/p>\s*",
+        "",
+        out,
+        flags=re.I,
+    )
+    # 5) Losse <hr> aan het begin.
+    out = re.sub(r"^\s*(?:<hr\s*\/?>\s*)+", "", out, flags=re.I)
+    return out.strip()
+
+
+def clean_for_publish(html_body: str) -> str:
+    """Volledige reiniging vóór publicatie: code-fences én meta/suggestie-blokken."""
+    if not html_body:
+        return html_body
+    # 1) code-fences eraf (kan meerdere keren voorkomen)
+    stripped = _CODE_FENCE_RE.sub(r"\1", html_body.strip())
+    stripped = _unwrap_code_fence(stripped)
+    # 2) meta/suggestie-blokken eraf
+    cleaned, _, _ = _strip_meta_and_suggestions(stripped)
+    return cleaned
+
+
 async def create_job_from_listicle(site: Dict, keyword: str, rationale: str,
                                    listicle_md: str) -> str:
     """Zet een afgeronde AEO-listicle (Mission Radar → conveyor-concept) om in
@@ -897,8 +987,8 @@ async def run_content_improver_job() -> Dict:
     de score niet verhoogt, laten we de job staan (de agent leert er in de
     learning-loop van). Nooit meer dan een beperkt aantal jobs per run, zodat een
     opstopping de event loop niet blokkeert. Retourneert een kort verslag."""
-    from ...shared.config import CONTENT_MIN_SCORE
-    MAX_JOBS_PER_RUN = int(os.getenv("CONTENT_IMPROVER_MAX_PER_RUN", "5"))
+    from ...shared.config import CONTENT_MIN_SCORE, CONTENT_IMPROVER_MAX_PER_RUN
+    MAX_JOBS_PER_RUN = CONTENT_IMPROVER_MAX_PER_RUN
     improved, still_low, failed = [], [], []
     jobs = [j for j in list_jobs(status="needs_work")
             if int(j.get("seo_score") or 0) < CONTENT_MIN_SCORE]
@@ -965,12 +1055,21 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
     # meta-waarden meeleverde, gebruiken we die liever dan ze uit de body te
     # halen (die bevat de Meta-titel/-description-koppen zelf).
     html_body, parsed_title, parsed_desc = _strip_meta_and_suggestions(html_body)
+    # ── Extra header-strip (site-rendert titel/byline/samenvatting ZELF) ──
+    # Sommige generators leveren bovenaan de body een eigen <h1>, een
+    # "Door ... – Gepubliceerd op ..." byline en een "<strong>Samenvatting:</strong>"
+    # paragraaf. De DatingAssistent-blogpagina rendert die velden zelf uit de
+    # DB, dus anders verschijnt alles dubbel. Strip ze hier (deploy-onafhankelijk).
+    html_body = _strip_duplicate_header(html_body)
     # meta-description + excerpt uit de (gezuiverde) HTML halen
     text = re.sub(r"<[^>]+>", " ", html_body or "")
     text = re.sub(r"\s+", " ", text).strip()
     meta_desc = parsed_desc or ((text[:155].rstrip() + "…") if len(text) > 155 else text)
     first_p = re.search(r"<p>(.*?)</p>", html_body or "", re.S)
-    excerpt = re.sub(r"<[^>]+>", "", first_p.group(1)).strip()[:200] if first_p else ""
+    raw_excerpt = re.sub(r"<[^>]+>", "", first_p.group(1)).strip() if first_p else ""
+    # Woordgrens-afkap zodat een excerpt nooit midden in een woord afbreekt
+    # (voorkomt "... toepassen. E").
+    excerpt = _smart_truncate(raw_excerpt, 200)
 
     if env_prefix == "BIJEEN":
         payload = {
