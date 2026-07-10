@@ -157,6 +157,30 @@ class VaultReader:
                 latest = latest[idx + 3:].strip()
         return latest[:2000]
 
+    def get_project_folder_notes(self, project_name: str) -> str:
+        """Lees alle .md-bestanden uit 10_Projects/{project}/ als projectkennis.
+
+        Verschilt van get_project_dashboard (dat één bestand zoekt) — projekten
+        wonen vaak in een submap (bv. 10_Projects/Skillkaart/SKILL.md)."""
+        if not self.is_configured:
+            return ""
+        folder = None
+        for f in self.vault.glob("10_Projects/*"):
+            if f.is_dir() and project_name.lower() in f.name.lower():
+                folder = f
+                break
+        if not folder:
+            return ""
+        parts = []
+        for md in sorted(folder.rglob("*.md")):
+            text = self._read(md)
+            if text.startswith("---"):
+                idx = text.find("---", 3)
+                if idx > 0:
+                    text = text[idx + 3:].strip()
+            parts.append(f"## {md.stem}\n{text}")
+        return "\n\n".join(parts)
+
     def get_project_specific_note(self, project_name: str, note_name: str) -> str:
         """Zoek een specifieke notitie in een project-submap (bv. Pootgelukkig/SEO/)."""
         if not self.is_configured:

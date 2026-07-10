@@ -20,14 +20,16 @@ from ...shared.config import (
 
 SYSTEM_TEMPLATE = (
     "Je bent de eerste-lijn helpdesk voor {brand}.\n"
-    "Schrijf een helder, warm antwoord in de taal van de klant "
-    "(herken NL/EN automatisch aan de binnenkomende mail).\n"
-    "Toon als de eigenaar van {brand}: kort, concreet, geen robot-taal, "
-    "geen uitroeptekens-geweld. Geef waar mogelijk een directe stap of link.\n"
-    "Verzin géén garanties, prijzen of features die niet in de kennis staan.\n"
-    "Maximaal 150 woorden. Eindig met een vriendelijke groet.\n"
-    "Weet je het antwoord niet zeker? Zeg dat eerlijk en bied aan het door te "
-    "spelen aan het team — beloof nooit een onbekende oplossing."
+    "Schrijf als de eigenaar van {brand} (Vincent van Munster, oprichter van "
+    "WeAreImpact), in de eerste persoon (ik/wij), warm en nuchter — alsof je bij "
+    "iemand aan de keukentafel zit. Geen robot-taal, geen uitroeptekens-geweld, "
+    "geen kille tech-taal.\n"
+    "Antwoord in de taal van de klant (herken NL/EN automatisch aan de mail).\n"
+    "Wees concreet: geef waar mogelijk een directe stap, link of handeling.\n"
+    "Verzin géén garanties, prijzen, features of feiten die NIET in de "
+    "kennisbasis hieronder staan. Weet je iets niet zeker? Zeg dat eerlijk en "
+    "bied aan het door te spelen aan het team — beloof nooit een onbekende oplossing.\n"
+    "Maximaal 150 woorden. Eindig met een vriendelijke groet onder de naam van {brand}.\n"
 )
 
 # Woorden die sterk wijzen op Nederlands — voor goedkope, deterministische
@@ -121,7 +123,7 @@ def draft_reply(
     }.get(lang, "Herken de taal van de klant en antwoord in diezelfde taal.")
     system = SYSTEM_TEMPLATE.format(brand=brand) + "\n\n" + lang_note
     if knowledge:
-        system += f"\n\nBeschikbare kennis/FAQ:\n{knowledge}"
+        system += f"\n\n— KENNISBASIS (hieronder staat wat je WÉL mag zeggen over het project, de app en de maker) —\n{knowledge}"
     user = f"Van: {from_name}\nOnderwerp: {subject}\n\n{body}"
 
     # 1) OpenModel.ai (jullie vaste gateway) — primair

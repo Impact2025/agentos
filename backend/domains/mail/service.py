@@ -17,21 +17,29 @@ from . import inbox, classify, drafter
 logger = logging.getLogger(__name__)
 
 
-def _knowledge_for(conn, scope: str) -> str:
-    """Verzamel actieve Iris-kennisbank-principes voor de scope van deze mailbox."""
-    if not scope or scope == "all":
-        rows = conn.execute(
-            "SELECT title, summary FROM iris_knowledge WHERE active=1"
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT title, summary FROM iris_knowledge "
-            "WHERE active=1 AND (scope='all' OR scope=?)",
-            (scope,),
-        ).fetchall()
-    if not rows:
+def _knowledge_for(conn, project: str) -> str:
+    """Echte projectkennis uit de Obsidian-vault (de single source of truth).
+
+    Laadt de projectmap-notes (10_Projects/{project}/) plus — voor niet-WeAreImpact
+    projecten — de WeAreImpact core-context, zodat de schrijver altijd weet wie er
+    achter het project zit (Vincent van Munster / WeAreImpact)."""
+    try:
+        from ...shared.vault_reader import VaultReader
+        vr = VaultReader()
+        if not vr.is_configured:
+            return ""
+        parts = []
+        proj = vr.get_project_folder_notes(project)
+        if proj:
+            parts.append(f"# Over {project}\n{proj}")
+        if project and project.lower() != "weareimpact":
+            core = vr.get_core_context("WeAreImpact")
+            if core:
+                parts.append(f"# Over de maker (WeAreImpact / Vincent van Munster)\n{core}")
+        return "\n\n".join(parts)
+    except Exception as e:
+        logger.warning("Kon helpdesk-kennis niet laden: %s", e)
         return ""
-    return "\n".join(f"- {r['title']}: {r['summary']}" for r in rows)
 
 
 def run_mailbox(mailbox: Dict) -> int:
@@ -49,7 +57,7 @@ def run_mailbox(mailbox: Dict) -> int:
             )
             if not fetched:
                 return 0
-            knowledge = _knowledge_for(conn, mailbox.get("knowledge_scope", "all"))
+            knowledge = _knowledge_for(conn, mailbox.get("project", ""))
             created = 0
             for m in fetched:
                 kind = classify.classify(m["subject"], m["body_text"])
@@ -63,7 +71,7 @@ def run_mailbox(mailbox: Dict) -> int:
                     from_name=m["from_name"] or m["from_addr"],
                     subject=m["subject"],
                     body=m["body_text"],
-                    brand_context=mailbox.get("brand_context", ""),
+                    brand_context=mailbox.get("project", ""),
                     knowledge=knowledge,
                 )
                 # Thread het antwoord op de originele mail
