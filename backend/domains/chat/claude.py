@@ -124,6 +124,15 @@ async def _get_via_openmodel(
             logger.warning("[claude/openmodel] Lege respons (poging %d/%d)",
                            attempt, _OPENMODEL_ATTEMPTS)
         except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.TransportError) as e:
+            if (isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 403
+                    and "quota" in e.response.text.lower()):
+                # Dagquota van de gateway op: retryen is zinloos en de kale 403
+                # is voor niemand leesbaar. De aanroepers escaleren dit al naar
+                # het Actiecentrum.
+                raise RuntimeError(
+                    "OpenModel-dagquota op (403 quota exceeded) — wacht op de reset "
+                    "of verhoog de quota op openmodel.ai"
+                ) from e
             transient = not (isinstance(e, httpx.HTTPStatusError)
                              and e.response.status_code < 500
                              and e.response.status_code != 429)

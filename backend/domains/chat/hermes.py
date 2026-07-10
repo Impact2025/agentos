@@ -199,6 +199,12 @@ async def _stream_openai_compat(
                     raise RuntimeError(
                         f"Model '{model}' niet gevonden (404) op OpenModel."
                     )
+                if (e.response.status_code == 403
+                        and "quota" in e.response.text.lower()):
+                    raise RuntimeError(
+                        "OpenModel-dagquota op (403 quota exceeded) — wacht op de "
+                        "reset of verhoog de quota op openmodel.ai"
+                    ) from e
                 raise
         return
 
