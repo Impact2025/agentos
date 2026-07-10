@@ -69,6 +69,23 @@ def test_pending_review_content_job(conn, clean_tables):
     assert {"content_approve", "content_reject"} <= types
 
 
+def test_pending_review_onder_scoregrens_crasht_niet(conn, clean_tables):
+    """Regressie: een pending_review-job ónder CONTENT_MIN_SCORE hoort stil te
+    worden overgeslagen (agent verbetert), niet het hele Actiecentrum te
+    breken met een NameError op de logger (500 → 'not valid JSON' in de UI)."""
+    from backend.domains.action_center.service import build_inbox
+
+    _seed_site(conn)
+    conn.execute(
+        "INSERT INTO content_jobs (id, site_id, title, keyword, status, seo_score, created_at) "
+        "VALUES ('job-lowscore', 'site-x', 'Zwak artikel', 'kw', 'pending_review', 40, datetime('now'))"
+    )
+    conn.commit()
+
+    inbox = build_inbox()  # mag niet crashen
+    assert all(i["id"] != "job-lowscore" for i in inbox["items"])
+
+
 def test_mislukte_publish_job_heeft_retry(conn, clean_tables):
     from backend.domains.action_center.service import build_inbox
 

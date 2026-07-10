@@ -8,10 +8,13 @@ Antwoordt op de drie vragen die het dashboard eerder niet beantwoordde:
 Elk item heeft `actions`: knoppen die de frontend 1-op-1 vertaalt naar
 bestaande endpoints. Het Actiecentrum voert zelf niets uit — het verzamelt.
 """
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from ...shared.database import get_conn
+
+logger = logging.getLogger(__name__)
 
 # Vacatures met fit_score (0-100) vanaf deze drempel zijn een inbox-item waard.
 VACANCY_FIT_THRESHOLD = 60
