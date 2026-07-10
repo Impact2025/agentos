@@ -81,11 +81,29 @@ def build_inbox() -> Dict[str, Any]:
             })
 
         # ── 2. Wachtrij: content dat op review wacht ────────────────────
+        # Harde regel: een artikel met score < CONTENT_MIN_SCORE mag NOOIT bij de
+        # mens op het dashboard verschijnen — de agent moet het zelf verbeteren.
+        # Jobs die desondanks in 'pending_review' met een te lage score staan
+        # (oude data vóór de gate-fix, of een vastgelopen verbeter-loop) laten we
+        # weg uit de inbox en rapporteren we als inconsistente-staat-logging, zodat
+        # de content-verbeteraar (scheduler) ze oppakt i.p.v. de mens.
+        from ...shared.config import CONTENT_MIN_SCORE
         for j in conn.execute(
             "SELECT j.id, j.title, j.seo_score, j.created_at, s.name AS site "
             "FROM content_jobs j LEFT JOIN sites s ON s.id = j.site_id "
             "WHERE j.status='pending_review' ORDER BY j.created_at DESC"
         ):
+            score = int(j["seo_score"] or 0)
+            if score < CONTENT_MIN_SCORE:
+                # Inconsistent: onder grens maar wél in de goedkeuringsqueue.
+                # Niet aan Vincent tonen — de agent lost het op (zie
+                # content-pipeline improve-loop / scheduler verbeter-taak).
+                logger.warning(
+                    "[actiecentrum] Job %s (%s) staat op pending_review met score %s "
+                    "< grens %s — weggelaten uit inbox, agent moet verbeteren.",
+                    j["id"], j["title"], score, CONTENT_MIN_SCORE,
+                )
+                continue
             items.append({
                 "kind": "content_review",
                 "dismiss_kind": "content",
@@ -268,7 +286,34 @@ def build_inbox() -> Dict[str, Any]:
                 ],
             })
 
-    # Scheduler-fouten (in-memory, niet in DB)
+        # ── 2c. Mail helpdesk: concept-antwoorden wachten op goedkeuring ──
+        for r in conn.execute(
+            "SELECT r.id, r.to_addr, r.subject, r.draft_body, r.created_at, "
+            "m.project, m.address, i.from_name "
+            "FROM mail_reply r "
+            "JOIN mailboxes m ON m.id=r.mailbox_id "
+            "JOIN mail_inbox i ON i.id=r.inbox_id "
+            "WHERE r.status='pending_review' ORDER BY r.created_at DESC"
+        ):
+            if ("mail", r["id"]) in skip:
+                continue
+            items.append({
+                "kind": "mail_reply",
+                "dismiss_kind": "mail",
+                "id": r["id"],
+                "title": f"Mail {r['from_name'] or r['to_addr']}: {r['subject']}",
+                "project": r["project"] or "Helpdesk",
+                "created_at": r["created_at"],
+                "summary": (r["draft_body"][:240] + ("…" if len(r["draft_body"]) > 240 else "")),
+                "actions": [
+                    {"label": "Verstuur", "type": "mail_send", "id": r["id"]},
+                    {"label": "Bewerk", "type": "mail_edit", "id": r["id"]},
+                    {"label": "Afwijzen", "type": "mail_reject", "id": r["id"], "danger": True},
+                ],
+            })
+
+    # Scheduler-fouten. Staan sinds de run-historie in `scheduler_runs` ook een
+    # herstart door: een gefaalde job blijft in het Actiecentrum tot hij slaagt.
     try:
         from ...scheduler import get_scheduler_status
         for job in get_scheduler_status().get("jobs", []):

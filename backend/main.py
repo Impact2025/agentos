@@ -7,12 +7,18 @@ package in backend/domains/ met eigen router + services.
 Gedeelde bibliotheek: backend/shared/ (database, config, models, utils, agent_runner).
 """
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+
+from .shared.logging_config import setup_logging
+
+# Vóór elke andere import die een logger aanmaakt of logt.
+setup_logging()
 
 from .shared.database import init_db
 from .shared.config import OBSIDIAN_VAULT_PATH, hermes_backend
@@ -54,45 +60,44 @@ from .domains.strategist import router as strategist_router
 from .domains.seo import optimizer as seo_optimizer
 from .domains.radar import router as radar_router
 from .domains.action_center import router as action_center_router
+from .domains.iris import router as iris_router
 
 BASE_DIR = Path(__file__).parent.parent
+logger = logging.getLogger("agentos")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    print("[OK] Database geinitialiseerd", flush=True)
+    logger.info("Database geinitialiseerd")
     team = ensure_expert_team()
-    print(f"[OK] Expert-team profielen actief ({len(team)} specialisten)", flush=True)
-    print(
-        f"[OK] Hermes [{hermes_backend()}]: {hermes_service.active_model()} | configured: {hermes_service.is_configured()}",
-        flush=True,
+    logger.info("Expert-team profielen actief (%d specialisten)", len(team))
+    logger.info(
+        "Hermes [%s]: %s | configured: %s",
+        hermes_backend(), hermes_service.active_model(), hermes_service.is_configured(),
     )
     obs = ObsidianService(OBSIDIAN_VAULT_PATH)
     if obs.is_configured:
-        print(
-            f"[OK] Obsidian vault: {OBSIDIAN_VAULT_PATH} ({obs.total_file_count()} bestanden)",
-            flush=True,
-        )
+        logger.info("Obsidian vault: %s (%d bestanden)",
+                    OBSIDIAN_VAULT_PATH, obs.total_file_count())
     else:
-        print(
-            "[WARN] Obsidian vault niet geconfigureerd (stel OBSIDIAN_VAULT_PATH in .env in)",
-            flush=True,
-        )
-    start_scheduler()
+        logger.warning("Obsidian vault niet geconfigureerd (stel OBSIDIAN_VAULT_PATH in .env in)")
 
     # Achtergrondtaken van doelen overleven een herstart niet — hervat bij het
     # opstarten meteen alles wat nog op 'running' staat, zodat je niet
     # handmatig op "Opnieuw uitvoeren" hoeft te klikken na elke restart.
+    # Vóór de scheduler: die start meteen een inhaalslag, en die mag geen doelen
+    # oppakken die nog als verweesd in de database staan.
     try:
         from .domains.strategist.service import autoheal_goals
         boot_heal = autoheal_goals()
         if boot_heal["deleted"] or boot_heal["resumed"]:
-            print(
-                f"[OK] Autoheal bij opstarten: {len(boot_heal['deleted'])} opgeruimd, "
-                f"{len(boot_heal['resumed'])} doelen hervat",
-                flush=True,
-            )
-    except Exception as e:
-        print(f"[WARN] Autoheal bij opstarten mislukt: {e}", flush=True)
+            logger.info("Autoheal bij opstarten: %d opgeruimd, %d doelen hervat",
+                        len(boot_heal["deleted"]), len(boot_heal["resumed"]))
+    except Exception:
+        logger.exception("Autoheal bij opstarten mislukt")
+
+    start_scheduler()
 
     loop_task = asyncio.create_task(conveyor_loop(poll_interval=2.0))
     app.state.conveyor_task = loop_task
@@ -155,6 +160,9 @@ app.include_router(strategist_router.router)
 app.include_router(seo_optimizer.router)
 app.include_router(radar_router.router)
 app.include_router(action_center_router.router)
+app.include_router(iris_router.router)
+from .domains.mail import router as mail_router
+app.include_router(mail_router.router)
 
 
 # ── Status / health endpoints ──────────────────────────────────────────────
