@@ -59,6 +59,113 @@ _SOURCE_WEIGHTS = {
     "overig": 6.0,
 }
 
+# ── Project-specifieke waardeboost ──────────────────────────────────────
+# Bepaalde keywords/domeinen zijn voor een project veel waardevoller dan de
+# generieke heuristiek (versheid+bron) ooit vangt. Een GPS-teamuitje-signaal
+# is voor IctusGo goud, maar scoort op zichzelf laag. Deze boost trekt die
+# signalen over de AEO-drempel zodat de agent ze zelfstandig aanvalt.
+#
+# Structuur: project (lowercase) -> lijst van (token, bonus) paren. Een signaal
+# krijgt de som van bonussen waarvan een token in titel OF keyword voorkomt
+# (geplafonneerd op HIGH_VALUE_CAP per signaal).
+_HIGH_VALUE_TOKENS: Dict[str, List[tuple]] = {
+    "ictusgo": [
+        ("gps", 12.0),
+        ("teambuilding", 10.0),
+        ("teamuitje", 10.0),
+        ("bedrijfsuitje", 10.0),
+        ("hoofddorp", 14.0),
+        ("schiphol", 12.0),
+        ("haarlemmermeer", 12.0),
+        ("wkr", 12.0),
+        ("csrd", 12.0),
+        ("maatschappelijk", 10.0),
+        ("sociale impact", 12.0),
+        ("geluksmoment", 12.0),
+        ("vrijwilliger", 10.0),
+        ("citygame", 8.0),
+        ("scavenger", 8.0),
+        ("flitz", 8.0),
+    ],
+    "bewaardvoorjou": [
+        ("bewaard", 12.0),
+        ("spullen", 10.0),
+        ("kringloop", 10.0),
+        ("secondhand", 10.0),
+        ("circular", 10.0),
+        ("duurzaam", 8.0),
+    ],
+    "bijeen": [
+        ("bijeen", 12.0),
+        ("event", 10.0),
+        ("meeting", 10.0),
+        ("congres", 10.0),
+        ("netwerk", 8.0),
+    ],
+    "teambuildingmetimpact": [
+        ("teambuilding", 12.0),
+        ("impact", 12.0),
+        ("wkr", 14.0),
+        ("csrd", 14.0),
+        ("esg", 12.0),
+        ("sroi", 14.0),
+        ("mvo", 12.0),
+        ("vrijwilliger", 12.0),
+        ("bedrijfsvrijwilligerswerk", 12.0),
+        ("legoseriousplay", 12.0),
+        ("lego serious play", 12.0),
+        ("meetbare", 12.0),
+        ("maatschappelijk", 10.0),
+        ("hoofddorp", 14.0),
+        ("haarlemmermeer", 14.0),
+        ("schiphol", 12.0),
+        ("social return", 12.0),
+        ("plekken met een verhaal", 10.0),
+    ],
+    "weareimpact": [
+        ("ai", 12.0),
+        ("kunstmatige intelligentie", 12.0),
+        ("zorg", 14.0),
+        ("welzijn", 14.0),
+        ("gemeente", 14.0),
+        ("sociaal domein", 16.0),
+        ("wmo", 12.0),
+        ("jeugdzorg", 12.0),
+        ("lego serious play", 14.0),
+        ("legoseriousplay", 14.0),
+        ("change management", 14.0),
+        ("verandermanagement", 14.0),
+        ("interim", 10.0),
+        ("directeur sociaal", 12.0),
+        ("digitale transformatie", 12.0),
+        ("innovatie", 10.0),
+        ("datagedreven", 10.0),
+        ("ggz", 10.0),
+    ],
+    "pootgelukkig": [
+        ("adoptie", 12.0),
+        ("hond adopteren", 14.0),
+        ("kat adopteren", 14.0),
+        ("dier adopteren", 12.0),
+        ("asiel", 12.0),
+        ("dierenasiel", 12.0),
+        ("asieldier", 12.0),
+        ("herplaatsing", 12.0),
+        ("herplaatster", 12.0),
+        ("adoptiehond", 12.0),
+        ("konijn adopteren", 12.0),
+        ("kittens", 10.0),
+        ("vrijwilliger", 10.0),
+        ("puppycursus", 10.0),
+        ("dierenbescherming", 12.0),
+        ("licg", 10.0),
+        ("dierennoodhulp", 10.0),
+        ("uitlaatservice", 10.0),
+        ("dierenopvang", 10.0),
+    ],
+}
+HIGH_VALUE_CAP = 22.0  # maximale bonus per signaal
+
 _NOW = lambda: datetime.now(timezone.utc).isoformat()  # noqa: E731
 
 
@@ -80,6 +187,7 @@ def compute_signal_score(
     published_days_ago: int = -1,
     tavily_score: float = 0.0,
     source: Optional[str] = None,
+    project: Optional[str] = None,
 ) -> float:
     """Heuristische Virality/Signal Score 0-100 (LLM-vrij).
 
@@ -103,6 +211,19 @@ def compute_signal_score(
 
     # Tavily geeft per resultaat een relevantiescore 0-1.
     score += min(max(tavily_score, 0.0), 1.0) * 20.0
+
+    # Project-specifieke waardeboost: signalen die het project raken op zijn
+    # kernwaarde (bijv. GPS/regio/WKR voor IctusGo) worden over de AEO-drempel
+    # getrokken zodat de agent ze zelfstandig aanvalt.
+    project_l = (project or "").lower()
+    tokens = _HIGH_VALUE_TOKENS.get(project_l)
+    if tokens:
+        haystack = f"{title} {keyword}".lower()
+        bonus = 0.0
+        for tok, val in tokens:
+            if tok in haystack:
+                bonus += val
+        score += min(bonus, HIGH_VALUE_CAP)
 
     return round(min(score, 100.0), 1)
 

@@ -114,6 +114,65 @@ _NO_DATA_BANNER = (
 _RESEARCH_SKILLS = {"research"}
 
 
+async def _is_topic_relevant(site: dict, title: str, html_body: str) -> tuple:
+    """Guard: hoort dit artikel inhoudelijk bij deze site? Voorkomt dat een
+    publisher-taak content uit een andere goal/project of een agent-tussenstap
+    (bv. 'Eindredactie', 'Rapport: Status', 'Bestanden opslaan in vault') als
+    echt artikel op de verkeerde site publiceert.
+
+    Twee lagen:
+      1. Snelle heuristiek — blokkeer duidelijke NIET-artikel/tussenstap-titels.
+      2. LLM-oordeel — past het onderwerp bij de site (naam + domein + bestaande
+         artikelen)? Bij twijfel of LLM-fout: TOELATEN (fail-open), zodat we geen
+         legitieme content tegenhouden; de heuristiek vangt de grofste fouten.
+
+    Retourneert (relevant: bool, reden: str).
+    """
+    t = (title or "").strip().lower()
+    # Laag 1: tussenstap-/procestitels die nooit een publiceerbaar artikel zijn.
+    _NON_ARTICLE = (
+        "eindredactie", "consistentiecheck", "rapport:", "status aanpassing",
+        "bestanden opslaan", "publicatieklaar", "opslaan in vault", "archiveren",
+        "content redactie", "review", "quality check", "qc-rapport",
+    )
+    if any(k in t for k in _NON_ARTICLE):
+        return (False, f"titel lijkt een agent-tussenstap, geen artikel: '{title}'")
+
+    # Laag 2: LLM-relevantie tegen de site-context.
+    try:
+        from ..publish import content_pipeline
+        from ..seo import sites as sites_service
+        # Enkele bestaande paginatitels als onderwerp-context.
+        try:
+            cand = content_pipeline.article_writer._link_candidates(site)[:8]
+            voorbeelden = "; ".join(c.get("title", "") for c in cand if c.get("title"))
+        except Exception:
+            voorbeelden = ""
+        naam = site.get("name", "")
+        domein = site.get("base_url", "")
+        plain = re.sub(r"<[^>]+>", " ", html_body or "")
+        plain = re.sub(r"\s+", " ", plain).strip()[:1200]
+        system = (
+            "Je bent een strenge redactie-gatekeeper. Bepaal of een artikel "
+            "inhoudelijk THUISHOORT op een specifieke website. Antwoord met "
+            "alleen JA of NEE, gevolgd door een korte reden."
+        )
+        prompt = (
+            f"Website: {naam} ({domein}).\n"
+            f"Voorbeelden van bestaande artikelen op deze site: {voorbeelden or '(onbekend)'}.\n\n"
+            f"Kandidaat-artikel titel: {title}\n"
+            f"Kandidaat-artikel begin: {plain}\n\n"
+            "Hoort dit artikel qua onderwerp op deze website? Antwoord JA of NEE + reden."
+        )
+        ans = (await content_pipeline._llm(system, prompt, max_tokens=120)).strip()
+        if re.match(r"^\s*nee\b", ans, re.IGNORECASE):
+            return (False, f"LLM: past niet bij {naam} — {ans[:160]}")
+        return (True, "relevant")
+    except Exception as e:
+        logger.warning(f"Relevantie-check faalde voor '{title}' ({e}) — toegelaten (fail-open)")
+        return (True, "relevantie-check overgeslagen (fout)")
+
+
 async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str) -> Optional[Tuple[str, str, int]]:
     """ECHTE actie voor publisher-taken: pak het artikel uit eerdere
     content-taken van deze goal en zet het als review-job in de Wachtrij
@@ -172,6 +231,17 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str) -> Opt
                 goal_id, "wachtrij_geweigerd",
                 f"'{title}' haalde {seo_score}/100 (grens {CONTENT_MIN_SCORE}) — "
                 "niet gestaged; resultaat blijft een concept",
+            )
+            return None
+
+        # Relevantie-gate: hoort dit artikel inhoudelijk bij deze site? Blokkeert
+        # off-topic content (uit een andere goal/project) en agent-tussenstappen
+        # die anders — mits SEO-score hoog genoeg — op de verkeerde site belanden.
+        relevant, reden = await _is_topic_relevant(full_site, title, html_body)
+        if not relevant:
+            _log_activity(
+                goal_id, "wachtrij_geweigerd",
+                f"'{title}' niet gestaged — {reden}",
             )
             return None
 

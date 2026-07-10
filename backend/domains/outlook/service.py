@@ -272,10 +272,17 @@ async def _graph(method: str, path: str, token: str, **kwargs) -> dict:
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.request(method, url, headers=headers, **kwargs)
-        if resp.status_code == 204:
+        if resp.status_code in (204, 202):
             return {}
         resp.raise_for_status()
-        return resp.json()
+        # Graph kan bij succes een lege body teruggeven (bijv. sendMail →
+        # 202 Accepted zonder JSON). Forceer geen json()-parse op lege bodies.
+        if not resp.content or not resp.content.strip():
+            return {}
+        try:
+            return resp.json()
+        except Exception:
+            return {}
 
 
 # ── Mail sync ─────────────────────────────────────────────────────────────────

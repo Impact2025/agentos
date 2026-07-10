@@ -961,6 +961,13 @@ async def run_content_batch(site: Dict, count: Optional[int] = None,
 async def run_biweekly_content_job() -> Dict:
     """Draai voor elke site met auto_content_enabled=1 een content-batch
     (content_batch_size artikelen, default 1)."""
+    # Circuit-breaker: stop de hele batch als de dagbudget op is.
+    from ...shared.outcomes import require_llm_budget
+    try:
+        require_llm_budget("biweekly-content")
+    except Exception as e:
+        logger.warning("[content-pipeline] Biweekly content-run overgeslagen: %s", e)
+        return {"_budget_exceeded": True}
     results: Dict[str, str] = {}
     for site in sites_service.list_sites():
         full_site = sites_service.get_site(site["id"])
@@ -989,9 +996,18 @@ async def run_content_improver_job() -> Dict:
     opstopping de event loop niet blokkeert. Retourneert een kort verslag."""
     from ...shared.config import CONTENT_MIN_SCORE, CONTENT_IMPROVER_MAX_PER_RUN
     MAX_JOBS_PER_RUN = CONTENT_IMPROVER_MAX_PER_RUN
-    improved, still_low, failed = [], [], []
+    improved, still_low, failed, stuck = [], [], [], []
+    # Circuit-breaker: geen LLM-verkeer meer als de dagbudget op is.
+    from ...shared.outcomes import require_llm_budget
+    try:
+        require_llm_budget("content-improver")
+    except Exception as e:  # BudgetExceeded — zachte stop, geen crash
+        logger.warning("[content-pipeline] Verbeter-ronde overgeslagen: %s", e)
+        return {"improved": [], "still_under_threshold": [], "failed": [],
+                "stuck": [], "queue_remaining": 0, "budget_exceeded": True}
     jobs = [j for j in list_jobs(status="needs_work")
             if int(j.get("seo_score") or 0) < CONTENT_MIN_SCORE]
+    stuck_jobs = list_jobs(status="stuck")
     # Oudste eerst — die wachten het langst op verbetering.
     jobs.sort(key=lambda j: j.get("created_at") or "")
     for j in jobs[:MAX_JOBS_PER_RUN]:
@@ -999,6 +1015,10 @@ async def run_content_improver_job() -> Dict:
             await regenerate_job(j["id"])
             refreshed = get_job(j["id"])
             new_score = int(refreshed.get("seo_score") or 0) if refreshed else 0
+            if refreshed and refreshed.get("status") == "stuck":
+                # Cross-run cap geraakt: niet verder proberen, wel melden.
+                stuck.append(f"{j['title']} (na {refreshed.get('improve_attempts')} pogingen)")
+                continue
             if refreshed and refreshed.get("status") == "pending_review" and new_score >= CONTENT_MIN_SCORE:
                 improved.append(f"{j['title']} ({new_score})")
                 _log_activity(
@@ -1019,10 +1039,17 @@ async def run_content_improver_job() -> Dict:
         "improved": improved,
         "still_under_threshold": still_low,
         "failed": failed,
+        "stuck": stuck,
         "queue_remaining": max(0, len(jobs) - MAX_JOBS_PER_RUN),
     }
-    logger.info("[content-pipeline] Verbeter-ronde klaar: +%d boven grens, %d nog onder, %d fout, %d in wacht.",
-                len(improved), len(still_low), len(failed), summary["queue_remaining"])
+    logger.info("[content-pipeline] Verbeter-ronde klaar: +%d boven grens, %d nog onder, %d fout, %d vast, %d in wacht.",
+                len(improved), len(still_low), len(failed), len(stuck), summary["queue_remaining"])
+    # Stuck-jobs uit een eerdere run apart melden (ze horen niet in 'still_low'
+    # en worden niet opnieuw geprobeerd — de cross-run cap blokkeert ze).
+    for j in stuck_jobs:
+        label = f"{j['title']} (bestaand, {j.get('improve_attempts')} pogingen)"
+        if label not in stuck:
+            stuck.append(label)
     return summary
 
 
@@ -1286,6 +1313,35 @@ async def regenerate_job(job_id: str) -> str:
     if not site:
         raise ValueError("Site niet gevonden.")
 
+    # Cross-run cap: als dit artikel al CONTENT_IMPROVER_MAX_ATTEMPTS keer
+    # verbeterd is (over alle 30-min-runs heen) zonder de grens te halen,
+    # zetten we 'm op 'stuck' en laten we de mens beslissen — in plaats van
+    # eindeloos LLM-calls te blijven verbranden (incident 2026-07-10: één
+    # oscillerend artikel liep de hele dag door en leegde de OpenModel-quota).
+    from ...shared.config import (CONTENT_MIN_SCORE, CONTENT_IMPROVER_MAX_ATTEMPTS)
+    attempts = int(job.get("improve_attempts") or 0)
+    if attempts >= CONTENT_IMPROVER_MAX_ATTEMPTS:
+        _update_job(job_id, status="stuck")
+        logger.warning(
+            "[content-pipeline] Job '%s' na %s verbeter-pogingen nog steeds onder grens "
+            "— op 'stuck' gezet, escaleert naar mens (geen verdere LLM-runs).",
+            job["keyword"], attempts,
+        )
+        try:
+            from ...shared.outcomes import log_outcome
+            log_outcome(
+                job.get("site_id") or "?",
+                "content-stuck",
+                f"'{job['title']}' ({job['keyword']}) haalt na {attempts} verbeter-pogingen "
+                f"de kwaliteitsgrens ({CONTENT_MIN_SCORE}) niet — vastgezet voor menselijke review.",
+                artifact=job_id,
+                next_step="Bekijk het artikel en herschrijf/keur handmatig, of verlaag de grens.",
+                status="error",
+            )
+        except Exception as e:
+            logger.debug("[content-pipeline] log_outcome(stuck) overgeslagen: %s", str(e)[:120])
+        return job_id
+
     old_score = float(job.get("seo_score") or 0)
     qc_report, case_study_id = {}, None
     if job["status"] == "needs_work" and (job.get("blog_html") or "").strip() and old_score > 0:
@@ -1299,10 +1355,15 @@ async def regenerate_job(job_id: str) -> str:
     html_body, review = await review_and_improve(site, job["keyword"], html_body)
 
     from ...shared.config import CONTENT_MIN_SCORE
+    passed = review["score"] >= CONTENT_MIN_SCORE
+    # Teller pas optellen als we écht een verbeter-cyclus hebben gedraaid; een
+    # no-op (bestaande versie behouden) telt niet als nieuwe poging.
+    new_attempts = attempts + (1 if review["score"] != old_score or review["score"] < CONTENT_MIN_SCORE else 0)
     if review["score"] < old_score:
         # Nooit een slechtere versie terugschrijven dan er al stond.
         logger.info("[content-pipeline] Regenerate leverde %s (< bestaande %s) — bestaande versie behouden",
                     review["score"], old_score)
+        _update_job(job_id, improve_attempts=new_attempts)
         return job_id
 
     title = _extract_title(html_body, fallback=job["title"])
@@ -1311,7 +1372,6 @@ async def regenerate_job(job_id: str) -> str:
     image_bytes = generate_quote_card(title, site["name"])
     import base64
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
-    passed = review["score"] >= CONTENT_MIN_SCORE
     infographic_bytes = (await _generate_article_infographic(site, title, job["keyword"], html_body)
                          if passed else None)
 
@@ -1319,6 +1379,7 @@ async def regenerate_job(job_id: str) -> str:
         title=title, blog_html=html_body, seo_score=review["score"],
         social_copy=json.dumps(social_copy), image_path=image_b64, slug=slug,
         status="pending_review" if passed else "needs_work",
+        improve_attempts=new_attempts,
         infographic_path=(base64.b64encode(infographic_bytes).decode("ascii")
                           if infographic_bytes else ""),
     )

@@ -135,7 +135,11 @@ async def _make_outline(site: Dict, keyword: str, angle: str, rationale: str,
         "3-5 vragen die de zoeker écht stelt — deze wordt gebruikt voor de FAQ-rich-result en "
         "AI Overviews. En plan een direct antwoord in de intro: de eerste alinea beantwoordt de "
         "zoekintentie meteen, zonder opwarming. Gebruik bij harde claims (cijfers, 'onderzoek "
-        "toont') altijd een bronvermelding (externe link of cijfer uit de casestudy)."
+        "toont') altijd een bronvermelding (externe link of cijfer uit de casestudy).\n"
+        "HARDE INTRO-REGEL: de eerste alinea (intro) is een GEWONE, ongelabelde <p> met echte "
+        "lezerswaarde — schrijf er NOOIT een label vóór zoals 'Samenvatting:', 'Intro:', "
+        "'Inleiding:' of 'Meta:'. Zo'n label verdwijnt bij publicatie en dan lijkt de intro weg. "
+        "De intro is verplicht aanwezig en mag nooit leeg zijn."
     )
     prompt_parts = [
         f"Site: {site['name']} ({site.get('base_url', '')})",

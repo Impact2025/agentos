@@ -133,6 +133,20 @@ def build_digest() -> Dict[str, Any]:
     except Exception:
         logger.exception("Formule-sectie in ochtendrapport mislukt")
 
+    # ── 3c. Iris' advies van vandaag (de 06:45-manageranalyse) ──
+    try:
+        from ..iris import service as iris_service
+        iris_report = iris_service.latest_report()
+        if iris_report and iris_report["report_date"] == today.strftime("%Y-%m-%d"):
+            advice = iris_report.get("advice") or []
+            if advice:
+                lines.append("## 🧭 Iris' advies voor vandaag")
+                for a in sorted(advice, key=lambda x: x.get("prio", 9))[:3]:
+                    lines.append(f"- **{a.get('actie', '')}** — {a.get('waarom', '')}")
+                lines.append("")
+    except Exception:
+        logger.exception("Iris-sectie in ochtendrapport mislukt")
+
     # ── 4. Vandaag gepland ──
     try:
         from ...scheduler import get_scheduler_status

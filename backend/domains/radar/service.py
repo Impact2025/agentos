@@ -926,6 +926,13 @@ def get_service() -> RadarService:
 
 async def scan_the_skies() -> None:
     """Entry point voor de scheduler — consumeert run_scan() over ALLE projecten."""
+    # Circuit-breaker: geen dure LLM-scans als de dagbudget op is.
+    from ...shared.outcomes import require_llm_budget
+    try:
+        require_llm_budget("radar-sky")
+    except Exception as e:
+        log.warning("[radar] Sky-scan overgeslagen: %s", e)
+        return
     svc = get_service()
     saved = 0
     async for ev in svc.run_scan():
