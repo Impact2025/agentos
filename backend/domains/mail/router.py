@@ -62,6 +62,7 @@ def run_now():
 
 
 @router.post("/reply/{reply_id}/send")
+@router.post("/replies/{reply_id}/send")  # alias — frontend stuurt soms meervoud
 def send_reply(reply_id: int):
     if not service.send_reply(reply_id):
         raise HTTPException(502, "Versturen mislukt (SMTP of reeds verzonden)")
@@ -69,12 +70,14 @@ def send_reply(reply_id: int):
 
 
 @router.post("/reply/{reply_id}/reject")
+@router.post("/replies/{reply_id}/reject")  # alias
 def reject_reply(reply_id: int):
     service.reject_reply(reply_id)
     return {"ok": True}
 
 
 @router.post("/reply/{reply_id}/edit")
+@router.post("/replies/{reply_id}/edit")  # alias
 def edit_reply(reply_id: int, body: EditBody):
     service.edit_reply(reply_id, body.text)
     return {"ok": True}

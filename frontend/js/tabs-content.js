@@ -90,7 +90,7 @@ async function helpdeskSend(id, btn) {
   if (!confirm('Concept versturen naar de klant?')) return;
   btn.disabled = true; btn.textContent = 'Versturen...';
   try {
-    var resp = await fetch('/api/mail/replies/' + id + '/send', { method:'POST' });
+    var resp = await fetch('/api/mail/reply/' + id + '/send', { method:'POST' });
     var d = await resp.json();
     if (d.ok) {
       var item = document.getElementById('hd-item-' + id);
@@ -113,7 +113,7 @@ async function helpdeskSave(id, btn) {
   var body = ta.value;
   btn.disabled = true; btn.textContent = 'Opslaan...';
   try {
-    var resp = await fetch('/api/mail/replies/' + id + '/edit', {
+    var resp = await fetch('/api/mail/reply/' + id + '/edit', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ draft_body: body }),
     });
@@ -128,7 +128,7 @@ async function helpdeskReject(id, btn) {
   if (!confirm('Concept afwijzen? Het wordt gemarkeerd als afgewezen en niet verstuurd.')) return;
   btn.disabled = true;
   try {
-    var resp = await fetch('/api/mail/replies/' + id + '/reject', { method:'POST' });
+    var resp = await fetch('/api/mail/reply/' + id + '/reject', { method:'POST' });
     var d = await resp.json();
     if (d.ok) { var item = document.getElementById('hd-item-' + id); if (item) item.remove(); pollHelpdeskBadge(); }
     else { alert('❌ ' + (d.error || 'onbekend')); btn.disabled = false; }
