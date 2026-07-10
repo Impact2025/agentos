@@ -832,6 +832,38 @@ def _migrate(conn) -> None:
         "ON mail_reply(mailbox_id, status)"
     )
 
+    # ── LLM-kosten-telemetrie ──────────────────────────────────────────────
+    # Elke OpenModel/Claude/Hermes-aanroep (ook de autonome achtergrond-jobs)
+    # wordt hier gelogd zodat token-verbruik zichtbaar is vóórdat de echte
+    # externe quota leegloopt. Geïntroduceerd na de "quota in één dag leeg"
+    # incident (2026-07-10): background-jobs schreven hun verbruik nergens heen.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS llm_usage (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            backend      TEXT NOT NULL,   -- openmodel | anthropic | openrouter | hermes-local | ollama
+            model        TEXT NOT NULL,
+            route        TEXT DEFAULT '',  -- bv. content-improver | radar-sky | chat | seo-demand
+            prompt_tokens   INTEGER DEFAULT 0,
+            completion_tokens INTEGER DEFAULT 0,
+            total_tokens INTEGER DEFAULT 0,
+            status       TEXT DEFAULT 'ok',  -- ok | error | empty
+            error        TEXT DEFAULT '',
+            created_at   TEXT DEFAULT (datetime('now'))
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_llm_usage_created "
+        "ON llm_usage(created_at)"
+    )
+
+    # Cross-run verbeter-teller: voorkomt dat de content-verbeteraar elke 30 min
+    # hetzelfde vastgelopen artikel blijft oppakken (incident 2026-07-10).
+    cj_cols = {r["name"] for r in conn.execute("PRAGMA table_info(content_jobs)").fetchall()}
+    if "improve_attempts" not in cj_cols:
+        conn.execute(
+            "ALTER TABLE content_jobs ADD COLUMN improve_attempts INTEGER DEFAULT 0"
+        )
+
     # Wereldklasse-uitbreidingen: threading + per-mailbox From-naam + auto-reply-bescherming
     mb_cols = {r["name"] for r in conn.execute("PRAGMA table_info(mailboxes)").fetchall()}
     if "from_display" not in mb_cols:

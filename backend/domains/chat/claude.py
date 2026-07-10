@@ -1,9 +1,20 @@
 """
-Anthropic Claude integratie met async streaming via SSE.
+Claude-integratie met drie routes, in volgorde van voorkeur:
 
-Terugvalpad: als de directe Anthropic-key ontbreekt of ongeldig is (401),
-loopt hetzelfde Claude-model via OpenRouter (CLAUDE_VIA_OPENROUTER) — zodat
-de Claude-agent blijft werken zolang één van beide keys geldig is.
+  1. Anthropic direct        — echte ANTHROPIC_API_KEY (sk-ant-…)
+  2. OpenModel.ai-gateway    — jullie vaste gateway spreekt het Anthropic
+                               Messages-formaat en biedt de Claude-modellen aan
+                               (OPENMODEL_SMART_MODEL, default claude-sonnet-4-6).
+                               Dit is op deze machine de primaire route: zo
+                               draait al het denk-werk (Iris, kwaliteitsgate,
+                               goal-synthese, drafts) op een topmodel zonder
+                               directe Anthropic-key.
+  3. OpenRouter              — laatste terugval (CLAUDE_VIA_OPENROUTER).
+
+De OpenModel-route is bewust non-streaming: de gateway retourneert op
+/v1/messages een volledig message-object (geen betrouwbare SSE), dus we
+parsen zelf en bewaken stop_reason — een op max_tokens afgekapt antwoord is
+de klassieke oorzaak van 'halve JSON' en wordt hier expliciet gelogd.
 """
 import json
 import logging
@@ -15,11 +26,18 @@ import httpx
 from ...shared.config import (
     ANTHROPIC_API_KEY, CLAUDE_MODEL, OPENROUTER_API_KEY,
     CLAUDE_VIA_OPENROUTER, anthropic_configured,
+    OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_SMART_MODEL,
 )
 
 logger = logging.getLogger(__name__)
 
 _client: anthropic.AsyncAnthropic | None = None
+
+# Denk-werk-prompts zijn fors (Iris-briefing, artikel-review); de gateway mag
+# daar rustig een paar minuten over doen — een timeout die te krap staat uit
+# zich als 'lege respons' en kost een hele analyse.
+_OPENMODEL_TIMEOUT = 300.0
+_OPENMODEL_ATTEMPTS = 2
 
 
 def get_client() -> anthropic.AsyncAnthropic:
@@ -29,8 +47,92 @@ def get_client() -> anthropic.AsyncAnthropic:
     return _client
 
 
+def openmodel_claude_configured() -> bool:
+    return bool(OPENMODEL_API_KEY)
+
+
 def is_configured() -> bool:
-    return anthropic_configured() or bool(OPENROUTER_API_KEY)
+    return anthropic_configured() or openmodel_claude_configured() or bool(OPENROUTER_API_KEY)
+
+
+def active_route() -> str:
+    if anthropic_configured():
+        return f"anthropic/{CLAUDE_MODEL}"
+    if openmodel_claude_configured():
+        return f"openmodel/{OPENMODEL_SMART_MODEL}"
+    if OPENROUTER_API_KEY:
+        return f"openrouter/{CLAUDE_VIA_OPENROUTER}"
+    return "geen"
+
+
+async def _get_via_openmodel(
+    messages: List[Dict], system_prompt: str, max_tokens: int,
+) -> str:
+    """Claude-model via de OpenModel-gateway (Anthropic Messages-formaat).
+
+    Retourneert de volledige tekst. Eén interne retry: de gateway geeft
+    sporadisch een lege respons of een transient 5xx — één verse poging is
+    goedkoper dan de terugval naar een zwakker model."""
+    payload = {
+        "model": OPENMODEL_SMART_MODEL,
+        "system": system_prompt,
+        "messages": messages,
+        "max_tokens": max_tokens,
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OPENMODEL_API_KEY}",
+        "anthropic-version": "2023-06-01",
+    }
+    last_error: Exception | None = None
+    for attempt in range(1, _OPENMODEL_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient(timeout=_OPENMODEL_TIMEOUT) as client:
+                resp = await client.post(
+                    OPENMODEL_BASE_URL.rstrip("/") + "/v1/messages",
+                    json=payload, headers=headers,
+                )
+                if resp.status_code == 404:
+                    raise RuntimeError(
+                        f"Model '{OPENMODEL_SMART_MODEL}' niet gevonden op OpenModel — "
+                        "controleer OPENMODEL_SMART_MODEL in .env."
+                    )
+                resp.raise_for_status()
+                data = resp.json()
+                usage = data.get("usage") or {}
+                if usage:
+                    from ...shared.outcomes import log_llm_usage
+                    log_llm_usage(
+                        backend="openmodel", model=OPENMODEL_SMART_MODEL,
+                        route="claude-openmodel",
+                        prompt_tokens=usage.get("input_tokens", 0),
+                        completion_tokens=usage.get("output_tokens", 0),
+                        total_tokens=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+                    )
+                text = "".join(
+                b.get("text", "") for b in data.get("content", []) if isinstance(b, dict)
+            )
+            if data.get("stop_reason") == "max_tokens":
+                logger.warning(
+                    "[claude/openmodel] Antwoord afgekapt op max_tokens (%d) — "
+                    "de aanroeper krijgt mogelijk halve JSON; overweeg een ruimer budget.",
+                    max_tokens,
+                )
+            if text.strip():
+                return text
+            logger.warning("[claude/openmodel] Lege respons (poging %d/%d)",
+                           attempt, _OPENMODEL_ATTEMPTS)
+        except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.TransportError) as e:
+            transient = not (isinstance(e, httpx.HTTPStatusError)
+                             and e.response.status_code < 500)
+            if not transient:
+                raise
+            last_error = e
+            logger.warning("[claude/openmodel] Transiente fout (poging %d/%d): %s",
+                           attempt, _OPENMODEL_ATTEMPTS, e)
+    if last_error:
+        raise last_error
+    raise RuntimeError("OpenModel gaf herhaaldelijk een lege respons")
 
 
 async def _stream_via_openrouter(
@@ -86,7 +188,15 @@ async def stream_response(
         except anthropic.APIError as e:
             if yielded:
                 raise  # midden in een stream niet meer stilletjes wisselen
-            logger.warning(f"Anthropic direct faalde ({e.__class__.__name__}) — terugval op Claude via OpenRouter")
+            logger.warning(f"Anthropic direct faalde ({e.__class__.__name__}) — terugval op OpenModel/OpenRouter")
+
+    if openmodel_claude_configured():
+        try:
+            # Gateway streamt niet betrouwbaar — volledige tekst als één chunk.
+            yield await _get_via_openmodel(messages, system_prompt, max_tokens)
+            return
+        except Exception as e:
+            logger.warning(f"Claude via OpenModel faalde ({e}) — terugval op OpenRouter")
 
     if OPENROUTER_API_KEY:
         async for text in _stream_via_openrouter(messages, system_prompt, max_tokens):
@@ -94,7 +204,7 @@ async def stream_response(
         return
 
     raise RuntimeError(
-        "Geen werkende Claude-backend: ANTHROPIC_API_KEY ontbreekt/ongeldig en geen OPENROUTER_API_KEY."
+        "Geen werkende Claude-backend: geen ANTHROPIC_API_KEY, OPENMODEL_API_KEY of OPENROUTER_API_KEY."
     )
 
 
@@ -114,7 +224,13 @@ async def get_response(
             )
             return response.content[0].text
         except anthropic.APIError as e:
-            logger.warning(f"Anthropic direct faalde ({e.__class__.__name__}) — terugval op Claude via OpenRouter")
+            logger.warning(f"Anthropic direct faalde ({e.__class__.__name__}) — terugval op OpenModel/OpenRouter")
+
+    if openmodel_claude_configured():
+        try:
+            return await _get_via_openmodel(messages, system_prompt, max_tokens)
+        except Exception as e:
+            logger.warning(f"Claude via OpenModel faalde ({e}) — terugval op OpenRouter")
 
     if OPENROUTER_API_KEY:
         parts: List[str] = []
@@ -123,5 +239,5 @@ async def get_response(
         return "".join(parts)
 
     raise RuntimeError(
-        "Geen werkende Claude-backend: ANTHROPIC_API_KEY ontbreekt/ongeldig en geen OPENROUTER_API_KEY."
+        "Geen werkende Claude-backend: geen ANTHROPIC_API_KEY, OPENMODEL_API_KEY of OPENROUTER_API_KEY."
     )

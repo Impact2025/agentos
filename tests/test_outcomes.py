@@ -12,7 +12,7 @@ def test_log_outcome_schrijft_alle_velden(clean_tables):
     )
     assert oid
 
-    feed = outcome_feed(limit=5)
+    feed = outcome_feed(limit=100)
     row = next(r for r in feed if r["id"] == oid)
     assert row["project"] == "TestProject"
     assert row["artifact"] == "D:/vault/task-x.md"

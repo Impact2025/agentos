@@ -34,6 +34,14 @@ def conn():
         yield c
 
 
+# Alias zodat nieuwe tests ook `db_conn` kunnen gebruiken (gelijk aan `conn`).
+@pytest.fixture()
+def db_conn():
+    from backend.shared.database import get_conn
+    with get_conn() as c:
+        yield c
+
+
 @pytest.fixture()
 def clean_tables():
     """Leeg de tabellen die tests vullen, zodat tests elkaar niet besmetten."""

@@ -17,6 +17,10 @@ OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
 OPENMODEL_API_KEY: str = os.getenv("OPENMODEL_API_KEY", "")
 OPENMODEL_BASE_URL: str = os.getenv("OPENMODEL_BASE_URL", "https://api.openmodel.ai")
 OPENMODEL_MODEL: str = os.getenv("OPENMODEL_MODEL", "deepseek-v4-flash")
+# Sterk model op dezelfde gateway voor denk-werk (Iris-analyse, kwaliteitsgate,
+# goal-synthese, drafts): het Claude-pad in de app loopt hierover zodra er geen
+# directe Anthropic-key is. Bulk-/toolwerk blijft op OPENMODEL_MODEL (flash).
+OPENMODEL_SMART_MODEL: str = os.getenv("OPENMODEL_SMART_MODEL", "claude-sonnet-4-6")
 HERMES_MODEL: str = os.getenv("HERMES_MODEL", "meta-llama/llama-3.1-8b-instruct")
 # Fallback-modellen (OpenRouter) waar de agent naartoe schakelt bij een 429
 # (rate-limit) op het primaire HERMES_MODEL. Komma-gescheiden, in volgorde van
@@ -80,6 +84,45 @@ GOOGLE_INDEXING_ENABLED: bool = os.getenv("GOOGLE_INDEXING_ENABLED", "0") == "1"
 # Wereldklasse-standaard: 85. Een artikel moet écht AEO-/rich-result-klaar zijn
 # (direct-answer + FAQ + E-E-A-T + schone links) om gepubliceerd te worden.
 CONTENT_MIN_SCORE: int = int(os.getenv("CONTENT_MIN_SCORE", "85"))
+
+# Hoeveel verbeterrondes de agent mág doen voordat hij opgeeft. Dit is een
+# HARDE veiligheidslimiet (tegen eindeloze LLM-loops), geen streefwaarde: de
+# review-loop stopt pas als de score ≥ CONTENT_MIN_SCORE OF dit aantal rondes
+# op is. Ruim gezet (standaard 12) zodat een artikel in de praktijk bijna altijd
+# boven de 85-grens uitkomt — en dus nooit als "onder de grens" op het dashboard
+# (en bij Vincent) belandt. Lokale/fallback-concepten (HERMES_LOCAL_FALLBACK)
+# scoren altijd < grens en worden hierdoor bewust niet oneindig geprobeerd.
+CONTENT_MAX_ROUNDS: int = int(os.getenv("CONTENT_MAX_ROUNDS", "12"))
+
+# Hoeveel onder-de-grens artikelen de autonome content-verbeteraar per run (elke
+# 30 min) oppakt. Kostenbeheersing: elke job doet meerdere LLM-rondes. Oudste
+# needs_work-jobs eerst; de rest volgt in latere runs.
+CONTENT_IMPROVER_MAX_PER_RUN: int = int(os.getenv("CONTENT_IMPROVER_MAX_PER_RUN", "5"))
+
+# TOTALE verbeter-pogingen per artikel, over álle runs heen (cross-run cap).
+# Zonder deze grens blijft de content-verbeteraar elke 30 min hetzelfde
+# vastgelopen artikel oppakken (score oscilleert 45–82, raakt de grens van 85
+# nooit) en verbrandt hij de hele dag LLM-calls. Na CONTENT_IMPROVER_MAX_ATTEMPTS
+# regenerate-pogingen wordt het artikel op status 'stuck' gezet en escaleert de
+# agent naar de mens in plaats van eindeloos door te draaien. Dé rem tegen de
+# "quota in één dag leeg"-incident van 2026-07-10.
+CONTENT_IMPROVER_MAX_ATTEMPTS: int = int(os.getenv("CONTENT_IMPROVER_MAX_ATTEMPTS", "3"))
+
+# ── LLM-kosten-zicht ───────────────────────────────────────────────────────
+# Background-jobs (content-pipeline, improver, radar, SEO-engine) schreven hun
+# token-verbruik nergens heen — je zag pas "quota op" toen het te laat was.
+# Elke OpenModel/Claude/Hermes-aanroep wordt nu gelogd in de `llm_usage`-tabel.
+# Vul de prijzen in (USD per 1M tokens) zodat de dagelijkse kostenschatting klopt;
+# default 0 = tokens worden wél geteld, kostenraming blijft 0 totdat je prijzen
+# invult. OpenModel-rekening komt op de OpenModel-factuur, niet op Anthropic.
+OPENMODEL_INPUT_COST_PER_MTOK: float = float(os.getenv("OPENMODEL_INPUT_COST_PER_MTOK", "0"))
+OPENMODEL_OUTPUT_COST_PER_MTOK: float = float(os.getenv("OPENMODEL_OUTPUT_COST_PER_MTOK", "0"))
+ANTHROPIC_INPUT_COST_PER_MTOK: float = float(os.getenv("ANTHROPIC_INPUT_COST_PER_MTOK", "0"))
+ANTHROPIC_OUTPUT_COST_PER_MTOK: float = float(os.getenv("ANTHROPIC_OUTPUT_COST_PER_MTOK", "0"))
+
+# Waarschuw (log-WARN + activiteit) zodra het geschatte dagverbruik deze grens
+# overschrijdt — vóórdat de echte quota hard tegen de limiet aanloopt.
+DAILY_TOKEN_BUDGET: int = int(os.getenv("DAILY_TOKEN_BUDGET", "2000000"))
 
 # ── Mission Radar autonomie ──────────────────────────────────────────────
 # Auto-AEO: na elke sky-scan start de agent zelfstandig een AEO-aanval op de

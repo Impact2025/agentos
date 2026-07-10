@@ -106,12 +106,10 @@ async def run_agent(
     # Primaire backend — stream direct door (geen buffer)
     primary_error: Optional[str] = None
     if backend == "openmodel":
-        events, had_error, err = await _run_cloud_backend("openmodel", messages, system_prompt, max_tokens, model_override)
-        if not had_error:
-            for event in events:
-                yield event
-            return
-        primary_error = err
+        async for event in _openmodel_loop(messages, system_prompt, max_tokens,
+                                           model_override, use_tools=use_tools):
+            yield event
+        return
     else:
         try:
             async for event in _openai_loop(messages, system_prompt, max_tokens, backend,
@@ -205,41 +203,80 @@ async def _openmodel_loop(
     system_prompt: str,
     max_tokens: int,
     model_override: str = None,
+    use_tools: bool = True,
 ) -> AsyncGenerator[Dict, None]:
-    """Streaming loop voor OpenModel.ai (Anthropic-compatible API).
+    """Agent-loop voor OpenModel.ai (Anthropic-compatible /v1/messages).
 
-    Gebruikt de Anthropic SDK met een aangepaste base_url zodat het dezelfde
-    wire-protocol spreekt als claude_service.py, maar via OpenModel's gratis tier.
-    Tool use wordt niet ondersteund via deze backend — gebruik use_tools=False.
+    Ondersteunt dezelfde tool-use-cyclus als _openai_loop: de agent mag
+    tool_use-blocks teruggeven, wij voeren ze uit en voeren de resultaten terug
+    tot MAX_ITERATIONS. Streaming laten we hier achterwege (tool_use vereist de
+    volledige message); de tekst wordt in één keer doorgegeven als 'text'-events
+    zodat de frontend er niets van merkt. Token-verbruik wordt gelogd in llm_usage.
     """
     import anthropic as _sdk
+    from ..tools import TOOLS, TOOL_MAP
     model = model_override or OPENMODEL_MODEL
     client = _sdk.AsyncAnthropic(
         api_key=OPENMODEL_API_KEY,
         base_url=OPENMODEL_BASE_URL,
     )
+    openai_tools = [t.to_anthropic() for t in TOOLS] if use_tools else []
+    full_messages = list(messages)
+
     try:
-        async with client.messages.stream(
-            model=model,
-            max_tokens=max_tokens,
-            system=system_prompt,
-            messages=messages,
-        ) as stream:
-            async for text in stream.text_stream:
-                yield {"type": "text", "text": text}
-            msg = await stream.get_final_message()
-            u = msg.usage
-            yield {
-                "type": "usage", "model": model,
-                "prompt_tokens": u.input_tokens,
-                "completion_tokens": u.output_tokens,
-                "total_tokens": u.input_tokens + u.output_tokens,
-            }
+        for _ in range(MAX_ITERATIONS):
+            kwargs = dict(model=model, max_tokens=max_tokens, system=system_prompt,
+                          messages=full_messages)
+            if openai_tools:
+                kwargs["tools"] = openai_tools
+            try:
+                msg = await client.messages.create(**kwargs)
+            except Exception as exc:
+                yield {"type": "error", "message": f"OpenModel fout: {exc}"}
+                return
+
+            # usage logging
+            u = getattr(msg, "usage", None)
+            if u:
+                pt, ct = getattr(u, "input_tokens", 0), getattr(u, "output_tokens", 0)
+                yield {"type": "usage", "model": model,
+                       "prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}
+                from .outcomes import log_llm_usage
+                log_llm_usage(backend="openmodel", model=model, route="agent-openmodel",
+                              prompt_tokens=pt, completion_tokens=ct, total_tokens=pt + ct)
+
+            # Tekst-blokken streamen als text-events
+            text_parts = [b.text for b in msg.content if b.type == "text"]
+            if text_parts:
+                yield {"type": "text", "text": "".join(text_parts)}
+
+            tool_uses = [b for b in msg.content if b.type == "tool_use"]
+            if not tool_uses:
+                break  # klaar, geen verdere tool-aanroep
+
+            # Tool-aanroepen uitvoeren en resultaten teruggeven
+            full_messages.append({"role": "assistant", "content": msg.content})
+            for tu in tool_uses:
+                yield {"type": "tool_start", "name": tu.name, "input": tu.input}
+                tool = TOOL_MAP.get(tu.name)
+                if tool:
+                    try:
+                        result = await tool.run(**(tu.input or {}))
+                        output, is_error = result.output, result.error
+                    except Exception as exc:  # noqa: BLE001
+                        output, is_error = f"Tool '{tu.name}' faalde: {exc}", True
+                else:
+                    output, is_error = f"Tool '{tu.name}' niet gevonden", True
+                yield {"type": "tool_result", "name": tu.name, "output": output, "error": is_error}
+                full_messages.append({
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": tu.id, "content": output}],
+                })
     except Exception as exc:
         yield {"type": "error", "message": f"OpenModel fout: {exc}"}
 
 
-# ── OpenAI-compatible agent loop (Hermes lokaal / OpenRouter / Ollama) ──────
+
 
 def _openai_headers_and_url(backend: str):
     if backend == "local":

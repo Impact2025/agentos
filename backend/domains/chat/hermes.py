@@ -174,6 +174,15 @@ async def _stream_openai_compat(
                     )
                 resp.raise_for_status()
                 data = resp.json()
+                usage = data.get("usage") or {}
+                if usage:
+                    from ..shared.outcomes import log_llm_usage
+                    log_llm_usage(
+                        backend="openmodel", model=model, route="hermes-openmodel",
+                        prompt_tokens=usage.get("input_tokens", 0),
+                        completion_tokens=usage.get("output_tokens", 0),
+                        total_tokens=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+                    )
                 # Anthropic-message: content is een lijst van blokken met .text
                 blocks = data.get("content", [])
                 text = "".join(
