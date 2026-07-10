@@ -97,6 +97,21 @@ body {
   font-weight: 600;
 }
 
+/* Helpdesk-badge: open concept-antwoorden teller in de sidebar */
+.nav-badge {
+  margin-left: auto;
+  background: #ef4444;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  padding: 0 4px;
+  border-radius: 8px;
+}
+
 .main-content {
   margin-left: var(--sidebar-w);
   flex: 1;

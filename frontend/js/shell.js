@@ -4,7 +4,11 @@
 
 function renderSidebar() {
   return '<div class="sidebar"><div class="sidebar-logo"><img src="logo.png" alt="AO" onerror="this.style.display=\'none\'"><span>Agent OS</span></div><nav class="sidebar-nav">' +
-    (currentProject ? TABS.map(function(t) { return '<button class="' + (t===currentTab?' active':'') + '" onclick="switchView(\''+t+'\')"><span class="icon">' + (TAB_ICONS[t]||'') + '</span>' + t + '</button>'; }).join('') : '') +
+    (currentProject ? TABS.map(function(t) {
+      var badge = '';
+      if (t === 'Helpdesk') badge = ' <span id="helpdesk-badge" class="nav-badge" style="display:none"></span>';
+      return '<button class="' + (t===currentTab?' active':'') + '" onclick="switchView(\''+t+'\')"><span class="icon">' + (TAB_ICONS[t]||'') + '</span>' + t + badge + '</button>';
+    }).join('') : '') +
     '</nav><div class="sidebar-footer">' + (currentProject ? '<button onclick="switchView(\'chat\')"><span class="icon">o</span>Chat</button>' : '') +
     '<button onclick="goHome()"><span class="icon"><-</span>Projecten</button></div></div>';
 }
@@ -18,6 +22,7 @@ function renderHeader() {
 function renderProjectView(main) {
   main.innerHTML = renderSidebar() + '<div class="main-content">' + renderHeader() + '<div class="tab-content" id="tab-content"><div class="loading"><div class="spinner"></div><p>' + currentTab + ' laden...</p></div></div></div>';
   startAgentStatusPoll();
+  startHelpdeskBadgePoll();
   loadCurrentTab();
 }
 async function loadCurrentTab() {
@@ -37,6 +42,7 @@ async function loadCurrentTab() {
     else if (currentTab === 'Opdrachten') await renderOpdrachtenTab(el);
     else if (currentTab === 'Technisch') await renderTechTab(el);
     else if (currentTab === 'Activiteit') await renderActiviteitTab(el);
+    else if (currentTab === 'Helpdesk') await renderHelpdeskTab(el);
     else if (currentTab === 'Instellingen') await renderInstellingenTab(el);
     else el.innerHTML = '<div class="empty-state">Tab niet gevonden</div>';
   } catch(e) { el.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; }
@@ -79,6 +85,25 @@ function startDashboardBannerPoll(project) {
   }, 8000);
 }
 function stopDashboardBannerPoll() { if (_dashBannerTimer) { clearInterval(_dashBannerTimer); _dashBannerTimer = null; } }
+
+// ── Helpdesk-badge: toont aantal open concept-antwoorden in de sidebar ──
+let _helpdeskBadgeTimer = null;
+function startHelpdeskBadgePoll() {
+  stopHelpdeskBadgePoll();
+  pollHelpdeskBadge();
+  _helpdeskBadgeTimer = setInterval(pollHelpdeskBadge, 20000);
+}
+function stopHelpdeskBadgePoll() { if (_helpdeskBadgeTimer) { clearInterval(_helpdeskBadgeTimer); _helpdeskBadgeTimer = null; } }
+function pollHelpdeskBadge() {
+  if (!currentProject) return;
+  fetch('/api/mail/pending').then(function(r){return r.json();}).then(function(rows){
+    var el = document.getElementById('helpdesk-badge');
+    if (!el) return;
+    var n = (rows && rows.replies && rows.replies.length) ? rows.replies.length : 0;
+    if (n > 0) { el.style.display = 'inline-block'; el.textContent = n; }
+    else { el.style.display = 'none'; }
+  }).catch(function(){});
+}
 
 async function renderDashboardTab(el) {
   if (currentProject === 'Finance Expert') { renderFinanceExpert(el); return; }

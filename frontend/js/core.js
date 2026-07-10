@@ -6,8 +6,8 @@
 const PROJECTS = ['WeAreImpact', 'IctusGo', 'Pootgelukkig', 'BewaardVoorJou', 'Kappersassistent', 'DatingAssistent', 'Finance Expert', 'Bijeen', 'Brickme', 'Vrijwilligersmatch', 'Skillkaart', 'Steentjeapp', 'Zorgblik', 'Teambuildingmetimpact'];
 const COLORS = { WeAreImpact: ['from-indigo-500 to-indigo-600','indigo'], Pootgelukkig: ['from-emerald-500 to-emerald-600','emerald'], BewaardVoorJou: ['from-amber-500 to-amber-600','amber'], Kappersassistent: ['from-violet-500 to-violet-600','violet'], DatingAssistent: ['from-red-500 to-red-600','red'], 'Finance Expert': ['from-rose-500 to-rose-600','rose'], Bijeen: ['from-cyan-500 to-cyan-600','cyan'], Brickme: ['from-orange-500 to-orange-600','orange'], Vrijwilligersmatch: ['from-teal-500 to-teal-600','teal'], Skillkaart: ['from-pink-500 to-pink-600','pink'], Steentjeapp: ['from-sky-500 to-sky-600','sky'], Zorgblik: ['from-lime-500 to-lime-600','lime'], Teambuildingmetimpact: ['from-amber-500 to-amber-600','amber'], IctusGo: ['from-cyan-700 to-emerald-600','emerald'] };
 const DESCS = { WeAreImpact: 'AI en innovatie voor zorg, welzijn en gemeenten', Pootgelukkig: 'Adoptieplatform voor asieldieren', BewaardVoorJou: 'Digitaal levensboek voor 65-plussers', Kappersassistent: 'Project kappersbranche (in opstart)', DatingAssistent: 'AI dating coach & datingadvies', 'Finance Expert': 'Financiele rapportage en analyse', Bijeen: 'Sociale verbinding & bijeenkomsten', Brickme: 'Bouw & constructie', Vrijwilligersmatch: 'Vrijwilligers matching platform', Skillkaart: 'Vaardigheden & competenties', Steentjeapp: 'Mobiele app Steentjebijsteentje', Zorgblik: 'Zorginnovatie & inzicht', Teambuildingmetimpact: 'Bedrijfsvrijwilligerswerk, impact days & LEGO Serious Play', IctusGo: 'GPS teambuilding met sociale impact (Hoofddorp/Schiphol)' };
-const TABS = ['Dashboard', 'Content', 'Kansen', 'Optimalisatie', 'Wachtrij', 'Concurrentie', 'Radar', 'Keywords', 'Doelen', 'Geheugen', 'Leads', 'Opdrachten', 'Technisch', 'Activiteit', 'Instellingen'];
-const TAB_ICONS = { Dashboard: 'D', Content: 'C', Kansen: 'K', Optimalisatie: '↗', Wachtrij: 'Q', Concurrentie: 'R', Radar: '✦', Keywords: 'W', Doelen: 'G', Geheugen: 'I', Leads: 'L', Opdrachten: 'O', Technisch: 'T', Activiteit: 'A', Instellingen: 'S' };
+const TABS = ['Dashboard', 'Content', 'Kansen', 'Optimalisatie', 'Wachtrij', 'Concurrentie', 'Radar', 'Keywords', 'Doelen', 'Geheugen', 'Leads', 'Opdrachten', 'Technisch', 'Activiteit', 'Helpdesk', 'Instellingen'];
+const TAB_ICONS = { Dashboard: 'D', Content: 'C', Kansen: 'K', Optimalisatie: '↗', Wachtrij: 'Q', Concurrentie: 'R', Radar: '✦', Keywords: 'W', Doelen: 'G', Geheugen: 'I', Leads: 'L', Opdrachten: 'O', Technisch: 'T', Activiteit: 'A', Helpdesk: '✉', Instellingen: 'S' };
 
 let currentProject = null, currentTab = 'Dashboard', weSuggestions = [], oppStatusFilter = null, scanningInProgress = false, chartInstances = {};
 let _agentStatusTimer = null;
@@ -244,6 +244,7 @@ function route() {
   var main = document.getElementById('main-content');
   if (!main) return;
   stopDashboardBannerPoll();
+  stopHelpdeskBadgePoll();
   if (!currentProject) renderHome(main);
   else if (currentTab === 'Chat') renderChat(main);
   else renderProjectView(main);

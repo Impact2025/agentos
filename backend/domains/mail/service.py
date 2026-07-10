@@ -217,11 +217,12 @@ def create_mailbox(data: Dict) -> str:
 def pending_replies() -> List[Dict]:
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT r.id, r.to_addr, r.subject, r.draft_body, r.status, "
-            "r.created_at, m.project, m.address, i.from_name, i.from_addr "
+            "SELECT r.id, r.mailbox_id, r.to_addr, r.subject, r.draft_body, "
+            "r.edited_body, r.status, r.created_at, m.project, m.address, "
+            "i.from_name, i.from_addr "
             "FROM mail_reply r "
             "JOIN mailboxes m ON m.id=r.mailbox_id "
-            "JOIN mail_inbox i ON i.id=r.inbox_id "
-            "WHERE r.status='pending_review' ORDER BY r.created_at DESC"
+            "LEFT JOIN mail_inbox i ON i.id=r.inbox_id "
+            "WHERE r.status IN ('pending_review','edited') ORDER BY r.created_at DESC"
         ).fetchall()
         return [dict(r) for r in rows]
