@@ -99,9 +99,12 @@ async function helpdeskSend(id, btn) {
       alert('✅ Verstuurd naar de klant.');
     } else {
       alert('❌ Kon niet versturen: ' + (d.error || 'onbekend'));
-      btn.disabled = false; btn.textContent = '✉ Verstuur';
     }
-  } catch(e) { alert('❌ Fout: ' + e.message); btn.disabled = false; btn.textContent = '✉ Verstuur'; }
+  } catch(e) {
+    alert('❌ Fout: ' + (e.message || e) + '\n\nDe server was tijdelijk niet bereikbaar. Probeer het opnieuw.');
+  } finally {
+    btn.disabled = false; btn.textContent = '✉ Verstuur';
+  }
 }
 
 async function helpdeskSave(id, btn) {
