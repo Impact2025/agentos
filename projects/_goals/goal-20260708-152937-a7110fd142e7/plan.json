@@ -1,0 +1,374 @@
+{
+  "plan_summary": "Deterministisch plan voor: Verover topposities voor Teambuilding met Impact op de strategische money-keywords: bedrijfsvrijwilligerswerk organiseren, impact day organiseren, mvo teambuild",
+  "estimated_duration": "2-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & analyse",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Analyseer beschikbare data voor teambuildingmetimpact",
+          "description": "Gebruik GSC-data, content-gap-analyse en bestaande kennisbank om de aanpak voor teambuildingmetimpact te onderbouwen. Lever een beknopt meetplan/analyse (geen live analytics-calls).",
+          "skill": "analyst",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content creatie",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Schrijf artikel 1 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 2 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 3 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 4 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 5 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 6 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 7 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 8 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 9 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 10 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 11 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 12 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 13 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 14 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 15 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 16 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 17 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 18 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 19 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 20 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 21 voor teambuildingmetimpact",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor teambuildingmetimpact. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Maak ondersteunend document (checklist/gids/template) voor teambuildingmetimpact",
+          "description": "Schrijf het ondersteunende document (checklist, lead-magnet, one-pager, gids of template) dat hoort bij teambuildingmetimpact.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 5: Publicatie (review-gate)",
+      "description": "Alle artikelen staged in de Wachtrij voor menselijke goedkeuring.",
+      "tasks": [
+        {
+          "title": "Publiceer artikel 1 (teambuildingmetimpact)",
+          "description": "Stage artikel 1 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 1 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 2 (teambuildingmetimpact)",
+          "description": "Stage artikel 2 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 2 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 3 (teambuildingmetimpact)",
+          "description": "Stage artikel 3 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 3 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 4 (teambuildingmetimpact)",
+          "description": "Stage artikel 4 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 4 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 5 (teambuildingmetimpact)",
+          "description": "Stage artikel 5 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 5 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 6 (teambuildingmetimpact)",
+          "description": "Stage artikel 6 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 6 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 7 (teambuildingmetimpact)",
+          "description": "Stage artikel 7 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 7 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 8 (teambuildingmetimpact)",
+          "description": "Stage artikel 8 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 8 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 9 (teambuildingmetimpact)",
+          "description": "Stage artikel 9 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 9 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 10 (teambuildingmetimpact)",
+          "description": "Stage artikel 10 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 10 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 11 (teambuildingmetimpact)",
+          "description": "Stage artikel 11 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 11 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 12 (teambuildingmetimpact)",
+          "description": "Stage artikel 12 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 12 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 13 (teambuildingmetimpact)",
+          "description": "Stage artikel 13 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 13 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 14 (teambuildingmetimpact)",
+          "description": "Stage artikel 14 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 14 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 15 (teambuildingmetimpact)",
+          "description": "Stage artikel 15 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 15 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 16 (teambuildingmetimpact)",
+          "description": "Stage artikel 16 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 16 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 17 (teambuildingmetimpact)",
+          "description": "Stage artikel 17 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 17 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 18 (teambuildingmetimpact)",
+          "description": "Stage artikel 18 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 18 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 19 (teambuildingmetimpact)",
+          "description": "Stage artikel 19 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 19 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 20 (teambuildingmetimpact)",
+          "description": "Stage artikel 20 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 20 voor teambuildingmetimpact"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 21 (teambuildingmetimpact)",
+          "description": "Stage artikel 21 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 21 voor teambuildingmetimpact"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -48,13 +48,19 @@ Blogposts worden gevuld via `prisma/seed-blogs.js` uit Markdown in `D:/APPS/Team
 - **Site:** https://www.teambuildingmetimpact.nl
 - **Backend stack:** Next.js 16 + React 19 + Prisma 7 + Neon Postgres, Vercel-deploy.
 
-## Huidige status (8 jul 2026)
-- 11 ImpactDays-artikelen live (3 landingspagina's + 8 blogs), v2.0-compliant, bug-vrij.
-- 10 bestaande posts (pre-ImpactDays) nog live.
-- Parser-upgrade (ol/ul-ondersteuning) gecommit+pushed → verbetert alle posts.
-- Let op: 5 slugs (bedrijfsvrijwilligerswerk, corporate-volunteering-nederland, impact-day-organiseren, mvo-teambuilding, social-return-teamdag) zijn in ronde 1 OVERSCHREVEN door ImpactDays-content (slug-conflict). Zie log/2026-07-08.
-
-## Interne links / autoriteit
+## Huidige status (8 jul 2026 — PRO-UPDATE)
+- 21 artikelen live (11 ImpactDays + 10 pre-ImpactDays), v2.0-compliant, bug-vrij.
+- **Mission Radar (SKY SCANNER) ACTIEF**: 25 watch-items (8 concurrenten + 14 gap-keywords
+  WKR/CSRD/ESG/regio + 3 RSS), 138 signalen gescand (top_score 78.4), 23 trend-notes in
+  de Obsidian-vault (`10_Projects/_trends/`). Auto-scanned elke 4u via `radar_sky_scan`.
+- **3 autonome doelen aangemaakt** (draft) — zie log/2026-07-08-pro-aan-het-werk.md:
+  Radar-warmup, AEO-contentmotor, ESG/regio-dominatie. Vincent moet ze confirm+starten
+  in de Doelen-tab.
+- Parser-upgrade (ol/ul-ondersteuning) gecommit+pushed.
+- Let op: 5 slugs (bedrijfsvrijwilligerswerk, corporate-volunteering-nederland,
+  impact-day-organiseren, mvo-teambuilding, social-return-teamdag) zijn in ronde 1
+  OVERSCHREVEN door ImpactDays-content (slug-conflict). Zie actiepunten.
+- Hub-spoke interne link-graph = open technische-SEO-slag.
 - Hub: /blog/impact-day-organiseren, /blog/bedrijfsvrijwilligerswerk, /blog/mvo-teambuilding
 - Cases: /blog/case-impact-day-voedselbank-haarlemmermeer, /blog/case-impact-day-ons-tweede-thuis (anoniem)
 - Volledige hub-spoke link-graph is een open technische-SEO-slag.

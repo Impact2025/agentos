@@ -1,0 +1,18 @@
+{
+  "plan_summary": "Deterministisch plan voor: Voer systematisch keyword research uit voor ictusgo.nl met Tavily en de bestaande kennisbank. Bouw 5 zoekwoord-clusters rond de kern van IctusGo: (1) gps teambu",
+  "estimated_duration": "2-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & analyse",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Analyseer beschikbare data voor ictusgo",
+          "description": "Gebruik GSC-data, content-gap-analyse en bestaande kennisbank om de aanpak voor ictusgo te onderbouwen. Lever een beknopt meetplan/analyse (geen live analytics-calls).",
+          "skill": "analyst",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

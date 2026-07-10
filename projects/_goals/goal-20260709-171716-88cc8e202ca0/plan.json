@@ -1,0 +1,96 @@
+{
+  "plan_summary": "In 4 fasen: onderzoek secundaire zoektermen en outreach-bronnen, schrijf 3 artikelen en 1 gids, optimaliseer met FAQ-schema en meta, publiceer in wachtrij, en maak 15 outreach-concepten voor gastblogs.",
+  "estimated_duration": "2-3 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Research & strategie",
+      "description": "Verzamel data over de 3 focus-zoektermen en identificeer doelgroeporganisaties voor outreach.",
+      "tasks": [
+        {
+          "title": "Analyseer zoekvolume, intentie en concurrentie voor de 3 zoektermen",
+          "description": "Gebruik GSC, Ahrefs of Semrush om inzichten te krijgen in zoekvolume, concurrentie en content gaps voor: 'Administratieve lasten verlagen welzijn AI', 'Kwartiermaker innovatie publieke sector', 'Slimme datatools maatschappelijke organisaties'.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Identificeer 15 relevante organisaties voor outreach",
+          "description": "Maak een lijst van 15 maatschappelijke organisaties, kennisinstituten en gemeentelijke datateams die relevant zijn voor gastblog-concepten op de thema's. Noteer contactgegevens en eerdere samenwerkingen.",
+          "skill": "research",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content creatie",
+      "description": "Schrijf de 3 artikelen en de gids. Elk document is een eigen content-writer taak.",
+      "tasks": [
+        {
+          "title": "Schrijf artikel 1: 'Administratieve lasten verlagen welzijn AI'",
+          "description": "Schrijf een diepgravend artikel van 1500-2000 woorden met exact deze titel/H1/meta. Focus op praktijkvoorbeelden en AI-oplossingen.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf artikel 2: 'Kwartiermaker innovatie publieke sector'",
+          "description": "Schrijf een artikel van 1500-2000 woorden met exact deze titel/H1/meta. Beschrijf de rol van kwartiermakers en succesfactoren.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf artikel 3: 'Slimme datatools maatschappelijke organisaties'",
+          "description": "Schrijf een artikel van 1500-2000 woorden met exact deze titel/H1/meta. Geef een overzicht van tools en toepassingen.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf gids: 'Slimme datatools voor maatschappelijke organisaties'",
+          "description": "Maak een one-pager of korte gids (PDF-formaat) met praktische stappen, checklists en voorbeeldcases. Bestemd om te delen als leadmagneet.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Optimalisatie & publicatie in wachtrij",
+      "description": "Voeg gestructureerde data toe, optimaliseer meta descriptions, en zet alle content klaar in de Wachtrij ter review.",
+      "tasks": [
+        {
+          "title": "Voeg FAQPage-schema toe aan alle 3 artikelen",
+          "description": "Implementeer JSON-LD FAQ-schema in elk artikel met 3-5 relevante vragen en antwoorden. Test met Google Rich Results Test.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Optimaliseer meta titles en descriptions voor artikelen en gids",
+          "description": "Schrijf SEO-vriendelijke metatitels en -beschrijvingen (max 160 chars) met exacte zoektermen. Optimaliseer ook de gids-meta.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Publiceer artikel 1 en artikel 2 in Wachtrij",
+          "description": "Zet de twee artikelen (met alle optimalisaties) klaar in de Wachtrij van de publicatietool, voorzien van metadata en status 'wacht op goedkeuring'.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Publiceer artikel 3 en gids in Wachtrij",
+          "description": "Zet het derde artikel en de gids klaar in de Wachtrij, klaar voor menselijke review en publicatie.",
+          "skill": "publisher",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Outreach & concepten",
+      "description": "Ontwikkel 15 gepersonaliseerde gastblog-concepten en stuur deze naar de geïdentificeerde organisaties.",
+      "tasks": [
+        {
+          "title": "Schrijf 15 outreach-concepten voor gastblogs",
+          "description": "Maak per target-organisatie een kort concept (titel, 3 bulletpoints, relevantie) voor een gastblog op WeAreImpact. Gebruik de inzichten uit fase 1.",
+          "skill": "outreach",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

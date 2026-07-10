@@ -1,0 +1,129 @@
+{
+  "plan_summary": "Plan voor het uitwerken van Feature X (nieuwe gebruikersfeedbackmodule) voor Ictusgo, met fases voor onderzoek, contentcreatie, ontwerp en publicatie.",
+  "estimated_duration": "2-3 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Onderzoek & Strategie",
+      "description": "Verkennen van de markt en doelgroep om de contentstrategie te bepalen voor de lancering van de feedbackmodule.",
+      "tasks": [
+        {
+          "title": "Doelgroepanalyse uitvoeren op basis van bestaande GSC-data",
+          "description": "Analyseer zoekgedrag en gebruikersintenties met behulp van Google Search Console-data om de behoefte aan een feedbackmodule te valideren.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Concurrentieanalyse van feedbacktools",
+          "description": "Onderzoek 3-5 concurrerende feedbacktools en noteer hun sterke/zwakke punten om onderscheidend te kunnen positioneren.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Contentstrategie voor lancering bepalen",
+          "description": "Stel op basis van de analyses een contentkalender op met landingspagina, blogpost, checklist en uitlegvideo.",
+          "skill": "analyst",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Contentcreatie",
+      "description": "Schrijven van alle benodigde teksten voor de feedbackmodule, inclusief redactie.",
+      "tasks": [
+        {
+          "title": "Landingspagina schrijven voor de feedbackmodule",
+          "description": "Schrijf een overtuigende landingspagina met voordelen, functies en call-to-action.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Blogpost 'Waarom feedback cruciaal is' schrijven",
+          "description": "Schrijf een blogpost die het belang van feedback benadrukt en de nieuwe module introduceert.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Checklist voor implementatie schrijven",
+          "description": "Maak een stapsgewijze checklist voor gebruikers om de feedbackmodule in te richten.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Alle teksten redigeren",
+          "description": "Controleer en redigeer de landingspagina, blogpost en checklist op consistentie, grammatica en toon.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Landingspagina schrijven voor de feedbackmodule",
+            "Blogpost 'Waarom feedback cruciaal is' schrijven",
+            "Checklist voor implementatie schrijven"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Ontwerp & Productie",
+      "description": "Visuele en audiovisuele productie, plus SEO-optimalisatie.",
+      "tasks": [
+        {
+          "title": "Ontwerpen van landingspagina visuals",
+          "description": "Ontwerp afbeeldingen, grafieken en hero-afbeelding voor de landingspagina passend bij de feedbackmodule.",
+          "skill": "designer",
+          "dependencies": []
+        },
+        {
+          "title": "Maken van uitlegvideo over de feedbackmodule",
+          "description": "Creëer een korte uitlegvideo (max 2 min) die de werking en voordelen van de module demonstreert.",
+          "skill": "video-builder",
+          "dependencies": []
+        },
+        {
+          "title": "SEO-optimalisatie voor alle pagina's",
+          "description": "Voeg meta-titels, beschrijvingen, alt-teksten toe en optimaliseer de content voor zoekmachines.",
+          "skill": "seo",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie & Evaluatie",
+      "description": "Publiceren van alle assets en analyseren van de eerste resultaten.",
+      "tasks": [
+        {
+          "title": "Landingspagina publiceren (stagen in wachtrij)",
+          "description": "Zet de landingspagina klaar in het publicatiesysteem ter review door de mens.",
+          "skill": "publisher",
+          "dependencies": [
+            "Ontwerpen van landingspagina visuals",
+            "Alle teksten redigeren"
+          ]
+        },
+        {
+          "title": "Blogpost publiceren (stagen in wachtrij)",
+          "description": "Plaats de blogpost in de publicatiewachtrij voor goedkeuring.",
+          "skill": "publisher",
+          "dependencies": [
+            "Alle teksten redigeren"
+          ]
+        },
+        {
+          "title": "Video publiceren op het platform (stagen in wachtrij)",
+          "description": "Upload de uitlegvideo en stage deze voor review.",
+          "skill": "publisher",
+          "dependencies": [
+            "Maken van uitlegvideo over de feedbackmodule"
+          ]
+        },
+        {
+          "title": "Prestatieanalyse na lancering uitvoeren",
+          "description": "Meet de eerste week na publicatie: views, klikken, conversies en geef aanbevelingen.",
+          "skill": "analyst",
+          "dependencies": [
+            "Landingspagina publiceren (stagen in wachtrij)",
+            "Blogpost publiceren (stagen in wachtrij)",
+            "Video publiceren op het platform (stagen in wachtrij)"
+          ]
+        }
+      ]
+    }
+  ]
+}

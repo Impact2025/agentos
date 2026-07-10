@@ -1,0 +1,136 @@
+{
+  "plan_summary": "Analyseer conversiepunten, creëer lead-magnet (checklist, gids, landingspagina), schrijf twee ondersteunende artikelen, en publiceer alles in de wachtrij voor review.",
+  "estimated_duration": "2-3 werkdagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Strategie",
+      "description": "Verzamel data, definieer doelgroep en vind SEO-kansen.",
+      "tasks": [
+        {
+          "id": "F1T1",
+          "title": "Analyseer conversie-punten bestaande landingspagina's",
+          "description": "Gebruik Google Analytics en GSC om huidige conversie, bounce rate en doorstroom te meten. Identificeer bottlenecks voor HR/MT-doelgroep.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "id": "F1T2",
+          "title": "Doelgroepanalyse HR/MT regio Hoofddorp/Schiphol",
+          "description": "Onderzoek demografie, pijnpunten en intenties van HR-managers en MT-leden in die regio. Gebruik interviews, sociale media en bestaande persona's.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "F1T3",
+          "title": "SEO-zoekwoordenonderzoek Geluksmomenten Score en maatschappelijke teambuilding",
+          "description": "Vind zoekwoorden met hoog volume en lage concurrentie rond 'teamgeluk meten', 'sociale impact teambuilding', 'GMS checklist'.",
+          "skill": "seo",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Lead-magnet creatie",
+      "description": "Maak de checklist, gids en landingspagina, gevolgd door redactie en publicatie.",
+      "tasks": [
+        {
+          "id": "F2T1",
+          "title": "Schrijf checklist '15 manieren om teamgeluk te meten'",
+          "description": "Createer een long-form checklist (PDF) met 15 meetmethoden, geschikt voor HR/MT. Gebruik copy die direct waarde toont.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "id": "F2T2",
+          "title": "Schrijf gids 'Zo koppel je teambuilding aan sociale impact'",
+          "description": "Createer een gids (PDF) die uitlegt hoe teambuilding-activiteiten aan maatschappelijke doelen worden gekoppeld, inclusief voorbeelden en ROI.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "id": "F2T3",
+          "title": "Schrijf landingspagina voor lead-magnet",
+          "description": "Createer een overtuigende landingspagina met titel, voordelen, CTA en downloadformulier. Optimaliseer voor conversie op basis van fase 1 inzichten.",
+          "skill": "content-writer",
+          "dependencies": [
+            "F1T1",
+            "F1T2",
+            "F1T3"
+          ]
+        },
+        {
+          "id": "F2T4",
+          "title": "Content-editor review checklist, gids en landingspagina",
+          "description": "Controleer leesbaarheid, consistentie en call-to-action. Pas waar nodig aan voor HR/MT-doelgroep.",
+          "skill": "content-editor",
+          "dependencies": [
+            "F2T1",
+            "F2T2",
+            "F2T3"
+          ]
+        },
+        {
+          "id": "F2T5",
+          "title": "Publiceer landingspagina in wachtrij ter review",
+          "description": "Zet de landingspagina klaar in het CMS voor menselijke goedkeuring. Voeg lead-magnet downloads als bijlagen.",
+          "skill": "publisher",
+          "dependencies": [
+            "F2T4"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Ondersteunende artikelen",
+      "description": "Schrijf en publiceer twee blogartikelen die de lead-magnet ondersteunen.",
+      "tasks": [
+        {
+          "id": "F3T1",
+          "title": "Schrijf artikel: 'De Geluksmomenten Score: objectief teamgeluk meten'",
+          "description": "Long-form artikel (1500+ woorden) over de GMS-methodiek, data en use cases. SEO-geoptimaliseerd met trefwoorden uit fase 1.",
+          "skill": "content-writer",
+          "dependencies": [
+            "F1T3"
+          ]
+        },
+        {
+          "id": "F3T2",
+          "title": "Schrijf artikel: 'Waarom maatschappelijke teambuilding de nieuwe standaard wordt'",
+          "description": "Artikel (1200+ woorden) over trends in teambuilding, sociale impact en hoe bedrijven hiermee aantrekkelijk worden voor talent. Interne link naar landingspagina.",
+          "skill": "content-writer",
+          "dependencies": [
+            "F1T2"
+          ]
+        },
+        {
+          "id": "F3T3",
+          "title": "Content-editor review beide artikelen",
+          "description": "Redigeer op stijl, feitelijkheid en SEO. Zorg dat ze aansluiten bij de lead-magnet-toon.",
+          "skill": "content-editor",
+          "dependencies": [
+            "F3T1",
+            "F3T2"
+          ]
+        },
+        {
+          "id": "F3T4",
+          "title": "Publiceer artikel 1 in wachtrij ter review",
+          "description": "Plaats het GMS-artikel in het CMS, klaar voor menselijke goedkeuring.",
+          "skill": "publisher",
+          "dependencies": [
+            "F3T3"
+          ]
+        },
+        {
+          "id": "F3T5",
+          "title": "Publiceer artikel 2 in wachtrij ter review",
+          "description": "Plaats het teambuilding-artikel in het CMS, klaar voor menselijke goedkeuring.",
+          "skill": "publisher",
+          "dependencies": [
+            "F3T3"
+          ]
+        }
+      ]
+    }
+  ]
+}

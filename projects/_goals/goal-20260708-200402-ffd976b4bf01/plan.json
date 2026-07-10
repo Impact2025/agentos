@@ -1,0 +1,108 @@
+{
+  "plan_summary": "Bouw radar-infrastructuur voor Pootgelukkig met 50+ signalen, voer wekelijkse scans uit op basis van de watchlist, identificeer maandelijks top-5 contentkansen en documenteer in de Obsidian-vault (10_Projects/_trends).",
+  "estimated_duration": "4-6 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Radar-infrastructuur opzetten",
+      "description": "Definieer de watchlist, configureer Mission Radar met 50+ signalen en zet de Obsidian-vault structuur klaar.",
+      "tasks": [
+        {
+          "title": "Definieer concurrenten, keywords en RSS-feeds",
+          "description": "Stel een definitieve lijst op van concurrenten (Dierenbescherming, ikzoekbaas, verhuisdieren), adoptie-keywords (hond, kat, herplaatsing, konijn) en RSS-bronnen (Dierenbescherming, LICG, Dierennoodhulp).",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Configureer Mission Radar met 50+ signalen",
+          "description": "Voer de concurrenten, keywords en RSS-feeds in in Mission Radar zodat er minimaal 50 actieve signalen ontstaan. Test de configuratie.",
+          "skill": "analyst",
+          "dependencies": [
+            "Definieer concurrenten, keywords en RSS-feeds"
+          ]
+        },
+        {
+          "title": "Maak Obsidian-vault mappenstructuur voor trends",
+          "description": "Maak de map '10_Projects/_trends' aan in de Obsidian-vault en voeg eventuele sjablonen of notities toe voor de maandelijkse top-5 documenten.",
+          "skill": "designer",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Eerste wekelijkse scan & rapportage",
+      "description": "Voer de eerste wekelijkse scan uit, genereer een rapport en archiveer het in de vault.",
+      "tasks": [
+        {
+          "title": "Stel wekelijks scanrapport sjabloon op",
+          "description": "Ontwerp een sjabloon voor het wekelijkse scanrapport met vaste velden: datum, aantal signalen, top-10 opvallende item, notities.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Voer wekelijkse scan uit en genereer rapport",
+          "description": "Draai de eerste volledige scan in Mission Radar, verzamel resultaten en vul het sjabloon in.",
+          "skill": "analyst",
+          "dependencies": [
+            "Stel wekelijks scanrapport sjabloon op"
+          ]
+        },
+        {
+          "title": "Archiveer eerste scanrapport in Obsidian-vault",
+          "description": "Sla het ingevulde rapport op in '10_Projects/_trends/' onder een datumnaam. Controleer of de link naar de radar correct is.",
+          "skill": "analyst",
+          "dependencies": [
+            "Voer wekelijkse scan uit en genereer rapport"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Maandelijkse contentkansenanalyse",
+      "description": "Analyseer de signalen van de afgelopen maand, identificeer de top-5 contentkansen en documenteer deze in de vault.",
+      "tasks": [
+        {
+          "title": "Analyseer signalen van afgelopen maand",
+          "description": "Verzamel alle wekelijkse scanrapporten van de maand en analyseer frequentie, trends en opvallende onderwerpen in de signalen.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Identificeer top-5 contentkansen",
+          "description": "Selecteer op basis van de analyse de vijf meest kansrijke onderwerpen voor blogposts, gidsen of pagina’s, met onderbouwing.",
+          "skill": "research",
+          "dependencies": [
+            "Analyseer signalen van afgelopen maand"
+          ]
+        },
+        {
+          "title": "Schrijf top-5 document naar Obsidian-vault",
+          "description": "Stel een notitie op in '10_Projects/_trends/' met de top-5 kansen, elk voorzien van titel, samenvatting, relevantie en voorgestelde bloglink (eventueel verwijzend naar bestaande content).",
+          "skill": "content-writer",
+          "dependencies": [
+            "Identificeer top-5 contentkansen"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Optimalisatie en automatisering",
+      "description": "Evalueer de effectiviteit van de radar, breid signalen uit en automatiseer de wekelijkse scanning en rapportage.",
+      "tasks": [
+        {
+          "title": "Evalueer signaalprestaties en breid signalen uit",
+          "description": "Bekijk welke signalen de meeste waarde opleveren; voeg extra signalen toe (bv. regionale nieuwssites, Google Trends) om de 50+ actief te houden en te verbeteren.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Automatiseer wekelijkse scan en rapportgeneratie",
+          "description": "Stel een cron-job of script in dat wekelijks de scan draait, het rapport genereert en in de vault plaatst, zodat het handmatig werk vermindert.",
+          "skill": "seo",
+          "dependencies": [
+            "Evalueer signaalprestaties en breid signalen uit"
+          ]
+        }
+      ]
+    }
+  ]
+}

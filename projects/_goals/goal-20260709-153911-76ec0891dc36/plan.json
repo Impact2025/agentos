@@ -1,0 +1,74 @@
+{
+  "plan_summary": "Deterministisch plan voor: Verover de lokale zoekvraag rond teambuilding in de regio met 4 artikelen voor ictusgo.nl, gebaseerd op keyword research naar regiospecifieke intentie: 'teambui",
+  "estimated_duration": "2-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 2: Content creatie",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Schrijf artikel 1 voor ictusgo",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor ictusgo. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf artikel 2 voor ictusgo",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor ictusgo. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf artikel 3 voor ictusgo",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor ictusgo. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf artikel 4 voor ictusgo",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor ictusgo. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 5: Publicatie (review-gate)",
+      "description": "Alle artikelen staged in de Wachtrij voor menselijke goedkeuring.",
+      "tasks": [
+        {
+          "title": "Publiceer artikel 1 (ictusgo)",
+          "description": "Stage artikel 1 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 1 voor ictusgo"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 2 (ictusgo)",
+          "description": "Stage artikel 2 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 2 voor ictusgo"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 3 (ictusgo)",
+          "description": "Stage artikel 3 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 3 voor ictusgo"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 4 (ictusgo)",
+          "description": "Stage artikel 4 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 4 voor ictusgo"
+          ]
+        }
+      ]
+    }
+  ]
+}

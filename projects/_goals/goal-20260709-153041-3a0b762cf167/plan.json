@@ -1,0 +1,104 @@
+{
+  "plan_summary": "Drie AEO-geoptimaliseerde artikelen voor ictusgo.nl schrijven en publiceren, inclusief SEO-onderzoek naar snippetposities, redactie en menselijke goedkeuring voordat ze in de Wachtrij worden geplaatst.",
+  "estimated_duration": "4-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & SEO Analyse",
+      "description": "Grondig SEO-onderzoek en concurrentieanalyse om de beste snippetposities en zoekwoordclusters te identificeren.",
+      "tasks": [
+        {
+          "title": "SEO-onderzoek snippetposities",
+          "description": "Analyseer SERP's en bestaande snippets voor de drie onderwerpen; bepaal de meest kansrijke featured-snippet en FAQPage-structuren.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Zoekwoord- en concurrentanalyse",
+          "description": "Identificeer long-tail zoekwoorden, gerelateerde vragen en concurrenten; verzamel data voor de tekststrategie.",
+          "skill": "research",
+          "dependencies": [
+            "SEO-onderzoek snippetposities"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Contentcreatie",
+      "description": "Schrijven van de drie artikelen, elk voorzien van FAQPage-schema en featured-snippet structuur zoals geïdentificeerd in het onderzoek.",
+      "tasks": [
+        {
+          "title": "Schrijf artikel 'WKR teambuilding 2026'",
+          "description": "Schrijf het AEO-optimale artikel over WKR teambuilding 2026 (wat mag wel en niet) met ingebouwde FAQPage en featured-snippet opmaak.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf artikel 'CSRD en teambuilding'",
+          "description": "Schrijf het AEO-optimale artikel over CSRD en teambuilding (maatschappelijke impact aankruisen) met ingebouwde FAQPage en featured-snippet opmaak.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf artikel 'Bedrijfsuitje zonder WKR'",
+          "description": "Schrijf het AEO-optimale artikel over 7 legale alternatieven voor bedrijfsuitjes zonder WKR met ingebouwde FAQPage en featured-snippet opmaak.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Redactie & Goedkeuring",
+      "description": "Professionele redactie en menselijke beoordeling om kwaliteit en AEO-naleving te garanderen.",
+      "tasks": [
+        {
+          "title": "Redactie en optimalisatie artikelen",
+          "description": "Bewerk alle drie concept-artikelen: verbeter leesbaarheid, schema's, snippetstructuur en consistentie.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Schrijf artikel 'WKR teambuilding 2026'",
+            "Schrijf artikel 'CSRD en teambuilding'",
+            "Schrijf artikel 'Bedrijfsuitje zonder WKR'"
+          ]
+        },
+        {
+          "title": "Menselijke beoordeling en goedkeuring",
+          "description": "Laat een menselijke beoordelaar (content-judge) de geredigeerde artikelen controleren en goedkeuren voor publicatie.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Redactie en optimalisatie artikelen"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie in Wachtrij",
+      "description": "Na goedkeuring worden de artikelen afzonderlijk in de Wachtrij geplaatst, klaar voor handmatige publicatie op ictusgo.nl.",
+      "tasks": [
+        {
+          "title": "Publiceer artikel 'WKR teambuilding 2026' in Wachtrij",
+          "description": "Stage het goedgekeurde artikel in de Wachtrij van ictusgo.nl, klaar voor handmatige publicatie.",
+          "skill": "publisher",
+          "dependencies": [
+            "Menselijke beoordeling en goedkeuring"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 'CSRD en teambuilding' in Wachtrij",
+          "description": "Stage het goedgekeurde artikel in de Wachtrij van ictusgo.nl, klaar voor handmatige publicatie.",
+          "skill": "publisher",
+          "dependencies": [
+            "Menselijke beoordeling en goedkeuring"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 'Bedrijfsuitje zonder WKR' in Wachtrij",
+          "description": "Stage het goedgekeurde artikel in de Wachtrij van ictusgo.nl, klaar voor handmatige publicatie.",
+          "skill": "publisher",
+          "dependencies": [
+            "Menselijke beoordeling en goedkeuring"
+          ]
+        }
+      ]
+    }
+  ]
+}

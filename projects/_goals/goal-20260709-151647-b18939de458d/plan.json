@@ -1,0 +1,18 @@
+{
+  "plan_summary": "Inventariseer, implementeer, test en deploy alle bugs voor Ictusgo volgens prioriteit, met gestructureerde fasen en duidelijke afhankelijkheden.",
+  "estimated_duration": "3-5 dagen",
+  "phases": [
+    {
+      "title": "Uitvoering",
+      "description": "Automatisch gegenereerd plan voor: Bugfixes afhandelen",
+      "tasks": [
+        {
+          "title": "Bugfixes afhandelen",
+          "description": "Voer uit: Bugfixes afhandelen",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

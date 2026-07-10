@@ -1,0 +1,128 @@
+{
+  "plan_summary": "Inventariseer de huidige backlog, prioritiseer en categoriseer items, werk beschrijvingen bij en communiceer de update met stakeholders.",
+  "estimated_duration": "3-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Inventarisatie en analyse",
+      "description": "Verzamel alle bestaande backlog items en analyseer hun status en relevantie.",
+      "tasks": [
+        {
+          "id": "f1t1",
+          "title": "Verzamel alle backlog items uit projectmanagementtool",
+          "description": "Exporteer of noteer alle openstaande en recent afgeronde items uit de tool (bijv. Notion, Jira).",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "f1t2",
+          "title": "Analyseer leeftijd, prioriteit en status per item",
+          "description": "Bepaal per item hoe oud het is, wat de huidige prioriteit is en of het nog relevant is.",
+          "skill": "analyst",
+          "dependencies": [
+            "f1t1"
+          ]
+        },
+        {
+          "id": "f1t3",
+          "title": "Identificeer verouderde of dubbel items",
+          "description": "Markeer items die niet meer nodig zijn of overlappen met andere items voor verwijdering of samenvoeging.",
+          "skill": "content-judge",
+          "dependencies": [
+            "f1t2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Prioritering en categorisatie",
+      "description": "Ken prioriteiten toe en organiseer de backlog in logische categorieën.",
+      "tasks": [
+        {
+          "id": "f2t1",
+          "title": "Ken prioriteitsniveaus toe (P1-P4) op basis van impact en urgentie",
+          "description": "Gebruik criteria zoals klantwaarde, tijdsdruk en strategisch belang om elk item een prioriteit te geven.",
+          "skill": "content-judge",
+          "dependencies": []
+        },
+        {
+          "id": "f2t2",
+          "title": "Sorteer items in categorieën (feature, bug, verbetering, technisch)",
+          "description": "Voeg labels of tags toe om de aard van elk item te duiden.",
+          "skill": "content-editor",
+          "dependencies": []
+        },
+        {
+          "id": "f2t3",
+          "title": "Bepaal onderlinge afhankelijkheden tussen items",
+          "description": "Noteer welke items afhankelijk zijn van andere items om in de juiste volgorde te kunnen plannen.",
+          "skill": "analyst",
+          "dependencies": [
+            "f2t1",
+            "f2t2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Actualiseren van item inhoud",
+      "description": "Werk de beschrijvingen en details van backlog items bij om ze helder en uitvoerbaar te maken.",
+      "tasks": [
+        {
+          "id": "f3t1",
+          "title": "Schrijf of update beschrijvingen van onduidelijke items",
+          "description": "Voeg context, acceptatiecriteria en concrete stappen toe voor elk item dat dat nodig heeft.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "id": "f3t2",
+          "title": "Voeg nieuwe items toe op basis van recente inzichten",
+          "description": "Identificeer ontbrekende items die relevant zijn geworden en voeg ze toe aan de backlog.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "id": "f3t3",
+          "title": "Review en accordeer de bijgewerkte items",
+          "description": "Controleer of alle wijzigingen correct en consistent zijn, en keur ze goed.",
+          "skill": "content-editor",
+          "dependencies": [
+            "f3t1",
+            "f3t2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Communicatie en oplevering",
+      "description": "Deel de bijgewerkte backlog met het team en archiveer overbodige items.",
+      "tasks": [
+        {
+          "id": "f4t1",
+          "title": "Maak een overzicht/samenvatting van de bijgewerkte backlog",
+          "description": "Schrijf een korte nota met de belangrijkste wijzigingen, prioriteiten en nieuwe items.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "id": "f4t2",
+          "title": "Deel de update met stakeholders via email of teamkanaal",
+          "description": "Stuur de samenvatting naar relevante teamleden en vraag om feedback.",
+          "skill": "outreach",
+          "dependencies": [
+            "f4t1"
+          ]
+        },
+        {
+          "id": "f4t3",
+          "title": "Archiveer verouderde items in een aparte sectie",
+          "description": "Verplaats gemarkeerde items naar een archiveer-lijst of sluit ze af in de tool.",
+          "skill": "publisher",
+          "dependencies": [
+            "f4t2"
+          ]
+        }
+      ]
+    }
+  ]
+}

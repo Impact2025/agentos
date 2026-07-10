@@ -1,0 +1,118 @@
+{
+  "plan_summary": "Onderzoek gebruikersbehoeften voor profieloptimalisatie, creëer landingspagina, blog, checklist en instructievideo, en publiceer alles met redactionele review.",
+  "estimated_duration": "5-7 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Strategie",
+      "description": "Verzamel inzichten uit gebruikersfeedback en concurrentie om de feature-eisen te bepalen.",
+      "tasks": [
+        {
+          "title": "Doelgroepanalyse op basis van feedback",
+          "description": "Analyseer bestaande gebruikersfeedback en chatgesprekken om veelvoorkomende profielproblemen te identificeren.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Concurrentieanalyse profieloptimalisatie",
+          "description": "Bekijk hoe Tinder, Bumble en andere datingapps profieloptimalisatie aanbieden en noteer best practices.",
+          "skill": "research",
+          "dependencies": [
+            "Doelgroepanalyse op basis van feedback"
+          ]
+        },
+        {
+          "title": "Feature requirements opstellen",
+          "description": "Stel op basis van analyses een lijst met functionele eisen op voor de profieloptimalisatie-tool.",
+          "skill": "analyst",
+          "dependencies": [
+            "Concurrentieanalyse profieloptimalisatie"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content Creatie",
+      "description": "Maak alle benodigde content voor de lancering: landingspagina, blog, visuele gids en checklist.",
+      "tasks": [
+        {
+          "title": "Schrijf landingspagina Profieloptimalisatie",
+          "description": "Creëer een overtuigende landingspagina die de functionaliteit en voordelen van de nieuwe feature uitlegt.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijf blogartikel '5 veelgemaakte profielfouten'",
+          "description": "Schrijf een SEO-geoptimaliseerd blogartikel met tips om profielkwaliteit te verbeteren.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Ontwerp infographic profielverbetering",
+          "description": "Maak een visuele infographic met voor/na voorbeelden van profieloptimalisatie.",
+          "skill": "designer",
+          "dependencies": []
+        },
+        {
+          "title": "Maak profielchecklist (downloadbaar PDF)",
+          "description": "Ontwikkel een praktische checklist die gebruikers kunnen volgen om hun profiel te verbeteren.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Video & Outreach",
+      "description": "Produceer een instructievideo en start met outreach naar relevante bloggers.",
+      "tasks": [
+        {
+          "title": "Maak tutorial video 'Hoe optimaliseer je je profiel'",
+          "description": "Neem een schermopname en voice-over op die stap voor stap het gebruik van de optimalisatietool demonstreert.",
+          "skill": "video-builder",
+          "dependencies": []
+        },
+        {
+          "title": "Outreach naar datingbloggers voor promotie",
+          "description": "Benader 5-10 datingbloggers om de nieuwe feature en bijbehorende content te promoten via gastblogs of links.",
+          "skill": "outreach",
+          "dependencies": [
+            "Maak tutorial video 'Hoe optimaliseer je je profiel'"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie & Kwaliteitscontrole",
+      "description": "Laat content redactioneel beoordelen, voer kwaliteitscontrole uit en publiceer alles.",
+      "tasks": [
+        {
+          "title": "Redactionele review landingspagina en blog",
+          "description": "Controleer de landingspagina en het blogartikel op consistentie, tone of voice en fouten.",
+          "skill": "content-editor",
+          "dependencies": []
+        },
+        {
+          "title": "Kwaliteitscontrole video",
+          "description": "Beoordeel de video op technische kwaliteit, duidelijkheid en boodschap.",
+          "skill": "content-judge",
+          "dependencies": []
+        },
+        {
+          "title": "Publiceer landingspagina en blogartikel",
+          "description": "Zet de goedgekeurde landingspagina en blog in de wachtrij voor publicatie.",
+          "skill": "publisher",
+          "dependencies": [
+            "Redactionele review landingspagina en blog"
+          ]
+        },
+        {
+          "title": "Publiceer video",
+          "description": "Zet de goedgekeurde video klaar voor publicatie op het platform en YouTube.",
+          "skill": "publisher",
+          "dependencies": [
+            "Kwaliteitscontrole video"
+          ]
+        }
+      ]
+    }
+  ]
+}

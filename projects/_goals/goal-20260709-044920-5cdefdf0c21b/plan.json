@@ -1,0 +1,18 @@
+{
+  "plan_summary": "Deterministisch plan voor: Los deze week minstens 5 van de 10 open SEO-suggesties op voor WeAreImpact, gemeten via de SEO-pijler (doel: score >5 na 7 dagen).",
+  "estimated_duration": "2-5 dagen",
+  "phases": [
+    {
+      "title": "Uitvoering",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Werk het doel uit voor WeAreImpact",
+          "description": "Los deze week minstens 5 van de 10 open SEO-suggesties op voor WeAreImpact, gemeten via de SEO-pijler (doel: score >5 na 7 dagen).",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

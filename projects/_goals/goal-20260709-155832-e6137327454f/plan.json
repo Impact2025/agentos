@@ -1,0 +1,120 @@
+{
+  "plan_summary": "Schrijf 3 AEO-optimale artikelen voor IctusGo over maatschappelijk teamuitje, WKR teambuilding 2026 en CSRD teambuilding, met SEO-onderzoek en publicatie in de wachtrij ter review. Fases: research, schrijven, optimalisatie, publicatie.",
+  "estimated_duration": "3-4 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Strategie",
+      "description": "Voer SEO- en concurrentieanalyse uit, definieer doelgroep en versterk het Geluksmomenten Score-concept voor de artikelen.",
+      "tasks": [
+        {
+          "title": "SEO-analyse snippet-posities en concurrenten",
+          "description": "Analyseer huidige snippet-posities voor 'maatschappelijk teamuitje', 'wkr teambuilding 2026' en 'csrd teambuilding'. Identificeer top-10 concurrenten en hun AEO-structuur.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Doelgroepanalyse en keyword mapping",
+          "description": "Gebruik GSC-data en zoekwoordonderzoek om intentie, vragen en long-tail termen in kaart te brengen. Maak een keyword map per artikel.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Conceptontwikkeling Geluksmomenten Score",
+          "description": "Definieer het meetbare concept 'Geluksmomenten Score' en werk uit hoe dit in elk artikel wordt verwerkt (bv. checklist, berekening, case).",
+          "skill": "research",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content Creatie",
+      "description": "Schrijf de drie AEO-optimale artikelen, elk als aparte taak. Gebruik de research-output voor direct-answer, FAQPage en E-E-A-T.",
+      "tasks": [
+        {
+          "title": "Schrijf artikel 1: Maatschappelijk teamuitje",
+          "description": "Schrijf het artikel 'Maatschappelijk teamuitje: zo koppel je teamgeluk aan sociale impact'. Verwerk de Geluksmomenten Score en AEO-structuur.",
+          "skill": "content-writer",
+          "dependencies": [
+            "SEO-analyse snippet-posities en concurrenten",
+            "Doelgroepanalyse en keyword mapping",
+            "Conceptontwikkeling Geluksmomenten Score"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 2: WKR teambuilding 2026",
+          "description": "Schrijf het artikel 'WKR teambuilding 2026: wat mag wel en wat niet (fiscaal)'. Verwerk de Geluksmomenten Score en AEO-structuur.",
+          "skill": "content-writer",
+          "dependencies": [
+            "SEO-analyse snippet-posities en concurrenten",
+            "Doelgroepanalyse en keyword mapping",
+            "Conceptontwikkeling Geluksmomenten Score"
+          ]
+        },
+        {
+          "title": "Schrijf artikel 3: CSRD en teambuilding",
+          "description": "Schrijf het artikel 'CSRD en teambuilding: zo vink je maatschappelijke impact aan (ESRS S1)'. Verwerk de Geluksmomenten Score en AEO-structuur.",
+          "skill": "content-writer",
+          "dependencies": [
+            "SEO-analyse snippet-posities en concurrenten",
+            "Doelgroepanalyse en keyword mapping",
+            "Conceptontwikkeling Geluksmomenten Score"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Redactie & Beoordeling",
+      "description": "Redigeer en beoordeel de artikelen op consistentie, AEO-optimalisatie en E-E-A-T-signalen.",
+      "tasks": [
+        {
+          "title": "Editor review van alle artikelen",
+          "description": "Controleer de drie artikelen op taal, structuur, interne links, en correcte verwerking van Geluksmomenten Score en AEO-principes. Pas aan waar nodig.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Schrijf artikel 1: Maatschappelijk teamuitje",
+            "Schrijf artikel 2: WKR teambuilding 2026",
+            "Schrijf artikel 3: CSRD en teambuilding"
+          ]
+        },
+        {
+          "title": "Beoordeling (content-judge) van alle artikelen",
+          "description": "Beoordeel de artikelen op feitelijke juistheid, SEO-compliance en E-E-A-T. Geef goedkeuring voor publicatie of stuur terug voor aanpassingen.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Editor review van alle artikelen"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatievoorbereiding",
+      "description": "Plaats elk artikel in de Wachtrij ter review door een mens (geen auto-publicatie).",
+      "tasks": [
+        {
+          "title": "Publiceer artikel 1 in wachtrij",
+          "description": "Stage het artikel 'Maatschappelijk teamuitje' in de publicatiewachtrij met de juiste metadata, klaar voor menselijke review.",
+          "skill": "publisher",
+          "dependencies": [
+            "Beoordeling (content-judge) van alle artikelen"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 2 in wachtrij",
+          "description": "Stage het artikel 'WKR teambuilding 2026' in de publicatiewachtrij met de juiste metadata, klaar voor menselijke review.",
+          "skill": "publisher",
+          "dependencies": [
+            "Beoordeling (content-judge) van alle artikelen"
+          ]
+        },
+        {
+          "title": "Publiceer artikel 3 in wachtrij",
+          "description": "Stage het artikel 'CSRD en teambuilding' in de publicatiewachtrij met de juiste metadata, klaar voor menselijke review.",
+          "skill": "publisher",
+          "dependencies": [
+            "Beoordeling (content-judge) van alle artikelen"
+          ]
+        }
+      ]
+    }
+  ]
+}

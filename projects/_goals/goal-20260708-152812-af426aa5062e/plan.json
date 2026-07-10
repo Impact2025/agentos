@@ -1,0 +1,32 @@
+{
+  "plan_summary": "Deterministisch plan voor: Bouw een robuuste Mission Radar-signaalgeschiedenis voor Teambuilding met Impact op: 50+ actieve signalen, wekelijks scanrapport op basis van de teambuildingmet",
+  "estimated_duration": "2-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & analyse",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Analyseer beschikbare data voor teambuildingmetimpact",
+          "description": "Gebruik GSC-data, content-gap-analyse en bestaande kennisbank om de aanpak voor teambuildingmetimpact te onderbouwen. Lever een beknopt meetplan/analyse (geen live analytics-calls).",
+          "skill": "analyst",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content creatie",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Maak ondersteunend document (checklist/gids/template) voor teambuildingmetimpact",
+          "description": "Schrijf het ondersteunende document (checklist, lead-magnet, one-pager, gids of template) dat hoort bij teambuildingmetimpact.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Analyseer beschikbare data voor teambuildingmetimpact"
+          ]
+        }
+      ]
+    }
+  ]
+}

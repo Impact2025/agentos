@@ -1,0 +1,117 @@
+{
+  "plan_summary": "Identificeer, prioriteer, los op, test en rol de bugfixes uit voor de Datingassistent.",
+  "estimated_duration": "3-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Bug Identifieren & Prioriteren",
+      "description": "Verzamel en analyseer bugs, stel prioriteiten vast op basis van impact.",
+      "tasks": [
+        {
+          "title": "Verzamel bugs uit feedback en logs",
+          "description": "Verzamel alle gemelde bugs via gebruikersfeedback, foutmeldingen en systeemlogs.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Analyseer ernst en impact",
+          "description": "Beoordeel per bug de ernst (kritiek/hoog/midden/laag) en de impact op gebruikers.",
+          "skill": "analyst",
+          "dependencies": [
+            0
+          ]
+        },
+        {
+          "title": "Stel prioriteitenlijst op",
+          "description": "Maak een geordende lijst van bugs op basis van ernst en impact, met aanbevolen volgorde van oplossen.",
+          "skill": "analyst",
+          "dependencies": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Bugfixes Implementeren",
+      "description": "Voer de daadwerkelijke correcties uit op tekst, UI en configuratie.",
+      "tasks": [
+        {
+          "title": "Los tekstuele bugs op in antwoorden",
+          "description": "Corrigeer foutieve of onduidelijke antwoorden van de assistent, inclusief spelfouten.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Pas UI-aanpassingen aan voor layout issues",
+          "description": "Herstel visuele problemen zoals verkeerde plaatsing, kleuren of lettertypen.",
+          "skill": "designer",
+          "dependencies": []
+        },
+        {
+          "title": "Review en keur de fixes goed",
+          "description": "Controleer of alle toegepaste fixes correct zijn en voldoen aan de gestelde eisen.",
+          "skill": "content-editor",
+          "dependencies": [
+            0,
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Testen & Valideren",
+      "description": "Test de doorgevoerde fixes en controleer op regressie.",
+      "tasks": [
+        {
+          "title": "Voer functionele tests uit op de fixes",
+          "description": "Test elke gefixeerde bug in een aparte testomgeving om te verifiëren dat het probleem is opgelost.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Valideer dat geen regressie optreedt",
+          "description": "Voer een korte regressietest uit op verwante functionaliteit om neveneffecten uit te sluiten.",
+          "skill": "analyst",
+          "dependencies": [
+            0
+          ]
+        },
+        {
+          "title": "Documenteer testresultaten",
+          "description": "Schrijf een beknopt testrapport met de resultaten van de uitgevoerde tests.",
+          "skill": "content-writer",
+          "dependencies": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Uitrol & Communicatie",
+      "description": "Bereid de release voor, rol de fixes uit en informeer de gebruikers.",
+      "tasks": [
+        {
+          "title": "Bereid release notes voor",
+          "description": "Stel een overzichtelijke lijst op van alle doorgevoerde bugfixes en eventuele wijzigingen.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Stage de update in de wachtrij",
+          "description": "Plaats de gecorrigeerde versie klaar in de publish-wachtrij voor menselijke goedkeuring.",
+          "skill": "publisher",
+          "dependencies": [
+            0
+          ]
+        },
+        {
+          "title": "Communiceer naar gebruikers",
+          "description": "Stuur een aankondiging via e-mail of melding in de app over de beschikbare bugfixes.",
+          "skill": "outreach",
+          "dependencies": [
+            1
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "plan_summary": "Deterministisch plan voor: Per maand 4 goedgekeurde Mission Radar-signalen omzetten in gepubliceerde AEO-listicles op weareimpact.nl via de auto-AEO conveyor (listicle, video, reddit). Fo",
+  "estimated_duration": "2-5 dagen",
+  "phases": [
+    {
+      "title": "Uitvoering",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Werk het doel uit voor weareimpact",
+          "description": "Per maand 4 goedgekeurde Mission Radar-signalen omzetten in gepubliceerde AEO-listicles op weareimpact.nl via de auto-AEO conveyor (listicle, video, reddit). Focus: AI voor zorg/welzijn/gemeenten, sociaal domein, LEGO Serious Play, change management. Human-in-the-loop: nooit auto-publiceren, altijd menselijke review-gate.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

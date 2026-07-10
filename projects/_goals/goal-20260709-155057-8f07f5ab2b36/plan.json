@@ -1,0 +1,108 @@
+{
+  "plan_summary": "Identificeer 40 backlink-bronnen, prioriteer top 20, stuur gepersonaliseerde pitches, schrijf en stage 3 gastcolumns, en monitor voortgang naar 25 nieuwe backlinks binnen 30 dagen.",
+  "estimated_duration": "30 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Bronidentificatie",
+      "description": "Inventariseer en prioriteer haalbare backlink-bronnen binnen de doelgroepen (welzijnskoepels, VNG, gemeenten, ANBI-directories, brancheverenigingen).",
+      "tasks": [
+        {
+          "title": "Identificeer 40 backlink-bronnen via doelsites en databases",
+          "description": "Doorzoek welzijnskoepels (e.g. Movisie), VNG-websites, gemeentelijke partnerpagina's, ANBI-directories en brancheverenigingen en maak een longlist van 40 sites die gastposts of backlinks toestaan.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Prioriteer top 20 bronnen op relevantie en domeinautoriteit",
+          "description": "Analyseer de longlist met behulp van SEO-tools (Ahrefs/Soovox) en kies de 20 meest kansrijke bronnen op basis van domeinautoriteit, thematische relevantie en bestaande backlinkprofiel.",
+          "skill": "analyst",
+          "dependencies": [
+            "Identificeer 40 backlink-bronnen via doelsites en databases"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Outreach & Pitches",
+      "description": "Stel gepersonaliseerde gastblog-pitches op voor de top 20 bronnen en leg contact met de redacties.",
+      "tasks": [
+        {
+          "title": "Schrijf en verstuur 20 gepersonaliseerde gastblog-pitches",
+          "description": "Stel per bron een op maat gemaakte pitch op (onderwerp, waardepropositie, voorbeeldtitels) en verstuur deze via e-mail of contactformulier. Registreer de respons.",
+          "skill": "outreach",
+          "dependencies": []
+        },
+        {
+          "title": "Verzamel en documenteer reacties en toezeggingen",
+          "description": "Houd een overzicht bij van wie reageert, welke bronnen akkoord gaan met een gastcolumn, en welke onderwerpen zij prefereren. Selecteer 3 partners voor de gastcolumns.",
+          "skill": "analyst",
+          "dependencies": [
+            "Schrijf en verstuur 20 gepersonaliseerde gastblog-pitches"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Gastcolumns (1 & 2) schrijven en stagen",
+      "description": "Schrijf twee gastcolumns voor toegezegde partner-sites en plaats ze klaar voor review in de Wachtrij.",
+      "tasks": [
+        {
+          "title": "Schrijf gastcolumn voor partner A",
+          "description": "Schrijf een volledige gastcolumn van 800-1200 woorden over een relevant onderwerp voor de eerste partner-site, inclusief interne links naar WeAreImpact en backlink. Verwerk feedback van partner.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Stage gastcolumn A in Wachtrij voor review",
+          "description": "Zet de geschreven gastcolumn klaar in het publicatie-systeem (Wachtrij) zodat de projecteigenaar deze kan controleren en vrijgeven.",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf gastcolumn voor partner A"
+          ]
+        },
+        {
+          "title": "Schrijf gastcolumn voor partner B",
+          "description": "Schrijf een tweede gastcolumn voor partner B, wederom op maat geschreven met waardevolle content en backlink(s) naar WeAreImpact.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Stage gastcolumn B in Wachtrij voor review",
+          "description": "Zet de tweede gastcolumn klaar in de Wachtrij ter goedkeuring.",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf gastcolumn voor partner B"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Gastcolumn 3 schrijven, stagen en monitoring",
+      "description": "Schrijf de derde gastcolumn, stage deze, en start de monitoring van de backlink-acquisitie richting de 25 nieuwe links.",
+      "tasks": [
+        {
+          "title": "Schrijf gastcolumn voor partner C",
+          "description": "Schrijf de derde gastcolumn voor partner C met dezelfde kwaliteitseisen.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Stage gastcolumn C in Wachtrij voor review",
+          "description": "Zet de derde gastcolumn in de Wachtrij voor goedkeuring.",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf gastcolumn voor partner C"
+          ]
+        },
+        {
+          "title": "Monitor backlink-acquisitie en rapporteer voortgang",
+          "description": "Gebruik SEO-tools om dagelijks nieuwe backlinks te detecteren, de voortgang te meten richting 25 links, en wekelijkse rapportages op te stellen. Volg ook alle uitgestuurde pitches en publicaties.",
+          "skill": "analyst",
+          "dependencies": [
+            "Stage gastcolumn C in Wachtrij voor review"
+          ]
+        }
+      ]
+    }
+  ]
+}

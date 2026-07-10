@@ -1,0 +1,32 @@
+{
+  "plan_summary": "Deterministisch plan voor: Zet goedgekeurde Mission Radar-signalen om in gepubliceerde SEO-content voor pootgelukkig.nl volgens de wereldklasse-SEO-regels (focuskeyword in titel + intro, ",
+  "estimated_duration": "2-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 2: Content creatie",
+      "description": "",
+      "tasks": [
+        {
+          "title": "Schrijf artikel 1 voor pootgelukkig",
+          "description": "Schrijf een publicabel artikel (inclusief FAQPage-sectie waar zinvol) voor pootgelukkig. Baseer op de research-output en bestaande kennisbank.",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 5: Publicatie (review-gate)",
+      "description": "Alle artikelen staged in de Wachtrij voor menselijke goedkeuring.",
+      "tasks": [
+        {
+          "title": "Publiceer artikel 1 (pootgelukkig)",
+          "description": "Stage artikel 1 in de Wachtrij ter review (mens keurt pas goed).",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf artikel 1 voor pootgelukkig"
+          ]
+        }
+      ]
+    }
+  ]
+}

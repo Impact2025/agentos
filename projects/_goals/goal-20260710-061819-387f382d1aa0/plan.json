@@ -1,0 +1,18 @@
+{
+  "plan_summary": "Identificeer, analyseer, los op en implementeer bugs in Skillkaart met een gefaseerde aanpak van inventarisatie tot productiedeploy.",
+  "estimated_duration": "1-2 weken",
+  "phases": [
+    {
+      "title": "Uitvoering",
+      "description": "Automatisch gegenereerd plan voor: Bugfixes afhandelen",
+      "tasks": [
+        {
+          "title": "Bugfixes afhandelen",
+          "description": "Voer uit: Bugfixes afhandelen",
+          "skill": "content-writer",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

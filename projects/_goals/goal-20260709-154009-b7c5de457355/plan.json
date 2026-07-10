@@ -1,0 +1,93 @@
+{
+  "plan_summary": "Voer keyword research uit, identificeer 20 bronnen, schrijf gepersonaliseerde outreach- en gastblogvoorstellen per bron, en publiceer een 'Partner & Impact'-pagina ter review. Geen auto-versturen.",
+  "estimated_duration": "4-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Bronidentificatie",
+      "description": "Grondig keyword-onderzoek en het vinden van 20 relevante backlink- en gastblogbronnen.",
+      "tasks": [
+        {
+          "title": "Keyword-onderzoek",
+          "description": "Analyseer zoekwoorden zoals vrijwilligers teambuilding, maatschappelijke stage, buurtinitiatief team, social return on investment. Bepaal welke termen welzijnskoepels, VNG en ANBI-partners gebruiken en rangschik op volume en relevantie.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Identificeer 20 backlink- en gastblogbronnen",
+          "description": "Gebruik de keyword-resultaten om 20 websites te selecteren die gastposts accepteren of backlinkmogelijkheden bieden op het snijvlak van teambuilding en sociale impact. Verzamel contactgegevens en relevantie.",
+          "skill": "research",
+          "dependencies": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Contentcreatie – batch 1 (bronnen 1-10) & partnerpagina",
+      "description": "Schrijf de eerste 10 outreach-concepten inclusief gastblog-voorstellen, plus de nieuwe partner- en impactpagina.",
+      "tasks": [
+        {
+          "title": "Schrijf outreach-concepten en gastblog-voorstellen voor bronnen 1-10",
+          "description": "Voor elke van de eerste 10 bronnen: een gepersonaliseerde outreach-e-mail en een op maat gemaakt gastblog-voorstel van 300-500 woorden, gebaseerd op de gevonden keywords.",
+          "skill": "content-writer",
+          "dependencies": [
+            2
+          ]
+        },
+        {
+          "title": "Schrijf de 'Partner & Impact'-pagina",
+          "description": "Creëer een nieuwe pagina voor ictusgo.nl die het partnerprogramma, sociale impact en mogelijkheden tot samenwerking beschrijft. Verwerk de relevante zoekwoorden.",
+          "skill": "content-writer",
+          "dependencies": [
+            1
+          ]
+        },
+        {
+          "title": "Stage 'Partner & Impact'-pagina in Wachtrij ter review",
+          "description": "Zet de geschreven pagina klaar in de publicatiewachtrij met volledige metadata (title, description, slug) voor menselijke goedkeuring.",
+          "skill": "publisher",
+          "dependencies": [
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Contentcreatie – batch 2 (bronnen 11-20)",
+      "description": "Schrijf de resterende 10 outreach-concepten en gastblog-voorstellen.",
+      "tasks": [
+        {
+          "title": "Schrijf outreach-concepten en gastblog-voorstellen voor bronnen 11-20",
+          "description": "Voor elke van de laatste 10 bronnen: een gepersonaliseerde outreach-e-mail en een op maat gemaakt gastblog-voorstel van 300-500 woorden, gebaseerd op de gevonden keywords.",
+          "skill": "content-writer",
+          "dependencies": [
+            2
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Kwaliteitsborging & Oplevering",
+      "description": "Controleer alle materialen op consistentie en maak ze gereed voor handmatige outreach.",
+      "tasks": [
+        {
+          "title": "Redactie & consistentiecheck van alle outreach-materialen",
+          "description": "Loop alle 20 outreach-concepten en gastblog-voorstellen na op toon, spelling, keyword-integratie en uniformiteit. Voer correcties uit waar nodig.",
+          "skill": "content-editor",
+          "dependencies": [
+            3,
+            6
+          ]
+        },
+        {
+          "title": "Eindoordeel en vrijgave voor handmatig versturen",
+          "description": "Beoordeel de kwaliteit van alle documenten en markeer ze als gereed voor handmatige outreach. Geef goedkeuring voor gebruik.",
+          "skill": "content-judge",
+          "dependencies": [
+            7
+          ]
+        }
+      ]
+    }
+  ]
+}

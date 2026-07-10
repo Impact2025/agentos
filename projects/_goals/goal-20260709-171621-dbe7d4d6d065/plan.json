@@ -1,0 +1,163 @@
+{
+  "plan_summary": "Binnen 90 dagen #1 op 4 primaire zoektermen via 4 dedicated landingspagina’s en 20 outreach-bronnen met gastblogconcepten, gefaseerd van research tot publicatie en outreach.",
+  "estimated_duration": "90 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Strategie",
+      "description": "Basis leggen met keyword-analyse, concurrentie-inzicht, bewijslastverzameling en interne linkstructuur. Ook start met aanleggen outreach-lijst.",
+      "tasks": [
+        {
+          "title": "Keyword gap-analyse uitvoeren (GSC + Ahrefs/SE Ranking)",
+          "description": "Identificeer ontbrekende kansen voor de 4 focus-zoektermen en bepaal de benodigde zoekvolume, moeilijkheid en intentie.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Concurrentie-analyse en bewijslast inventariseren",
+          "description": "Analyseer top-10 concurrenten per zoekterm, verzamel bestaande cases (SROI, LEGO Serious Play, IctusGo) en markeer unieke proposities.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Interne linkstructuur en URL-schema opzetten",
+          "description": "Ontwerp een silo-structuur voor de 4 landingspagina’s met interne links naar IctusGo, Bijeen en relevante subpagina’s.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "title": "Outreach-bronnenlijst samenstellen (20 stuks)",
+          "description": "Selecteer 20 potentiële bronnen: gemeenten, VNG, welzijnskoepels, vakbladen sociaal domein. Vermeld contactpersonen en kanalen.",
+          "skill": "research",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content Creatie Landingspagina’s",
+      "description": "Schrijf 4 aparte landingspagina’s, elk geoptimaliseerd voor exact één primaire zoekterm, met FAQPage structured data, cases en interne links.",
+      "tasks": [
+        {
+          "title": "Schrijf landingspagina ‘AI consultant sociaal domein’",
+          "description": "Ontwerp een complete landingspagina met H1, meta, FAQ, cases en CTA. Gericht op zoekterm 1.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Keyword gap-analyse uitvoeren",
+            "Concurrentie-analyse en bewijslast inventariseren",
+            "Interne linkstructuur en URL-schema opzetten"
+          ]
+        },
+        {
+          "title": "Schrijf landingspagina ‘Interim manager digitalisering welzijn’",
+          "description": "Zelfde structuur als boven, maar gericht op zoekterm 2.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Keyword gap-analyse uitvoeren",
+            "Concurrentie-analyse en bewijslast inventariseren",
+            "Interne linkstructuur en URL-schema opzetten"
+          ]
+        },
+        {
+          "title": "Schrijf landingspagina ‘Procesoptimalisatie gemeenten AI’",
+          "description": "Zelfde structuur, gericht op zoekterm 3.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Keyword gap-analyse uitvoeren",
+            "Concurrentie-analyse en bewijslast inventariseren",
+            "Interne linkstructuur en URL-schema opzetten"
+          ]
+        },
+        {
+          "title": "Schrijf landingspagina ‘AI implementatie zorg en welzijn’",
+          "description": "Zelfde structuur, gericht op zoekterm 4.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Keyword gap-analyse uitvoeren",
+            "Concurrentie-analyse en bewijslast inventariseren",
+            "Interne linkstructuur en URL-schema opzetten"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Review, SEO-optimalisatie & Publicatievoorbereiding",
+      "description": "Alle 4 pagina’s worden inhoudelijk gereviewd, voorzien van structured data, meta-optimalisatie en in de Wachtrij geplaatst voor menselijke goedkeuring.",
+      "tasks": [
+        {
+          "title": "Inhoudelijke review en redactie van 4 pagina’s",
+          "description": "Controleer feiten, consistentie, toon en interne linkintegratie. Voeg waar nodig FAQ-structuur aan.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Schrijf landingspagina ‘AI consultant sociaal domein’",
+            "Schrijf landingspagina ‘Interim manager digitalisering welzijn’",
+            "Schrijf landingspagina ‘Procesoptimalisatie gemeenten AI’",
+            "Schrijf landingspagina ‘AI implementatie zorg en welzijn’"
+          ]
+        },
+        {
+          "title": "SEO-optimalisatie (structured data, meta, interne links)",
+          "description": "Voeg FAQPage JSON-LD toe, optimaliseer meta-titles/descriptions, pas interne links aan naar IctusGo en Bijeen.",
+          "skill": "seo",
+          "dependencies": [
+            "Inhoudelijke review en redactie van 4 pagina’s"
+          ]
+        },
+        {
+          "title": "Publiceer pagina’s 1 en 2 in Wachtrij",
+          "description": "Zet de eerste twee landingspagina’s klaar in het publicatie-systeem (Wachtrij voor menselijke review).",
+          "skill": "publisher",
+          "dependencies": [
+            "SEO-optimalisatie (structured data, meta, interne links)"
+          ]
+        },
+        {
+          "title": "Publiceer pagina’s 3 en 4 in Wachtrij",
+          "description": "Zet pagina’s 3 en 4 klaar in de Wachtrij voor menselijke review.",
+          "skill": "publisher",
+          "dependencies": [
+            "SEO-optimalisatie (structured data, meta, interne links)"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Outreach & Autoriteit Verankeren",
+      "description": "Ontwikkel 20 outreach-e-mails en 2 gastblogconcepten voor de belangrijkste bronnen, klaar voor verzending. Plaats gastblogconcepten in Wachtrij.",
+      "tasks": [
+        {
+          "title": "Schrijf 20 outreach-e-mails (concepten)",
+          "description": "Maak een set van 20 gepersonaliseerde e-mails voor de geselecteerde bronnen, met aanbod voor gastblog of samenwerking.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Outreach-bronnenlijst samenstellen (20 stuks)"
+          ]
+        },
+        {
+          "title": "Schrijf 2 gastblog-concepten (voorbeeld voor top-prioriteit bronnen)",
+          "description": "Ontwikkel twee volledig uitgewerkte gastblogartikelen gericht op ‘AI in sociaal domein’ en ‘digitale transformatie welzijn’, met concrete cases.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Outreach-bronnenlijst samenstellen (20 stuks)",
+            "Inhoudelijke review en redactie van 4 pagina’s"
+          ]
+        },
+        {
+          "title": "Redactionele check outreach en gastblog",
+          "description": "Controleer e-mails en gastblog-concepten op toon, feiten, personalisatie en call-to-action.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Schrijf 20 outreach-e-mails (concepten)",
+            "Schrijf 2 gastblog-concepten (voorbeeld voor top-prioriteit bronnen)"
+          ]
+        },
+        {
+          "title": "Zet gastblog-concepten klaar in Wachtrij (ter goedkeuring versturen)",
+          "description": "Plaats de twee gastblog-concepten in het publicatiesysteem, klaar voor menselijke review en uiteindelijke verzending naar de bronnen.",
+          "skill": "publisher",
+          "dependencies": [
+            "Redactionele check outreach en gastblog"
+          ]
+        }
+      ]
+    }
+  ]
+}

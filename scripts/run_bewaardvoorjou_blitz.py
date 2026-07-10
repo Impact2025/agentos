@@ -10,9 +10,9 @@ from backend.shared.database import get_conn
 
 async def main():
     site = sites_service.get_site("1e3e5bc6-982e-489f-bfb9-22313b33edb4")
-    print(f"[blitz] start content-batch voor {site['name']} (count=3)...")
+    print(f"[blitz] start content-batch voor {site['name']} (count=1)...")
     try:
-        job_ids = await content_pipeline.run_content_batch(site, count=3)
+        job_ids = await content_pipeline.run_content_batch(site, count=2, light_mode=True)
         print(f"[blitz] aangemaakte jobs: {job_ids}")
     except Exception as e:
         print(f"[blitz] fout: {e}")

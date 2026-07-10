@@ -1,0 +1,1 @@
+Inventariseer, implementeer, test en deploy alle bugs voor Ictusgo volgens prioriteit, met gestructureerde fasen en duidelijke afhankelijkheden.

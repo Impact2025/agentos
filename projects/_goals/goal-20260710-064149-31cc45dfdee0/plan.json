@@ -1,0 +1,93 @@
+{
+  "plan_summary": "Selecteer 10 enriched leads, maak gepersonaliseerde outreach-berichten in twee batches, laat deze reviewen en verstuur ze via de scheduler – alles binnen één dag.",
+  "estimated_duration": "1 dag (vandaag)",
+  "phases": [
+    {
+      "title": "Fase 1: Leadselectie & Sjabloonontwerp",
+      "description": "Haal de juiste leads op en maak een basis-sjabloon voor personalisatie.",
+      "tasks": [
+        {
+          "title": "Exporteer 10 enriched leads uit CRM",
+          "description": "Filter leads met status 'enriched' en exporteer naam, email, organisatie en relevante context naar een werkblad.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Stel gepersonaliseerd outreach-sjabloon op per segment",
+          "description": "Schrijf een aanpasbaar sjabloon met placeholders voor personalisatie, afgestemd op het type lead (bijv. zorgprofessional, onderwijs).",
+          "skill": "content-writer",
+          "dependencies": [
+            "Exporteer 10 enriched leads uit CRM"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Berichtcreatie in batches",
+      "description": "Schrijf de 10 gepersonaliseerde berichten in twee groepen van 5.",
+      "tasks": [
+        {
+          "title": "Schrijf 5 gepersonaliseerde outreach-berichten (batch 1)",
+          "description": "Vul het sjabloon in voor de eerste 5 leads met specifieke aanhef, context en call-to-action.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Stel gepersonaliseerd outreach-sjabloon op per segment"
+          ]
+        },
+        {
+          "title": "Schrijf 5 gepersonaliseerde outreach-berichten (batch 2)",
+          "description": "Vul het sjabloon in voor de resterende 5 leads.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Stel gepersonaliseerd outreach-sjabloon op per segment"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Redactie & Goedkeuring",
+      "description": "Controleer alle berichten op juistheid, consistentie en stijl, en keur ze goed voor verzending.",
+      "tasks": [
+        {
+          "title": "Redigeer en corrigeer alle 10 berichten",
+          "description": "Loop elk bericht na op spelfouten, personalisatie en consistentie met het sjabloon.",
+          "skill": "content-editor",
+          "dependencies": [
+            "Schrijf 5 gepersonaliseerde outreach-berichten (batch 1)",
+            "Schrijf 5 gepersonaliseerde outreach-berichten (batch 2)"
+          ]
+        },
+        {
+          "title": "Keur berichten goed voor publicatie",
+          "description": "Beoordeel de uiteindelijke berichten en markeer ze als 'goedgekeurd' voor versturing.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Redigeer en corrigeer alle 10 berichten"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Verzending via scheduler",
+      "description": "Zet de goedgekeurde berichten klaar in de scheduler en activeer verzending.",
+      "tasks": [
+        {
+          "title": "Laad 10 berichten in scheduler-wachtrij",
+          "description": "Kopieer elk goedgekeurd bericht naar de scheduler interface en stel de verzendtijd in (direct).",
+          "skill": "publisher",
+          "dependencies": [
+            "Keur berichten goed voor publicatie"
+          ]
+        },
+        {
+          "title": "Activeer verzending van de wachtrij",
+          "description": "Start de scheduler om alle 10 berichten nu te versturen en controleer op fouten.",
+          "skill": "outreach",
+          "dependencies": [
+            "Laad 10 berichten in scheduler-wachtrij"
+          ]
+        }
+      ]
+    }
+  ]
+}

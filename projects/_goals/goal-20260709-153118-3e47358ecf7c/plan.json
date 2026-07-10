@@ -1,0 +1,102 @@
+{
+  "plan_summary": "Analyseer de huidige offsite-positie van ictusgo.nl via GSC-data, identificeer 25 relevante backlink-bronnen, ontwikkel een gestandaardiseerd outreach-concept, schrijf 25 gepersonaliseerde gastblog-voorstellen in drie batches, en publiceer een partner-pagina die de sociale-impact-relaties toont.",
+  "estimated_duration": "4-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Data-analyse",
+      "description": "Analyseer de huidige offsite-positie en identificeer 25 potentiële backlink-bronnen binnen de doelgroep (welzijnskoepels, VNG, brancheverenigingen, ANBI-directory's, regio Haarlemmermeer/Schiphol partners).",
+      "tasks": [
+        {
+          "title": "Analyseer huidige offsite-positie via GSC-data",
+          "description": "Exporteer en analyseer backlink- en domeingegevens uit Google Search Console om de huidige backlink-profiel, verwijzende domeinen en ankerteksten te beoordelen.",
+          "skill": "analyst",
+          "dependencies": []
+        },
+        {
+          "title": "Identificeer 25 relevante backlink-bronnen",
+          "description": "Stel een lijst samen van 25 potentiële bronnen (welzijnskoepels, VNG, brancheverenigingen, ANBI-directory's, regionale partners) op basis van relevantie, domeinautoriteit en kans op samenwerking.",
+          "skill": "research",
+          "dependencies": [
+            "Analyseer huidige offsite-positie via GSC-data"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Strategie & Templates",
+      "description": "Ontwikkel de partner-pagina en een gestandaardiseerd outreach-concept dat als basis dient voor alle gepersonaliseerde voorstellen.",
+      "tasks": [
+        {
+          "title": "Schrijf partner-pagina content voor ictusgo.nl",
+          "description": "Schrijf de tekst voor een nieuwe partner-pagina die de sociale-impact-relaties toont, inclusief context van de samenwerkingen en voordelen voor partners.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Identificeer 25 relevante backlink-bronnen"
+          ]
+        },
+        {
+          "title": "Stage partner-pagina in wachtrij ter review",
+          "description": "Zet de voltooide partner-pagina klaar in de publicatiewachtrij, zodat een menselijke redacteur deze kan beoordelen en publiceren.",
+          "skill": "publisher",
+          "dependencies": [
+            "Schrijf partner-pagina content voor ictusgo.nl"
+          ]
+        },
+        {
+          "title": "Ontwikkel gestandaardiseerd outreach-concept en gastblog-template",
+          "description": "Maak een herbruikbaar template voor outreach-e-mails en een gastblog-voorstelstructuur, inclusief variabele velden voor personalisatie per bron.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Identificeer 25 relevante backlink-bronnen"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Schrijf eerste batch gepersonaliseerde concepten",
+      "description": "Pas het template toe op de eerste 16 bronnen en schrijf gepersonaliseerde outreach-concepten met gastblog-voorstellen.",
+      "tasks": [
+        {
+          "title": "Schrijf gepersonaliseerd outreach-concept voor bron 1-8",
+          "description": "Schrijf voor de eerste 8 bronnen een gepersonaliseerd outreach-concept en bijbehorend gastblog-voorstel, gebaseerd op de template en specifieke kenmerken van elke bron.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Ontwikkel gestandaardiseerd outreach-concept en gastblog-template"
+          ]
+        },
+        {
+          "title": "Schrijf gepersonaliseerd outreach-concept voor bron 9-16",
+          "description": "Schrijf voor bron 9-16 een gepersonaliseerd outreach-concept en gastblog-voorstel, parallel aan de eerste batch.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Ontwikkel gestandaardiseerd outreach-concept en gastblog-template"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Voltooi resterende concepten en redactionele review",
+      "description": "Schrijf de overige 9 concepten en voer een eindredactie uit over alle 25 stukken.",
+      "tasks": [
+        {
+          "title": "Schrijf gepersonaliseerd outreach-concept voor bron 17-25",
+          "description": "Schrijf voor de laatste 9 bronnen gepersonaliseerde outreach-concepten en gastblog-voorstellen.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Ontwikkel gestandaardiseerd outreach-concept en gastblog-template"
+          ]
+        },
+        {
+          "title": "Redactionele review en finalisatie van alle outreach-concepten",
+          "description": "Controleer alle 25 outreach-concepten op consistentie, personalisatie, toon en spelfouten, en finaliseer ze voor verzending (zonder automatisch te versturen).",
+          "skill": "content-editor",
+          "dependencies": [
+            "Schrijf gepersonaliseerd outreach-concept voor bron 1-8",
+            "Schrijf gepersonaliseerd outreach-concept voor bron 9-16",
+            "Schrijf gepersonaliseerd outreach-concept voor bron 17-25"
+          ]
+        }
+      ]
+    }
+  ]
+}

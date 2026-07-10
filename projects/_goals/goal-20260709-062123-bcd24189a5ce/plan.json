@@ -1,0 +1,117 @@
+{
+  "plan_summary": "Opstellen van een gedetailleerd deployment plan voor Bijeen, van huidige situatie-analyse tot definitieve oplevering en communicatie.",
+  "estimated_duration": "4-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Huidige status & vereisten",
+      "description": "Verzamel input over bestaande deployment processen en leg vereisten vast voor het nieuwe plan.",
+      "tasks": [
+        {
+          "id": "analysis-gsc",
+          "title": "Analyseer huidige deployment pipeline",
+          "description": "Doorloop bestaande documentatie en interview teamleden om huidige deployment stappen, knelpunten en gebruikte tools in kaart te brengen.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "requirements",
+          "title": "Documenteer functionele en technische vereisten",
+          "description": "Stel op basis van de analyse een lijst op van must-have en nice-to-have functionaliteiten voor de nieuwe deployment workflow.",
+          "skill": "analyst",
+          "dependencies": [
+            "analysis-gsc"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Planontwerp",
+      "description": "Ontwikkel het deployment plan met stappen, visualisatie en prioriteiten.",
+      "tasks": [
+        {
+          "id": "write-plan",
+          "title": "Schrijf deployment stappenplan",
+          "description": "Schrijf een helder stappenplan met rollen, verantwoordelijkheden en doorlooptijden per stap.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "id": "design-flow",
+          "title": "Ontwerp visueel deployment stroomschema",
+          "description": "Maak een overzichtelijk flowchart of diagram dat de volledige deployment cyclus weergeeft.",
+          "skill": "designer",
+          "dependencies": []
+        },
+        {
+          "id": "priorities",
+          "title": "Stel prioriteiten en mijlpalen op",
+          "description": "Bepaal de volgorde van implementatie, kritische mijlpalen en deadlines voor elke fase.",
+          "skill": "analyst",
+          "dependencies": [
+            "write-plan",
+            "design-flow"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Validatie en finalisatie",
+      "description": "Laat het conceptplan reviewen en risico’s beoordelen, voer verbeteringen door.",
+      "tasks": [
+        {
+          "id": "review-plan",
+          "title": "Review stappenplan en visualisaties",
+          "description": "Controleer het geschreven plan en de flowchart op volledigheid, consistentie en duidelijkheid.",
+          "skill": "content-editor",
+          "dependencies": [
+            "write-plan",
+            "design-flow"
+          ]
+        },
+        {
+          "id": "risk-assess",
+          "title": "Voer risicoanalyse uit op het plan",
+          "description": "Beoordeel de kwetsbaarheden in het plan en stel mitigerende maatregelen voor.",
+          "skill": "content-judge",
+          "dependencies": [
+            "write-plan"
+          ]
+        },
+        {
+          "id": "finalize",
+          "title": "Verwerk feedback en finaliseer document",
+          "description": "Neem de opmerkingen van review en risicoanalyse door, pas het plan aan en maak de definitieve versie.",
+          "skill": "content-writer",
+          "dependencies": [
+            "review-plan",
+            "risk-assess"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Oplevering en communicatie",
+      "description": "Publiceer het definitieve deployment plan en breng het team op de hoogte.",
+      "tasks": [
+        {
+          "id": "publish",
+          "title": "Publiceer definitief deployment plan",
+          "description": "Zet het goedgekeurde plan klaar in de gedeelde documentatie (bv. Obsidian, Notion) en plaats het in de reviewwachtrij voor de menselijke eindgoedkeuring.",
+          "skill": "publisher",
+          "dependencies": [
+            "finalize"
+          ]
+        },
+        {
+          "id": "communicate",
+          "title": "Communiceer plan naar betrokken teamleden",
+          "description": "Stuur een aankondiging met samenvatting, link en verwachte impact, en plan een korte kickoff-bijeenkomst.",
+          "skill": "outreach",
+          "dependencies": [
+            "publish"
+          ]
+        }
+      ]
+    }
+  ]
+}

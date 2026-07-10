@@ -1,0 +1,139 @@
+{
+  "plan_summary": "Zet 4 goedgekeurde Mission Radar-signalen om in SEO-content voor teambuildingmetimpact.nl, met 4 artikelen per maand, via de seed-blogs.js-pijplijn en menselijke review-wachtrij.",
+  "estimated_duration": "4 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Research & Strategie",
+      "description": "Analyseer goedgekeurde Mission Radar-signalen en voer SEO-onderzoek uit om de meest kansrijke onderwerpen te selecteren voor de 4 artikelen.",
+      "tasks": [
+        {
+          "id": "task1",
+          "title": "Mission Radar-signalen filteren en vertalen naar content-onderwerpen",
+          "description": "Selecteer 4 goedgekeurde signalen uit de Mission Radar die relevant zijn voor impact-day, bedrijfsvrijwilligerswerk of LEGO Serious Play hubs. Bepaal per signaal de invalshoek en kernboodschap.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "task2",
+          "title": "SEO-analyse voor geselecteerde onderwerpen",
+          "description": "Voer long-tail zoekwoordenonderzoek uit per geselecteerd onderwerp (GSC, SEMrush, AnswerThePublic). Bepaal de focus keywords, gerelateerde zoekintenties en optimaliseer de contentstructuur per artikel.",
+          "skill": "seo",
+          "dependencies": [
+            "task1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Content Creatie",
+      "description": "Schrijf 4 afzonderlijke artikelen/landingspagina's volgens de v2.0-regels (geen 'u', geen AI-woorden, eerste persoon Vincent, unieke slugs, geen parser-onvriendelijke syntax).",
+      "tasks": [
+        {
+          "id": "task3",
+          "title": "Schrijf artikel 1: impact-day",
+          "description": "Schrijf een artikel van 800-1200 woorden over impact-day, met focus op het geselecteerde signaal. Gebruik de v2.0-regels en de SEO-structuur uit fase 1.",
+          "skill": "content-writer",
+          "dependencies": [
+            "task2"
+          ]
+        },
+        {
+          "id": "task4",
+          "title": "Schrijf artikel 2: bedrijfsvrijwilligerswerk",
+          "description": "Schrijf een artikel van 800-1200 woorden over bedrijfsvrijwilligerswerk, met focus op het geselecteerde signaal. Gebruik de v2.0-regels en de SEO-structuur uit fase 1.",
+          "skill": "content-writer",
+          "dependencies": [
+            "task2"
+          ]
+        },
+        {
+          "id": "task5",
+          "title": "Schrijf artikel 3: LEGO Serious Play hubs",
+          "description": "Schrijf een artikel van 800-1200 woorden over LEGO Serious Play hubs, met focus op het geselecteerde signaal. Gebruik de v2.0-regels en de SEO-structuur uit fase 1.",
+          "skill": "content-writer",
+          "dependencies": [
+            "task2"
+          ]
+        },
+        {
+          "id": "task6",
+          "title": "Schrijf artikel 4: mix onderwerp (impact-day + bedrijfsvrijwilligerswerk)",
+          "description": "Schrijf een artikel van 800-1200 woorden over een combinatiethema (bijv. impact-day en bedrijfsvrijwilligerswerk), gebaseerd op het vierde signaal. Gebruik de v2.0-regels en de SEO-structuur uit fase 1.",
+          "skill": "content-writer",
+          "dependencies": [
+            "task2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Redactie & Beoordeling",
+      "description": "Controleer alle artikelen op stijl, consistentie, E-E-A-T en v2.0-naleving. Voer een kwaliteitsbeoordeling uit voordat ze naar de wachtrij gaan.",
+      "tasks": [
+        {
+          "id": "task7",
+          "title": "Redactionele bewerking van alle 4 artikelen",
+          "description": "Bewerk de 4 artikelen op grammatica, toon, structuur en naleving van de v2.0-regels. Zorg dat 'u' nergens voorkomt, geen AI-verklikkers, eerste persoon Vincent, unieke slugs.",
+          "skill": "content-editor",
+          "dependencies": [
+            "task3",
+            "task4",
+            "task5",
+            "task6"
+          ]
+        },
+        {
+          "id": "task8",
+          "title": "Kwaliteitsbeoordeling (content-judge) van de 4 artikelen",
+          "description": "Beoordeel elk artikel op E-E-A-T, lezerswaarde, zoekintentie-match en of het voldoet aan de gestelde doelen. Keur goed of stuur terug voor aanpassingen.",
+          "skill": "content-judge",
+          "dependencies": [
+            "task7"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: publicatievoorbereiding (seed-blogs.js & Wachtrij)",
+      "description": "Plaats elk goedgekeurd artikel in de seed-blogs.js-pijplijn en zet ze klaar in de menselijke Wachtrij voor definitieve publicatie.",
+      "tasks": [
+        {
+          "id": "task9",
+          "title": "Plaats artikel 1 in Wachtrij via publisher",
+          "description": "Configureer artikel 1 in seed-blogs.js en zet het klaar in de Wachtrij (staging). De mens keurt pas goed voor live publicatie.",
+          "skill": "publisher",
+          "dependencies": [
+            "task8"
+          ]
+        },
+        {
+          "id": "task10",
+          "title": "Plaats artikel 2 in Wachtrij via publisher",
+          "description": "Configureer artikel 2 in seed-blogs.js en zet het klaar in de Wachtrij.",
+          "skill": "publisher",
+          "dependencies": [
+            "task8"
+          ]
+        },
+        {
+          "id": "task11",
+          "title": "Plaats artikel 3 in Wachtrij via publisher",
+          "description": "Configureer artikel 3 in seed-blogs.js en zet het klaar in de Wachtrij.",
+          "skill": "publisher",
+          "dependencies": [
+            "task8"
+          ]
+        },
+        {
+          "id": "task12",
+          "title": "Plaats artikel 4 in Wachtrij via publisher",
+          "description": "Configureer artikel 4 in seed-blogs.js en zet het klaar in de Wachtrij.",
+          "skill": "publisher",
+          "dependencies": [
+            "task8"
+          ]
+        }
+      ]
+    }
+  ]
+}

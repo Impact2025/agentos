@@ -1,0 +1,108 @@
+{
+  "plan_summary": "Voer een gestructureerde update van de Ictusgo-backlog uit: inventariseer, verrijk, voeg nieuwe items toe en finaliseer de backlog.",
+  "estimated_duration": "3-5 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Backlog audit",
+      "description": "Breng de huidige backlog in kaart, beoordeel relevantie en categoriseer items op prioriteit.",
+      "tasks": [
+        {
+          "title": "Inventarisatie van huidige backlog items",
+          "description": "Verzamel alle bestaande backlog items met hun status, labels en eigenaar.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Beoordeling van relevantie per item",
+          "description": "Beoordeel of elk item nog bijdraagt aan de huidige projectdoelen en verwijder obsoleten.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Inventarisatie van huidige backlog items"
+          ]
+        },
+        {
+          "title": "Categoriseren in prioriteitsklassen",
+          "description": "Wijs Must-have, Should-have en Nice-to-have toe op basis van business impact.",
+          "skill": "analyst",
+          "dependencies": [
+            "Beoordeling van relevantie per item"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Backlog verrijking",
+      "description": "Verduidelijk beschrijvingen, voeg schattingen toe en verwijder dubbele items.",
+      "tasks": [
+        {
+          "title": "Beschrijvingen herschrijven voor onduidelijke items",
+          "description": "Geef elk item een heldere titel en acceptatiecriteria zodat het direct uitvoerbaar is.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "title": "Toevoegen van schattingen en prioriteitsvolgorde",
+          "description": "Voorzie items van een eerste inschatting (story points) en sorteer op prioriteit.",
+          "skill": "analyst",
+          "dependencies": [
+            "Beschrijvingen herschrijven voor onduidelijke items"
+          ]
+        },
+        {
+          "title": "Identificeren en verwijderen van dubbele items",
+          "description": "Zoek naar overlappingen en merge of verwijder dubbele backlog items.",
+          "skill": "content-editor",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Nieuwe items toevoegen",
+      "description": "Vul lacunes in de backlog op basis van feedback en schrijf nieuwe user stories.",
+      "tasks": [
+        {
+          "title": "Opstellen van lijst met ontbrekende features",
+          "description": "Analyseer gebruikersfeedback en roadmaps om hiaten te identificeren.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Schrijven van user stories voor nieuwe items",
+          "description": "Formuleer elke ontbrekende feature als een complete user story met context.",
+          "skill": "content-writer",
+          "dependencies": [
+            "Opstellen van lijst met ontbrekende features"
+          ]
+        },
+        {
+          "title": "Review van nieuwe user stories door product owner",
+          "description": "Laat de product owner de toegevoegde stories valideren voordat ze worden opgenomen.",
+          "skill": "content-judge",
+          "dependencies": [
+            "Schrijven van user stories voor nieuwe items"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Backlog finaliseren",
+      "description": "Werk de tool bij en communiceer de wijzigingen naar het team.",
+      "tasks": [
+        {
+          "title": "Updaten van de backlog in projectmanagement tool",
+          "description": "Voer alle wijzigingen door (toevoegen, verwijderen, aanpassen) in de tool.",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "title": "Sturen van een backlog-update naar stakeholders",
+          "description": "Stuur een korte samenvatting van de aanpassingen naar het team en relevante belanghebbenden.",
+          "skill": "outreach",
+          "dependencies": [
+            "Updaten van de backlog in projectmanagement tool"
+          ]
+        }
+      ]
+    }
+  ]
+}

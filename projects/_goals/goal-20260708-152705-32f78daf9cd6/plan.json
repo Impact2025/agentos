@@ -1,0 +1,139 @@
+{
+  "plan_summary": "Pilot-test van een nieuwe teambuildingmethode met impactmeting, bestaande uit doelgroepanalyse, contentcreatie, uitvoering en evaluatie.",
+  "estimated_duration": "4 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Onderzoek & Protocolontwerp",
+      "description": "Analyseer doelgroep en bestaande data, ontwerp testprotocol en feedbackinstrumenten.",
+      "tasks": [
+        {
+          "id": "t1",
+          "title": "Doelgroepanalyse obv enquêtedata en GSC",
+          "description": "Analyseer bestaande enquêteresultaten en Google Search Console-data om doelgroepsegmenten en behoeften in kaart te brengen.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "t2",
+          "title": "Ontwerp testprotocol met meetpunten",
+          "description": "Stel een gestandaardiseerd protocol op voor de teambuildingsessie, inclusief voor- en nametingen, observatiepunten en tijdlijn.",
+          "skill": "designer",
+          "dependencies": [
+            "t1"
+          ]
+        },
+        {
+          "id": "t3",
+          "title": "Maak feedbackformulier-template",
+          "description": "Ontwerp een digitaal formulier (Google Forms) met open en gesloten vragen voor deelnemers na de sessie.",
+          "skill": "content-writer",
+          "dependencies": [
+            "t2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Contentcreatie & Publicatie",
+      "description": "Ontwikkel ondersteunend blogartikel over impactmeting van teambuilding, met redactie en publicatie.",
+      "tasks": [
+        {
+          "id": "t4",
+          "title": "Schrijf artikel 'Hoe meet je de impact van teambuilding?'",
+          "description": "Schrijf een 800-woorden blog over methodieken en tools om teambuilding-impact te meten, gericht op HR-professionals.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "id": "t5",
+          "title": "Redigeer en optimaliseer artikel voor SEO",
+          "description": "Pas het artikel aan op leesbaarheid, toon en SEO (kernwoorden, meta-omschrijving).",
+          "skill": "content-editor",
+          "dependencies": [
+            "t4"
+          ]
+        },
+        {
+          "id": "t6",
+          "title": "Publiceer artikel in de Wachtrij voor review",
+          "description": "Zet het artikel klaar in het publicatiesysteem met status 'wacht op menselijke review'.",
+          "skill": "publisher",
+          "dependencies": [
+            "t5"
+          ]
+        },
+        {
+          "id": "t7",
+          "title": "Maak visuele samenvatting (infographic) van meetmethodes",
+          "description": "Ontwerp een infographic die de belangrijkste meetmethodes visueel weergeeft, geschikt voor social media.",
+          "skill": "designer",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Uitvoering pilot-sessie",
+      "description": "Rekruteer deelnemers, organiseer de sessie en verzamel ruwe data.",
+      "tasks": [
+        {
+          "id": "t8",
+          "title": "Rekruteer 8-12 deelnemers via interne kanalen",
+          "description": "Stuur uitnodigingen naar medewerkers via intranet en e-mail, selecteer een representatieve groep.",
+          "skill": "outreach",
+          "dependencies": []
+        },
+        {
+          "id": "t9",
+          "title": "Voer teambuildingsessie uit en documenteer observaties",
+          "description": "Faciliteer de sessie volgens protocol, maak aantekeningen van groepsdynamiek en reacties.",
+          "skill": "video-director",
+          "dependencies": [
+            "t8"
+          ]
+        },
+        {
+          "id": "t10",
+          "title": "Verzamel ingevulde feedbackformulieren en ruwe data",
+          "description": "Exporteer antwoorden uit Google Forms en bundel observaties in een gestructureerd bestand.",
+          "skill": "research",
+          "dependencies": [
+            "t9"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Analyse & Rapportage",
+      "description": "Analyseer de verzamelde data, trek conclusies en publiceer een intern rapport.",
+      "tasks": [
+        {
+          "id": "t11",
+          "title": "Statistische analyse en interpretatie van resultaten",
+          "description": "Bereken gemiddelden, trends en significante verschillen tussen voor- en nametingen, en identificeer verbeterpunten.",
+          "skill": "analyst",
+          "dependencies": [
+            "t10"
+          ]
+        },
+        {
+          "id": "t12",
+          "title": "Schrijf evaluatierapport met aanbevelingen",
+          "description": "Stel een beknopt rapport op (3-5 pagina's) met bevindingen, conclusies en concrete aanbevelingen voor opschaling.",
+          "skill": "content-writer",
+          "dependencies": [
+            "t11"
+          ]
+        },
+        {
+          "id": "t13",
+          "title": "Publiceer rapport in gedeelde projectomgeving",
+          "description": "Zet het rapport klaar in de projectmap (bv. SharePoint) en stuur een samenvatting naar de stakeholders.",
+          "skill": "publisher",
+          "dependencies": [
+            "t12"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -16,6 +16,19 @@ function renderHome(main) {
     // ── Actiecentrum: alles wat op een menselijke beslissing wacht ──
     html += '<div id="action-center-panel"><div style="color:#64748b;font-size:12px;padding:8px 0">Inbox laden...</div></div>';
 
+    // ── Iris — de manager: cijfers per project, geleerd/verbeterd, advies ──
+    html += '<div class="section-card" style="margin-bottom:16px;border:1px solid #ddd6fe;background:linear-gradient(135deg,#faf5ff,#f8fafc)">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+      '<h4 style="font-size:13px;font-weight:700;color:#7c3aed">\u{1F9ED} Iris — dagbriefing van je AI-manager</h4>' +
+      '<div style="display:flex;gap:6px">' +
+      '<button onclick="loadIrisBriefing()" style="padding:3px 10px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:4px;font-size:10px;cursor:pointer">Ververs</button>' +
+      '<button id="iris-run-btn" onclick="runIrisNow()" style="padding:3px 10px;background:#7c3aed;color:#fff;border:none;border-radius:4px;font-size:10px;font-weight:600;cursor:pointer">Analyseer nu</button>' +
+      '</div></div>' +
+      '<div id="iris-panel" style="font-size:12px"><div style="color:#64748b">Laden...</div></div>' +
+      '<details style="margin-top:10px;border-top:1px solid #ede9fe;padding-top:8px" ontoggle="if(this.open)loadIrisKnowledge()">' +
+      '<summary style="cursor:pointer;font-size:12px;font-weight:600;color:#7c3aed">\u{1F4DA} Kennisbank — voed Iris met onderzoek (GEO, SEO, ...)</summary>' +
+      '<div id="iris-knowledge-panel" style="margin-top:8px;font-size:12px"><div style="color:#64748b">Klik om te laden...</div></div></details></div>';
+
     // ── Ochtendrapport (inklapbaar; zelfde inhoud als de 07:00-digest) ──
     html += '<details class="section-card" style="margin-bottom:16px;padding:10px 16px" ontoggle="if(this.open)loadDigest()">' +
       '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:#334155">\u{2615} Ochtendrapport — fouten · wacht-op-jou · gisteren opgeleverd · vandaag gepland</summary>' +
@@ -94,6 +107,7 @@ function renderHome(main) {
     main.innerHTML = html;
     loadActionCenter();
     startActionCenterRefresh();
+    loadIrisBriefing();
     loadActivityLogs();
     loadSystemHealth();
     startAgentStatusPoll();
@@ -192,6 +206,147 @@ function loadDigest() {
     el.innerHTML = '<div class="strategist-analyse-content">' + mdToHtml(d.markdown || '') + '</div>';
   }).catch(function(e){
     el.innerHTML = '<div style="color:#ef4444">Rapport laden mislukt: ' + escHtml(e.message) + '</div>';
+  });
+}
+
+// ── Iris — dagbriefing van de manager-agent ────────────────────────
+function _irisGradeColor(cijfer) {
+  if (cijfer >= 8) return ['#dcfce7', '#166534'];
+  if (cijfer >= 6) return ['#fef9c3', '#854d0e'];
+  return ['#fee2e2', '#991b1b'];
+}
+
+function loadIrisBriefing() {
+  var el = document.getElementById('iris-panel');
+  if (!el) return;
+  fetch('/api/iris/briefing').then(function(r){return r.json();}).then(function(d){
+    var html = '';
+    var grades = d.grades || {};
+    var names = Object.keys(grades);
+    if (!d.report_date) {
+      // Nog geen briefing — toon het live cijferbeeld als voorproefje.
+      var projs = ((d.metrics || {}).projects) || [];
+      if (projs.length) {
+        html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + projs.map(function(p){
+          var c = _irisGradeColor(p.grade);
+          return '<span style="padding:3px 8px;border-radius:12px;background:' + c[0] + ';color:' + c[1] + ';font-size:11px;font-weight:600">' + escHtml(p.project) + ' ' + p.grade + '</span>';
+        }).join('') + '</div>';
+      }
+      html += '<div style="color:#64748b">Iris heeft nog geen dagbriefing gedraaid — klik <strong>Analyseer nu</strong> of wacht op de 06:45-run.</div>';
+      el.innerHTML = html;
+      return;
+    }
+    // Trefkans-badge: Iris' eigen bewezen track record (de gesloten leer-lus).
+    var tr = d.track_record || {};
+    if (tr.accuracy != null || tr.open) {
+      var accColor = tr.accuracy == null ? ['#e2e8f0','#475569']
+        : (tr.accuracy >= 60 ? ['#dcfce7','#166534'] : (tr.accuracy >= 40 ? ['#fef9c3','#854d0e'] : ['#fee2e2','#991b1b']));
+      html += '<div style="margin-bottom:8px;font-size:11px;color:#475569">Mijn trefkans: ' +
+        (tr.accuracy != null
+          ? '<span style="padding:2px 8px;border-radius:10px;background:' + accColor[0] + ';color:' + accColor[1] + ';font-weight:700">' + tr.accuracy + '%</span> (' + (tr.correct||0) + ' raak · ' + (tr.wrong||0) + ' mis)'
+          : '<span style="color:#94a3b8">nog geen afgerekende voorspellingen</span>') +
+        (tr.open ? ' · <span style="color:#7c3aed;font-weight:600">' + tr.open + ' voorspelling(en) open</span>' : '') + '</div>';
+    }
+    // Cijfer-chips per project (laagste eerst — daar zit het werk).
+    names.sort(function(a,b){ return (grades[a].cijfer||0) - (grades[b].cijfer||0); });
+    html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + names.map(function(n){
+      var g = grades[n]; var c = _irisGradeColor(g.cijfer || 0);
+      return '<span title="' + escHtml(g.oordeel || '') + '" style="padding:3px 8px;border-radius:12px;background:' + c[0] + ';color:' + c[1] + ';font-size:11px;font-weight:600;cursor:default">' + escHtml(n) + ' ' + (g.cijfer != null ? g.cijfer : '?') + '</span>';
+    }).join('') + '</div>';
+    var advice = d.advice || [];
+    if (advice.length) {
+      html += '<div style="margin-bottom:8px">' + advice.slice(0,3).map(function(a){
+        return '<div style="padding:4px 0;border-bottom:1px solid #f1f5f9"><strong style="color:#334155">' + (a.prio || '•') + '. ' + escHtml(a.actie || '') + '</strong> <span style="color:#64748b">— ' + escHtml(a.waarom || '') + '</span></div>';
+      }).join('') + '</div>';
+    }
+    html += '<details><summary style="cursor:pointer;font-size:11px;font-weight:600;color:#7c3aed">Volledige briefing (' + escHtml(d.report_date) + ') — geleerd · verbeterd · advies</summary>' +
+      '<div class="strategist-analyse-content" style="margin-top:8px">' + mdToHtml(d.markdown || '') + '</div></details>';
+    el.innerHTML = html;
+  }).catch(function(e){
+    el.innerHTML = '<div style="color:#ef4444">Iris-briefing laden mislukt: ' + escHtml(e.message) + '</div>';
+  });
+}
+
+// ── Iris kennisbank — Vincent voedt Iris met onderzoek ─────────────
+function loadIrisKnowledge() {
+  var el = document.getElementById('iris-knowledge-panel');
+  if (!el) return;
+  fetch('/api/iris/knowledge').then(function(r){return r.json();}).then(function(d){
+    var items = d.items || [];
+    var html = '';
+    if (d.folder) {
+      html += '<div style="font-size:11px;color:#64748b;margin-bottom:8px">Drop markdown-onderzoek in: <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px">' + escHtml(d.folder) + '</code> — of plak hieronder direct.</div>';
+    } else {
+      html += '<div style="font-size:11px;color:#b45309;margin-bottom:8px">Geen Obsidian-vault ingesteld — je kunt kennis wel hieronder plakken.</div>';
+    }
+    // Plakveld voor directe kennis
+    html += '<div style="margin-bottom:10px">' +
+      '<input id="iris-know-title" placeholder="Titel (bv. GEO-onderzoek jan 2026)" style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;margin-bottom:4px">' +
+      '<textarea id="iris-know-text" placeholder="Plak hier je onderzoek/notities die Iris moet leren en toepassen..." style="width:100%;min-height:70px;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;resize:vertical"></textarea>' +
+      '<div style="display:flex;gap:6px;margin-top:4px">' +
+      '<button id="iris-know-add" onclick="addIrisKnowledge()" style="padding:5px 12px;background:#7c3aed;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Leer dit</button>' +
+      '<button onclick="syncIrisKnowledge(this)" style="padding:5px 12px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">Ververs uit vault</button>' +
+      '</div></div>';
+    if (items.length) {
+      html += '<div style="font-size:11px;color:#334155;font-weight:600;margin-bottom:4px">' + items.length + ' kennisitem(s) actief</div>';
+      html += items.map(function(it){
+        var tags = (it.tags||[]).map(function(t){return '<span style="background:#ede9fe;color:#6d28d9;padding:1px 5px;border-radius:8px;font-size:9px;margin-left:4px">' + escHtml(t) + '</span>';}).join('');
+        var scope = (it.scope && it.scope !== 'all') ? ' <span style="color:#94a3b8">[' + escHtml(it.scope) + ']</span>' : '';
+        var princ = (it.principles||[]).slice(0,4).map(function(p){return '<li style="color:#475569">' + escHtml(p) + '</li>';}).join('');
+        return '<div style="border:1px solid #f1f5f9;border-radius:6px;padding:6px 8px;margin-bottom:5px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center"><strong style="font-size:11px;color:#334155">' + escHtml(it.title) + scope + tags + '</strong>' +
+          '<button onclick="deleteIrisKnowledge(\'' + it.id + '\')" title="Verwijderen" style="background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:13px">×</button></div>' +
+          (it.summary ? '<div style="font-size:10px;color:#64748b;margin:2px 0">' + escHtml(it.summary) + '</div>' : '') +
+          (princ ? '<ul style="margin:2px 0;padding-left:16px;font-size:10px;line-height:1.5">' + princ + '</ul>' : '') +
+          '</div>';
+      }).join('');
+    } else {
+      html += '<div style="font-size:11px;color:#94a3b8">Nog geen kennis. Plak je GEO-onderzoek hierboven of zet een .md in de vault-map.</div>';
+    }
+    el.innerHTML = html;
+  }).catch(function(e){ el.innerHTML = '<div style="color:#ef4444">Kennisbank laden mislukt: ' + escHtml(e.message) + '</div>'; });
+}
+
+function addIrisKnowledge() {
+  var title = (document.getElementById('iris-know-title')||{}).value || '';
+  var text = (document.getElementById('iris-know-text')||{}).value || '';
+  if (text.trim().length < 20) { alert('Plak wat meer tekst zodat Iris er iets van kan leren.'); return; }
+  var btn = document.getElementById('iris-know-add');
+  if (btn) { btn.disabled = true; btn.textContent = 'Iris leest...'; }
+  fetch('/api/iris/knowledge', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ title: title, text: text }) })
+    .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(){ loadIrisKnowledge(); })
+    .catch(function(e){ if(btn){btn.disabled=false;btn.textContent='Leer dit';} console.error('[Iris kennis]', e); });
+}
+
+function syncIrisKnowledge(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Bezig...'; }
+  fetch('/api/iris/knowledge/sync', { method: 'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(res){ loadIrisKnowledge(); })
+    .catch(function(e){ if(btn){btn.disabled=false;btn.textContent='Ververs uit vault';} console.error('[Iris sync]', e); });
+}
+
+function deleteIrisKnowledge(id) {
+  if (!confirm('Dit kennisitem verwijderen?')) return;
+  fetch('/api/iris/knowledge/' + id, { method: 'DELETE' })
+    .then(function(){ loadIrisKnowledge(); })
+    .catch(function(e){ console.error('[Iris kennis del]', e); });
+}
+
+function runIrisNow() {
+  var btn = document.getElementById('iris-run-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Iris analyseert...'; }
+  fetch('/api/iris/run-now', { method: 'POST' }).then(function(r){
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(){
+    if (btn) { btn.disabled = false; btn.textContent = 'Analyseer nu'; }
+    loadIrisBriefing();
+  }).catch(function(e){
+    if (btn) { btn.disabled = false; btn.textContent = 'Mislukt — opnieuw'; }
+    console.error('[Iris]', e);
   });
 }
 

@@ -1,0 +1,122 @@
+{
+  "plan_summary": "Inventariseer, prioriteer, update en publiceer de backlog voor de Datingassistent, met focus op impactanalyse en SEO-optimalisatie.",
+  "estimated_duration": "1-2 weken",
+  "phases": [
+    {
+      "title": "Fase 1: Inventarisatie en Analyse",
+      "description": "Verzamel alle openstaande backlog-items uit verschillende bronnen en beoordeel relevantie en impact.",
+      "tasks": [
+        {
+          "id": "task_f1_1",
+          "title": "Verzamel openstaande backlog-items",
+          "description": "Haal alle openstaande taken, ideeën en verbeterpunten op uit projectmanagementsysteem, notities en team-input.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "id": "task_f1_2",
+          "title": "Beoordeel relevantie en haalbaarheid",
+          "description": "Evalueer of elk item nog past bij de huidige projectdoelen en of het technisch haalbaar is.",
+          "skill": "content-judge",
+          "dependencies": []
+        },
+        {
+          "id": "task_f1_3",
+          "title": "Analyseer impact en urgentie",
+          "description": "Gebruik GA4-data en gebruikersfeedback om de potentiële impact en urgentie van elk item te bepalen.",
+          "skill": "analyst",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Prioritering en Strategie",
+      "description": "Bepaal prioriteiten, optimaliseer voor SEO en stel een implementatietijdlijn op.",
+      "tasks": [
+        {
+          "id": "task_f2_1",
+          "title": "Bepaal prioriteit op basis van impact/urgency",
+          "description": "Ken prioriteiten (P1-P4) toe aan elk backlog-item op basis van de impact- en urgentieanalyse.",
+          "skill": "content-judge",
+          "dependencies": []
+        },
+        {
+          "id": "task_f2_2",
+          "title": "Pas SEO-optimalisatie toe op prioritaire items",
+          "description": "Optimaliseer titels, beschrijvingen en keywords van de hoogst geprioriteerde items voor betere vindbaarheid.",
+          "skill": "seo",
+          "dependencies": []
+        },
+        {
+          "id": "task_f2_3",
+          "title": "Stel een tijdlijn op voor implementatie",
+          "description": "Plan de uitvoering van P1- en P2-items in de komende sprints, met mijlpalen.",
+          "skill": "analyst",
+          "dependencies": [
+            "task_f2_1"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Content Update",
+      "description": "Werk de beschrijvingen van backlog-items bij, review en voeg indien nodig visuele elementen toe.",
+      "tasks": [
+        {
+          "id": "task_f3_1",
+          "title": "Schrijf en update beschrijvingen van backlog-items",
+          "description": "Herformuleer en verbeter de omschrijvingen van alle items, inclusief acceptatiecriteria en context.",
+          "skill": "content-writer",
+          "dependencies": []
+        },
+        {
+          "id": "task_f3_2",
+          "title": "Review en redigeer beschrijvingen",
+          "description": "Controleer de beschrijvingen op volledigheid, consistentie en grammatica.",
+          "skill": "content-editor",
+          "dependencies": [
+            "task_f3_1"
+          ]
+        },
+        {
+          "id": "task_f3_3",
+          "title": "Ontwerp eventuele visuele elementen",
+          "description": "Maak schema's, wireframes of iconen voor items die visuele toelichting nodig hebben.",
+          "skill": "designer",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie en Communicatie",
+      "description": "Publiceer de definitieve backlog, communiceer met stakeholders en monitor feedback.",
+      "tasks": [
+        {
+          "id": "task_f4_1",
+          "title": "Publiceer de bijgewerkte backlog in het systeem",
+          "description": "Zet alle bijgewerkte items met prioriteiten klaar in het projectmanagementsysteem (bijv. Jira, Notion).",
+          "skill": "publisher",
+          "dependencies": []
+        },
+        {
+          "id": "task_f4_2",
+          "title": "Stuur een update naar stakeholders",
+          "description": "Deel de wijzigingen en prioritering via e-mail of Slack met het team en eventuele externe belanghebbenden.",
+          "skill": "outreach",
+          "dependencies": [
+            "task_f4_1"
+          ]
+        },
+        {
+          "id": "task_f4_3",
+          "title": "Monitor feedback en analyseer resultaten",
+          "description": "Verzamel reacties op de backlog-update en evalueer of aanpassingen nodig zijn.",
+          "skill": "analyst",
+          "dependencies": [
+            "task_f4_2"
+          ]
+        }
+      ]
+    }
+  ]
+}

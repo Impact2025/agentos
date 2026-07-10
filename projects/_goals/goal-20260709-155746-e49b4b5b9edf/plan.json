@@ -1,0 +1,130 @@
+{
+  "plan_summary": "Voer keyword research en concurrentieanalyse uit voor lokale zoekintentie, schrijf drie regiospecifieke landingspagina's (teambuilding hoofddorp, haarlemmermeer, bedrijfsuitje hoofddorp schiphol) met lokale hooks, testemonials en CTA, redigeer en optimaliseer interne links naar de GPS-pillar, en publiceer alles in de Wachtrij ter review.",
+  "estimated_duration": "3-4 dagen",
+  "phases": [
+    {
+      "title": "Fase 1: Research & concurrentieanalyse",
+      "description": "Verzamel lokale zoekdata en inzicht in concurrenten voor de drie thema's.",
+      "tasks": [
+        {
+          "title": "Uitvoeren keyword research lokale zoekintentie",
+          "description": "Gebruik tools zoals Semrush of Ahrefs om zoekvolumes, long-tail varianten en intentie te analyseren voor 'teambuilding hoofddorp', 'teambuilding haarlemmermeer' en 'bedrijfsuitje hoofddorp schiphol'.",
+          "skill": "research",
+          "dependencies": []
+        },
+        {
+          "title": "Concurrentieanalyse teamevents.nl, meetinn.nl, eventfully.nl",
+          "description": "Analyseer de landingspagina's en aanpak van deze concurrenten in de regio. Noteer sterke/zwakke punten, hooks en gebruikte keywords.",
+          "skill": "research",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "title": "Fase 2: Schrijven landingspagina's",
+      "description": "Schrijf drie aparte, regiospecifieke landingspagina's op basis van de research.",
+      "tasks": [
+        {
+          "title": "Schrijf landingspagina 'teambuilding hoofddorp'",
+          "description": "Maak een pagina met lokale hooks (Schiphol, N201, Haarlemmermeerse bossen, bedrijvenparken), testimonials en een duidelijke CTA. Gebruik de resultaten uit fase 1.",
+          "skill": "content-writer",
+          "dependencies": [
+            "task-1",
+            "task-2"
+          ]
+        },
+        {
+          "title": "Schrijf landingspagina 'teambuilding haarlemmermeer'",
+          "description": "Maak een pagina met lokale hooks (o.a. Haarlemmermeerse bos, N201, lokale bedrijven), testimonials en CTA. Gebruik de resultaten uit fase 1.",
+          "skill": "content-writer",
+          "dependencies": [
+            "task-1",
+            "task-2"
+          ]
+        },
+        {
+          "title": "Schrijf landingspagina 'bedrijfsuitje hoofddorp schiphol'",
+          "description": "Maak een pagina met lokale hooks (Schiphol, N201, bedrijvenparken), testimonials en CTA. Gebruik de resultaten uit fase 1.",
+          "skill": "content-writer",
+          "dependencies": [
+            "task-1",
+            "task-2"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 3: Redactie, optimalisatie en interne links",
+      "description": "Controleer, redigeer de pagina's en voeg interne links naar de GPS-pillar toe.",
+      "tasks": [
+        {
+          "title": "Redigeer landingspagina 'teambuilding hoofddorp'",
+          "description": "Controleer taal, consistentie, lokale informatie en werk testimonial-voorbeelden bij. Voeg interne links naar de GPS-pillar toe.",
+          "skill": "content-editor",
+          "dependencies": [
+            "task-3"
+          ]
+        },
+        {
+          "title": "Redigeer landingspagina 'teambuilding haarlemmermeer'",
+          "description": "Controleer taal, consistentie, lokale informatie en werk testimonial-voorbeelden bij. Voeg interne links naar de GPS-pillar toe.",
+          "skill": "content-editor",
+          "dependencies": [
+            "task-4"
+          ]
+        },
+        {
+          "title": "Redigeer landingspagina 'bedrijfsuitje hoofddorp schiphol'",
+          "description": "Controleer taal, consistentie, lokale informatie en werk testimonial-voorbeelden bij. Voeg interne links naar de GPS-pillar toe.",
+          "skill": "content-editor",
+          "dependencies": [
+            "task-5"
+          ]
+        },
+        {
+          "title": "SEO-check en verfijning interne linkstructuur",
+          "description": "Controleer of alle pagina's correct verwijzen naar de GPS-pillar en onderling. Optimaliseer meta descriptions en headings voor de gevonden keywords.",
+          "skill": "seo",
+          "dependencies": [
+            "task-6",
+            "task-7",
+            "task-8"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fase 4: Publicatie in de Wachtrij",
+      "description": "Zet elke definitieve pagina klaar in de Wachtrij voor menselijke review (geen automatische publicatie).",
+      "tasks": [
+        {
+          "title": "Publiceer landingspagina 'teambuilding hoofddorp' in Wachtrij",
+          "description": "Stage de goedgekeurde en geoptimaliseerde pagina in de Wachtrij van het CMS met status 'review'. Voeg notities toe voor de reviewer.",
+          "skill": "publisher",
+          "dependencies": [
+            "task-6",
+            "task-9"
+          ]
+        },
+        {
+          "title": "Publiceer landingspagina 'teambuilding haarlemmermeer' in Wachtrij",
+          "description": "Stage de goedgekeurde en geoptimaliseerde pagina in de Wachtrij van het CMS met status 'review'. Voeg notities toe voor de reviewer.",
+          "skill": "publisher",
+          "dependencies": [
+            "task-7",
+            "task-9"
+          ]
+        },
+        {
+          "title": "Publiceer landingspagina 'bedrijfsuitje hoofddorp schiphol' in Wachtrij",
+          "description": "Stage de goedgekeurde en geoptimaliseerde pagina in de Wachtrij van het CMS met status 'review'. Voeg notities toe voor de reviewer.",
+          "skill": "publisher",
+          "dependencies": [
+            "task-8",
+            "task-9"
+          ]
+        }
+      ]
+    }
+  ]
+}
