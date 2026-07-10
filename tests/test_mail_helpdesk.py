@@ -232,6 +232,122 @@ def test_send_via_mailbox_smtp(mailbox_row, monkeypatch):
         assert conn.execute("SELECT status FROM mail_reply").fetchone()["status"] == "sent"
 
 
+def test_pending_replies_filters_per_project(mailbox_row, monkeypatch):
+    """Elk project zijn eigen helpdesk: pending/mailboxes gefilterd op project."""
+    monkeypatch.setattr(poplib, "POP3", FakePop)
+    monkeypatch.setattr(drafter, "_sync_openmodel", lambda system, user: "stub")
+    service.run_mailbox({"id": "mb_test", "pop_host": "h", "pop_port": 110,
+                          "pop_user": "u", "pop_password": "p",
+                          "brand_context": "", "knowledge_scope": "all"})
+    # naam-matching is genormaliseerd: 'Skill kaart' ~ 'skillkaart'
+    assert len(service.pending_replies(project="Skill kaart")) == 1
+    assert service.pending_replies(project="teambuildingmetimpact") == []
+    assert len(service.list_mailboxes(project="SKILLKAART")) == 1
+    assert service.list_mailboxes(project="anders") == []
+    # de klantvraag reist mee naar de UI
+    p = service.pending_replies(project="skillkaart")[0]
+    assert "wachtwoord" in p["question_subject"].lower()
+
+
+def test_knowledge_includes_site_profile_pages_and_learned_qa(mailbox_row):
+    """De helpdesk kent het project: merkprofiel, échte live links en eerder
+    goedgekeurde antwoorden gaan mee in de kennisbasis."""
+    from backend.domains.mail import knowledge as km
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM sites")
+        conn.execute("DELETE FROM published_pages")
+        conn.execute(
+            "INSERT INTO sites(id,name,base_url,gsc_property,profile,ctas,created_at) "
+            "VALUES('s1','Skillkaart','https://skillkaart.nl','sc-domain:skillkaart.nl',"
+            "'PWA voor voetbalcoaches, warm en nuchter.','[\"Plan een demo\"]',datetime('now'))")
+        conn.execute(
+            "INSERT INTO published_pages(id,site_id,slug,title,url,created_at,updated_at) "
+            "VALUES('p1','s1','player-hub','Inloggen als coach',"
+            "'https://skillkaart.nl/hub',datetime('now'),datetime('now'))")
+        # eerder verstuurd (goedgekeurd) antwoord = leermateriaal
+        conn.execute(
+            "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,subject,body_text,classified) "
+            "VALUES('mb_test','QA1','eerder@x.nl','Magic link komt niet aan','Geen mail ontvangen.','question')")
+        prev_id = conn.execute("SELECT id FROM mail_inbox WHERE uidl='QA1'").fetchone()["id"]
+        conn.execute(
+            "INSERT INTO mail_reply(mailbox_id,inbox_id,to_addr,subject,draft_body,edited_body,"
+            "status,sent_at) VALUES('mb_test',?,?,'Re: Magic link komt niet aan',"
+            "'concept','Check je spambox, of vraag een nieuwe aan via de hub.','sent',datetime('now'))",
+            (prev_id, "eerder@x.nl"))
+        text = km.build_knowledge(conn, "skillkaart", {"id": "mb_test", "project": "skillkaart"})
+    assert "voetbalcoaches" in text              # site-profiel
+    assert "Plan een demo" in text               # CTA
+    assert "https://skillkaart.nl/hub" in text   # echte live link (geen placeholder)
+    assert "Check je spambox" in text            # geleerd van goedgekeurd antwoord
+
+
+def test_thread_history_gives_conversation_context(mailbox_row):
+    """Een 'Re: RE:'-mail wordt met de eerdere wisseling beantwoord."""
+    from backend.domains.mail import knowledge as km
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,subject,body_text,classified,created_at) "
+            "VALUES('mb_test','T1','jan@x.nl','probleem','Ik kan niet inloggen.','question','2026-07-09 10:00:00')")
+        first_id = conn.execute("SELECT id FROM mail_inbox WHERE uidl='T1'").fetchone()["id"]
+        conn.execute(
+            "INSERT INTO mail_reply(mailbox_id,inbox_id,to_addr,subject,draft_body,status,sent_at) "
+            "VALUES('mb_test',?,?,'Re: probleem','Log in via de hub.','sent','2026-07-09 11:00:00')",
+            (first_id, "jan@x.nl"))
+        conn.execute(
+            "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,subject,body_text,classified,created_at) "
+            "VALUES('mb_test','T2','jan@x.nl','Re: RE: probleem','Hub werkt ook niet.','question','2026-07-10 09:00:00')")
+        new_id = conn.execute("SELECT id FROM mail_inbox WHERE uidl='T2'").fetchone()["id"]
+        hist = km.thread_history(conn, "mb_test", "jan@x.nl", new_id)
+    assert "Ik kan niet inloggen" in hist        # eerdere klantmail
+    assert "Log in via de hub" in hist           # ons eerdere antwoord
+    assert "Hub werkt ook niet" not in hist      # de nieuwe mail zelf niet
+    assert hist.index("Ik kan niet inloggen") < hist.index("Log in via de hub")  # oud → nieuw
+
+
+def test_drafter_prompt_carries_history_and_knowledge(monkeypatch):
+    captured = {}
+    def fake(system, user):
+        captured["system"] = system
+        captured["user"] = user
+        return "ok"
+    monkeypatch.setattr(drafter, "_sync_openmodel", fake)
+    monkeypatch.setattr(drafter, "OPENMODEL_API_KEY", "test-key")
+    drafter.draft_reply(
+        from_name="Jan", subject="Re: probleem", body="Hub werkt ook niet.",
+        brand_context="skillkaart",
+        knowledge="Live pagina's: https://skillkaart.nl/hub",
+        history="[KLANT] probleem\nIk kan niet inloggen.\n\n[WIJ] Re: probleem\nLog in via de hub.")
+    assert "https://skillkaart.nl/hub" in captured["system"]
+    assert "EERDERE CORRESPONDENTIE" in captured["user"]
+    assert "Log in via de hub" in captured["user"]
+    assert "placeholder" in captured["system"]   # anti-'[jouw domein]'-instructie
+
+
+def test_edit_body_accepts_both_keys():
+    """De frontend stuurde historisch 'draft_body' — dat mag nooit een 422 worden."""
+    from backend.domains.mail.router import EditBody
+    assert EditBody(text="a").text == "a"
+    assert EditBody(draft_body="b").text == "b"
+    with pytest.raises(Exception):
+        EditBody()
+
+
+def test_run_single_mailbox_and_error_escalation(mailbox_row, monkeypatch):
+    """run met mailbox_id pakt alleen die mailbox; een kapotte mailbox wordt een
+    error-kaart in het Actiecentrum (activity_log, status='error')."""
+    def broken(*a, **k):
+        raise RuntimeError("POP3 mislukt: login geweigerd")
+    monkeypatch.setattr(service, "run_mailbox", broken)
+    results = service.run_all_mailboxes(mailbox_id="mb_test")
+    assert results == {"hello@skillkaart.nl": -1}
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "SELECT status, next_step FROM activity_log WHERE action='mail_helpdesk' "
+            "ORDER BY created_at DESC LIMIT 1").fetchone()
+    assert row is not None and row["status"] == "error"
+    assert "POP3" in row["next_step"] or "instellingen" in row["next_step"]
+
+
 def test_reject_and_edit(mailbox_row, monkeypatch):
     monkeypatch.setattr(poplib, "POP3", FakePop)
     monkeypatch.setattr(drafter, "_sync_openmodel", lambda system, user: "stub")

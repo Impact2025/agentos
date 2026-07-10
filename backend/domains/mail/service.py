@@ -12,34 +12,13 @@ import smtplib
 from typing import List, Dict, Optional
 
 from ...shared.database import get_conn
-from . import inbox, classify, drafter
+from . import inbox, classify, drafter, knowledge as knowledge_mod
 
 logger = logging.getLogger(__name__)
 
 
-def _knowledge_for(conn, project: str) -> str:
-    """Echte projectkennis uit de Obsidian-vault (de single source of truth).
-
-    Laadt de projectmap-notes (10_Projects/{project}/) plus — voor niet-WeAreImpact
-    projecten — de WeAreImpact core-context, zodat de schrijver altijd weet wie er
-    achter het project zit (Vincent van Munster / WeAreImpact)."""
-    try:
-        from ...shared.vault_reader import VaultReader
-        vr = VaultReader()
-        if not vr.is_configured:
-            return ""
-        parts = []
-        proj = vr.get_project_folder_notes(project)
-        if proj:
-            parts.append(f"# Over {project}\n{proj}")
-        if project and project.lower() != "weareimpact":
-            core = vr.get_core_context("WeAreImpact")
-            if core:
-                parts.append(f"# Over de maker (WeAreImpact / Vincent van Munster)\n{core}")
-        return "\n\n".join(parts)
-    except Exception as e:
-        logger.warning("Kon helpdesk-kennis niet laden: %s", e)
-        return ""
+def _norm(name: str) -> str:
+    return (name or "").lower().replace(" ", "").replace("-", "").replace("_", "")
 
 
 def run_mailbox(mailbox: Dict) -> int:
@@ -57,7 +36,9 @@ def run_mailbox(mailbox: Dict) -> int:
             )
             if not fetched:
                 return 0
-            knowledge = _knowledge_for(conn, mailbox.get("project", ""))
+            knowledge = knowledge_mod.build_knowledge(
+                conn, mailbox.get("project", ""), mailbox
+            )
             created = 0
             for m in fetched:
                 kind = classify.classify(m["subject"], m["body_text"])
@@ -67,12 +48,16 @@ def run_mailbox(mailbox: Dict) -> int:
                 )
                 if kind != "question":
                     continue
+                history = knowledge_mod.thread_history(
+                    conn, mid, m["from_addr"], m["id"]
+                )
                 draft = drafter.draft_reply(
                     from_name=m["from_name"] or m["from_addr"],
                     subject=m["subject"],
                     body=m["body_text"],
                     brand_context=mailbox.get("project", ""),
                     knowledge=knowledge,
+                    history=history,
                 )
                 # Thread het antwoord op de originele mail
                 refs = (m.get("references") or "").strip()
@@ -92,20 +77,37 @@ def run_mailbox(mailbox: Dict) -> int:
         raise
 
 
-def run_all_mailboxes() -> Dict[str, int]:
-    """Verwerk elke ingeschakelde mailbox. Returns {address: aantal_concepten}."""
+def run_all_mailboxes(mailbox_id: Optional[str] = None) -> Dict[str, int]:
+    """Verwerk elke ingeschakelde mailbox (of alleen `mailbox_id`).
+    Returns {address: aantal_concepten}. Een kapotte mailbox (POP3/credentials)
+    verschijnt als uitkomst-kaart met status='error' in het Actiecentrum —
+    stil falen betekent hier: klanten die dagenlang geen antwoord krijgen."""
     results: Dict[str, int] = {}
     with get_conn() as conn:
-        boxes = conn.execute(
-            "SELECT * FROM mailboxes WHERE enabled=1"
-        ).fetchall()
+        if mailbox_id:
+            boxes = conn.execute(
+                "SELECT * FROM mailboxes WHERE enabled=1 AND id=?", (mailbox_id,)
+            ).fetchall()
+        else:
+            boxes = conn.execute("SELECT * FROM mailboxes WHERE enabled=1").fetchall()
     for mb in boxes:
         mb = dict(mb)
         try:
             n = run_mailbox(mb)
             results[mb["address"]] = n
-        except Exception:
+        except Exception as e:
             results[mb["address"]] = -1  # fout
+            try:
+                from ...shared.outcomes import log_outcome
+                log_outcome(
+                    project=mb.get("project", "Helpdesk"),
+                    action="mail_helpdesk",
+                    detail=f"Mailbox {mb['address']} kon niet worden opgehaald: {e}",
+                    next_step="Controleer de POP3-instellingen/het wachtwoord van deze mailbox op de Helpdesk-tab.",
+                    status="error",
+                )
+            except Exception:
+                logger.exception("Kon helpdesk-fout niet naar het Actiecentrum loggen")
     return results
 
 
@@ -190,14 +192,19 @@ def edit_reply(reply_id: int, text: str) -> None:
 
 # ── Mailbox-beheer (API) ────────────────────────────────────────────────────
 
-def list_mailboxes() -> List[Dict]:
+def list_mailboxes(project: Optional[str] = None) -> List[Dict]:
+    """Alle mailboxen, of alleen die van één project (naam-match zoals overal:
+    genormaliseerd, zodat 'Skillkaart' en 'skillkaart' dezelfde zijn)."""
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT id, project, label, address, pop_host, pop_port, smtp_host, "
-            "smtp_port, brand_context, knowledge_scope, poll_minutes, enabled "
-            "FROM mailboxes ORDER BY project, address"
+            "smtp_port, brand_context, knowledge_scope, poll_minutes, enabled, "
+            "from_display FROM mailboxes ORDER BY project, address"
         ).fetchall()
-        return [dict(r) for r in rows]
+    boxes = [dict(r) for r in rows]
+    if project:
+        boxes = [b for b in boxes if _norm(b["project"]) == _norm(project)]
+    return boxes
 
 
 def create_mailbox(data: Dict) -> str:
@@ -222,15 +229,50 @@ def create_mailbox(data: Dict) -> str:
     return mid
 
 
-def pending_replies() -> List[Dict]:
+def pending_replies(project: Optional[str] = None) -> List[Dict]:
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT r.id, r.mailbox_id, r.to_addr, r.subject, r.draft_body, "
             "r.edited_body, r.status, r.created_at, m.project, m.address, "
-            "i.from_name, i.from_addr "
+            "i.from_name, i.from_addr, i.subject AS question_subject, "
+            "i.body_text AS question_body "
             "FROM mail_reply r "
             "JOIN mailboxes m ON m.id=r.mailbox_id "
             "LEFT JOIN mail_inbox i ON i.id=r.inbox_id "
             "WHERE r.status IN ('pending_review','edited') ORDER BY r.created_at DESC"
         ).fetchall()
-        return [dict(r) for r in rows]
+    replies = [dict(r) for r in rows]
+    if project:
+        replies = [r for r in replies if _norm(r["project"]) == _norm(project)]
+    return replies
+
+
+def update_mailbox(mailbox_id: str, data: Dict) -> bool:
+    """Werk instelbare velden bij; lege wachtwoord-velden laten het oude staan."""
+    allowed = (
+        "project", "label", "address", "pop_host", "pop_port", "pop_user",
+        "pop_password", "smtp_host", "smtp_port", "smtp_user", "smtp_password",
+        "brand_context", "knowledge_scope", "poll_minutes", "enabled", "from_display",
+    )
+    updates, params = [], []
+    for f in allowed:
+        if f not in data or data[f] is None:
+            continue
+        if f in ("pop_password", "smtp_password") and not str(data[f]).strip():
+            continue  # leeg wachtwoord = niet wijzigen
+        updates.append(f"{f}=?")
+        params.append(data[f])
+    if not updates:
+        return False
+    params.append(mailbox_id)
+    with get_conn() as conn:
+        cur = conn.execute(f"UPDATE mailboxes SET {', '.join(updates)} WHERE id=?", params)
+        return cur.rowcount > 0
+
+
+def delete_mailbox(mailbox_id: str) -> bool:
+    """Verwijder een mailbox incl. inbox/replies (ON DELETE CASCADE)."""
+    with get_conn() as conn:
+        conn.execute("PRAGMA foreign_keys=ON")
+        cur = conn.execute("DELETE FROM mailboxes WHERE id=?", (mailbox_id,))
+        return cur.rowcount > 0

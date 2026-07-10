@@ -29,6 +29,12 @@ SYSTEM_TEMPLATE = (
     "Verzin géén garanties, prijzen, features of feiten die NIET in de "
     "kennisbasis hieronder staan. Weet je iets niet zeker? Zeg dat eerlijk en "
     "bied aan het door te spelen aan het team — beloof nooit een onbekende oplossing.\n"
+    "Links: gebruik ALLEEN URL's die letterlijk in de kennisbasis staan. Schrijf "
+    "nooit een placeholder zoals '[jouw domein]' of een verzonnen pad — staat de "
+    "juiste link er niet bij, beschrijf de stap dan in woorden.\n"
+    "Is er eerdere correspondentie meegegeven? Behandel de mail dan als vervolg: "
+    "niet opnieuw voorstellen, niet dezelfde uitleg herhalen, maar doorpakken op "
+    "waar het gesprek was gebleven.\n"
     "Maximaal 150 woorden. Eindig met een vriendelijke groet onder de naam van {brand}.\n"
 )
 
@@ -114,6 +120,7 @@ def draft_reply(
     body: str,
     brand_context: str,
     knowledge: str,
+    history: str = "",
 ) -> str:
     brand = brand_context or "dit project"
     lang = detect_language(subject + " " + body)
@@ -124,7 +131,13 @@ def draft_reply(
     system = SYSTEM_TEMPLATE.format(brand=brand) + "\n\n" + lang_note
     if knowledge:
         system += f"\n\n— KENNISBASIS (hieronder staat wat je WÉL mag zeggen over het project, de app en de maker) —\n{knowledge}"
-    user = f"Van: {from_name}\nOnderwerp: {subject}\n\n{body}"
+    user = ""
+    if history:
+        user += (
+            "— EERDERE CORRESPONDENTIE met deze klant (oud → nieuw) —\n"
+            f"{history}\n\n— NIEUWE MAIL (beantwoord déze) —\n"
+        )
+    user += f"Van: {from_name}\nOnderwerp: {subject}\n\n{body}"
 
     # 1) OpenModel.ai (jullie vaste gateway) — primair
     if OPENMODEL_API_KEY:

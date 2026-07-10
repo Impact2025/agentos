@@ -96,7 +96,8 @@ function startHelpdeskBadgePoll() {
 function stopHelpdeskBadgePoll() { if (_helpdeskBadgeTimer) { clearInterval(_helpdeskBadgeTimer); _helpdeskBadgeTimer = null; } }
 function pollHelpdeskBadge() {
   if (!currentProject) return;
-  fetch('/api/mail/pending').then(function(r){return r.json();}).then(function(rows){
+  // Badge telt alleen de concepten van dít project — elk project zijn eigen helpdesk.
+  fetch('/api/mail/pending?project=' + encodeURIComponent(currentProject)).then(function(r){return r.json();}).then(function(rows){
     var el = document.getElementById('helpdesk-badge');
     if (!el) return;
     var n = (rows && rows.replies && rows.replies.length) ? rows.replies.length : 0;
@@ -225,6 +226,104 @@ async function renderDashboardTab(el) {
   loadProjectActivityLogs();
   loadSystemHealth('system-health-panel-proj', 'autoheal-btn-proj');
   startDashboardBannerPoll(currentProject);
+}
+
+// ── Chart helpers (Chart.js v4, globaal geladen via CDN in index.html) ──
+// Per-canvas instances zodat her-renders (tab-switch, poll) geen
+// "Canvas is already in use" fout geven.
+var _chartInstances = {};
+function _destroyChart(id) {
+  if (_chartInstances[id]) {
+    try { _chartInstances[id].destroy(); } catch (e) {}
+    delete _chartInstances[id];
+  }
+}
+function _fmtChartDate(d) {
+  // 'YYYY-MM-DD' -> 'DD-MM'
+  if (!d) return '';
+  var p = String(d).split('-');
+  return p.length === 3 ? (p[2] + '-' + p[1]) : d;
+}
+// Lijn grafiek voor één meetreeks (klikken / impressies) uit trend.daily.
+function renderSeriesChart(canvasId, daily, key, label, color) {
+  if (typeof Chart === 'undefined') return;
+  var cv = document.getElementById(canvasId);
+  if (!cv || !daily || !daily.length) return;
+  _destroyChart(canvasId);
+  var labels = daily.map(function (d) { return _fmtChartDate(d.date); });
+  var data = daily.map(function (d) { return d[key] != null ? d[key] : 0; });
+  _chartInstances[canvasId] = new Chart(cv.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: label,
+        data: data,
+        borderColor: color,
+        backgroundColor: color + '22',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8, autoSkip: true, font: { size: 10 } }, grid: { display: false } },
+        y: { beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: '#f1f5f9' } }
+      }
+    }
+  });
+}
+// Positie-grafiek: deze vs vorige periode (lager = beter, dus geen beginAtZero).
+function renderPositionChart(canvasId, cur, prev) {
+  if (typeof Chart === 'undefined') return;
+  var cv = document.getElementById(canvasId);
+  if (!cv || !cur || !cur.length) return;
+  _destroyChart(canvasId);
+  var labels = cur.map(function (d) { return _fmtChartDate(d.date); });
+  var datasets = [{
+    label: 'Deze periode',
+    data: cur.map(function (d) { return d.position != null ? d.position : null; }),
+    borderColor: '#0ea5e9',
+    backgroundColor: 'rgba(14,165,233,0.12)',
+    fill: true,
+    tension: 0.3,
+    pointRadius: 0,
+    pointHoverRadius: 4,
+    borderWidth: 2,
+  }];
+  if (prev && prev.length) {
+    var prevData = prev.slice(0, cur.length).map(function (d) { return d.position != null ? d.position : null; });
+    datasets.push({
+      label: 'Vorige periode',
+      data: prevData,
+      borderColor: '#94a3b8',
+      borderDash: [5, 4],
+      fill: false,
+      tension: 0.3,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      borderWidth: 1.5,
+    });
+  }
+  _chartInstances[canvasId] = new Chart(cv.getContext('2d'), {
+    type: 'line',
+    data: { labels: labels, datasets: datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: datasets.length > 1, labels: { boxWidth: 12, font: { size: 10 } } } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8, autoSkip: true, font: { size: 10 } }, grid: { display: false } },
+        y: { ticks: { font: { size: 10 } }, grid: { color: '#f1f5f9' } }
+      }
+    }
+  });
 }
 
 // ── Handle advice quick actions ──
