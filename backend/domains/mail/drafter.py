@@ -1,13 +1,22 @@
-"""Draft-generator: laat de LLM een warm, concreet helpdesk-antwoord schrijven
+"""Draft-generator: laat een LLM een warm, concreet helpdesk-antwoord schrijven
 in de merkstem van het project, in de taal van de vraagsteller.
 
-Gebruikt de bestaande Claude-client (domains/chat/claude.get_response) met
-terugval op OpenRouter. Bij ontbrekende LLM-key valt hij terug op een
-leesbare placeholder in plaats van te crashen — de review-gate vangt dat op.
+Backend-keuze (expliciet, geen gok):
+  1. OpenModel.ai (jullie vaste gateway, OPENMODEL_API_KEY) — primair.
+  2. Terugval op de bestaande Claude-client (chat/claude) als OpenModel
+     niet geconfigureerd is (Anthropic / OpenRouter).
+Bij geen werkende backend: leesbare placeholder (geen crash) — de
+review-gate vangt dat op en jij vult handmatig in.
 """
 import asyncio
 import re
 from typing import List, Dict
+
+import httpx
+
+from ...shared.config import (
+    OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL,
+)
 
 SYSTEM_TEMPLATE = (
     "Je bent de eerste-lijn helpdesk voor {brand}.\n"
@@ -21,7 +30,7 @@ SYSTEM_TEMPLATE = (
     "spelen aan het team — beloof nooit een onbekende oplossing."
 )
 
-# Woorden die sterk wijzen op Nederlands — voor goedkope, deterministiche
+# Woorden die sterk wijzen op Nederlands — voor goedkope, deterministische
 # taaldetectie zonder externe dep (de LLM herkent de rest zelf).
 _NL_HINTS = (
     "de", "het", "ik", "je", "mijn", "hoe", "wat", "niet", "een", "is", "met",
@@ -51,13 +60,46 @@ def detect_language(text: str) -> str:
     return "onbekend"
 
 
-def _sync_llm(system: str, user: str) -> str:
+def _sync_openmodel(system: str, user: str) -> str:
+    """OpenModel.ai is Anthropic-compatible (/v1/messages, x-api-key)."""
+    url = (OPENMODEL_BASE_URL or "https://api.openmodel.ai").rstrip("/") + "/v1/messages"
+    payload = {
+        "model": OPENMODEL_MODEL or "deepseek-v4-flash",
+        "max_tokens": 800,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }
+    with httpx.Client(timeout=120) as client:
+        resp = client.post(
+            url,
+            headers={
+                "x-api-key": OPENMODEL_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    # OpenModel geeft ofwel Anthropic-vorm (content[].text) of OpenAI-vorm (choices)
+    if "content" in data:
+        return "".join(
+            part.get("text", "") for part in data["content"] if part.get("type") == "text"
+        )
+    if "choices" in data:
+        return data["choices"][0]["message"]["content"]
+    return data.get("text", "")
+
+
+def _sync_claude_fallback(system: str, user: str) -> str:
     from ..chat import claude
 
-    messages: List[Dict] = [{"role": "user", "content": user}]
     try:
-        return asyncio.run(claude.get_response(messages=messages, system_prompt=system, max_tokens=800))
-    except Exception as e:  # geen LLM beschikbaar: leesbare placeholder
+        return asyncio.run(
+            claude.get_response(messages=[{"role": "user", "content": user}],
+                                 system_prompt=system, max_tokens=800)
+        )
+    except Exception as e:
         return (
             f"[Kon geen antwoord genereren: {e}. Beantwoord handmatig.]\n\n"
             f"(Originele vraag hierboven.)"
@@ -81,4 +123,14 @@ def draft_reply(
     if knowledge:
         system += f"\n\nBeschikbare kennis/FAQ:\n{knowledge}"
     user = f"Van: {from_name}\nOnderwerp: {subject}\n\n{body}"
-    return _sync_llm(system, user)
+
+    # 1) OpenModel.ai (jullie vaste gateway) — primair
+    if OPENMODEL_API_KEY:
+        try:
+            return _sync_openmodel(system, user).strip()
+        except Exception as e:
+            # niet stilzwijgend falen — loggen en dan terugvallen
+            import logging
+            logging.getLogger(__name__).warning("OpenModel draft mislukt: %s", e)
+    # 2) Terugval op Claude-agent (Anthropic / OpenRouter)
+    return _sync_claude_fallback(system, user).strip()

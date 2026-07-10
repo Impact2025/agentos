@@ -121,7 +121,7 @@ def test_fetch_new_filters_spam(monkeypatch, mailbox_row):
 
 def test_run_mailbox_creates_pending_reply(mailbox_row, monkeypatch):
     monkeypatch.setattr(poplib, "POP3", FakePop)
-    monkeypatch.setattr(drafter, "_sync_llm", lambda system, user: "Beste, reset via /wachtwoord-vergeten.")
+    monkeypatch.setattr(drafter, "_sync_openmodel", lambda system, user: "Beste, reset via /wachtwoord-vergeten.")
     n = service.run_mailbox({
         "id": "mb_test", "pop_host": "h", "pop_port": 110, "pop_user": "u",
         "pop_password": "p", "brand_context": "Skillkaart", "knowledge_scope": "all",
@@ -177,7 +177,7 @@ def test_fetch_new_ignores_auto_submitted(monkeypatch, mailbox_row):
 
 def test_run_mailbox_saves_threading_headers(mailbox_row, monkeypatch):
     monkeypatch.setattr(poplib, "POP3", FakePop)
-    monkeypatch.setattr(drafter, "_sync_llm", lambda system, user: "Beste, reset via /wachtwoord-vergeten.")
+    monkeypatch.setattr(drafter, "_sync_openmodel", lambda system, user: "Beste, reset via /wachtwoord-vergeten.")
     service.run_mailbox({
         "id": "mb_test", "pop_host": "h", "pop_port": 110, "pop_user": "u",
         "pop_password": "p", "brand_context": "Skillkaart", "knowledge_scope": "all",
@@ -192,7 +192,7 @@ def test_run_mailbox_saves_threading_headers(mailbox_row, monkeypatch):
 def test_send_via_mailbox_smtp(mailbox_row, monkeypatch):
     """Verstuur moet de SMTP van déze mailbox gebruiken, niet de globale .env."""
     monkeypatch.setattr(poplib, "POP3", FakePop)
-    monkeypatch.setattr(drafter, "_sync_llm", lambda system, user: "stub")
+    monkeypatch.setattr(drafter, "_sync_openmodel", lambda system, user: "stub")
     service.run_mailbox({"id": "mb_test", "pop_host": "h", "pop_port": 110,
                           "pop_user": "u", "pop_password": "p",
                           "brand_context": "", "knowledge_scope": "all"})
@@ -234,7 +234,7 @@ def test_send_via_mailbox_smtp(mailbox_row, monkeypatch):
 
 def test_reject_and_edit(mailbox_row, monkeypatch):
     monkeypatch.setattr(poplib, "POP3", FakePop)
-    monkeypatch.setattr(drafter, "_sync_llm", lambda system, user: "stub")
+    monkeypatch.setattr(drafter, "_sync_openmodel", lambda system, user: "stub")
     service.run_mailbox({"id": "mb_test", "pop_host": "h", "pop_port": 110,
                           "pop_user": "u", "pop_password": "p",
                           "brand_context": "", "knowledge_scope": "all"})
