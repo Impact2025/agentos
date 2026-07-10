@@ -60,7 +60,17 @@ async function renderHelpdeskTab(el) {
       '<button onclick="helpdeskRunOne(\'' + escHtml(mb.id) + '\',this)" style="padding:4px 12px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">↻ Ophalen</button>' +
       '<button onclick="helpdeskToggle(\'' + escHtml(mb.id) + '\',' + (mb.enabled ? 0 : 1) + ',this)" style="padding:4px 12px;background:#fff;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">' + (mb.enabled ? 'Pauzeer' : 'Activeer') + '</button>' +
       '<button onclick="helpdeskDeleteMailbox(\'' + escHtml(mb.id) + '\',\'' + escHtml(mb.address) + '\',this)" style="padding:4px 10px;background:#fff;color:#ef4444;border:1px solid #fecaca;border-radius:6px;font-size:11px;cursor:pointer">Verwijder</button>' +
-      '</div></div>';
+      '</div></div>' +
+      // Kennis-paneel: maakt zichtbaar wat de helpdesk over dit project weet
+      '<details style="margin-bottom:8px" ontoggle="if(this.open)helpdeskLoadKnowledge(\'' + escHtml(mb.id) + '\')">' +
+      '<summary style="font-size:11px;font-weight:600;color:#64748b;cursor:pointer">🧠 Wat weet de helpdesk?</summary>' +
+      '<div id="hd-know-' + escHtml(mb.id) + '" style="font-size:11px;color:#475569;padding:8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;margin-top:4px">Laden...</div></details>' +
+      // Handtekening per project — WYSIWYG onder elk concept
+      '<details style="margin-bottom:8px">' +
+      '<summary style="font-size:11px;font-weight:600;color:#64748b;cursor:pointer">✍ Handtekening' + (mb.signature ? '' : ' <span style="color:#d97706">(nog niet ingesteld)</span>') + '</summary>' +
+      '<div style="margin-top:4px"><textarea id="hd-sig-' + escHtml(mb.id) + '" placeholder="Bijv.:\nHartelijke groet,\nVincent van Munster\n' + escHtml(mb.project) + ' · hello@' + escHtml(mb.project) + '.nl" style="width:100%;min-height:80px;font-size:12px;line-height:1.5;padding:8px;border:1px solid #e2e8f0;border-radius:6px;resize:vertical;font-family:inherit;background:#f8fafc">' + escHtml(mb.signature || '') + '</textarea>' +
+      '<button onclick="helpdeskSaveSignature(\'' + escHtml(mb.id) + '\',this)" style="margin-top:4px;padding:5px 14px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Handtekening opslaan</button>' +
+      '<span style="font-size:10px;color:#94a3b8;margin-left:8px">Komt automatisch onder elk nieuw concept; de AI ondertekent dan niet meer zelf.</span></div></details>';
 
     if (!replies.length) {
       html += '<p style="color:#94a3b8;font-size:12px;text-align:center;padding:14px">Geen open concepten — inbox is bijgewerkt.</p>';
@@ -167,6 +177,48 @@ async function helpdeskRunOne(mailboxId, btn) {
   finally { btn.disabled = false; btn.textContent = orig; }
 }
 
+async function helpdeskSaveSignature(mailboxId, btn) {
+  var ta = document.getElementById('hd-sig-' + mailboxId);
+  if (!ta) return;
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Opslaan...';
+  try {
+    var resp = await fetch('/api/mail/mailboxes/' + encodeURIComponent(mailboxId), {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ signature: ta.value }),
+    });
+    var d = await resp.json();
+    if (d.ok) { btn.textContent = 'Opgeslagen ✓'; setTimeout(function(){ btn.textContent = orig; }, 1500); }
+    else { alert('❌ ' + (d.error || d.detail || 'onbekend')); btn.textContent = orig; }
+  } catch(e) { alert('❌ ' + e.message); btn.textContent = orig; }
+  finally { btn.disabled = false; }
+}
+
+var _hdKnowLoaded = {};
+async function helpdeskLoadKnowledge(mailboxId) {
+  if (_hdKnowLoaded[mailboxId]) return;
+  _hdKnowLoaded[mailboxId] = true;
+  var box = document.getElementById('hd-know-' + mailboxId);
+  if (!box) return;
+  try {
+    var c = await (await fetch('/api/mail/mailboxes/' + encodeURIComponent(mailboxId) + '/knowledge')).json();
+    function chip(ok, label) {
+      return '<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;' +
+        (ok ? 'background:#ecfdf5;color:#059669' : 'background:#fef2f2;color:#ef4444') + '">' + (ok ? '✓ ' : '✗ ') + label + '</span>';
+    }
+    var html = chip(c.vault, 'Vault-notes' + (c.vault ? ' (' + Math.round(c.vault_chars/100)/10 + 'k tekens)' : '')) +
+      chip(c.site_profile, 'Merkprofiel') +
+      chip(!!c.base_url, 'Site-URL' + (c.base_url ? '' : '')) +
+      chip(c.live_pages > 0, 'Live pagina\'s (' + c.live_pages + ')') +
+      chip(c.learned_qa > 0, 'Geleerde antwoorden (' + c.learned_qa + ')') +
+      chip(c.signature, 'Handtekening') +
+      '<div style="margin-top:4px;color:#94a3b8">Totale kennisbasis: ' + (c.total_chars || 0).toLocaleString('nl-NL') + ' tekens per antwoord.</div>';
+    if (c.hints && c.hints.length) {
+      html += '<ul style="margin:6px 0 0 14px;padding:0;color:#b45309">' + c.hints.map(function(h){ return '<li style="margin-bottom:2px">' + escHtml(h) + '</li>'; }).join('') + '</ul>';
+    }
+    box.innerHTML = html;
+  } catch(e) { box.innerHTML = 'Fout: ' + escHtml(e.message); _hdKnowLoaded[mailboxId] = false; }
+}
+
 async function helpdeskToggle(mailboxId, enabled, btn) {
   btn.disabled = true;
   try {
@@ -209,6 +261,8 @@ function helpdeskShowAddForm() {
     field('hd-smtp-pass','SMTP-wachtwoord','', true) +
     field('hd-display','Weergavenaam','Project Hulp') +
     '</div>' +
+    '<label style="font-size:11px;color:#475569;display:flex;flex-direction:column;gap:3px;margin-top:8px">Handtekening (onder elk antwoord)' +
+    '<textarea id="hd-signature" placeholder="Hartelijke groet,\nVincent van Munster" style="min-height:70px;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-family:inherit;resize:vertical"></textarea></label>' +
     '<div style="margin-top:10px"><button onclick="helpdeskAdd(this)" style="padding:7px 18px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Aanmaken</button></div></div>';
 }
 function field(id, label, ph, pwd, val) {
@@ -221,7 +275,7 @@ async function helpdeskAdd(btn) {
     project: v('hd-project') || currentProject || '', address: v('hd-address'),
     pop_host: v('hd-pop-host'), pop_port: parseInt(v('hd-pop-port')||'110',10), pop_user: v('hd-pop-user'), pop_password: v('hd-pop-pass'),
     smtp_host: v('hd-smtp-host'), smtp_port: parseInt(v('hd-smtp-port')||'587',10), smtp_user: v('hd-smtp-user'), smtp_password: v('hd-smtp-pass'),
-    from_display: v('hd-display'), enabled: 1, poll_minutes: 30,
+    from_display: v('hd-display'), signature: v('hd-signature'), enabled: 1, poll_minutes: 30,
   };
   if (!payload.project || !payload.address || !payload.pop_host) { alert('Vul minimaal project, adres en POP-host in.'); return; }
   btn.disabled = true; btn.textContent = 'Aanmaken...';

@@ -52,16 +52,39 @@ def _dm(s: Optional[str]) -> str:
     return "".join(out)
 
 
+def _strip_html(html: str) -> str:
+    """Kale-tekst uit een HTML-mail — genoeg voor classificatie + beantwoording.
+    Sommige mailclients sturen alléén text/html; zonder dit blijft de body leeg
+    en wordt de vraag nooit als vraag herkend."""
+    import html as html_mod
+    text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html)
+    text = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</tr>", "\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html_mod.unescape(text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n+", "\n\n", text)
+    return text.strip()
+
+
 def _body(msg: email.message.Message) -> str:
+    html_fallback = ""
     if msg.is_multipart():
         for part in msg.walk():
-            if part.get_content_type() == "text/plain" and "attachment" not in str(
-                part.get("Content-Disposition")
-            ):
-                payload = part.get_payload(decode=True) or b""
-                return payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+            disp = str(part.get("Content-Disposition"))
+            if "attachment" in disp:
+                continue
+            payload = part.get_payload(decode=True) or b""
+            decoded = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+            if part.get_content_type() == "text/plain":
+                return decoded
+            if part.get_content_type() == "text/html" and not html_fallback:
+                html_fallback = decoded
+        return _strip_html(html_fallback) if html_fallback else ""
     payload = msg.get_payload(decode=True) or b""
-    return payload.decode(msg.get_content_charset() or "utf-8", errors="replace")
+    decoded = payload.decode(msg.get_content_charset() or "utf-8", errors="replace")
+    if msg.get_content_type() == "text/html":
+        return _strip_html(decoded)
+    return decoded
 
 
 def _should_ignore(from_addr: str, subject: str, body: str = "", auto_submitted: bool = False) -> bool:

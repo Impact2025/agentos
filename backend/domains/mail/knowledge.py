@@ -169,6 +169,64 @@ def build_knowledge(conn, project: str, mailbox: Dict) -> str:
     return "\n\n".join(sections)
 
 
+def coverage(conn, project: str, mailbox: Dict) -> Dict:
+    """Meetbaar antwoord op "weet de helpdesk genoeg?" — per kennislaag of hij
+    gevuld is, plus concrete hints om lege lagen te vullen. Voedt het
+    'Wat weet de helpdesk?'-paneel in de UI."""
+    vault = _vault_section(project)
+    site = _site_for_project(conn, project)
+    profile_ok, ctas_n, base_url = False, 0, ""
+    live_n = 0
+    if site:
+        base_url = (site.get("base_url") or "").strip()
+        profile_ok = bool((site.get("profile") or "").strip())
+        try:
+            ctas = json.loads(site.get("ctas") or "[]")
+            ctas_n = len([c for c in ctas if str(c).strip()]) if isinstance(ctas, list) else 0
+        except json.JSONDecodeError:
+            ctas_n = 0
+        live_n = conn.execute(
+            "SELECT COUNT(*) AS n FROM published_pages WHERE site_id=? AND url != ''",
+            (site["id"],),
+        ).fetchone()["n"]
+    qa_n = conn.execute(
+        "SELECT COUNT(*) AS n FROM mail_reply WHERE mailbox_id=? AND status='sent'",
+        (mailbox.get("id", ""),),
+    ).fetchone()["n"]
+    signature_ok = bool((mailbox.get("signature") or "").strip())
+
+    hints = []
+    if not vault:
+        hints.append(f"Geen vault-notes gevonden — maak/vul 10_Projects/{project}/ in Obsidian.")
+    if not site:
+        hints.append("Geen site gekoppeld — voeg dit project toe onder Sites (zelfde naam als het project).")
+    else:
+        if not profile_ok:
+            hints.append("Site-profiel is leeg — vul 'profile' (wie/wat/doelgroep/toon) bij de site-instellingen.")
+        if not base_url:
+            hints.append("Site heeft geen base_url — zonder die weet de helpdesk het webadres niet.")
+        if live_n == 0:
+            hints.append("Nog geen live pagina's bekend — de helpdesk kan geen echte links geven; publiceer via de Wachtrij.")
+    if qa_n == 0:
+        hints.append("Nog geen verstuurde antwoorden — na je eerste goedkeuringen gaat de helpdesk jouw stijl imiteren.")
+    if not signature_ok:
+        hints.append("Geen handtekening ingesteld — klanten krijgen nu de generieke Agent OS-footer.")
+
+    return {
+        "vault": bool(vault),
+        "vault_chars": len(vault),
+        "site_found": bool(site),
+        "site_profile": profile_ok,
+        "base_url": base_url,
+        "ctas": ctas_n,
+        "live_pages": live_n,
+        "learned_qa": qa_n,
+        "signature": signature_ok,
+        "total_chars": len(build_knowledge(conn, project, mailbox)),
+        "hints": hints,
+    }
+
+
 def thread_history(conn, mailbox_id: str, from_addr: str, exclude_inbox_id: int) -> str:
     """Eerdere wisseling met déze afzender op déze mailbox, oud → nieuw.
 

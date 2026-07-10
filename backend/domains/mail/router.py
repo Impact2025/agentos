@@ -37,6 +37,7 @@ class MailboxBody(BaseModel):
     poll_minutes: int = 30
     enabled: int = 1
     from_display: str = ""
+    signature: str = ""
 
 
 class EditBody(BaseModel):
@@ -71,6 +72,7 @@ class MailboxPatch(BaseModel):
     poll_minutes: Optional[int] = None
     enabled: Optional[int] = None
     from_display: Optional[str] = None
+    signature: Optional[str] = None
 
 
 class RunBody(BaseModel):
@@ -100,6 +102,19 @@ def remove_mailbox(mailbox_id: str):
     if not service.delete_mailbox(mailbox_id):
         raise HTTPException(404, "Mailbox niet gevonden")
     return {"ok": True}
+
+
+@router.get("/mailboxes/{mailbox_id}/knowledge")
+def mailbox_knowledge(mailbox_id: str):
+    """Wat weet de helpdesk over dit project? Coverage per kennislaag + hints."""
+    from ...shared.database import get_conn
+    from . import knowledge as knowledge_mod
+    with get_conn() as conn:
+        mb = conn.execute("SELECT * FROM mailboxes WHERE id=?", (mailbox_id,)).fetchone()
+        if not mb:
+            raise HTTPException(404, "Mailbox niet gevonden")
+        mb = dict(mb)
+        return knowledge_mod.coverage(conn, mb.get("project", ""), mb)
 
 
 @router.get("/pending")

@@ -1,14 +1,16 @@
 """Draft-generator: laat een LLM een warm, concreet helpdesk-antwoord schrijven
 in de merkstem van het project, in de taal van de vraagsteller.
 
-Backend-keuze (expliciet, geen gok):
-  1. OpenModel.ai (jullie vaste gateway, OPENMODEL_API_KEY) — primair.
-  2. Terugval op de bestaande Claude-client (chat/claude) als OpenModel
-     niet geconfigureerd is (Anthropic / OpenRouter).
+Backend-keuze (expliciet, geen gok) — instelbaar via MAIL_DRAFT_BACKEND:
+  * 'openmodel' (default): OpenModel.ai (jullie vaste gateway) primair,
+    Claude-client (Anthropic / OpenRouter) als terugval.
+  * 'claude': Claude primair (beste kwaliteit — aanbevolen voor klantcontact,
+    het volume is klein), OpenModel als terugval.
 Bij geen werkende backend: leesbare placeholder (geen crash) — de
 review-gate vangt dat op en jij vult handmatig in.
 """
 import asyncio
+import os
 import re
 from typing import List, Dict
 
@@ -17,6 +19,8 @@ import httpx
 from ...shared.config import (
     OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL,
 )
+
+MAIL_DRAFT_BACKEND = os.getenv("MAIL_DRAFT_BACKEND", "openmodel").strip().lower()
 
 SYSTEM_TEMPLATE = (
     "Je bent de eerste-lijn helpdesk voor {brand}.\n"
@@ -35,7 +39,19 @@ SYSTEM_TEMPLATE = (
     "Is er eerdere correspondentie meegegeven? Behandel de mail dan als vervolg: "
     "niet opnieuw voorstellen, niet dezelfde uitleg herhalen, maar doorpakken op "
     "waar het gesprek was gebleven.\n"
-    "Maximaal 150 woorden. Eindig met een vriendelijke groet onder de naam van {brand}.\n"
+    "Maximaal 150 woorden.\n"
+)
+
+# Afsluiting hangt af van of de mailbox een vaste handtekening heeft: die wordt
+# ná het genereren onder het concept geplakt, dus de LLM mag dan niet zelf ook
+# nog eens ondertekenen (dubbele groet oogt knullig).
+_CLOSING_WITH_SIGNATURE = (
+    "Sluit af met alléén een korte groetregel (bijv. 'Hartelijke groet,') — "
+    "GEEN naam, merk of handtekening eronder; de vaste handtekening van {brand} "
+    "wordt automatisch onder je antwoord gezet."
+)
+_CLOSING_NO_SIGNATURE = (
+    "Eindig met een vriendelijke groet onder de naam van {brand}."
 )
 
 # Woorden die sterk wijzen op Nederlands — voor goedkope, deterministische
@@ -121,6 +137,7 @@ def draft_reply(
     brand_context: str,
     knowledge: str,
     history: str = "",
+    has_signature: bool = False,
 ) -> str:
     brand = brand_context or "dit project"
     lang = detect_language(subject + " " + body)
@@ -128,7 +145,9 @@ def draft_reply(
         "nl": "De klant schrijft Nederlands — antwoord in het Nederlands.",
         "en": "The customer writes in English — reply in English.",
     }.get(lang, "Herken de taal van de klant en antwoord in diezelfde taal.")
-    system = SYSTEM_TEMPLATE.format(brand=brand) + "\n\n" + lang_note
+    closing = (_CLOSING_WITH_SIGNATURE if has_signature else _CLOSING_NO_SIGNATURE)
+    system = (SYSTEM_TEMPLATE.format(brand=brand) + closing.format(brand=brand)
+              + "\n\n" + lang_note)
     if knowledge:
         system += f"\n\n— KENNISBASIS (hieronder staat wat je WÉL mag zeggen over het project, de app en de maker) —\n{knowledge}"
     user = ""
@@ -139,13 +158,28 @@ def draft_reply(
         )
     user += f"Van: {from_name}\nOnderwerp: {subject}\n\n{body}"
 
-    # 1) OpenModel.ai (jullie vaste gateway) — primair
+    import logging
+    log = logging.getLogger(__name__)
+
+    if MAIL_DRAFT_BACKEND == "claude":
+        # Claude primair (beste kwaliteit voor klantcontact), OpenModel-vangnet.
+        out = _sync_claude_fallback(system, user).strip()
+        if not out.startswith("[Kon geen antwoord genereren"):
+            return out
+        log.warning("Claude draft mislukt — terugval op OpenModel")
+        if OPENMODEL_API_KEY:
+            try:
+                return _sync_openmodel(system, user).strip()
+            except Exception as e:
+                log.warning("OpenModel draft mislukt: %s", e)
+        return out  # leesbare placeholder — review-gate vangt dit op
+
+    # Default: OpenModel.ai (jullie vaste gateway) primair
     if OPENMODEL_API_KEY:
         try:
             return _sync_openmodel(system, user).strip()
         except Exception as e:
             # niet stilzwijgend falen — loggen en dan terugvallen
-            import logging
-            logging.getLogger(__name__).warning("OpenModel draft mislukt: %s", e)
-    # 2) Terugval op Claude-agent (Anthropic / OpenRouter)
+            log.warning("OpenModel draft mislukt: %s", e)
+    # Terugval op Claude-agent (Anthropic / OpenRouter)
     return _sync_claude_fallback(system, user).strip()

@@ -51,6 +51,7 @@ def run_mailbox(mailbox: Dict) -> int:
                 history = knowledge_mod.thread_history(
                     conn, mid, m["from_addr"], m["id"]
                 )
+                signature = (mailbox.get("signature") or "").strip()
                 draft = drafter.draft_reply(
                     from_name=m["from_name"] or m["from_addr"],
                     subject=m["subject"],
@@ -58,7 +59,12 @@ def run_mailbox(mailbox: Dict) -> int:
                     brand_context=mailbox.get("project", ""),
                     knowledge=knowledge,
                     history=history,
+                    has_signature=bool(signature),
                 )
+                # Handtekening in het concept zelf (WYSIWYG): wat Vincent in de
+                # review ziet is exact wat de klant krijgt — en per mail bij te werken.
+                if signature:
+                    draft = draft.rstrip() + "\n\n" + signature
                 # Thread het antwoord op de originele mail
                 refs = (m.get("references") or "").strip()
                 irt = (m.get("in_reply_to") or "").strip()
@@ -117,6 +123,15 @@ def send_reply(reply_id: int) -> bool:
     """Verstuur een goedgekeurd concept via de SMTP van déze mailbox (per project,
     niet de globale .env-SMTP). Threadt netjes op de originele mail en zet een
     heldere From-naam + helpdesk-footer. Review-gate: alleen via expliciete call."""
+    ok, sent_info = _send_reply_impl(reply_id)
+    # Loggen pas ná de commit van de verzend-transactie — log_outcome opent een
+    # eigen schrijf-connectie en zou anders op de open transactie vastlopen.
+    if ok and sent_info:
+        _log_sent(*sent_info)
+    return ok
+
+
+def _send_reply_impl(reply_id: int):
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
     from email.utils import formataddr, make_msgid
@@ -126,14 +141,14 @@ def send_reply(reply_id: int) -> bool:
             "SELECT r.to_addr, r.subject, r.draft_body, r.edited_body, r.status, "
             "r.in_reply_to, r.\"references\", "
             "m.smtp_host, m.smtp_port, m.smtp_user, m.smtp_password, m.address, "
-            "m.from_display, m.project "
+            "m.from_display, m.project, m.signature "
             "FROM mail_reply r JOIN mailboxes m ON m.id=r.mailbox_id WHERE r.id=?",
             (reply_id,),
         ).fetchone()
         if not r:
-            return False
+            return False, None
         if r["status"] == "sent":
-            return True
+            return True, None
         if not (r["smtp_host"] and r["smtp_user"] and r["smtp_password"]):
             # Terugval op de globale .env-SMTP (bestaande email_service)
             from ...shared.email_service import send_report
@@ -141,15 +156,19 @@ def send_reply(reply_id: int) -> bool:
             ok = send_report(subject=r["subject"], body=body, to=r["to_addr"])
             if ok:
                 conn.execute("UPDATE mail_reply SET status='sent', sent_at=datetime('now') WHERE id=?", (reply_id,))
-            return ok
+                return True, (r["project"], r["to_addr"], r["subject"])
+            return False, None
 
         body = r["edited_body"] or r["draft_body"]
-        # Plain-text body + nette footer (geen finance-stamp)
-        footer = (
-            f"\n\n—\n{r['project']} helpdesk · dit bericht is voorbereid met Agent OS. "
-            f"Tip: stuur gewoon een reply, we lezen mee."
-        )
-        text = body + footer
+        # Handtekening zit al ín het concept (WYSIWYG). Alleen mailboxen zónder
+        # eigen handtekening krijgen de generieke footer als vangnet.
+        if (r["signature"] or "").strip():
+            text = body
+        else:
+            text = body + (
+                f"\n\n—\n{r['project']} helpdesk · dit bericht is voorbereid met Agent OS. "
+                f"Tip: stuur gewoon een reply, we lezen mee."
+            )
         msg = MIMEMultipart("alternative")
         display = r["from_display"] or r["project"]
         msg["From"] = formataddr((display, r["address"]))
@@ -171,10 +190,26 @@ def send_reply(reply_id: int) -> bool:
                 s.login(r["smtp_user"], r["smtp_password"])
                 s.sendmail(r["address"], [r["to_addr"]], msg.as_string())
             conn.execute("UPDATE mail_reply SET status='sent', sent_at=datetime('now') WHERE id=?", (reply_id,))
-            return True
+            return True, (r["project"], r["to_addr"], r["subject"])
         except Exception as e:
             logger.exception("Versturen via mailbox SMTP mislukt: %s", e)
-            return False
+            return False, None
+
+
+def _log_sent(project: str, to_addr: str, subject: str) -> None:
+    """Uitkomst-kaart per verzonden antwoord — zo is in de Activiteit per project
+    terug te zien wat de helpdesk (na goedkeuring) heeft beantwoord."""
+    try:
+        from ...shared.outcomes import log_outcome
+        log_outcome(
+            project=project or "Helpdesk",
+            action="mail_verstuurd",
+            detail=f"Helpdesk-antwoord verstuurd aan {to_addr}: {subject}",
+            artifact=f"mailto:{to_addr}",
+            status="ok",
+        )
+    except Exception:
+        logger.exception("Kon verzonden mail niet in activity_log zetten")
 
 
 def reject_reply(reply_id: int) -> None:
@@ -199,7 +234,7 @@ def list_mailboxes(project: Optional[str] = None) -> List[Dict]:
         rows = conn.execute(
             "SELECT id, project, label, address, pop_host, pop_port, smtp_host, "
             "smtp_port, brand_context, knowledge_scope, poll_minutes, enabled, "
-            "from_display FROM mailboxes ORDER BY project, address"
+            "from_display, signature FROM mailboxes ORDER BY project, address"
         ).fetchall()
     boxes = [dict(r) for r in rows]
     if project:
@@ -214,8 +249,8 @@ def create_mailbox(data: Dict) -> str:
         conn.execute(
             "INSERT INTO mailboxes(id,project,label,address,pop_host,pop_port,pop_user,"
             "pop_password,smtp_host,smtp_port,smtp_user,smtp_password,brand_context,"
-            "knowledge_scope,poll_minutes,enabled,from_display,created_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+            "knowledge_scope,poll_minutes,enabled,from_display,signature,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
             (
                 mid, data["project"], data.get("label", ""), data["address"],
                 data["pop_host"], int(data.get("pop_port", 110)), data["pop_user"],
@@ -223,7 +258,7 @@ def create_mailbox(data: Dict) -> str:
                 data.get("smtp_user", ""), data.get("smtp_password", ""),
                 data.get("brand_context", ""), data.get("knowledge_scope", "all"),
                 int(data.get("poll_minutes", 30)), int(data.get("enabled", 1)),
-                data.get("from_display", ""),
+                data.get("from_display", ""), data.get("signature", ""),
             ),
         )
     return mid
@@ -253,6 +288,7 @@ def update_mailbox(mailbox_id: str, data: Dict) -> bool:
         "project", "label", "address", "pop_host", "pop_port", "pop_user",
         "pop_password", "smtp_host", "smtp_port", "smtp_user", "smtp_password",
         "brand_context", "knowledge_scope", "poll_minutes", "enabled", "from_display",
+        "signature",
     )
     updates, params = [], []
     for f in allowed:

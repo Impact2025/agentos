@@ -348,6 +348,98 @@ def test_run_single_mailbox_and_error_escalation(mailbox_row, monkeypatch):
     assert "POP3" in row["next_step"] or "instellingen" in row["next_step"]
 
 
+def test_signature_lands_in_draft_and_llm_does_not_sign(mailbox_row, monkeypatch):
+    """Handtekening per project: onder elk concept (WYSIWYG), en de LLM krijgt
+    de instructie om niet zelf ook nog te ondertekenen."""
+    captured = {}
+    def fake(system, user):
+        captured["system"] = system
+        return "Hoi Jan, reset via de hub.\n\nHartelijke groet,"
+    monkeypatch.setattr(poplib, "POP3", FakePop)
+    monkeypatch.setattr(drafter, "_sync_openmodel", fake)
+    monkeypatch.setattr(drafter, "OPENMODEL_API_KEY", "test-key")
+    with db.get_conn() as conn:
+        conn.execute("UPDATE mailboxes SET signature='Vincent van Munster\nSkillkaart' WHERE id='mb_test'")
+    service.run_mailbox({"id": "mb_test", "pop_host": "h", "pop_port": 110,
+                          "pop_user": "u", "pop_password": "p", "project": "skillkaart",
+                          "signature": "Vincent van Munster\nSkillkaart",
+                          "brand_context": "", "knowledge_scope": "all"})
+    with db.get_conn() as conn:
+        draft = conn.execute("SELECT draft_body FROM mail_reply").fetchone()["draft_body"]
+    assert draft.endswith("Vincent van Munster\nSkillkaart")
+    assert "GEEN naam" in captured["system"]  # anti-dubbele-handtekening-instructie
+
+
+def test_send_skips_generic_footer_when_signature_set(mailbox_row, monkeypatch):
+    monkeypatch.setattr(poplib, "POP3", FakePop)
+    monkeypatch.setattr(drafter, "_sync_openmodel", lambda system, user: "stub")
+    service.run_mailbox({"id": "mb_test", "pop_host": "h", "pop_port": 110,
+                          "pop_user": "u", "pop_password": "p", "project": "skillkaart",
+                          "brand_context": "", "knowledge_scope": "all"})
+    with db.get_conn() as conn:
+        rid = conn.execute("SELECT id FROM mail_reply").fetchone()["id"]
+        conn.execute(
+            "UPDATE mailboxes SET smtp_host='mail.skillkaart.nl', smtp_port=587, "
+            "smtp_user='hello@skillkaart.nl', smtp_password='pw', "
+            "signature='Vincent van Munster' WHERE id='mb_test'")
+    sent = {}
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=20): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def ehlo(self): pass
+        def starttls(self): pass
+        def login(self, u, p): pass
+        def sendmail(self, frm, to, msg): sent["msg"] = msg
+    monkeypatch.setattr(service, "smtplib", types.SimpleNamespace(SMTP=FakeSMTP))
+    assert service.send_reply(rid) is True
+    assert "voorbereid met Agent OS" not in sent["msg"]  # geen dubbele afsluiting
+    # verzending is als uitkomst-kaart gelogd
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "SELECT status FROM activity_log WHERE action='mail_verstuurd' "
+            "ORDER BY created_at DESC LIMIT 1").fetchone()
+    assert row is not None and row["status"] == "ok"
+
+
+def test_knowledge_coverage_reports_layers_and_hints(mailbox_row):
+    from backend.domains.mail import knowledge as km
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM sites")
+        conn.execute("DELETE FROM published_pages")
+        cov = km.coverage(conn, "projectzondersite", {"id": "mb_test", "project": "projectzondersite"})
+    assert cov["site_found"] is False
+    assert cov["live_pages"] == 0
+    assert cov["signature"] is False
+    assert any("site" in h.lower() for h in cov["hints"])
+    assert any("handtekening" in h.lower() for h in cov["hints"])
+    assert cov["total_chars"] >= 0
+
+
+def test_html_only_mail_gets_text_body(mailbox_row, monkeypatch):
+    """Mailclients die alléén text/html sturen mogen geen lege body opleveren."""
+    class HtmlPop(FakePop):
+        def __init__(self, *a, **k):
+            html_mail = (
+                "From: Klant <eva@x.nl>\r\n"
+                "Subject: Vraag over inloggen\r\n"
+                "Content-Type: text/html; charset=utf-8\r\n\r\n"
+                "<html><body><p>Hoe kan ik <b>inloggen</b> als coach?</p>"
+                "<br><p>Groet, Eva</p></body></html>\r\n"
+            ).encode("utf-8")
+            self._mails = [html_mail]
+        def list(self):
+            return (b"+OK 1", [b"1 1"], 10)
+        def uidl(self):
+            return (b"+OK", [b"1 UH1"], 10)
+    monkeypatch.setattr(poplib, "POP3", HtmlPop)
+    with db.get_conn() as conn:
+        got = inbox.fetch_new("mb_test", "h", 110, "u", "p", conn)
+    assert len(got) == 1
+    assert "inloggen" in got[0]["body_text"]
+    assert "<" not in got[0]["body_text"]  # tags gestript
+
+
 def test_reject_and_edit(mailbox_row, monkeypatch):
     monkeypatch.setattr(poplib, "POP3", FakePop)
     monkeypatch.setattr(drafter, "_sync_openmodel", lambda system, user: "stub")

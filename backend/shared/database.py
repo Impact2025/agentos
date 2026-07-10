@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS opportunities (
     rationale         TEXT DEFAULT '',
     status            TEXT NOT NULL DEFAULT 'new',
     scanned_at        TEXT NOT NULL,
+    live_url          TEXT DEFAULT '',
+    published_at      TEXT DEFAULT '',
     FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
 );
 
@@ -408,6 +410,15 @@ CREATE TABLE IF NOT EXISTS case_studies (
     FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_case_studies_site ON case_studies(site_id, status);
+
+CREATE TABLE IF NOT EXISTS scheduler_runs (
+    job_id      TEXT PRIMARY KEY,
+    status      TEXT NOT NULL,              -- ok | error | missed
+    last_run_at TEXT NOT NULL,              -- laatste run, ongeacht uitkomst
+    last_ok_at  TEXT,                       -- laatste geslaagde run; bepaalt of een run ingehaald moet worden
+    error       TEXT,
+    source      TEXT NOT NULL DEFAULT 'schedule'  -- schedule | catchup | manual
+);
 """
 
 
@@ -546,6 +557,15 @@ def _migrate(conn) -> None:
         if col not in site_cols:
             conn.execute(ddl)
 
+    # Demand Engine kansen: live-URL + publicatietimestamp, zodat de Kansen-card
+    # in de UI direct kan tonen of een artikel écht live staat (ipv alleen de
+    # handmatige 'Gepubliceerd'-vink). Idempotent.
+    opp_cols = {row["name"] for row in conn.execute("PRAGMA table_info(opportunities)").fetchall()}
+    if "live_url" not in opp_cols:
+        conn.execute("ALTER TABLE opportunities ADD COLUMN live_url TEXT DEFAULT ''")
+    if "published_at" not in opp_cols:
+        conn.execute("ALTER TABLE opportunities ADD COLUMN published_at TEXT DEFAULT ''")
+
     # Content-jobs: QC-rapport van de meertraps-generator + gebruikte casestudy,
     # zodat de Wachtrij per artikel kan tonen welke checks zijn gedaan/gefixt.
     cj_cols = {row["name"] for row in conn.execute("PRAGMA table_info(content_jobs)").fetchall()}
@@ -619,6 +639,221 @@ def _migrate(conn) -> None:
         ("gsc_synced_at",    "ALTER TABLE published_pages ADD COLUMN gsc_synced_at TEXT DEFAULT ''"),
     ):
         if col not in pp_cols:
+            conn.execute(ddl)
+
+    # GSC-historie — dagreeksen per site (scope='site', echte dagcijfers via de
+    # date-dimensie) en dagelijkse per-pagina-snapshots (scope='page', trailing
+    # 28-dagen-aggregaat op sync-datum). Basis voor trend-delta's: zonder
+    # historie kan niemand (Iris incluis) bewijzen dat een interventie werkte.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS gsc_history (
+            id          TEXT PRIMARY KEY,
+            site_id     TEXT NOT NULL,
+            scope       TEXT NOT NULL DEFAULT 'site',  -- site | page
+            page_url    TEXT DEFAULT '',               -- leeg bij scope='site'
+            date        TEXT NOT NULL,                 -- YYYY-MM-DD
+            clicks      INTEGER DEFAULT 0,
+            impressions INTEGER DEFAULT 0,
+            ctr         REAL DEFAULT 0,
+            position    REAL DEFAULT 0,
+            top_query   TEXT DEFAULT '',
+            created_at  TEXT NOT NULL,
+            UNIQUE(site_id, scope, page_url, date)
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_gsc_history_site_date "
+        "ON gsc_history(site_id, scope, date DESC)"
+    )
+
+    # Iris — de manager-agent: dagelijkse briefing (rapport per dag) en het
+    # lessen-geheugen waarmee ze over dagen heen leert en zichzelf verbetert.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS iris_reports (
+            id            TEXT PRIMARY KEY,
+            report_date   TEXT NOT NULL,          -- YYYY-MM-DD (Europe/Amsterdam)
+            markdown      TEXT NOT NULL,          -- de volledige briefing
+            grades        TEXT DEFAULT '{}',      -- JSON: {project: {score, oordeel}}
+            learned       TEXT DEFAULT '[]',      -- JSON: wat Iris vandaag leerde
+            improvements  TEXT DEFAULT '[]',      -- JSON: wat ze concreet aanpaste
+            advice        TEXT DEFAULT '[]',      -- JSON: advies-van-vandaag voor Vincent
+            metrics       TEXT DEFAULT '{}',      -- JSON: de harde cijfers-snapshot
+            created_at    TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_iris_reports_date ON iris_reports(report_date DESC)"
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS iris_lessons (
+            id              TEXT PRIMARY KEY,
+            lesson          TEXT NOT NULL,        -- de les, in één zin
+            category        TEXT DEFAULT '',      -- seo | content | funnel | systeem | proces
+            source          TEXT DEFAULT '',      -- waaruit de les volgde
+            times_confirmed INTEGER DEFAULT 1,    -- vaker bevestigd = zwaarder gewicht
+            active          INTEGER DEFAULT 1,    -- 0 = achterhaald/ingetrokken
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        )"""
+    )
+    # Evidence-based leren: elke les wordt getoetst met falsifieerbare
+    # voorspellingen. Een les die correcte voorspellingen oplevert wint
+    # vertrouwen; faalt haar voorspelling dan daalt het — en bij herhaald
+    # falen wordt de les ingetrokken (active=0). Zo weegt bewijs, niet herhaling.
+    les_cols = {r["name"] for r in conn.execute("PRAGMA table_info(iris_lessons)").fetchall()}
+    for col, ddl in (
+        ("predictions_made",    "ALTER TABLE iris_lessons ADD COLUMN predictions_made INTEGER DEFAULT 0"),
+        ("predictions_correct", "ALTER TABLE iris_lessons ADD COLUMN predictions_correct INTEGER DEFAULT 0"),
+        ("confidence",          "ALTER TABLE iris_lessons ADD COLUMN confidence REAL DEFAULT 0.5"),
+    ):
+        if col not in les_cols:
+            conn.execute(ddl)
+
+    # Iris' voorspellingen — de gesloten leer-lus. Bij elk advies/bijsturing
+    # legt Iris een toetsbare voorspelling vast (metric, richting, horizon).
+    # De volgende ochtend na `due_date` rekent ze die af tegen de echte
+    # GSC-/cijferdata. Dit is wat 'leert en verbetert' aantoonbaar maakt.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS iris_predictions (
+            id            TEXT PRIMARY KEY,
+            report_date   TEXT NOT NULL,          -- dag waarop de voorspelling is gedaan
+            project       TEXT DEFAULT '',
+            site_id       TEXT DEFAULT '',
+            metric        TEXT NOT NULL,          -- clicks | position | impressions | ctr | live_content
+            direction     TEXT NOT NULL,          -- up | down (positie: up = beter = lager getal)
+            baseline      REAL DEFAULT 0,         -- metriekwaarde op moment van voorspellen
+            target        REAL,                   -- optioneel: verwachte waarde
+            horizon_days  INTEGER DEFAULT 7,
+            due_date      TEXT NOT NULL,          -- report_date + horizon
+            lesson_id     TEXT DEFAULT '',        -- de les die deze voorspelling toetst
+            statement     TEXT DEFAULT '',        -- de voorspelling in mensentaal
+            status        TEXT NOT NULL DEFAULT 'open',  -- open | correct | wrong | unclear
+            outcome_value REAL,
+            outcome_note  TEXT DEFAULT '',
+            evaluated_at  TEXT DEFAULT '',
+            created_at    TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_iris_predictions_due "
+        "ON iris_predictions(status, due_date)"
+    )
+
+    # Iris' kennisbank — Vincent voedt haar met onderzoek (bv. GEO/AEO/SEO).
+    # Markdown-bestanden in de vault-map worden gedistilleerd tot toepasbare
+    # principes die in Iris' analyse-prompt én in de content-schrijfprompts
+    # terechtkomen. Zo wordt ze aantoonbaar slimmer van wat jij aanlevert.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS iris_knowledge (
+            id            TEXT PRIMARY KEY,
+            source        TEXT NOT NULL DEFAULT 'vault',  -- vault | manual
+            source_path   TEXT DEFAULT '',                -- vault-bestandspad (leeg bij manual)
+            title         TEXT NOT NULL,
+            content_hash  TEXT DEFAULT '',                -- detecteert gewijzigde bestanden
+            summary       TEXT DEFAULT '',                -- korte distillatie
+            principles    TEXT DEFAULT '[]',              -- JSON: toepasbare principes
+            tags          TEXT DEFAULT '[]',              -- JSON: bv. ['geo','seo','content']
+            scope         TEXT DEFAULT 'all',             -- 'all' of een projectnaam
+            active        INTEGER DEFAULT 1,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_iris_knowledge_active "
+        "ON iris_knowledge(active, scope)"
+    )
+
+    # ── Mail helpdesk (review-gate): per project een eigen mailbox ──────────
+    # Een mailbox koppelt een project aan zijn POP3-inbox + SMTP-verzender.
+    # AgentOS haalt mail op, filtert spam, laat de LLM een concept-antwoord
+    # schrijven en zet dat klaar in mail_reply (status=pending_review). Niets
+    # vertrekt zonder Vincents expliciete klik — zelfde discipline als de
+    # content-wachtrij / Iris "publiceert nooit zelf".
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS mailboxes (
+            id             TEXT PRIMARY KEY,
+            project        TEXT NOT NULL,          -- projectnaam (skillkaart, bijeen, ...)
+            label          TEXT NOT NULL DEFAULT '',
+            address        TEXT NOT NULL,          -- hallo@bijeen.app
+            pop_host       TEXT NOT NULL,
+            pop_port       INTEGER NOT NULL DEFAULT 110,
+            pop_user       TEXT NOT NULL,
+            pop_password   TEXT NOT NULL DEFAULT '',
+            smtp_host      TEXT NOT NULL DEFAULT '',
+            smtp_port      INTEGER NOT NULL DEFAULT 587,
+            smtp_user      TEXT NOT NULL DEFAULT '',
+            smtp_password  TEXT NOT NULL DEFAULT '',
+            brand_context  TEXT DEFAULT '',          -- merkstem voor de drafter
+            knowledge_scope TEXT DEFAULT 'all',     -- filter op iris_knowledge.scope
+            poll_minutes   INTEGER NOT NULL DEFAULT 30,
+            enabled        INTEGER NOT NULL DEFAULT 1,
+            created_at     TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mailboxes_project "
+        "ON mailboxes(project)"
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS mail_inbox (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            mailbox_id   TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+            uidl         TEXT NOT NULL,              -- POP3 UIDL, dedupe-sleutel
+            from_addr    TEXT NOT NULL,
+            from_name    TEXT DEFAULT '',
+            subject      TEXT DEFAULT '',
+            body_text    TEXT DEFAULT '',
+            received_at  TEXT DEFAULT '',
+            classified   TEXT DEFAULT 'unknown',    -- question|invoice|spam|newsletter|other
+            created_at   TEXT DEFAULT (datetime('now'))
+        )"""
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_inbox_uidl "
+        "ON mail_inbox(mailbox_id, uidl)"
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS mail_reply (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            mailbox_id   TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+            inbox_id     INTEGER NOT NULL REFERENCES mail_inbox(id) ON DELETE CASCADE,
+            to_addr      TEXT NOT NULL,
+            subject      TEXT NOT NULL,
+            draft_body   TEXT NOT NULL,             -- LLM-concept (markdown/NL)
+            status       TEXT DEFAULT 'pending_review', -- pending_review|sent|edited|rejected
+            edited_body  TEXT DEFAULT '',
+            created_at   TEXT DEFAULT (datetime('now')),
+            sent_at      TEXT DEFAULT ''
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mail_reply_status "
+        "ON mail_reply(mailbox_id, status)"
+    )
+
+    # Wereldklasse-uitbreidingen: threading + per-mailbox From-naam + auto-reply-bescherming
+    mb_cols = {r["name"] for r in conn.execute("PRAGMA table_info(mailboxes)").fetchall()}
+    if "from_display" not in mb_cols:
+        conn.execute("ALTER TABLE mailboxes ADD COLUMN from_display TEXT DEFAULT ''")
+    # Handtekening per project: gaat onder elk concept mee (WYSIWYG in de review).
+    if "signature" not in mb_cols:
+        conn.execute("ALTER TABLE mailboxes ADD COLUMN signature TEXT DEFAULT ''")
+    mi_cols = {r["name"] for r in conn.execute("PRAGMA table_info(mail_inbox)").fetchall()}
+    for col, ddl in (
+        ("message_id",  "ALTER TABLE mail_inbox ADD COLUMN message_id TEXT DEFAULT ''"),
+        ("in_reply_to", "ALTER TABLE mail_inbox ADD COLUMN in_reply_to TEXT DEFAULT ''"),
+        ("references",  'ALTER TABLE mail_inbox ADD COLUMN "references" TEXT DEFAULT \'\''),
+        ("auto_submitted", "ALTER TABLE mail_inbox ADD COLUMN auto_submitted INTEGER DEFAULT 0"),
+    ):
+        if col not in mi_cols:
+            conn.execute(ddl)
+    mr_cols = {r["name"] for r in conn.execute("PRAGMA table_info(mail_reply)").fetchall()}
+    for col, ddl in (
+        ("in_reply_to", "ALTER TABLE mail_reply ADD COLUMN in_reply_to TEXT DEFAULT ''"),
+        ("references",  'ALTER TABLE mail_reply ADD COLUMN "references" TEXT DEFAULT \'\''),
+    ):
+        if col not in mr_cols:
             conn.execute(ddl)
 
 
