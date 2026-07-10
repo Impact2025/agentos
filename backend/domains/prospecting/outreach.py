@@ -10,14 +10,75 @@ outreach-approve-endpoint na menselijke goedkeuring (de Wachtrij-gate-regel).
 """
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import unquote
 
 from ...shared.config import OUTREACH_DAILY_TARGET
 from ...shared.database import get_conn
 from ...shared.outcomes import log_outcome
 
 logger = logging.getLogger(__name__)
+
+# Eigen zakelijke domeinen — een lead op een van deze domeinen is géén
+# externe prospect (self-lead) en mag nooit in de outreach-review komen.
+_OWN_DOMAINS = {"weareimpact.nl", "bewaardvooraltijd.nl"}
+# Algemene/functie-adressen die (bijna) nooit de inkoper zijn. Acquisitie naar
+# info@ / pers@ / redactie@ is zinloos en beschadigt de verzender-reputatie.
+_GENERIC_LOCAL = {
+    "info", "pers", "redactie", "admin", "noreply", "no-reply", "contact",
+    "algemeen", "mail", "office", "sales", "pr", "marketing",
+}
+# Domeinen die duidelijk geen echt zakelijk adres zijn (placeholder/scrape-rest).
+_INVALID_DOMAINS = {"voorbeeld.nl", "example.com", "example.nl", "test.nl", "localhost"}
+
+
+def _email_is_valid(addr: str) -> tuple[bool, str]:
+    """Valideer een e-mailadres op 'serieus prospect-adres'.
+
+    Returns (ok, reden). reden is leeg bij ok. Een adres is pas ok als:
+    - het een syntactisch geldig adres is (local@domein.tld),
+    - het domein niet een eigen domein is (geen self-lead),
+    - het domein niet in de expliciete ongeldige-lijst staat,
+    - de local-part geen bekend algemeen/functie-adres is,
+    - het domein een écht TLD heeft (≥2 tekens na de laatste punt).
+    """
+    if not addr or "@" not in addr:
+        return False, "geen geldig adres (geen @)"
+    # Sommige leads hebben een URL-encoding of proto-rest (bijv.
+    # 'http://geaddresseerd%40voorbeeld.nl') — schoon dat eerst.
+    addr = unquote(addr).split("://")[-1].split("?")[0].strip().lower()
+    local, _, dom = addr.partition("@")
+    if not local or not dom:
+        return False, "geen geldig adres (local/domein ontbreekt)"
+    if "." not in dom:
+        return False, f"geen geldig domein ('{dom}')"
+    sld, _, tld = dom.rpartition(".")
+    if len(tld) < 2 or not re.fullmatch(r"[a-z0-9-]+", tld):
+        return False, f"geen geldig TLD ('{dom}')"
+    # Second-level domain moet ook minimaal 3 tekens zijn — 'b.ys' e.d.
+    # zijn vrijwel altijd scrape-rest/placeholder, geen echte organisatie.
+    if len(sld) < 3:
+        return False, f"geen geldig domein ('{dom}')"
+    if dom in _INVALID_DOMAINS:
+        return False, f"placeholder/scrape-rest domein ('{dom}')"
+    if dom in _OWN_DOMAINS:
+        return False, f"eigen domein (self-lead: '{dom}')"
+    if local in _GENERIC_LOCAL:
+        return False, f"algemeen adres ('{local}@{dom}' — geen inkoper)"
+    return True, ""
+
+
+def valid_target(lead: Dict[str, Any]) -> tuple[bool, str]:
+    """Bepaal of de lead een serieus outreach-doel heeft.
+
+    Kijkt naar hetzelfde adres dat bij verzending gebruikt zou worden
+    (hoofdmail, anders eerste contactpersoon). Returns (ok, reden)."""
+    target = target_email_for(lead)
+    if not target:
+        return False, "geen e-mailadres bekend"
+    return _email_is_valid(target)
 
 # Waardepropositie per lead_type: WeAreImpact (AI in zorg/welzijn) of
 # Bewaard voor altijd (keepsake, B2B-partners). Bepaalt de invalshoek van
@@ -47,7 +108,17 @@ _PITCH_BY_TYPE = {
 }
 _DEFAULT_PITCH = _PITCH_BY_TYPE["ai-consultancy"]
 
-_SIGNATURE = "Vincent van Munster\nWeAreImpact\nv.munster@weareimpact.nl\n06 14 47 09 77"
+_SIGNATURE = (
+    "Hartelijke groet,\n"
+    "  WeAreImpact\n"
+    "Innovatie met een sociaal hart.\n"
+    "\n"
+    "Vincent van Munster - Strategic Innovation Partner\n"
+    "  T  06 - 144 709 77\n"
+    "  E  v.munster@weareimpact.nl\n"
+    "  W  weareimpact.nl\n"
+    "  L  in/vincent-van-münster"
+)
 
 
 def _now() -> str:
@@ -70,7 +141,10 @@ def select_batch_leads(count: int) -> List[Dict[str, Any]]:
             "LIMIT ?",
             (count,),
         ).fetchall()
-    return [dict(r) for r in rows]
+    leads = [dict(r) for r in rows]
+    # Sorteer direct al de leads eruit zonder serieus prospect-adres — die
+    # mogen nooit in de outreach-review belanden (zie valid_target()).
+    return [l for l in leads if valid_target(l)[0]]
 
 
 def target_email_for(lead: Dict[str, Any]) -> str:
@@ -157,6 +231,22 @@ async def prepare_outreach_batch(count: int = 0) -> Dict[str, Any]:
     drafted, skipped, done = 0, 0, []
     now = _now()
     for lead in leads:
+        # Harde guard: alleen een serieus prospect-adres mag in review.
+        # Een lead zonder geldig adres gaat naar 'lost' met reden, zodat hij
+        # niet de volgende ochtend weer in de batch opduikt (en nooit per
+        # ongeluk verstuurd wordt).
+        ok, why = valid_target(lead)
+        if not ok:
+            logger.info("[outreach] Lead %s overgeslagen (%s) — niet in review",
+                        lead.get("org_name"), why)
+            with get_conn() as conn:
+                conn.execute(
+                    "UPDATE leads SET status = 'lost', outreach_draft = '', "
+                    "outreach_drafted_at = '', lost_at = ?, updated_at = ? WHERE id = ?",
+                    (now, now, lead["id"]),
+                )
+            skipped += 1
+            continue
         draft = await draft_outreach(lead)
         if not draft:
             skipped += 1
@@ -183,6 +273,48 @@ async def prepare_outreach_batch(count: int = 0) -> Dict[str, Any]:
     )
     logger.info("[outreach] Batch klaar: %d concepten, %d overgeslagen", drafted, skipped)
     return {"drafted": drafted, "skipped": skipped, "leads": done}
+
+
+def cleanup_unmailable_leads() -> Dict[str, Any]:
+    """Schoon de funnel-invoer op: leads (new/enriched) zonder bruikbaar
+    e-mailadres gaan naar 'lost' met tijdstempel.
+
+    Zonder deze opschoning liegt de funnel: '62 enriched' klinkt als voorraad,
+    maar als de outreach-batch er dagelijks maar 1 door de kwaliteitsguard
+    krijgt, is de rest dood gewicht dat elke ochtend opnieuw geselecteerd en
+    overgeslagen wordt. Verstuurt niets; verwijdert niets."""
+    now = _now()
+    with get_conn() as conn:
+        candidates = [dict(r) for r in conn.execute(
+            "SELECT * FROM leads WHERE status IN ('new', 'enriched')"
+        ).fetchall()]
+    removed: Dict[str, int] = {}
+    kept = 0
+    for lead in candidates:
+        ok, why = valid_target(lead)
+        if ok:
+            kept += 1
+            continue
+        removed[why] = removed.get(why, 0) + 1
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE leads SET status = 'lost', lost_at = ?, updated_at = ? WHERE id = ?",
+                (now, now, lead["id"]),
+            )
+    total_removed = sum(removed.values())
+    reasons = "; ".join(f"{n}× {why}" for why, n in
+                        sorted(removed.items(), key=lambda kv: -kv[1]))
+    log_outcome(
+        "Leads", "funnel_opschoning",
+        f"Funnel-invoer opgeschoond: {total_removed} onbruikbare lead(s) → lost "
+        f"({reasons or 'geen'}), {kept} bruikbare blijven staan",
+        artifact="/api/leads/funnel",
+        next_step=(f"Draai een lead-zoekactie: nog maar {kept} bruikbare lead(s) in voorraad."
+                   if kept < 20 else
+                   f"Niets — de outreach-batch kan weer vooruit met {kept} bruikbare leads."),
+    )
+    logger.info("[outreach] Opschoning: %d verwijderd, %d bruikbaar", total_removed, kept)
+    return {"removed": total_removed, "kept": kept, "reasons": removed}
 
 
 async def run_daily_outreach_batch() -> None:

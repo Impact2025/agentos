@@ -21,7 +21,9 @@ def _make_lead(**overrides):
     fields = {
         "org_name": "Testorganisatie", "website": "https://example.nl",
         "contacts": "[]", "summary": "Doet dingen.", "relevance": "hoog",
-        "status": "enriched", "email": "info@example.nl", "score": 70,
+        # Bewust een 'serieus' adres: info@ (functie-adres) en example.nl/test.nl
+        # (placeholder-domeinen) weigert de outreach-validatie als prospect-doel.
+        "status": "enriched", "email": "jan@testorganisatie.nl", "score": 70,
         "created_at": now, "updated_at": now,
     }
     fields.update(overrides)

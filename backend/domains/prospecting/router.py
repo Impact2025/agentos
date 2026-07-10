@@ -444,6 +444,14 @@ async def run_outreach_batch(count: int = Query(0, ge=0, le=50)):
     return await outreach.prepare_outreach_batch(count)
 
 
+@router.post("/cleanup-unmailable")
+def cleanup_unmailable():
+    """Funnel-opschoning: new/enriched leads zonder bruikbaar e-mailadres → lost.
+    Verstuurt en verwijdert niets; maakt de voorraadcijfers weer eerlijk."""
+    from . import outreach
+    return outreach.cleanup_unmailable_leads()
+
+
 @router.get("/outreach-review")
 def list_outreach_review():
     """Alle outreach-concepten die op menselijke goedkeuring wachten."""
@@ -475,6 +483,13 @@ async def approve_outreach(lead_id: str, body: OutreachApproveRequest = Outreach
     target = outreach.target_email_for(lead)
     if not target:
         raise HTTPException(status_code=422, detail="Geen e-mailadres bekend voor deze lead.")
+    ok, why = outreach.valid_target(lead)
+    if not ok:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Dit adres ({target}) is geen serieus prospect-adres ({why}) — versturen geweigerd. "
+                   "Zoek een specifiek contact of wijs de lead af.",
+        )
     if not outlook.is_authenticated():
         raise HTTPException(
             status_code=422,
