@@ -43,14 +43,18 @@ def active_model() -> str:
 
 def _fallback_backends(primary: str) -> List[str]:
     """Cloud-backends om op terug te vallen als de primaire backend faalt
-    (bv. billing-fout of tijdelijke storing) — vóórdat er al tekst is gestreamd."""
+    (bv. billing-fout of tijdelijke storing) — vóórdat er al tekst is gestreamd.
+
+    Anthropic-direct alleen met een échte key (anthropic_configured): een
+    placeholder-key is truthy en gaf hier 401's tegen het echte Anthropic-API."""
+    from ...shared.config import anthropic_configured
     chain = [primary]
     if primary == "openmodel":
         if OPENROUTER_API_KEY:
             chain.append("openrouter")
-        elif ANTHROPIC_API_KEY:
+        elif anthropic_configured():
             chain.append("anthropic")
-    elif primary == "openrouter" and ANTHROPIC_API_KEY:
+    elif primary == "openrouter" and anthropic_configured():
         chain.append("anthropic")
     return chain
 
@@ -176,7 +180,7 @@ async def _stream_openai_compat(
                 data = resp.json()
                 usage = data.get("usage") or {}
                 if usage:
-                    from ..shared.outcomes import log_llm_usage
+                    from ...shared.outcomes import log_llm_usage
                     log_llm_usage(
                         backend="openmodel", model=model, route="hermes-openmodel",
                         prompt_tokens=usage.get("input_tokens", 0),

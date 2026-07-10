@@ -33,10 +33,11 @@ logger = logging.getLogger(__name__)
 
 _client: anthropic.AsyncAnthropic | None = None
 
-# Denk-werk-prompts zijn fors (Iris-briefing, artikel-review); de gateway mag
-# daar rustig een paar minuten over doen — een timeout die te krap staat uit
-# zich als 'lege respons' en kost een hele analyse.
-_OPENMODEL_TIMEOUT = 300.0
+# Denk-werk-prompts zijn fors (Iris-briefing, artikel-herschrijfrondes van
+# 4500+ tokens); de non-streaming gateway doet daar in de praktijk tot ~8
+# minuten over. Een te krappe timeout uit zich als 'transiente fout' × 2 en
+# kost een hele verbeterronde (gezien op 2026-07-10, 2× 300s-timeout op rij).
+_OPENMODEL_TIMEOUT = 600.0
 _OPENMODEL_ATTEMPTS = 2
 
 
@@ -124,12 +125,14 @@ async def _get_via_openmodel(
                            attempt, _OPENMODEL_ATTEMPTS)
         except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.TransportError) as e:
             transient = not (isinstance(e, httpx.HTTPStatusError)
-                             and e.response.status_code < 500)
+                             and e.response.status_code < 500
+                             and e.response.status_code != 429)
             if not transient:
                 raise
             last_error = e
-            logger.warning("[claude/openmodel] Transiente fout (poging %d/%d): %s",
-                           attempt, _OPENMODEL_ATTEMPTS, e)
+            # str(e) van een httpx-timeout is leeg — noem ook de klasse.
+            logger.warning("[claude/openmodel] Transiente fout (poging %d/%d): %s: %s",
+                           attempt, _OPENMODEL_ATTEMPTS, e.__class__.__name__, e)
     if last_error:
         raise last_error
     raise RuntimeError("OpenModel gaf herhaaldelijk een lege respons")
