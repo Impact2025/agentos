@@ -19,6 +19,7 @@ import httpx
 
 from ...shared.config import (
     ANTHROPIC_API_KEY, CLAUDE_MODEL, OPENROUTER_API_KEY, CLAUDE_VIA_OPENROUTER,
+    OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_SMART_MODEL,
     anthropic_configured,
 )
 from ...shared.database import get_conn
@@ -74,6 +75,10 @@ def find_opportunities(
     return scored[:limit]
 
 
+def _llm_available() -> bool:
+    return anthropic_configured() or bool(OPENMODEL_API_KEY) or bool(OPENROUTER_API_KEY)
+
+
 _ANNOTATE_SYSTEM = (
     "Je bent een Nederlandse SEO-strateeg. Je krijgt 'striking distance'-zoekwoorden "
     "uit Google Search Console (zoekwoorden waar de site al half op scoort). Per zoekwoord "
@@ -89,10 +94,9 @@ def _claude_complete(system: str, prompt: str, max_tokens: int = 2000) -> str:
     """Vraag een Claude-completion via de eerste werkende route.
 
     1. Directe Anthropic-API (als ANTHROPIC_API_KEY geldig is).
-    2. Claude via OpenRouter (CLAUDE_VIA_OPENROUTER) als terugval.
-
-    Zo blijft de Demand Engine werken ook als één van beide sleutels ontbreekt of
-    verlopen is — wat hier het geval was met de directe sleutel.
+    2. Claude-model via de OpenModel-gateway (OPENMODEL_SMART_MODEL) — op deze
+       machine de primaire route.
+    3. Claude via OpenRouter (CLAUDE_VIA_OPENROUTER) als laatste terugval.
     """
     errors = []
     if anthropic_configured():
@@ -105,6 +109,43 @@ def _claude_complete(system: str, prompt: str, max_tokens: int = 2000) -> str:
             return resp.content[0].text
         except Exception as e:  # noqa: BLE001
             errors.append(f"anthropic: {e}")
+
+    if OPENMODEL_API_KEY:
+        try:
+            resp = httpx.post(
+                OPENMODEL_BASE_URL.rstrip("/") + "/v1/messages",
+                headers={
+                    "Authorization": f"Bearer {OPENMODEL_API_KEY}",
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": OPENMODEL_SMART_MODEL, "max_tokens": max_tokens,
+                    "system": system,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=120.0,
+            )
+            resp.raise_for_status()
+            _data = resp.json()
+            usage = _data.get("usage") or {}
+            if usage:
+                from ...shared.outcomes import log_llm_usage
+                log_llm_usage(
+                    backend="openmodel", model=OPENMODEL_SMART_MODEL, route="seo-engine",
+                    prompt_tokens=usage.get("input_tokens", 0),
+                    completion_tokens=usage.get("output_tokens", 0),
+                    total_tokens=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+                )
+            text = "".join(
+                b.get("text", "") for b in _data.get("content", [])
+                if isinstance(b, dict)
+            )
+            if text.strip():
+                return text
+            errors.append("openmodel: lege respons")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"openmodel: {e}")
 
     if OPENROUTER_API_KEY:
         try:
@@ -136,7 +177,7 @@ def _claude_complete(system: str, prompt: str, max_tokens: int = 2000) -> str:
 def _annotate(opportunities: List[Dict], site_name: str) -> List[Dict]:
     """Laat Claude per kans action/angle/rationale bepalen. Index-gealigneerd."""
     base = [{"action": "", "angle": "", "rationale": ""} for _ in opportunities]
-    if not opportunities or not (anthropic_configured() or OPENROUTER_API_KEY):
+    if not opportunities or not _llm_available():
         return base
 
     table = "\n".join(
@@ -223,14 +264,126 @@ def scan_site(
                 "scanned_at": scanned_at, **opp, **ann,
             })
 
+    # Cold-start: leverde GSC niets op én staat er ook niets meer open, dan
+    # zit deze site vast (nieuwe site zonder rankings). Genereer dan kansen
+    # uit het site-profiel zodat de contentmotor kan blijven draaien.
+    cold_started: List[Dict] = []
+    if not saved and not list_opportunities(site_id=site["id"], status="new"):
+        cold_started = cold_start_opportunities(site)
+        saved.extend(cold_started)
+
     return {
         "site_id": site["id"],
         "scanned_at": scanned_at,
         "analysed": len(rows),
         "found": len(opportunities),
         "new": len(saved),
+        "cold_start": len(cold_started),
         "opportunities": saved,
     }
+
+
+_COLD_START_SYSTEM = (
+    "Je bent een Nederlandse SEO-strateeg gespecialiseerd in nieuwe websites zonder "
+    "rankinghistorie. Je bedenkt long-tail zoekwoorden waar een verse site realistisch "
+    "op kan scoren: specifiek, vraaggedreven, lage concurrentie, aansluitend op het "
+    "site-profiel. Geen generieke head-terms (daar wint een nieuwe site nooit). "
+    "Antwoord UITSLUITEND met een JSON-array."
+)
+
+_COLD_START_SCORE = 60.0  # onder echte striking-distance-kansen, boven niets
+
+
+def cold_start_opportunities(site: Dict, count: int = 8) -> List[Dict]:
+    """Kansen genereren voor een site zonder bruikbare GSC-data.
+
+    Striking-distance vereist bestaande posities mét impressies — een site
+    zonder live content heeft die per definitie niet, dus zonder deze
+    cold-start blijft zo'n site eeuwig op 0 artikelen hangen. De kansen komen
+    uit het site-profiel (kennisbank) en worden als handmatige kans opgeslagen;
+    de contentmotor pakt ze daarna gewoon op. Vereist een LLM."""
+    if not _llm_available():
+        return []
+    from .knowledge import get_site_knowledge
+    kb = get_site_knowledge(site)
+    profile = kb.get("profile") or ""
+    if len(profile) < 40:
+        return []  # zonder profiel wordt keyword-onderzoek giswerk — niet doen
+
+    with get_conn() as conn:
+        existing = {
+            r["query"].strip().lower()
+            for r in conn.execute(
+                "SELECT query FROM opportunities WHERE site_id = ?", (site["id"],)
+            ).fetchall()
+        }
+
+    prompt = (
+        f"Site: {site.get('name')} ({site.get('base_url', '')})\n\n"
+        f"## Site-profiel\n{profile[:2000]}\n\n"
+        + (f"## CTA's / diensten\n- " + "\n- ".join(kb.get("ctas", [])[:6]) + "\n\n"
+           if kb.get("ctas") else "")
+        + f"Deze site heeft nog geen rankings. Bedenk {count} long-tail "
+        "content-kansen waarmee de site zijn eerste organische bezoekers kan "
+        "winnen. Geef een JSON-array met exact dit formaat:\n"
+        '[{"query": "het zoekwoord (3-6 woorden, zoals mensen echt zoeken)", '
+        '"angle": "concrete onderscheidende invalshoek (max 12 woorden)", '
+        '"rationale": "waarom een nieuwe site hier kan winnen, één zin"}]'
+    )
+    try:
+        raw = _claude_complete(_COLD_START_SYSTEM, prompt, max_tokens=2500)
+        items = json.loads(_strip_json_fences(raw))
+        assert isinstance(items, list)
+    except Exception as e:  # noqa: BLE001
+        print(f"[demand] Cold-start keyword-onderzoek mislukt: {e}")
+        return []
+
+    created: List[Dict] = []
+    for item in items[:count]:
+        query = (item.get("query") or "").strip() if isinstance(item, dict) else ""
+        if not query or query.lower() in existing:
+            continue
+        existing.add(query.lower())
+        created.append(create_manual_opportunity(
+            site_id=site["id"], query=query,
+            angle=(item.get("angle") or "").strip(),
+            rationale=(item.get("rationale") or "").strip(),
+            action="nieuwe-content", opportunity_score=_COLD_START_SCORE,
+        ))
+    return created
+
+
+async def run_weekly_demand_scan() -> None:
+    """Scheduler (ma 06:15): kansen-scan voor alle sites met GSC, inclusief
+    cold-start voor sites zonder rankings. Zonder deze job raakt de kansen-
+    voorraad op en valt de di/vr-contentmotor stil zonder dat iemand het ziet."""
+    import asyncio
+    from ...shared.outcomes import log_outcome
+    from . import sites as sites_service
+
+    scanned, new_total, cold_total, failed = 0, 0, 0, []
+    for s in sites_service.list_sites():
+        site = sites_service.get_site(s["id"]) or s
+        if not (site.get("gsc_property") or "").strip():
+            continue
+        try:
+            res = await asyncio.to_thread(scan_site, site)
+            scanned += 1
+            new_total += res.get("new", 0)
+            cold_total += res.get("cold_start", 0)
+        except Exception as e:  # noqa: BLE001
+            failed.append(site.get("name") or site["id"])
+            print(f"[demand] Weekscan mislukt voor {site.get('name')}: {e}")
+    log_outcome(
+        "SEO", "demand_scan",
+        f"Wekelijkse Demand-scan: {scanned} site(s), {new_total} nieuwe kans(en)"
+        + (f" waarvan {cold_total} via cold-start" if cold_total else "")
+        + (f"; mislukt: {', '.join(failed[:5])}" if failed else ""),
+        artifact="/api/seo/opportunities",
+        next_step=("Controleer de GSC-koppeling van de mislukte site(s)." if failed
+                   else "Niets — de contentmotor pakt de kansen automatisch op (di/vr)."),
+        status="error" if failed and not scanned else "ok",
+    )
 
 
 def create_manual_opportunity(
@@ -279,15 +432,41 @@ def list_opportunities(site_id: Optional[str] = None, status: Optional[str] = No
     return [dict(r) for r in rows]
 
 
-def update_opportunity_status(opp_id: str, status: str) -> Optional[Dict]:
+def update_opportunity(opp_id: str, status: Optional[str] = None,
+                       live_url: Optional[str] = None,
+                       published_at: Optional[str] = None) -> Optional[Dict]:
+    """Werk een kans bij. Status én/of live-URL/publicatietimestamp kunnen los worden gezet.
+
+    `live_url` wordt door de write-and-publish pipeline teruggeschreven zodra een
+    artikel écht live staat — zo kan de Kansen-card in de UI onderscheiden tussen
+    "handmatig op Gepubliceerd gevinkt" en "staat daadwerkelijk live op de site".
+    """
+    sets, params = [], []
     allowed = {"new", "in_progress", "published", "dismissed"}
-    if status not in allowed:
-        raise ValueError(f"Ongeldige status '{status}'. Toegestaan: {sorted(allowed)}")
+    if status is not None:
+        if status not in allowed:
+            raise ValueError(f"Ongeldige status '{status}'. Toegestaan: {sorted(allowed)}")
+        sets.append("status = ?")
+        params.append(status)
+    if live_url is not None:
+        sets.append("live_url = ?")
+        params.append(live_url)
+    if published_at is not None:
+        sets.append("published_at = ?")
+        params.append(published_at)
+    if not sets:
+        return None
     with get_conn() as conn:
         cur = conn.execute(
-            "UPDATE opportunities SET status = ? WHERE id = ?", (status, opp_id)
+            f"UPDATE opportunities SET {', '.join(sets)} WHERE id = ?",
+            params + [opp_id],
         )
         if cur.rowcount == 0:
             return None
         row = conn.execute("SELECT * FROM opportunities WHERE id = ?", (opp_id,)).fetchone()
     return dict(row)
+
+
+# Alias zodat bestaande callers (frontend updateOppStatus) blijven werken.
+def update_opportunity_status(opp_id: str, status: str) -> Optional[Dict]:
+    return update_opportunity(opp_id, status=status)

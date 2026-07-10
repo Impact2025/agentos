@@ -16,10 +16,13 @@ artikel of legt een cluster-link. Zo compoundeert de content-machine.
 
 Alles is defensief: geen GSC-config = geen actie, geen crashes.
 """
+import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from ...shared.database import get_conn
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -75,6 +78,16 @@ def sync_page_performance(site: Dict) -> Dict:
                  m["query"], now, site["id"], f"%{slug}/", slug),
             )
             synced += 1
+
+    # Historie: dezelfde per-pagina-aggregaten als dag-snapshot bewaren, zodat
+    # trend-delta's (deze week vs. vorige) mogelijk worden — published_pages
+    # zelf wordt elke sync overschreven.
+    try:
+        from . import history as history_service
+        history_service.record_page_snapshots(site["id"], by_page)
+    except Exception:
+        logger.exception("[gsc-sync] pagina-snapshots naar gsc_history mislukt")
+
     return {"ok": True, "synced": synced, "pages": len(by_page)}
 
 
@@ -185,6 +198,11 @@ def run_daily_gsc_sync() -> Dict:
             res = sync_page_performance(s)
             report["sites"] += 1
             report["synced"] += res.get("synced", 0)
+            # Site-dagreeks bijwerken (echte dagcijfers via de date-dimensie;
+            # eerste keer 90 dagen backfill). Fout hier mag de sync niet stoppen.
+            from . import history as history_service
+            hist = history_service.record_site_daily(s)
+            report["history_rows"] = report.get("history_rows", 0) + hist.get("rows", 0)
             # Voed de Radar met hetzelfde project als de site-naam (radar
             # matched op project; growth-signalen krijgen dat als project).
             gs = feed_radar(s, project=(s.get("name") or ""))

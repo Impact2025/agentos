@@ -30,7 +30,9 @@ class ScanRequest(BaseModel):
 
 
 class OpportunityUpdate(BaseModel):
-    status: str
+    status: Optional[str] = None
+    live_url: Optional[str] = None
+    published_at: Optional[str] = None
 
 
 class OpportunityCreate(BaseModel):
@@ -96,11 +98,18 @@ def create_opportunity(body: OpportunityCreate):
 
 @router.patch("/opportunities/{opp_id}")
 def update_opportunity(opp_id: str, body: OpportunityUpdate):
+    if body.status is None and body.live_url is None and body.published_at is None:
+        raise HTTPException(status_code=400, detail="Geen velden om bij te werken")
     try:
-        updated = demand_engine.update_opportunity_status(opp_id, body.status)
+        updated = demand_engine.update_opportunity(
+            opp_id,
+            status=body.status,
+            live_url=body.live_url,
+            published_at=body.published_at,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    if not updated:
+    if updated is None:
         raise HTTPException(status_code=404, detail="Kans niet gevonden")
     return updated
 

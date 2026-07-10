@@ -48,10 +48,12 @@ from .domains.publish.content_pipeline import (
 )
 from .domains.vacancies.service import run_vacancy_scan_job
 from .domains.seo.optimizer import run_weekly_optimizer_job
+from .domains.seo.engine import run_weekly_demand_scan
 from .domains.radar.service import scan_the_skies
 from .domains.seo.feedback import run_daily_gsc_sync
 from .domains.action_center.digest import run_daily_digest
 from .domains.iris.service import run_morning_briefing
+from .domains.iris.service import run_iris_prediction_eval
 from .domains.prospecting.outreach import run_daily_outreach_batch
 
 logger = logging.getLogger(__name__)
@@ -160,6 +162,10 @@ def _cron(**kwargs) -> CronTrigger:
 
 # Volgorde = leesvolgorde van de dag. De inhaalslag sorteert zelf op tijdstip.
 _SPECS: list[JobSpec] = [
+    JobSpec(
+        "weekly_demand_scan", "Demand Engine-scan (kansen verversen, incl. cold-start voor verse sites)",
+        run_weekly_demand_scan, _cron(day_of_week="mon", hour=6, minute=15), catch_up=True,
+    ),
     JobSpec(
         "gsc_sync", "GSC-feedback-loop (performance → Radar growth-signalen)",
         run_daily_gsc_sync, _cron(hour=6, minute=30), catch_up=True,
