@@ -8,7 +8,10 @@ ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 CLAUDE_MODEL_2: str = os.getenv("CLAUDE_MODEL_2", "claude-haiku-4-5-20251001")
 
-# Hermes agent — priority: lokaal (127.0.0.1:8642) > Ollama > OpenModel > OpenRouter > Anthropic
+# Hermes agent — priority: lokaal > OpenModel (deepseek-v4-flash, goedkoop, primair)
+#   > Ollama (lokaal llama3.1, GRATIS backup, geen quota) > OpenRouter > Anthropic.
+# Bij een OpenModel 403 quota-exceeded schakelt hermes_backend tijdelijk over naar
+# Ollama (zie llm_quota_backoff_active) zodat de agents gratis doorlopen.
 HERMES_LOCAL_URL: str = os.getenv("HERMES_LOCAL_URL", "")
 HERMES_LOCAL_KEY: str = os.getenv("HERMES_LOCAL_KEY", "")
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
@@ -19,8 +22,11 @@ OPENMODEL_BASE_URL: str = os.getenv("OPENMODEL_BASE_URL", "https://api.openmodel
 OPENMODEL_MODEL: str = os.getenv("OPENMODEL_MODEL", "deepseek-v4-flash")
 # Sterk model op dezelfde gateway voor denk-werk (Iris-analyse, kwaliteitsgate,
 # goal-synthese, drafts): het Claude-pad in de app loopt hierover zodra er geen
-# directe Anthropic-key is. Bulk-/toolwerk blijft op OPENMODEL_MODEL (flash).
-OPENMODEL_SMART_MODEL: str = os.getenv("OPENMODEL_SMART_MODEL", "claude-sonnet-4-6")
+# directe Anthropic-key is. Bulk-/toolwerk loopt op OPENMODEL_MODEL (flash).
+# Default is bewust deepseek-v4-flash: claude-sonnet-4-6 verbrandde ~10x zoveel
+# krediet (incident 2026-07-11, $4,90 op één dag). Wil je alsnog het dure Claude-
+# pad, zet dan expliciet OPENMODEL_SMART_MODEL=claude-sonnet-4-6 in .env.
+OPENMODEL_SMART_MODEL: str = os.getenv("OPENMODEL_SMART_MODEL", "deepseek-v4-flash")
 HERMES_MODEL: str = os.getenv("HERMES_MODEL", "meta-llama/llama-3.1-8b-instruct")
 # Fallback-modellen (OpenRouter) waar de agent naartoe schakelt bij een 429
 # (rate-limit) op het primaire HERMES_MODEL. Komma-gescheiden, in volgorde van
@@ -92,12 +98,12 @@ CONTENT_MIN_SCORE: int = int(os.getenv("CONTENT_MIN_SCORE", "85"))
 # boven de 85-grens uitkomt — en dus nooit als "onder de grens" op het dashboard
 # (en bij Vincent) belandt. Lokale/fallback-concepten (HERMES_LOCAL_FALLBACK)
 # scoren altijd < grens en worden hierdoor bewust niet oneindig geprobeerd.
-CONTENT_MAX_ROUNDS: int = int(os.getenv("CONTENT_MAX_ROUNDS", "12"))
+CONTENT_MAX_ROUNDS: int = int(os.getenv("CONTENT_MAX_ROUNDS", "5"))
 
 # Hoeveel onder-de-grens artikelen de autonome content-verbeteraar per run (elke
 # 30 min) oppakt. Kostenbeheersing: elke job doet meerdere LLM-rondes. Oudste
 # needs_work-jobs eerst; de rest volgt in latere runs.
-CONTENT_IMPROVER_MAX_PER_RUN: int = int(os.getenv("CONTENT_IMPROVER_MAX_PER_RUN", "5"))
+CONTENT_IMPROVER_MAX_PER_RUN: int = int(os.getenv("CONTENT_IMPROVER_MAX_PER_RUN", "2"))
 
 # TOTALE verbeter-pogingen per artikel, over álle runs heen (cross-run cap).
 # Zonder deze grens blijft de content-verbeteraar elke 30 min hetzelfde
@@ -122,7 +128,14 @@ ANTHROPIC_OUTPUT_COST_PER_MTOK: float = float(os.getenv("ANTHROPIC_OUTPUT_COST_P
 
 # Waarschuw (log-WARN + activiteit) zodra het geschatte dagverbruik deze grens
 # overschrijdt — vóórdat de echte quota hard tegen de limiet aanloopt.
-DAILY_TOKEN_BUDGET: int = int(os.getenv("DAILY_TOKEN_BUDGET", "2000000"))
+DAILY_TOKEN_BUDGET: int = int(os.getenv("DAILY_TOKEN_BUDGET", "600000"))
+
+# Zelf-uitlijnende quota-rem: na een harde 403 "quota exceeded" van de provider
+# pauzeren autonome LLM-runs deze periode vanzelf (de provider is de bron van
+# waarheid — geen gegokte tokenlimiet nodig). Zie outcomes.note_llm_quota_exhausted.
+# 0 = uit. Incident 2026-07-10/11: quota om 20:39 leeg, Iris-briefing van 06:45
+# liep er de volgende ochtend nog tegenaan.
+LLM_QUOTA_BACKOFF_MINUTES: int = int(os.getenv("LLM_QUOTA_BACKOFF_MINUTES", "45"))
 
 # ── Mission Radar autonomie ──────────────────────────────────────────────
 # Auto-AEO: na elke sky-scan start de agent zelfstandig een AEO-aanval op de
@@ -164,13 +177,22 @@ def anthropic_configured() -> bool:
 
 
 def hermes_backend() -> str:
-    """Returns which backend Hermes will use based on configured env vars."""
+    """Returns which backend Hermes will use based on configured env vars.
+
+    Volgorde: lokaal > OpenModel (deepseek-v4-flash, primair/goedkoop) >
+    Ollama (lokaal llama3.1, gratis backup) > OpenRouter > Anthropic.
+    Als de OpenModel-provider recent 403 quota zei, slaan we OpenModel over en
+    vallen we meteen terug op Ollama — zo blijven de agents draaien zonder
+    dure cloud-tokens te verbranden (incident 2026-07-10/11)."""
+    from .outcomes import llm_quota_backoff_active
     if HERMES_LOCAL_URL and HERMES_LOCAL_KEY:
         return "local"
+    if OPENMODEL_API_KEY and not llm_quota_backoff_active():
+        return "openmodel"
     if OLLAMA_BASE_URL:
         return "ollama"
     if OPENMODEL_API_KEY:
-        return "openmodel"
+        return "openmodel"  # laatste poging ondanks quota-backoff
     if OPENROUTER_API_KEY:
         return "openrouter"
     return "anthropic"
@@ -178,6 +200,27 @@ def hermes_backend() -> str:
 
 # Model dat OpenRouter gebruikt voor de Claude-agent als Anthropic niet geconfigureerd is
 CLAUDE_VIA_OPENROUTER: str = os.getenv("CLAUDE_VIA_OPENROUTER", "anthropic/claude-sonnet-4-5")
+
+# ── Google Agenda (calendar) ───────────────────────────────────────────
+# Twee manieren om de serviceaccount te leveren (kies één):
+#  A) Inline (makkelijkst te kopiëren uit WeAreImpact .env.local):
+#       CALENDAR_CLIENT_EMAIL  = agendaweareimpact@weareimpact-482912.iam.gserviceaccount.com
+#       CALENDAR_PRIVATE_KEY   = "-----BEGIN PRIVATE KEY-----\n..."
+#  B) JSON-bestandspad:
+#       CALENDAR_SERVICE_ACCOUNT_PATH = /pad/naar/serviceaccount.json
+#       (default: hergebruikt het GSC/GA4-serviceaccount)
+# Voor een persoonlijke/Workspace-agenda met Domain-Wide Delegation zet je
+# CALENDAR_SUB op het impersonatie-adres (bijv. v.munster@weareimpact.nl).
+# CALENDAR_CALENDAR_ID is de gedeelde agenda (of 'primary' voor de eigenaar).
+CALENDAR_CLIENT_EMAIL: str = os.getenv("CALENDAR_CLIENT_EMAIL", "")
+CALENDAR_PRIVATE_KEY: str = os.getenv("CALENDAR_PRIVATE_KEY", "").replace(
+    "\\n", "\n"
+)
+CALENDAR_SERVICE_ACCOUNT_PATH: str = (
+    os.getenv("CALENDAR_SERVICE_ACCOUNT_PATH", "") or GSC_SERVICE_ACCOUNT_PATH
+)
+CALENDAR_SUB: str = os.getenv("CALENDAR_SUB", "")
+CALENDAR_CALENDAR_ID: str = os.getenv("CALENDAR_CALENDAR_ID", "primary")
 
 # Microsoft Outlook / Graph API
 # Registreer een Azure AD app (portal.azure.com > App registrations) met:

@@ -97,6 +97,7 @@ async def run_agent(
     max_tokens: int = 4096,
     model_override: str = None,
     use_tools: bool = True,
+    purpose: str = "",
 ) -> AsyncGenerator[Dict, None]:
     backend = hermes_backend()
     if not backend:
@@ -107,7 +108,8 @@ async def run_agent(
     primary_error: Optional[str] = None
     if backend == "openmodel":
         async for event in _openmodel_loop(messages, system_prompt, max_tokens,
-                                           model_override, use_tools=use_tools):
+                                           model_override, use_tools=use_tools,
+                                           purpose=purpose):
             yield event
         return
     else:
@@ -204,6 +206,7 @@ async def _openmodel_loop(
     max_tokens: int,
     model_override: str = None,
     use_tools: bool = True,
+    purpose: str = "",
 ) -> AsyncGenerator[Dict, None]:
     """Agent-loop voor OpenModel.ai (Anthropic-compatible /v1/messages).
 
@@ -231,7 +234,27 @@ async def _openmodel_loop(
                 kwargs["tools"] = openai_tools
             try:
                 msg = await client.messages.create(**kwargs)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
+                # Een harde 403 "quota exceeded" van de OpenModel-gateway is geen
+                # bug: de provider-dagquota is op. Zet de zelf-uitlijnende rem
+                # (note_llm_quota_exhausted) — precies zoals in chat/hermes/mail —
+                # zodat autonome jobs én de backend-keuze zichzelf pauzeren in
+                # plaats van elke 15/45 min opnieuw op een dode quota te bonken.
+                # Zo verdwijnt de rode FOUT-kaart en pauzeert Agent OS netjes tot
+                # de reset, in plaats van eindeloos te falen.
+                status = getattr(exc, "status_code", None)
+                resp = getattr(exc, "response", None)
+                body = getattr(resp, "text", "") or "" if resp is not None else ""
+                if status == 403 and "quota" in str(body).lower():
+                    from .outcomes import note_llm_quota_exhausted
+                    note_llm_quota_exhausted(
+                        backend="openmodel", model=model,
+                        route=purpose or "agent-openmodel",
+                    )
+                    yield {"type": "error", "message":
+                        "OpenModel-dagquota op (403 quota exceeded) — wacht op de "
+                        "reset of verhoog de quota op openmodel.ai"}
+                    return
                 yield {"type": "error", "message": f"OpenModel fout: {exc}"}
                 return
 
@@ -242,7 +265,7 @@ async def _openmodel_loop(
                 yield {"type": "usage", "model": model,
                        "prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}
                 from .outcomes import log_llm_usage
-                log_llm_usage(backend="openmodel", model=model, route="agent-openmodel",
+                log_llm_usage(backend="openmodel", model=model, route=purpose or "agent-openmodel",
                               prompt_tokens=pt, completion_tokens=ct, total_tokens=pt + ct)
 
             # Tekst-blokken streamen als text-events

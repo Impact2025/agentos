@@ -11,6 +11,11 @@ import uuid
 _TMP_DB = os.path.join(tempfile.gettempdir(), f"agentos-test-{uuid.uuid4().hex[:8]}.db")
 os.environ["AGENTOS_DB_PATH"] = _TMP_DB
 
+# Login-gate uit in tests: de auth-middleware leest AGENTOS_PASSWORD per request
+# uit os.environ, en een gevulde .env zou anders elke API-test op 401 laten
+# stranden. Leeg = gate uit (zelfde gedrag als lokale dev zonder wachtwoord).
+os.environ["AGENTOS_PASSWORD"] = ""
+
 import pytest  # noqa: E402
 
 

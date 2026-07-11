@@ -160,6 +160,42 @@ def _cron(**kwargs) -> CronTrigger:
     return CronTrigger(timezone=_TZ, **kwargs)
 
 
+# ── Google Agenda-sync ────────────────────────────────────────────────────
+# Periodieke cache-verversing zodat de UI/Iris altijd verse events heeft.
+# Stil als niet geconfigureerd (geen side-effects). Gedefinieerd vóór _SPECS
+# zodat de JobSpec ernaar kan verwijzen.
+def calendar_sync_job() -> None:
+    from .domains.calendar import service as calendar_service
+    if not calendar_service.is_configured():
+        return
+    try:
+        asyncio.run(calendar_service.get_week_events())
+        logger.info("Calendar-sync: week-cache bijgewerkt")
+    except Exception as e:
+        # Leesbaar doorgooien: de kale API-fout ('404 Not Found') vertelt niet
+        # dat de agenda met het service-account gedeeld moet worden. De
+        # vertaling belandt via scheduler_runs in het Actiecentrum (één rij per
+        # job, dus geen kaarten-spam).
+        raise RuntimeError(calendar_service.explain_error(e)) from e
+
+
+# ── Iris-herkanselaar ──────────────────────────────────────────────────────
+# Valt de 06:45-briefing terug op puur cijfers (provider-quota op, lege LLM),
+# dan probeert deze job het later op de dag opnieuw tot er een volwaardige
+# analyse staat. run_morning_briefing degradeert nooit (een volwaardige
+# briefing blijft staan) en dedupet acties per dag, dus herkansen is veilig.
+async def _iris_retry_job() -> None:
+    from .domains.iris import service as iris_service
+    from .shared.outcomes import llm_quota_backoff_active
+    if not iris_service.briefing_needs_retry():
+        return
+    if llm_quota_backoff_active():
+        logger.info("[iris-retry] provider-quota recent op — herkansing uitgesteld")
+        return
+    logger.info("[iris-retry] terugval-briefing gevonden — nieuwe poging voor een volwaardige analyse")
+    await run_morning_briefing()
+
+
 # Volgorde = leesvolgorde van de dag. De inhaalslag sorteert zelf op tijdstip.
 _SPECS: list[JobSpec] = [
     JobSpec(
@@ -227,6 +263,14 @@ _SPECS: list[JobSpec] = [
     JobSpec(
         "goal_autoheal", "Doelen-zelfreparatie (verweesde/dubbele doelen)",
         _autoheal_job, IntervalTrigger(minutes=15), misfire_grace_time=300, coalesce=True,
+    ),
+    JobSpec(
+        "calendar_sync", "Google Agenda-sync (cache bijwerken, elke 15 min)",
+        calendar_sync_job, IntervalTrigger(minutes=15), misfire_grace_time=300, coalesce=True,
+    ),
+    JobSpec(
+        "iris_briefing_retry", "Iris-herkanselaar (terugval-briefing later alsnog volwaardig)",
+        _iris_retry_job, IntervalTrigger(minutes=45), misfire_grace_time=600, coalesce=True,
     ),
 ]
 
@@ -477,6 +521,43 @@ def _resume_scheduler() -> None:
 
 # ── Levenscyclus ───────────────────────────────────────────────────────────
 
+def _check_local_backend() -> None:
+    """Health-check op de lokale LiteLLM-backend bij scheduler-startup.
+
+    Voorkomt stomme fail-first-call-terugval: in plaats van pas bij de
+    éérste LLM-aanroep te merken dat LiteLLM down is, pingen we 'm bij
+    opstarten. Staat de lokale backend aan maar faalt de ping, dan loggen we
+    pro-actief 'degraded mode' zodat je niet pas in de Wachtrij ziet dat
+    artikelen achterblijven. (Wereldklasse = pro-actief, niet reactief.)
+    """
+    from .shared.config import HERMES_LOCAL_URL, HERMES_LOCAL_KEY
+    if not HERMES_LOCAL_URL:
+        return  # geeen lokale backend geconfigureerd — niks te checken
+    import httpx
+    url = HERMES_LOCAL_URL.rstrip("/") + "/v1/models"
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(
+                url,
+                headers={"Authorization": f"Bearer {HERMES_LOCAL_KEY or 'x'}"},
+            )
+        if resp.status_code < 400:
+            logger.info("[health] Lokale LLM-backend UP (%s) — primair actief.",
+                        HERMES_LOCAL_URL)
+        else:
+            logger.warning(
+                "[health] Lokale LLM-backend antwoordt %s — agents vallen "
+                "terug op cloud (OpenModel/deepseek). Degraded mode.",
+                resp.status_code,
+            )
+    except Exception as e:
+        logger.warning(
+            "[health] Lokale LLM-backend NIET bereikbaar (%s: %s) — "
+            "agents vallen terug op cloud (OpenModel/deepseek). Degraded mode.",
+            type(e).__name__, e,
+        )
+
+
 def start_scheduler() -> None:
     global _scheduler, _catchup_task
     _scheduler = AsyncIOScheduler(timezone=_TZ)
@@ -493,9 +574,15 @@ def start_scheduler() -> None:
         _on_job_event, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED
     )
     # Gepauzeerd: geen enkele job mag vuren zolang de inhaalslag loopt, anders
-    # kruisen ingehaalde en geplande runs elkaar. Zie `_startup_catchup`.
     _scheduler.start(paused=True)
-    logger.info("Scheduler gestart (gepauzeerd) — %d jobs ingepland", len(_SPECS))
+    logger.info("Scheduler gestart (gepauzeerd) — %d jobs ingepland",
+                len(_SPECS))
+
+    # Pro-actieve health-check op de lokale backend vóór de inhaalslag.
+    try:
+        _check_local_backend()
+    except Exception:
+        logger.exception("[health] Lokale-backend-check onverwacht mislukt")
 
     # Op de achtergrond, zodat een trage LLM-briefing het opstarten niet ophoudt.
     _catchup_task = asyncio.create_task(_startup_catchup())

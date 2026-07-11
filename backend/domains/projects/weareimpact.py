@@ -376,6 +376,7 @@ async def suggest_blogs(name: str, days: int = Query(28)):
         messages=[{"role": "user", "content": user_prompt}],
         system_prompt=system_prompt,
         max_tokens=2000,
+        purpose="content",
     ):
         full_response += chunk
 
@@ -567,14 +568,37 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
     # slug daarop gebaseerd gaf onleesbare URL's die niets met de uiteindelijke H1 te maken hadden.
     slug = _slugify(final_title)
 
-    # Meta description = eerste alinea van het artikel zelf. NOOIT de rationale —
-    # dat is interne Demand-Engine-analyse ("SEO-kans uit GSC: ...") en die stond
-    # eerder letterlijk als intro op de live site.
+    # Samenvatting (excerpt) + meta description uit de EERSTE alinea van het
+    # artikel — NOOIT de rationale (interne Demand-Engine-analyse, bv. "SEO-kans
+    # uit GSC"). Beide worden op een zin-grens afgekapt zodat ze nooit als
+    # '... middenInEenWoord' op de live site (of in Google) verschijnen.
     first_p = re.search(r"<p[^>]*>(.*?)</p>", optimized_html, re.S)
-    meta_desc = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", first_p.group(1))).strip() if first_p else ""
+    first_para = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", first_p.group(1))).strip() if first_p else ""
+    sentences = re.split(r"(?<=[.!?])\s+", first_para) if first_para else []
+
+    # excerpt: eerste 1-2 zinnen, max ~200 tekens, altijd op een zin-grens.
+    excerpt = ""
+    for s in sentences:
+        cand = (excerpt + " " + s).strip() if excerpt else s
+        if len(cand) > 200 and excerpt:
+            break
+        excerpt = cand
+    if not excerpt:
+        excerpt = first_para[:200].rsplit(" ", 1)[0] if first_para else ""
+
+    # meta description: eerste zin/gedeelte, max ~155, op zin-grens (geen '…'
+    # midden in een woord). Is de eerste zin kort genoeg, dan blijft hij compleet.
+    meta_desc = ""
+    for s in sentences:
+        cand = (meta_desc + " " + s).strip() if meta_desc else s
+        if len(cand) > 155 and meta_desc:
+            break
+        meta_desc = cand
+    if not meta_desc:
+        meta_desc = first_para[:155].rsplit(" ", 1)[0] if first_para else ""
     if len(meta_desc) < 40:
         meta_desc = f"Praktische gids over {keyword} — met concrete stappen en voorbeelden."
-    meta_desc = meta_desc[:157].rsplit(" ", 1)[0] + "…" if len(meta_desc) > 157 else meta_desc
+        excerpt = excerpt or meta_desc
 
     word_count = len(optimized_html.split())
 
@@ -667,7 +691,16 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
                     content_pipeline.article_writer.strip_unvetted_internal_links(
                         bijeen_html, site)
                 first_p = re.search(r"<p>(.*?)</p>", bijeen_html, re.S)
-                excerpt = re.sub(r"<[^>]+>", "", first_p.group(1)).strip()[:200] if first_p else ""
+                bijeen_first_para = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", first_p.group(1))).strip() if first_p else ""
+                bijeen_sentences = re.split(r"(?<=[.!?])\s+", bijeen_first_para) if bijeen_first_para else []
+                excerpt = ""
+                for s in bijeen_sentences:
+                    cand = (excerpt + " " + s).strip() if excerpt else s
+                    if len(cand) > 200 and excerpt:
+                        break
+                    excerpt = cand
+                if not excerpt:
+                    excerpt = bijeen_first_para[:200].rsplit(" ", 1)[0] if bijeen_first_para else ""
                 # Meta-titel nooit halverwege afbreken op een '&' (escaped &amp;)
                 _bt = (bijeen_meta_title or final_title or "").replace("&amp;", "&")
                 payload = {
@@ -684,6 +717,8 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
                     "title": final_title,
                     "content": optimized_html.strip(),
                     "slug": slug,
+                    "excerpt": excerpt,
+                    "seoTitle": (parsed_title or title)[:60],
                     "seoDescription": meta_desc,
                     "tags": [keyword] if keyword else [],
                     "source": "agent-os",

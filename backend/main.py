@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi import Request
 from pathlib import Path
 
 from .shared.logging_config import setup_logging
@@ -61,6 +62,8 @@ from .domains.seo import optimizer as seo_optimizer
 from .domains.radar import router as radar_router
 from .domains.action_center import router as action_center_router
 from .domains.iris import router as iris_router
+from .domains.auth import router as auth_router
+from .domains.auth import service as auth_service
 
 BASE_DIR = Path(__file__).parent.parent
 logger = logging.getLogger("agentos")
@@ -130,6 +133,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Login-gate ──────────────────────────────────────────────────────
+# Beschermt de hele app (ook de gevaarlijke /api/* die mail versturen en
+# publiceren) met een sessie-cookie. Staat uit zolang AGENTOS_PASSWORD niet
+# is gezet (lokale dev blijft zonder slot). Bij deploy verplicht.
+from .domains.auth import service as _auth_service  # noqa: E402
+
+
+@app.middleware("http")
+async def auth_guard_middleware(request: Request, call_next):
+    return await _auth_service.auth_guard(request, call_next)
+
 # ── Monteer alle domein-routers ─────────────────────────────────────────────
 app.include_router(chat_router.router)
 app.include_router(sessions_router.router)
@@ -161,8 +175,11 @@ app.include_router(seo_optimizer.router)
 app.include_router(radar_router.router)
 app.include_router(action_center_router.router)
 app.include_router(iris_router.router)
+app.include_router(auth_router.router)
 from .domains.mail import router as mail_router
 app.include_router(mail_router.router)
+from .domains.calendar import router as calendar_router
+app.include_router(calendar_router.router)
 
 
 # ── Status / health endpoints ──────────────────────────────────────────────

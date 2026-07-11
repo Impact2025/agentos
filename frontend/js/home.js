@@ -41,6 +41,12 @@ function renderHome(main) {
       '<div id="activity-log-panel" style="background:#0f172a;border-radius:8px;padding:8px;font-family:monospace;font-size:11px;max-height:300px;overflow-y:auto">' +
       '<div style="color:#64748b;text-align:center;padding:16px">Laden...</div></div></div>';
 
+    // ── OpenModel-credits — live verbruik per doel (llm_usage-telemetrie) ──
+    html += '<div class="section-card" style="margin-bottom:16px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+      '<h4 style="font-size:13px;font-weight:700">\u{1F4B3} OpenModel-credits — live verbruik</h4>' +
+      '<button onclick="loadLlmUsage()" style="padding:3px 10px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:4px;font-size:10px;cursor:pointer">Ververs</button></div>' +
+      '<div id="llm-usage-panel" style="font-size:12px"><div style="color:#64748b">Laden...</div></div></div>';
+
     // ── System Health bar ──
     var sys = data.system || {};
     var obs = sys.obsidian || {};
@@ -109,6 +115,8 @@ function renderHome(main) {
     startActionCenterRefresh();
     loadIrisBriefing();
     loadActivityLogs();
+    loadLlmUsage();
+    startLlmUsageRefresh();
     loadSystemHealth();
     startAgentStatusPoll();
   }).catch(function(e){ main.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; });
@@ -206,6 +214,106 @@ function loadDigest() {
     el.innerHTML = '<div class="strategist-analyse-content">' + mdToHtml(d.markdown || '') + '</div>';
   }).catch(function(e){
     el.innerHTML = '<div style="color:#ef4444">Rapport laden mislukt: ' + escHtml(e.message) + '</div>';
+  });
+}
+
+// ── OpenModel-credits — live verbruik (llm_usage-telemetrie) ───────
+// Toont waar de credits vandaag heengaan: budgetbalk, grootverbruikers
+// per doel/model en de 7-daagse trend. Ververst elke 30s, net als de inbox.
+var _llmRouteLabels = {
+  'iris': 'Iris (manager-analyse)',
+  'content': 'Content-pipeline (schrijven & review)',
+  'goal': 'Doelen (synthese)',
+  'mail': 'Mail-helpdesk (concepten)',
+  'outreach': 'Outreach-concepten',
+  'seo-engine': 'SEO Demand Engine',
+  'seo-optimizer': 'SEO-optimalisatie',
+  'agent-openmodel': 'Chat-agent (tools)',
+  'claude-openmodel': 'Denk-werk (ongelabeld)',
+  'hermes-openmodel': 'Bulk-werk (ongelabeld)'
+};
+
+function _fmtTokens(n) {
+  n = n || 0;
+  if (n >= 1e6) return (n / 1e6).toFixed(2).replace('.', ',') + 'M';
+  if (n >= 1000) return Math.round(n / 1000) + 'k';
+  return String(n);
+}
+
+var _llmUsageTimer = null;
+function startLlmUsageRefresh() {
+  if (_llmUsageTimer) clearInterval(_llmUsageTimer);
+  _llmUsageTimer = setInterval(function(){
+    if (!document.getElementById('llm-usage-panel')) { clearInterval(_llmUsageTimer); _llmUsageTimer = null; return; }
+    loadLlmUsage();
+  }, 30000);
+}
+
+function loadLlmUsage() {
+  var el = document.getElementById('llm-usage-panel');
+  if (!el) return;
+  fetch('/api/action-center/llm-usage').then(function(r){return r.json();}).then(function(d){
+    if (!el) return;
+    var t = d.today || {};
+    var html = '';
+
+    // Budgetbalk — vandaag t.o.v. DAILY_TOKEN_BUDGET
+    var pct = t.budget_pct != null ? t.budget_pct : 0;
+    var barColor = pct >= 90 ? '#dc2626' : (pct >= 70 ? '#d97706' : '#16a34a');
+    html += '<div style="margin-bottom:10px">' +
+      '<div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:#475569;margin-bottom:3px;flex-wrap:wrap">' +
+      '<span><b>Vandaag:</b> ' + _fmtTokens(t.total_tokens) + ' van ' + _fmtTokens(d.budget) + ' tokens (' + pct + '% van het dagbudget)' +
+      (t.cost != null ? ' · ≈ $' + t.cost.toFixed(2) : '') + '</span>' +
+      '<span>' + (t.calls || 0) + ' calls' + (t.errors ? ' · <span style="color:#dc2626;font-weight:600">' + t.errors + ' fout(en)</span>' : '') + '</span></div>' +
+      '<div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden">' +
+      '<div style="height:100%;width:' + Math.min(100, pct) + '%;background:' + barColor + ';border-radius:4px"></div></div></div>';
+
+    // Grootverbruikers vandaag — per doel + model, aflopend
+    var routes = d.by_route || [];
+    if (!routes.length) {
+      html += '<div style="color:#94a3b8">Nog geen LLM-verbruik vandaag.</div>';
+    } else {
+      html += '<div style="font-size:11px;font-weight:600;color:#334155;margin-bottom:4px">Grootverbruikers vandaag</div>';
+      var max = routes[0].total_tokens || 1;
+      routes.slice(0, 8).forEach(function(r){
+        var share = t.total_tokens ? Math.round(100 * r.total_tokens / t.total_tokens) : 0;
+        var label = _llmRouteLabels[r.route] || r.route;
+        html += '<div style="display:flex;align-items:center;gap:8px;padding:3px 0">' +
+          '<span style="flex:0 0 230px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="route: ' + escHtml(r.route) + '">' +
+          escHtml(label) + ' <span style="color:#94a3b8;font-size:10px">' + escHtml(r.model || '') + '</span></span>' +
+          '<div style="flex:1;height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden">' +
+          '<div style="height:100%;width:' + Math.max(2, Math.round(100 * r.total_tokens / max)) + '%;background:#4f46e5;border-radius:4px"></div></div>' +
+          '<span style="flex:0 0 130px;text-align:right;color:#475569">' + _fmtTokens(r.total_tokens) + ' · ' + share + '%' +
+          (r.cost != null ? ' · $' + r.cost.toFixed(2) : '') + '</span>' +
+          '<span style="flex:0 0 55px;text-align:right;color:#94a3b8;font-size:10px">' + r.calls + '×' +
+          (r.errors ? ' <span style="color:#dc2626">' + r.errors + '⚠</span>' : '') + '</span></div>';
+      });
+    }
+
+    // Trend — laatste dagen (staafjes, vandaag donker)
+    var days = d.days || [];
+    if (days.length > 1) {
+      var dmax = 1;
+      days.forEach(function(x){ if (x.total_tokens > dmax) dmax = x.total_tokens; });
+      html += '<div style="margin-top:10px;border-top:1px solid #f1f5f9;padding-top:8px">' +
+        '<div style="font-size:11px;font-weight:600;color:#334155;margin-bottom:4px">Laatste ' + days.length + ' dagen (tokens per dag)</div>' +
+        '<div style="display:flex;align-items:flex-end;gap:6px;height:52px">' +
+        days.map(function(x, i){
+          var h = Math.max(2, Math.round(40 * x.total_tokens / dmax));
+          var isToday = i === days.length - 1;
+          return '<div title="' + x.date + ': ' + _fmtTokens(x.total_tokens) + ' tokens (' + x.calls + ' calls)' +
+            (x.cost != null ? ' · $' + x.cost.toFixed(2) : '') + '" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px;height:100%">' +
+            '<div style="width:100%;max-width:34px;height:' + h + 'px;background:' + (isToday ? '#4f46e5' : '#c7d2fe') + ';border-radius:4px 4px 0 0"></div>' +
+            '<span style="font-size:9px;color:#94a3b8">' + x.date.slice(8, 10) + '/' + x.date.slice(5, 7) + '</span></div>';
+        }).join('') + '</div></div>';
+    }
+
+    if (!d.prices_configured) {
+      html += '<div style="margin-top:8px;font-size:10px;color:#94a3b8">Tip: zet <code>OPENMODEL_INPUT_COST_PER_MTOK</code> en <code>OPENMODEL_OUTPUT_COST_PER_MTOK</code> in .env om het verbruik ook in dollars/credits te zien.</div>';
+    }
+    el.innerHTML = html;
+  }).catch(function(e){
+    el.innerHTML = '<div style="color:#ef4444">Verbruik laden mislukt: ' + escHtml(e.message) + '</div>';
   });
 }
 
@@ -421,9 +529,58 @@ function acAction(btn, action, project) {
       .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(done).catch(fail);
   } else if (type === 'dismiss') {
     post('/api/action-center/dismiss', { kind: action.dismiss_kind, ref_id: String(action.id) }).then(done).catch(fail);
+  } else if (type === 'mail_send') {
+    if (!confirm('Deze mail wordt ECHT verstuurd naar de klant. Doorgaan?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
+    post('/api/mail/reply/' + encodeURIComponent(action.id) + '/send').then(done).catch(fail);
+  } else if (type === 'mail_reject') {
+    if (!confirm('Concept afwijzen? Wordt niet verstuurd.')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
+    post('/api/mail/reply/' + encodeURIComponent(action.id) + '/reject').then(done).catch(fail);
+  } else if (type === 'mail_edit') {
+    acMailEdit(btn, action); return;
   } else {
     fail(new Error('Onbekende actie: ' + type));
   }
+}
+
+// ── Inline editor voor het Actiecentrum (mail_reply → Bewerk) ──────
+// Haal het volledige concept op en vervang de actieknoppen door een
+// tekstvak + opslaan/annuleren. Zelfde backend-gate als de helpdesk-tab.
+async function acMailEdit(btn, action) {
+  var actionsDiv = btn ? btn.parentNode : null;
+  var card = actionsDiv ? actionsDiv.closest('[id^="ac-item-"]') : null;
+  if (!card || !actionsDiv) { alert('Editor kon niet worden geopend — ververs de pagina.'); return; }
+  var inner = actionsDiv.parentNode;
+  try {
+    var replies = (await (await fetch('/api/mail/pending')).json()).replies || [];
+    var r = replies.find(function(x){ return String(x.id) === String(action.id); });
+    if (!r) { alert('Concept niet meer gevonden (al verstuurd of afgewezen?).'); return; }
+    var ta = document.createElement('textarea');
+    ta.value = r.draft_body || '';
+    ta.style.cssText = 'width:100%;min-height:120px;font-size:12px;line-height:1.5;padding:8px;border:1px solid #e2e8f0;border-radius:6px;resize:vertical;font-family:inherit;background:#fffbeb;margin-top:8px';
+    var saveBtn = document.createElement('button');
+    saveBtn.textContent = 'Opslaan';
+    saveBtn.style.cssText = 'padding:4px 12px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;margin:8px 6px 0 0';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Annuleren';
+    cancelBtn.style.cssText = 'padding:4px 12px;background:#f8fafc;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer;margin-top:8px';
+    actionsDiv.innerHTML = '';
+    inner.appendChild(ta);
+    actionsDiv.appendChild(saveBtn);
+    actionsDiv.appendChild(cancelBtn);
+    cancelBtn.onclick = function(){ loadActionCenter(); };
+    saveBtn.onclick = async function(){
+      saveBtn.disabled = true; saveBtn.textContent = 'Opslaan...';
+      try {
+        var resp = await fetch('/api/mail/reply/' + encodeURIComponent(action.id) + '/edit', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ text: ta.value })
+        });
+        var d = await resp.json();
+        if (d.ok) { loadActionCenter(); }
+        else { alert('❌ ' + (d.error || 'onbekend')); saveBtn.disabled = false; saveBtn.textContent = 'Opslaan'; }
+      } catch(e) { alert('❌ ' + e.message); saveBtn.disabled = false; saveBtn.textContent = 'Opslaan'; }
+    };
+  } catch(e) { alert('❌ ' + e.message); }
 }
 
 // ── Systeemgezondheid (herbruikbaar: Control Room + per-project Dashboard) ──

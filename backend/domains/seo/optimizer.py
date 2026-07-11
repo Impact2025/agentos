@@ -427,6 +427,7 @@ async def _llm(system: str, prompt: str, max_tokens: int = 2000) -> str:
         system_prompt=system,
         agent="hermes",
         use_tools=False,
+        purpose="seo-optimizer",
     ):
         if chunk.get("type") == "text":
             full += chunk["text"]

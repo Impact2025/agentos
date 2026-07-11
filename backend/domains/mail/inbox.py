@@ -114,15 +114,23 @@ def fetch_new(
     user: str,
     pw: str,
     conn,
+    use_ssl: bool = False,
 ) -> List[Dict]:
     """Haal ongeziene mails voor één mailbox op. Spam, nieuwsbrieven én
     auto-generated mail (out-of-office/bounces) worden als gelezen weg geschreven
     en komen niet terug voor classificatie. `conn` is een geopende sqlite-connectie;
     de caller commit.
 
+    `use_ssl` — wanneer True wordt er POP3_SSL (STARTTLS/TLS, bv. poort 995)
+    gebruikt in plaats van kaal POP3. Office365/Exchange en vrijwel alle hosters
+    hebben basic-auth op 110 uitgezet; die mailboxen VERPLICHTEN SSL.
+
     Bewaart threading-headers (Message-ID, In-Reply-To, References) zodat een
     antwoord netjes als reply op de originele mail landt."""
-    srv = poplib.POP3(host, int(port), timeout=20)
+    if use_ssl:
+        srv = poplib.POP3_SSL(host, int(port), timeout=20)
+    else:
+        srv = poplib.POP3(host, int(port), timeout=20)
     try:
         srv.user(user)
         srv.pass_(pw)

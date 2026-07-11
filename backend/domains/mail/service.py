@@ -33,6 +33,7 @@ def run_mailbox(mailbox: Dict) -> int:
                 user=mailbox["pop_user"],
                 pw=mailbox["pop_password"],
                 conn=conn,
+                use_ssl=bool(int(mailbox.get("pop_ssl") or 0)),
             )
             if not fetched:
                 return 0
@@ -232,7 +233,7 @@ def list_mailboxes(project: Optional[str] = None) -> List[Dict]:
     genormaliseerd, zodat 'Skillkaart' en 'skillkaart' dezelfde zijn)."""
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, project, label, address, pop_host, pop_port, smtp_host, "
+            "SELECT id, project, label, address, pop_host, pop_port, pop_ssl, smtp_host, "
             "smtp_port, brand_context, knowledge_scope, poll_minutes, enabled, "
             "from_display, signature FROM mailboxes ORDER BY project, address"
         ).fetchall()
@@ -244,22 +245,29 @@ def list_mailboxes(project: Optional[str] = None) -> List[Dict]:
 
 def create_mailbox(data: Dict) -> str:
     import uuid
+    from datetime import datetime
     mid = data.get("id") or f"mb_{uuid.uuid4().hex[:12]}"
+    cols = (
+        "id,project,label,address,pop_host,pop_port,pop_ssl,pop_user,"
+        "pop_password,smtp_host,smtp_port,smtp_user,smtp_password,brand_context,"
+        "knowledge_scope,poll_minutes,enabled,from_display,signature,created_at"
+    )
+    vals = (
+        mid, data["project"], data.get("label", ""), data["address"],
+        data["pop_host"], int(data.get("pop_port", 110)),
+        int(data.get("pop_ssl", 0)), data["pop_user"],
+        data.get("pop_password", ""), data.get("smtp_host", ""),
+        int(data.get("smtp_port", 587)), data.get("smtp_user", ""),
+        data.get("smtp_password", ""), data.get("brand_context", ""),
+        data.get("knowledge_scope", "all"), int(data.get("poll_minutes", 30)),
+        int(data.get("enabled", 1)), data.get("from_display", ""),
+        data.get("signature", ""), datetime.now().isoformat(),
+    )
+    placeholders = ",".join(["?"] * len(vals))
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO mailboxes(id,project,label,address,pop_host,pop_port,pop_user,"
-            "pop_password,smtp_host,smtp_port,smtp_user,smtp_password,brand_context,"
-            "knowledge_scope,poll_minutes,enabled,from_display,signature,created_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
-            (
-                mid, data["project"], data.get("label", ""), data["address"],
-                data["pop_host"], int(data.get("pop_port", 110)), data["pop_user"],
-                data.get("pop_password", ""), data.get("smtp_host", ""), int(data.get("smtp_port", 587)),
-                data.get("smtp_user", ""), data.get("smtp_password", ""),
-                data.get("brand_context", ""), data.get("knowledge_scope", "all"),
-                int(data.get("poll_minutes", 30)), int(data.get("enabled", 1)),
-                data.get("from_display", ""), data.get("signature", ""),
-            ),
+            f"INSERT INTO mailboxes({cols}) VALUES({placeholders})",
+            vals,
         )
     return mid
 

@@ -56,17 +56,29 @@ def _vault_section(project: str) -> str:
         vr = VaultReader()
         if not vr.is_configured:
             return ""
+        # Per-note clippen: zo blijft elke notitie behouden en wordt alleen
+        # een te lange notitie zélf ingekort — i.p.v. de hele blob bij 4000
+        # tekens af te kappen (wat de laatste notities stilzwijgend weggooide).
         parts = []
         proj = vr.get_project_folder_notes(project)
         if proj:
-            parts.append(f"# Over {project}\n{_clip(proj)}")
+            # get_project_folder_notes leverd "## {stem}\n{text}" per bestand op;
+            # splits per kop en clip elke sectie los.
+            for block in proj.split("\n## "):
+                block = block.strip()
+                if not block:
+                    continue
+                # eerste blok heeft geen "## "-prefix meer na de split
+                if not block.startswith("#"):
+                    block = "## " + block
+                parts.append(_clip(block))
         if project and project.lower() != "weareimpact":
             core = vr.get_core_context("WeAreImpact")
             if core:
                 parts.append(
                     f"# Over de maker (WeAreImpact / Vincent van Munster)\n{_clip(core)}"
                 )
-        return "\n\n".join(parts)
+        return "\n\n".join(p for p in parts if p)
     except Exception as e:
         logger.warning("Kon vault-kennis niet laden: %s", e)
         return ""

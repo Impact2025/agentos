@@ -68,6 +68,7 @@ def active_route() -> str:
 
 async def _get_via_openmodel(
     messages: List[Dict], system_prompt: str, max_tokens: int,
+    purpose: str = "",
 ) -> str:
     """Claude-model via de OpenModel-gateway (Anthropic Messages-formaat).
 
@@ -105,7 +106,7 @@ async def _get_via_openmodel(
                     from ...shared.outcomes import log_llm_usage
                     log_llm_usage(
                         backend="openmodel", model=OPENMODEL_SMART_MODEL,
-                        route="claude-openmodel",
+                        route=purpose or "claude-openmodel",
                         prompt_tokens=usage.get("input_tokens", 0),
                         completion_tokens=usage.get("output_tokens", 0),
                         total_tokens=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
@@ -127,8 +128,11 @@ async def _get_via_openmodel(
             if (isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 403
                     and "quota" in e.response.text.lower()):
                 # Dagquota van de gateway op: retryen is zinloos en de kale 403
-                # is voor niemand leesbaar. De aanroepers escaleren dit al naar
-                # het Actiecentrum.
+                # is voor niemand leesbaar. De marker zet de zelf-uitlijnende
+                # rem aan (autonome jobs pauzeren vanzelf, zie outcomes).
+                from ...shared.outcomes import note_llm_quota_exhausted
+                note_llm_quota_exhausted(backend="openmodel", model=OPENMODEL_SMART_MODEL,
+                                         route=purpose or "claude-openmodel")
                 raise RuntimeError(
                     "OpenModel-dagquota op (403 quota exceeded) — wacht op de reset "
                     "of verhoog de quota op openmodel.ai"
@@ -182,6 +186,7 @@ async def stream_response(
     messages: List[Dict],
     system_prompt: str = "You are a helpful AI assistant.",
     max_tokens: int = 4096,
+    purpose: str = "",
 ) -> AsyncGenerator[str, None]:
     yielded = False
     if anthropic_configured():
@@ -205,7 +210,7 @@ async def stream_response(
     if openmodel_claude_configured():
         try:
             # Gateway streamt niet betrouwbaar — volledige tekst als één chunk.
-            yield await _get_via_openmodel(messages, system_prompt, max_tokens)
+            yield await _get_via_openmodel(messages, system_prompt, max_tokens, purpose)
             return
         except Exception as e:
             logger.warning(f"Claude via OpenModel faalde ({e}) — terugval op OpenRouter")
@@ -224,6 +229,7 @@ async def get_response(
     messages: List[Dict],
     system_prompt: str = "You are a helpful AI assistant.",
     max_tokens: int = 4096,
+    purpose: str = "",
 ) -> str:
     if anthropic_configured():
         try:
@@ -240,7 +246,7 @@ async def get_response(
 
     if openmodel_claude_configured():
         try:
-            return await _get_via_openmodel(messages, system_prompt, max_tokens)
+            return await _get_via_openmodel(messages, system_prompt, max_tokens, purpose)
         except Exception as e:
             logger.warning(f"Claude via OpenModel faalde ({e}) — terugval op OpenRouter")
 

@@ -198,7 +198,7 @@ async def draft_outreach(lead: Dict[str, Any]) -> Optional[Dict[str, str]]:
         "Je bent een nuchtere Nederlandse B2B-copywriter. Je schrijft outreach die "
         "gelezen wordt omdat hij specifiek en kort is, niet omdat hij schreeuwt."
     )
-    raw = await _llm(system, _draft_prompt(lead), max_tokens=700)
+    raw = await _llm(system, _draft_prompt(lead), max_tokens=700, purpose="outreach")
     if not raw:
         return None
     try:

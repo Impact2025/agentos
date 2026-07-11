@@ -47,7 +47,9 @@ def list_case_studies(site_id: str, status: Optional[str] = "active") -> List[Di
     with get_conn() as conn:
         rows = conn.execute(
             f"SELECT * FROM case_studies WHERE {' AND '.join(clauses)} "
-            "ORDER BY updated_at DESC",
+            # rowid als tiebreaker: updated_at heeft seconde-resolutie, dus twee
+            # vlak na elkaar aangemaakte cases sorteerden anders willekeurig.
+            "ORDER BY updated_at DESC, rowid DESC",
             params,
         ).fetchall()
     return [dict(r) for r in rows]

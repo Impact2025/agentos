@@ -10,7 +10,8 @@ function renderSidebar() {
       return '<button class="' + (t===currentTab?' active':'') + '" onclick="switchView(\''+t+'\')"><span class="icon">' + (TAB_ICONS[t]||'') + '</span>' + t + badge + '</button>';
     }).join('') : '') +
     '</nav><div class="sidebar-footer">' + (currentProject ? '<button onclick="switchView(\'chat\')"><span class="icon">o</span>Chat</button>' : '') +
-    '<button onclick="goHome()"><span class="icon"><-</span>Projecten</button></div></div>';
+    '<button onclick="goHome()"><span class="icon"><-</span>Projecten</button>' +
+    '<button onclick="logoutAgent()"><span class="icon">⏻</span>Uitloggen</button></div></div>';
 }
 function renderHeader() {
   if (!currentProject) return '';

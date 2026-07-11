@@ -221,3 +221,33 @@ def test_iris_endpoints(conn, iris_clean):
     assert "projects" in r.json()
     r = client.get("/api/iris/history")
     assert r.status_code == 200
+
+
+def test_briefing_needs_retry(conn, iris_clean):
+    """De herkanselaar draait alleen bij een terugval-briefing van vandaag."""
+    from backend.domains.iris import service
+
+    # Geen rapport vandaag → niets te herkansen (dat is aan de 06:45-run)
+    assert not service.briefing_needs_retry()
+
+    # Terugval-briefing (llm_ok=0) → herkansen
+    conn.execute(
+        "INSERT INTO iris_reports (id, report_date, markdown, created_at, llm_ok) "
+        "VALUES ('r-retry', ?, 'alleen cijfers', '2026-01-01T06:45:00', 0)",
+        (service._today(),),
+    )
+    conn.commit()
+    assert service.briefing_needs_retry()
+
+    # Volwaardige briefing → klaar, niet meer herkansen
+    conn.execute("UPDATE iris_reports SET llm_ok=1, markdown='volwaardige analyse' "
+                 "WHERE id='r-retry'")
+    conn.commit()
+    assert not service.briefing_needs_retry()
+
+    # Terugval-rij van vóór de llm_ok-kolom: vlag staat op 1, maar de vaste
+    # marker in de markdown verraadt hem alsnog
+    conn.execute("UPDATE iris_reports SET markdown='x _LLM niet beschikbaar y' "
+                 "WHERE id='r-retry'")
+    conn.commit()
+    assert service.briefing_needs_retry()

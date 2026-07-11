@@ -684,6 +684,13 @@ def _migrate(conn) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_iris_reports_date ON iris_reports(report_date DESC)"
     )
+    # Terugval-vlag: 0 = briefing zonder LLM (puur cijfers). De herkanselaar
+    # (scheduler-job iris_briefing_retry) draait dan later op de dag alsnog een
+    # volwaardige analyse. Oude terugval-rijen (vóór deze kolom) worden herkend
+    # aan de "_LLM niet beschikbaar"-marker in de markdown.
+    ir_cols = {r["name"] for r in conn.execute("PRAGMA table_info(iris_reports)").fetchall()}
+    if "llm_ok" not in ir_cols:
+        conn.execute("ALTER TABLE iris_reports ADD COLUMN llm_ok INTEGER DEFAULT 1")
     conn.execute(
         """CREATE TABLE IF NOT EXISTS iris_lessons (
             id              TEXT PRIMARY KEY,
@@ -871,6 +878,11 @@ def _migrate(conn) -> None:
     # Handtekening per project: gaat onder elk concept mee (WYSIWYG in de review).
     if "signature" not in mb_cols:
         conn.execute("ALTER TABLE mailboxes ADD COLUMN signature TEXT DEFAULT ''")
+    # SSL-vlag voor de POP3-poller. Office365/Exchange en de meeste hosters
+    # hebben basic-auth op poort 110 allang uitgezet en verplichten POP3_SSL
+    # (poort 995). Zonder deze vlag strandde elke Exchange-mailbox stilzwijgend.
+    if "pop_ssl" not in mb_cols:
+        conn.execute("ALTER TABLE mailboxes ADD COLUMN pop_ssl INTEGER NOT NULL DEFAULT 0")
     mi_cols = {r["name"] for r in conn.execute("PRAGMA table_info(mail_inbox)").fetchall()}
     for col, ddl in (
         ("message_id",  "ALTER TABLE mail_inbox ADD COLUMN message_id TEXT DEFAULT ''"),
@@ -887,6 +899,29 @@ def _migrate(conn) -> None:
     ):
         if col not in mr_cols:
             conn.execute(ddl)
+
+
+    # ── Google Agenda-cache (Fase 1: lezen + blokkeren) ────────────────────
+    # Lokale kopie van gesyncte events zodat de UI/Iris ook werkt als Google
+    # even niet bereikbaar is. Gevuld door de calendar-sync job + bij elke
+    # GET /api/calendar/events. Idempotent op event_id.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS calendar_events (
+            event_id     TEXT PRIMARY KEY,
+            summary      TEXT DEFAULT '',
+            start_at     TEXT DEFAULT '',     -- ISO (dateTime of date)
+            end_at       TEXT DEFAULT '',
+            all_day      INTEGER DEFAULT 0,
+            location     TEXT DEFAULT '',
+            hangout_link TEXT DEFAULT '',
+            html_link    TEXT DEFAULT '',
+            synced_at    TEXT DEFAULT ''
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_calendar_events_start "
+        "ON calendar_events(start_at)"
+    )
 
 
 @contextmanager

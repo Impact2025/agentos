@@ -84,6 +84,7 @@ async def _llm(system: str, prompt: str, max_tokens: int = 3000) -> str:
                 messages=[{"role": "user", "content": prompt}],
                 system_prompt=system,
                 max_tokens=max_tokens,
+                purpose="iris",
             )).strip()
             if out:
                 return out
@@ -97,6 +98,7 @@ async def _llm(system: str, prompt: str, max_tokens: int = 3000) -> str:
             messages=[{"role": "user", "content": prompt}],
             system_prompt=system,
             max_tokens=max_tokens,
+            purpose="iris",
         ):
             full += chunk
         if not full.strip():
@@ -220,23 +222,53 @@ def report_history(limit: int = 14) -> List[Dict[str, Any]]:
 
 
 def _store_report(report_date: str, markdown: str, grades: Dict, learned: List,
-                  improvements: List, advice: List, metrics_snapshot: Dict) -> str:
-    """Eén briefing per dag: een nieuwe run op dezelfde dag vervangt de oude."""
+                  improvements: List, advice: List, metrics_snapshot: Dict,
+                  llm_ok: bool = True) -> str:
+    """Eén briefing per dag: een nieuwe run op dezelfde dag vervangt de oude.
+
+    llm_ok=False markeert een puur cijfermatige terugval — de herkanselaar
+    (scheduler-job iris_briefing_retry) probeert die later alsnog te vervangen
+    door een volwaardige analyse."""
     report_id = str(uuid.uuid4())
     with get_conn() as conn:
         conn.execute("DELETE FROM iris_reports WHERE report_date = ?", (report_date,))
         conn.execute(
             "INSERT INTO iris_reports (id, report_date, markdown, grades, learned, "
-            "improvements, advice, metrics, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "improvements, advice, metrics, created_at, llm_ok) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (report_id, report_date, markdown,
              json.dumps(grades, ensure_ascii=False),
              json.dumps(learned, ensure_ascii=False),
              json.dumps(improvements, ensure_ascii=False),
              json.dumps(advice, ensure_ascii=False),
              json.dumps(metrics_snapshot, ensure_ascii=False),
-             _now_iso()),
+             _now_iso(), 1 if llm_ok else 0),
         )
     return report_id
+
+
+def _is_fallback_report(rec: Dict[str, Any]) -> bool:
+    """Terugval-briefing? Kijkt naar de llm_ok-vlag; rijen van vóór die kolom
+    worden herkend aan de vaste marker in de markdown."""
+    if not rec.get("llm_ok", 1):
+        return True
+    return "_LLM niet beschikbaar" in (rec.get("markdown") or "")
+
+
+def briefing_needs_retry() -> bool:
+    """True als de briefing van vandaag een LLM-loze terugval is.
+
+    De herkanselaar draait dan opnieuw; zodra er een volwaardige analyse staat
+    (of er vandaag nog geen briefing is — dat is aan de 06:45-run/inhaalslag)
+    is er niets te herkansen."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT markdown, llm_ok FROM iris_reports WHERE report_date = ?",
+            (_today(),),
+        ).fetchone()
+    if not row:
+        return False
+    return _is_fallback_report(dict(row))
 
 
 # ── Zelfstandige bijsturing (strikte whitelist) ─────────────────────────────
@@ -283,12 +315,23 @@ async def _apply_draft_goal(project: str, title: str, objective: str, reason: st
 async def _apply_improvements(improvements: List[Dict[str, Any]]) -> List[str]:
     """Voer alleen whitelisted verbeteringen uit; alles wordt gelogd."""
     from . import actions
+    from ...shared.outcomes import llm_budget_exceeded
+    # De LLM-zware acties (content/outreach/seo) roepen zelf de gateway aan.
+    # Is het budget op of de quota-rem actief, dan zouden ze tóch 403'en en per
+    # actie een 'iris_actie'-foutkaart loggen (die de échte oorzaak — quota —
+    # verhult) plus de gateway rammen terwijl er niets meer doorkomt. Sla die
+    # acties dan over; batch_size (pure DB-write) en doel (draft) mogen wél door.
+    _LLM_HEAVY = {"content_run", "outreach_run", "seo_refresh"}
+    budget_op = llm_budget_exceeded()
     applied: List[str] = []
     goals_created = content_runs = outreach_runs = seo_refreshes = 0
     for imp in improvements[:8]:
         kind = (imp.get("type") or "").strip().lower()
         reason = (imp.get("reden") or imp.get("reason") or "").strip()[:300]
         done: Optional[str] = None
+        if kind in _LLM_HEAVY and budget_op:
+            logger.info("[iris] %s overgeslagen: LLM-budget/quota op — advies blijft staan", kind)
+            continue
         if kind == "batch_size":
             done = _apply_batch_size(imp.get("site_id", ""), imp.get("waarde") or imp.get("value"), reason)
         elif kind == "doel" and goals_created < _MAX_NEW_GOALS_PER_RUN:
@@ -333,19 +376,31 @@ def _yesterday_activity(limit: int = 40) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def gather_context(snapshot: Optional[Dict[str, Any]] = None,
-                   validation: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+async def gather_context(snapshot: Optional[Dict[str, Any]] = None,
+                      validation: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Bouw de context voor de prompt. Roep dit ná evaluate_due aan, zodat de
     lessen hun bijgewerkte vertrouwen en de ingetrokken lessen weerspiegelen."""
     from . import predictions
     from . import knowledge as knowledge_service
     prev = latest_report()
+    # Agenda-context (Fase 1): als Google Agenda is gekoppeld, geef Iris de
+    # planning van vandaag mee zodat ze rekening houdt met drukte/rust in haar
+    # advies (bv. "drukke dag, plan geen content-run"). Stil als niet gekoppeld.
+    agenda_summary = ""
+    from ...domains.calendar import service as calendar_service
+    try:
+        if calendar_service.is_configured():
+            agenda_summary = await calendar_service.get_today_summary()
+    except Exception as e:
+        logger.warning("[iris] agenda-context ophalen mislukt: %s",
+                       calendar_service.explain_error(e))
     return {
         "snapshot": snapshot if snapshot is not None else metrics.snapshot(),
         "yesterday_activity": _yesterday_activity(),
         "lessons": active_lessons(),
         "knowledge": knowledge_service.knowledge_prompt_block(),
         "validation": validation,
+        "agenda": agenda_summary,
         "track_record": predictions.track_record(),
         "previous": {
             "date": prev["report_date"],
@@ -405,6 +460,12 @@ def _build_prompt(ctx: Dict[str, Any]) -> str:
                   json.dumps({"grades": ctx["previous"]["grades"],
                               "advice": ctx["previous"]["advice"]}, ensure_ascii=False),
                   "", "Vergelijk: is je advies opgevolgd, en wat deed dat met de cijfers?"]
+    if ctx.get("agenda"):
+        parts += ["", "## Je agenda van vandaag (Google Calendar)",
+                  "Houd bij je advies rekening met je beschikbaarheid: op een drukke dag "
+                  "plan je geen zware autonome runs (content/SEO), op een lege dag juist wel. "
+                  "Noem in je advies expliciet of de dag ruimte biedt voor dieptewerk of acquisitie.",
+                  ctx["agenda"]]
     parts += [
         "",
         "Geef je dagbriefing als JSON met exact deze sleutels:",
@@ -727,27 +788,36 @@ async def run_morning_briefing() -> Dict[str, Any]:
     #    Dit werkt het vertrouwen van de lessen bij vóór we de context bouwen.
     validation = predictions.evaluate_due(snapshot["projects"], today=report_date)
 
-    ctx = gather_context(snapshot=snapshot, validation=validation)
+    ctx = await gather_context(snapshot=snapshot, validation=validation)
 
     parsed = await _ask_iris(_build_prompt(ctx))
     if parsed is None:
         # Iris' brein is offline: dat is een fout die Vincent moet zien, geen
-        # voetnoot. En een eerdere vólwaardige briefing van vandaag (bv. van de
-        # ochtendrun) mag een mislukte herrun niet stilletjes degraderen.
-        log_outcome(
-            "Iris", "dagbriefing",
-            f"Iris' analyse faalde na {_LLM_ATTEMPTS} pogingen (lege LLM-respons of "
-            f"ongeldige JSON) — briefing {report_date} valt terug op puur cijfers",
-            artifact="/api/iris/briefing",
-            next_step="Controleer de LLM-backend (.env: ANTHROPIC_API_KEY / OPENROUTER_API_KEY / "
-                      "OpenModel) en draai daarna 'Analyseer nu' opnieuw",
-            status="error",
-        )
+        # voetnoot — maar één kaart per dag; de herkanselaar (elke 45 min) mag
+        # het Actiecentrum niet vol stapelen met kopieën.
+        with get_conn() as conn:
+            flagged = conn.execute(
+                "SELECT COUNT(*) FROM activity_log WHERE action = 'dagbriefing' "
+                "AND status = 'error' AND date(created_at) = date('now')"
+            ).fetchone()[0]
+        if not flagged:
+            log_outcome(
+                "Iris", "dagbriefing",
+                f"Iris' analyse faalde na {_LLM_ATTEMPTS} pogingen (lege LLM-respons of "
+                f"ongeldige JSON) — briefing {report_date} valt terug op puur cijfers",
+                artifact="/api/iris/briefing",
+                next_step="Niets nodig: de herkanselaar probeert het elke 45 min opnieuw zodra "
+                          "de LLM-quota terug is. Handmatig kan ook: 'Analyseer nu'.",
+                status="error",
+            )
+        # Een bestaande briefing van vandaag blijft staan: een vólwaardige mag
+        # nooit degraderen, en een terugval nóg eens opslaan (en mailen) voegt
+        # niets toe — de herkanselaar probeert later gewoon opnieuw.
         existing = latest_report()
-        if (existing and existing.get("report_date") == report_date
-                and "_LLM niet beschikbaar" not in (existing.get("markdown") or "")):
-            logger.warning("[iris] Herrun zonder LLM — de volwaardige briefing van "
-                           "%s blijft staan", report_date)
+        if existing and existing.get("report_date") == report_date:
+            logger.warning("[iris] Herrun zonder LLM — de %s briefing van %s blijft staan",
+                           "cijfermatige" if _is_fallback_report(existing) else "volwaardige",
+                           report_date)
             return {"date": report_date, "markdown": existing.get("markdown") or "",
                     "grades": existing.get("grades") or {}, "applied": [],
                     "advice": existing.get("advice") or [], "predicted": 0,
@@ -770,7 +840,8 @@ async def run_morning_briefing() -> Dict[str, Any]:
               for p in snapshot["projects"]}
     advice = (parsed or {}).get("advies") or []
     learned = (parsed or {}).get("geleerd") or []
-    _store_report(report_date, markdown, grades, learned, applied, advice, snapshot)
+    _store_report(report_date, markdown, grades, learned, applied, advice, snapshot,
+                  llm_ok=parsed is not None)
 
     # Mail de briefing mee zodra SMTP is ingesteld (zelfde kanaal als de digest).
     mailed = False

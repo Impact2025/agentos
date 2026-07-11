@@ -72,6 +72,19 @@ async def stream_chat(req: ChatRequest):
     history = memory_service.get_messages_for_api(req.session_id)
     system_prompt = _build_system_prompt(req.message, req.use_obsidian, req.agent)
 
+    # Circuit-breaker: interactieve chat ook onder de dagquota houden.
+    # Zonder deze check ramde één drukke sessie 49 calls/uur op het dure
+    # model (incident 2026-07-10). Bij een provider-403-quota geeft de
+    # router een leesbare fout i.p.v. de kale browser-modal.
+    from ...shared.outcomes import require_llm_budget
+    try:
+        require_llm_budget("chat")
+    except Exception as e:
+        raise HTTPException(
+            status_code=429,
+            detail=f"LLM-daglimiet bereikt: {e}",
+        )
+
     history.append({"role": "user", "content": req.message})
     memory_service.add_message(req.session_id, "user", req.message)
 

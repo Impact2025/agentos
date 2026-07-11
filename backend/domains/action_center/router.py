@@ -33,6 +33,13 @@ def feed(limit: int = Query(25, ge=1, le=100)):
     return service.outcome_feed(limit)
 
 
+@router.get("/llm-usage")
+def llm_usage(days: int = Query(7, ge=1, le=31)):
+    """Live LLM-verbruik (OpenModel-credits): vandaag per route/model + dagreeks."""
+    from ...shared.outcomes import llm_usage_summary
+    return llm_usage_summary(days)
+
+
 @router.get("/digest")
 def digest():
     """Het ochtendrapport, on demand (zelfde inhoud als de 07:00-mail)."""

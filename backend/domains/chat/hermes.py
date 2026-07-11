@@ -61,6 +61,7 @@ def _fallback_backends(primary: str) -> List[str]:
 
 async def _stream_for_backend(
     backend: str, messages: List[Dict], system_prompt: str, max_tokens: int,
+    purpose: str = "",
 ) -> AsyncGenerator[str, None]:
     if backend == "anthropic":
         async for chunk in _stream_anthropic(messages, system_prompt, max_tokens):
@@ -70,10 +71,10 @@ async def _stream_for_backend(
         # anthropic-SDK parseert hun SSE/tekst-blokken niet betrouwbaar (lege
         # output). Routeer daarom via de eigen OpenAI-compat helper die het
         # volledige message-object zelf parset (content[].text).
-        async for chunk in _stream_openai_compat(messages, system_prompt, max_tokens, "openmodel"):
+        async for chunk in _stream_openai_compat(messages, system_prompt, max_tokens, "openmodel", purpose):
             yield chunk
     else:
-        async for chunk in _stream_openai_compat(messages, system_prompt, max_tokens, backend):
+        async for chunk in _stream_openai_compat(messages, system_prompt, max_tokens, backend, purpose):
             yield chunk
 
 
@@ -81,6 +82,7 @@ async def stream_response(
     messages: List[Dict],
     system_prompt: str = "You are Hermes, a helpful AI assistant.",
     max_tokens: int = 4096,
+    purpose: str = "",
 ) -> AsyncGenerator[str, None]:
     backend = hermes_backend()
     chain = _fallback_backends(backend)
@@ -89,7 +91,7 @@ async def stream_response(
     for be in chain:
         started = False
         try:
-            async for chunk in _stream_for_backend(be, messages, system_prompt, max_tokens):
+            async for chunk in _stream_for_backend(be, messages, system_prompt, max_tokens, purpose):
                 started = True
                 yield chunk
             return
@@ -126,7 +128,8 @@ async def _stream_anthropic(
 
 
 async def _stream_openai_compat(
-    messages: List[Dict], system_prompt: str, max_tokens: int, backend: str
+    messages: List[Dict], system_prompt: str, max_tokens: int, backend: str,
+    purpose: str = "",
 ) -> AsyncGenerator[str, None]:
     if backend == "local":
         base_url = HERMES_LOCAL_URL.rstrip("/")
@@ -182,7 +185,7 @@ async def _stream_openai_compat(
                 if usage:
                     from ...shared.outcomes import log_llm_usage
                     log_llm_usage(
-                        backend="openmodel", model=model, route="hermes-openmodel",
+                        backend="openmodel", model=model, route=purpose or "hermes-openmodel",
                         prompt_tokens=usage.get("input_tokens", 0),
                         completion_tokens=usage.get("output_tokens", 0),
                         total_tokens=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
@@ -201,6 +204,9 @@ async def _stream_openai_compat(
                     )
                 if (e.response.status_code == 403
                         and "quota" in e.response.text.lower()):
+                    from ...shared.outcomes import note_llm_quota_exhausted
+                    note_llm_quota_exhausted(backend="openmodel", model=model,
+                                             route=purpose or "hermes-openmodel")
                     raise RuntimeError(
                         "OpenModel-dagquota op (403 quota exceeded) — wacht op de "
                         "reset of verhoog de quota op openmodel.ai"

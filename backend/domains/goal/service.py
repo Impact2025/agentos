@@ -1568,6 +1568,7 @@ async def _route_by_skill(
                     messages=[{"role": "user", "content": user_prompt}],
                     system_prompt=system_prompt,
                     max_tokens=4096,
+                    purpose="goal",
                 )).strip()
             except Exception as e:
                 logger.warning(f"Claude-synthese mislukt voor taak '{title}' — terugval op Hermes: {e}")

@@ -391,5 +391,5 @@ document.addEventListener('DOMContentLoaded', function() {
   if (m) currentProject = decodeURIComponent(m[1]);
   var t = location.hash.match(/tab=([^&]+)/);
   if (t && TABS.indexOf(decodeURIComponent(t[1])) >= 0) currentTab = decodeURIComponent(t[1]);
-  route();
+  checkAuthAndStart();
 });

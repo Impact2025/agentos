@@ -66,18 +66,21 @@ def _log_activity(project: str, action: str, detail: str = "",
 
 # ── Herbruikbare generatie-helpers ──────────────────────────────────────────
 
-async def _stream_hermes(system: str, prompt: str, max_tokens: int = 2000) -> str:
+async def _stream_hermes(system: str, prompt: str, max_tokens: int = 2000,
+                         purpose: str = "content") -> str:
     full = ""
     async for chunk in hermes_service.stream_response(
         messages=[{"role": "user", "content": prompt}],
         system_prompt=system,
         max_tokens=max_tokens,
+        purpose=purpose,
     ):
         full += chunk
     return full.strip()
 
 
-async def _llm(system: str, prompt: str, max_tokens: int = 2000) -> str:
+async def _llm(system: str, prompt: str, max_tokens: int = 2000,
+               purpose: str = "content") -> str:
     """Beste beschikbare model voor schrijf-/reviewwerk: Claude eerst (direct
     of via OpenRouter), Hermes als terugval. De lage Wachtrij-scores kwamen
     grotendeels doordat een klein gratis model zowel schreef als beoordeelde."""
@@ -88,15 +91,17 @@ async def _llm(system: str, prompt: str, max_tokens: int = 2000) -> str:
                 messages=[{"role": "user", "content": prompt}],
                 system_prompt=system,
                 max_tokens=max_tokens,
+                purpose=purpose,
             )).strip()
             if out:
                 return out
         except Exception as e:
             logger.warning("[content-pipeline] Claude niet beschikbaar (%s) — terugval op Hermes", e)
-    return await _stream_hermes_retry(system, prompt, max_tokens)
+    return await _stream_hermes_retry(system, prompt, max_tokens, purpose=purpose)
 
 
-async def _stream_hermes_retry(system: str, prompt: str, max_tokens: int = 2000, retries: int = 2) -> str:
+async def _stream_hermes_retry(system: str, prompt: str, max_tokens: int = 2000, retries: int = 2,
+                               purpose: str = "content") -> str:
     """Zoals _stream_hermes, maar probeert opnieuw bij een lege response.
 
     Kleinere/budget-modellen geven soms een 200-response met 0 output-tokens
@@ -105,7 +110,7 @@ async def _stream_hermes_retry(system: str, prompt: str, max_tokens: int = 2000,
     verderop geparsed worden — een enkele lege poging mag niet meteen
     terugvallen op de fallback-tekst."""
     for attempt in range(retries + 1):
-        out = await _stream_hermes(system, prompt, max_tokens)
+        out = await _stream_hermes(system, prompt, max_tokens, purpose=purpose)
         if out:
             return out
         if attempt < retries:
@@ -378,6 +383,17 @@ async def review_and_improve(site: Dict, keyword: str, html_body: str,
     best_html, best_review = html_body, review
     rounds = 0
     while review["score"] < CONTENT_MIN_SCORE and rounds < effective_max and review["feedback"]:
+        # Circuit-breaker midden in de verbeter-loop: als de provider-quota
+        # (of het dagbudget) opraakt, stoppen we direct — anders blijft één
+        # run de hele quota leegzuigen (incident 2026-07-10/11: 46 calls in
+        # 32 min, escalerend). Elke ronde is 2 LLM-calls.
+        from ...shared.outcomes import llm_budget_exceeded
+        if llm_budget_exceeded():
+            logger.warning(
+                "[content-pipeline] LLM-budget op midden in verbeter-loop (%s rondes, "
+                "score %s) — stop, behoud beste versie.", rounds, best_review["score"]
+            )
+            break
         rounds += 1
         logger.info("[content-pipeline] Verbeterronde %s (score %s < %s) — %s",
                     rounds, review["score"], CONTENT_MIN_SCORE, site["name"])
@@ -876,7 +892,26 @@ def _strip_duplicate_header(html: str) -> str:
         flags=re.I,
     )
     # 5) Losse <hr> aan het begin.
-    out = re.sub(r"^\s*(?:<hr\s*\/?>\s*)+", "", out, flags=re.I)
+    out = re.sub(r"^\s*(?:<hr\s*/?>\s*)+", "", out, flags=re.I)
+    # 6) Generator-meta-regels bovenaan de body (overblijfselen zoals
+    #    "Publicatiedatum: 15 juli 2026 Project: WeAreImpact Auteur: …").
+    #    Deze horen niet in de leesbare tekst en verpesten anders de excerpt.
+    for _ in range(4):
+        before = out
+        out = re.sub(
+            r"^\s*<p\b[^>]*>\s*(?:publicatiedatum|project|auteur|datum|door)\b[^\n<]*?</p>\s*",
+            "",
+            out,
+            flags=re.I,
+        )
+        out = re.sub(
+            r"^\s*(?:publicatiedatum|project|auteur|datum)\s*:\s*[^\n]*\n",
+            "",
+            out,
+            flags=re.I,
+        )
+        if out == before:
+            break
     return out.strip()
 
 
@@ -1007,10 +1042,16 @@ async def run_content_improver_job() -> Dict:
                 "stuck": [], "queue_remaining": 0, "budget_exceeded": True}
     jobs = [j for j in list_jobs(status="needs_work")
             if int(j.get("seo_score") or 0) < CONTENT_MIN_SCORE]
+    # Sla jobs die al op 'stuck' staan over vóór de LLM-dans — die zijn al
+    # CONTENT_IMPROVER_MAX_ATTEMPTS keer vastgelopen en horen niet opnieuw
+    # verbrand te worden (incident 2026-07-10).
+    stuck_ids = {j["id"] for j in list_jobs(status="stuck")}
     stuck_jobs = list_jobs(status="stuck")
     # Oudste eerst — die wachten het langst op verbetering.
     jobs.sort(key=lambda j: j.get("created_at") or "")
     for j in jobs[:MAX_JOBS_PER_RUN]:
+        if j["id"] in stuck_ids:
+            continue  # al vastgelopen — niet opnieuw verbranden
         try:
             await regenerate_job(j["id"])
             refreshed = get_job(j["id"])

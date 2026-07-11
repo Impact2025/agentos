@@ -103,8 +103,24 @@ def _sync_openmodel(system: str, user: str) -> str:
             },
             json=payload,
         )
+        if resp.status_code == 403 and "quota" in resp.text.lower():
+            from ...shared.outcomes import note_llm_quota_exhausted
+            note_llm_quota_exhausted(backend="openmodel", model=payload["model"], route="mail")
+            raise RuntimeError(
+                "OpenModel-dagquota op (403 quota exceeded) — wacht op de reset "
+                "of verhoog de quota op openmodel.ai"
+            )
         resp.raise_for_status()
         data = resp.json()
+    usage = data.get("usage") or {}
+    if usage:
+        from ...shared.outcomes import log_llm_usage
+        log_llm_usage(
+            backend="openmodel", model=payload["model"], route="mail",
+            prompt_tokens=usage.get("input_tokens", 0),
+            completion_tokens=usage.get("output_tokens", 0),
+            total_tokens=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+        )
     # OpenModel geeft ofwel Anthropic-vorm (content[].text) of OpenAI-vorm (choices)
     if "content" in data:
         return "".join(
@@ -121,7 +137,7 @@ def _sync_claude_fallback(system: str, user: str) -> str:
     try:
         return asyncio.run(
             claude.get_response(messages=[{"role": "user", "content": user}],
-                                 system_prompt=system, max_tokens=800)
+                                 system_prompt=system, max_tokens=800, purpose="mail")
         )
     except Exception as e:
         return (
