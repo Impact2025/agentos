@@ -52,6 +52,7 @@ from .domains.outlook import router as outlook_router
 from .domains.linkedin import router as linkedin_router
 from .domains.social import router as social_router
 from .domains.social_inbox import router as social_inbox_router
+from .domains.social_content import router as social_content_router
 from .domains.content_queue import router as content_queue_router
 from .domains.projects import router as projects_router
 from .domains.projects import weareimpact  # noqa — activity/content/blog routes
@@ -168,6 +169,7 @@ app.include_router(outlook_router.router)
 app.include_router(linkedin_router.router)
 app.include_router(social_router.router)
 app.include_router(social_inbox_router.router)
+app.include_router(social_content_router.router)
 app.include_router(content_queue_router.router)
 app.include_router(projects_router.router)
 app.include_router(activity_router)

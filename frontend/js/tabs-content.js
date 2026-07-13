@@ -75,11 +75,20 @@ async function renderHelpdeskTab(el) {
     if (!replies.length) {
       html += '<p style="color:#94a3b8;font-size:12px;text-align:center;padding:14px">Geen open concepten — inbox is bijgewerkt.</p>';
     } else {
+      // ── Bulk-actiebalk (multi-select) ──
+      html += '<div id="hd-bulkbar-' + escHtml(mb.id) + '" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;margin-bottom:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">' +
+        '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#475569;cursor:pointer">' +
+        '<input type="checkbox" onclick="helpdeskToggleAll(\'' + escHtml(mb.id) + '\',this.checked)" style="cursor:pointer"> Alles selecteren</label>' +
+        '<span id="hd-selcount-' + escHtml(mb.id) + '" style="font-size:12px;color:#64748b">0 geselecteerd</span>' +
+        '<button onclick="helpdeskRejectSelected(\'' + escHtml(mb.id) + '\',this)" style="margin-left:auto;padding:5px 14px;background:#fff;color:#ef4444;border:1px solid #fecaca;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Geselecteerde afwijzen</button>' +
+        '</div>';
+
       replies.forEach(function(r) {
         var isEdited = r.status === 'edited';
         var question = (r.question_body || '').trim();
-        html += '<div class="helpdesk-item" id="hd-item-' + r.id + '" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:10px;background:#fff">' +
+        html += '<div class="helpdesk-item" id="hd-item-' + r.id + '" data-mb="' + escHtml(mb.id) + '" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:10px;background:#fff">' +
           '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
+          '<input type="checkbox" class="hd-check-' + escHtml(mb.id) + '" data-id="' + r.id + '" onclick="helpdeskUpdateSelCount(\'' + escHtml(mb.id) + '\')" style="cursor:pointer;width:15px;height:15px">' +
           '<span style="font-size:11px;font-weight:600;color:#059669;background:#ecfdf5;padding:2px 8px;border-radius:10px">' + (isEdited ? 'bewerkt' : 'concept') + '</span>' +
           '<span style="font-size:13px;font-weight:600;color:#1e293b">Van: ' + escHtml(r.from_name || r.from_addr || r.to_addr) + ' &lt;' + escHtml(r.to_addr) + '&gt;</span></div>' +
           '<div style="font-size:12px;color:#475569;margin-bottom:6px"><strong>Onderwerp:</strong> ' + escHtml(r.subject) + '</div>' +
@@ -153,6 +162,42 @@ async function helpdeskReject(id, btn) {
     if (d.ok) { var item = document.getElementById('hd-item-' + id); if (item) item.remove(); pollHelpdeskBadge(); }
     else { alert('❌ ' + (d.error || 'onbekend')); btn.disabled = false; }
   } catch(e) { alert('❌ ' + e.message); btn.disabled = false; }
+}
+
+// ── Multi-select bulk-afwijzen ──
+function helpdeskToggleAll(mbId, checked) {
+  document.querySelectorAll('.hd-check-' + CSS.escape(mbId)).forEach(function(c){ c.checked = checked; });
+  helpdeskUpdateSelCount(mbId);
+}
+
+function helpdeskUpdateSelCount(mbId) {
+  var checks = document.querySelectorAll('.hd-check-' + CSS.escape(mbId));
+  var n = 0; checks.forEach(function(c){ if (c.checked) n++; });
+  var lbl = document.getElementById('hd-selcount-' + mbId);
+  if (lbl) lbl.textContent = n + ' geselecteerd';
+}
+
+async function helpdeskRejectSelected(mbId, btn) {
+  var checks = document.querySelectorAll('.hd-check-' + CSS.escape(mbId));
+  var ids = [];
+  checks.forEach(function(c){ if (c.checked) ids.push(parseInt(c.getAttribute('data-id'), 10)); });
+  if (!ids.length) { alert('Geen concepten geselecteerd.'); return; }
+  if (!confirm(ids.length + ' concept' + (ids.length===1?'':'en') + ' afwijzen? Ze worden gemarkeerd als afgewezen en niet verstuurd.')) return;
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Afwijzen...';
+  try {
+    var resp = await fetch('/api/mail/replies/reject-bulk', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ ids: ids }),
+    });
+    var d = await resp.json();
+    if (d.ok) {
+      ids.forEach(function(id){ var it = document.getElementById('hd-item-' + id); if (it) it.remove(); });
+      helpdeskUpdateSelCount(mbId);
+      pollHelpdeskBadge();
+    } else {
+      alert('❌ ' + (d.error || 'onbekend')); btn.disabled = false; btn.textContent = orig;
+    }
+  } catch(e) { alert('❌ ' + e.message); btn.disabled = false; btn.textContent = orig; }
 }
 
 async function helpdeskRunAll(btn) {
@@ -1226,24 +1271,43 @@ async function socialReject(id, btn) {
   } catch(e) { alert('❌ ' + e.message); btn.disabled = false; }
 }
 
+function socialToast(msg) {
+  var t = document.getElementById('social-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'social-toast';
+    t.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#0f172a;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.25);opacity:0;transition:opacity .2s';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(window._socialToastTimer);
+  window._socialToastTimer = setTimeout(function(){ t.style.opacity = '0'; }, 3500);
+}
+
 async function socialRunAll(btn) {
   btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Ophalen...';
   try {
     var inboxes = (await (await fetch('/api/social-inbox/inboxes?project=' + encodeURIComponent(currentProject))).json()) || [];
+    var total = 0;
     for (var i = 0; i < inboxes.length; i++) {
-      await fetch('/api/social-inbox/inboxes/' + encodeURIComponent(inboxes[i].id) + '/poll', { method:'POST' });
+      var d = await (await fetch('/api/social-inbox/inboxes/' + encodeURIComponent(inboxes[i].id) + '/poll', { method:'POST' })).json();
+      total += (d && typeof d.fetched === 'number') ? d.fetched : 0;
     }
+    socialToast(total > 0 ? ('✓ Bijgewerkt — ' + total + ' nieuw(e) bericht(en)') : '✓ Bijgewerkt — geen nieuwe berichten');
     renderHelpdeskTab(document.getElementById('tab-content'));
-  } catch(e) { alert('❌ ' + e.message); }
+  } catch(e) { socialToast('❌ ' + e.message); }
   finally { btn.disabled = false; btn.textContent = orig; }
 }
 
 async function socialRunOne(inboxId, btn) {
   btn.disabled = true; var orig = btn.textContent; btn.textContent = '...';
   try {
-    await fetch('/api/social-inbox/inboxes/' + encodeURIComponent(inboxId) + '/poll', { method:'POST' });
+    var d = await (await fetch('/api/social-inbox/inboxes/' + encodeURIComponent(inboxId) + '/poll', { method:'POST' })).json();
+    var n = (d && typeof d.fetched === 'number') ? d.fetched : 0;
+    socialToast(n > 0 ? ('✓ Bijgewerkt — ' + n + ' nieuw(e) bericht(en)') : '✓ Bijgewerkt — geen nieuwe berichten');
     renderHelpdeskTab(document.getElementById('tab-content'));
-  } catch(e) { alert('❌ ' + e.message); }
+  } catch(e) { socialToast('❌ ' + e.message); }
   finally { btn.disabled = false; btn.textContent = orig; }
 }
 
@@ -1308,4 +1372,194 @@ async function socialAdd(btn) {
   } catch(e) { alert('❌ ' + e.message); btn.textContent = 'Aanmaken'; }
   finally { btn.disabled = false; }
 }
+
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SOCIAL CREATIE TAB — agents maken posts, beeld-briefs & TikTok-packs
+// ══════════════════════════════════════════════════════════════════════════
+
+function _scBadge(status) {
+  var map = {
+    pending_review: ['#fffbeb', '#d97706', 'Wacht op goedkeuring'],
+    approved:       ['#f0fdf4', '#16a34a', 'Goedgekeurd'],
+    rejected:       ['#fef2f2', '#ef4444', 'Afgewezen'],
+    posted:         ['#eff6ff', '#2563eb', 'Geplaatst'],
+  };
+  var b = map[status] || ['#f1f5f9', '#475569', status];
+  return '<span style="font-size:10px;font-weight:600;color:' + b[1] + ';background:' + b[0] + ';padding:2px 8px;border-radius:10px">' + b[2] + '</span>';
+}
+
+async function renderSocialCreatieTab(el) {
+  if (!currentProject) { el.innerHTML = '<div class="empty-state">Kies eerst een project.</div>'; return; }
+  el.innerHTML = '<div class="loading"><div class="spinner"></div><p>Social content laden...</p></div>';
+  try {
+    var packs = (await (await fetch('/api/social-content/packs?project=' + encodeURIComponent(currentProject))).json()) || [];
+    var html = '<div class="section-card" style="margin-bottom:16px">' +
+      '<h3 style="margin:0 0 4px;font-size:15px;font-weight:700">Social Creatie — ' + escHtml(currentProject) + '</h3>' +
+      '<p style="font-size:12px;color:#64748b;margin:0 0 14px">De agent schrijft posts voor LinkedIn, Facebook, Instagram en TikTok in jouw merkstem, plus een Canva-ready beeld-brief en een TikTok-scriptpack. Alles wacht op jouw goedkeuring — er wordt niets automatisch gepost.</p>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;align-items:end">' +
+      '<label style="font-size:11px;color:#475569;display:flex;flex-direction:column;gap:3px">Thema' +
+      '<input id="sc-theme" placeholder="bijv. buurtfeest verbindt mensen" style="padding:7px 9px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px"></label>' +
+      '<label style="font-size:11px;color:#475569;display:flex;flex-direction:column;gap:3px">Invalshoek (optioneel)' +
+      '<input id="sc-angle" placeholder="bijv. echte ontmoetingen ipv scherm" style="padding:7px 9px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px"></label>' +
+      '<label style="font-size:11px;color:#475569;display:flex;gap:12px;flex-direction:row;align-items:center;height:34px">' +
+      '<span style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="sc-img" checked style="accent-color:#e5a500"> Beeld</span>' +
+      '<span style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="sc-vid" checked style="accent-color:#e5a500"> TikTok</span></label>' +
+      '<button onclick="scGenerate(this)" style="padding:8px 18px;background:#e5a500;color:#1f2937;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;height:34px">Genereer content pack</button>' +
+      '</div></div>';
+
+    if (!packs.length) {
+      html += '<div class="empty-state"><p style="font-size:13px;color:#475569">Nog geen content packs voor ' + escHtml(currentProject) + '.</p>' +
+        '<p style="font-size:12px;color:#94a3b8">Vul een thema in en klik "Genereer content pack".</p></div>';
+    } else {
+      html += '<div style="display:flex;flex-direction:column;gap:12px">';
+      packs.forEach(function(p) {
+        var conceptTag = p.concept ? '<span style="font-size:10px;font-weight:600;color:#92400e;background:#fef3c7;padding:2px 8px;border-radius:10px">concept (geen LLM)</span>' : '';
+        html += '<div class="section-card" style="margin:0">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px">' +
+          '<div style="display:flex;align-items:center;gap:8px"><strong style="font-size:13px">' + escHtml(p.theme) + '</strong>' +
+          _scBadge(p.status) + conceptTag + '</div>' +
+          '<div style="display:flex;gap:6px">' +
+          '<button onclick="scOpenPack(\'' + escHtml(p.id) + '\')" style="padding:5px 12px;background:#fff;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">Bekijk</button>' +
+          (p.status === 'pending_review' ?
+            '<button onclick="scApprove(\'' + escHtml(p.id) + '\',this)" style="padding:5px 12px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Goedkeuren</button>' : '') +
+          (p.status === 'approved' ?
+            '<button onclick="scPublish(\'' + escHtml(p.id) + '\',this)" style="padding:5px 12px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Plaatsen…</button>' : '') +
+          '<button onclick="scReject(\'' + escHtml(p.id) + '\',this)" style="padding:5px 10px;background:#fff;color:#ef4444;border:1px solid #fecaca;border-radius:6px;font-size:11px;cursor:pointer">Afwijzen</button>' +
+          '</div></div>' +
+          (p.angle ? '<p style="font-size:11px;color:#64748b;margin:0 0 6px">Invalshoek: ' + escHtml(p.angle) + '</p>' : '') +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:#64748b">' +
+          Object.keys(p.copy || {}).map(function(k){ return '<span style="background:#f1f5f9;padding:2px 7px;border-radius:10px">' + _socialPlatformLabel(k) + '</span>'; }).join('') +
+          (p.image_brief ? '<span style="background:#fef3c7;padding:2px 7px;border-radius:10px">Beeld-brief</span>' : '') +
+          (p.tiktok_pack ? '<span style="background:#ede9fe;padding:2px 7px;border-radius:10px">TikTok-pack</span>' : '') +
+          '</div></div>';
+      });
+      html += '</div>';
+    }
+    html += '<div id="sc-detail"></div>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<div class="empty-state">Social Creatie fout: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+async function scGenerate(btn) {
+  var theme = (document.getElementById('sc-theme') || {}).value || '';
+  if (!theme.trim()) { alert('Vul een thema in.'); return; }
+  var angle = (document.getElementById('sc-angle') || {}).value || '';
+  var withImg = !!(document.getElementById('sc-img') || {}).checked;
+  var withVid = !!(document.getElementById('sc-vid') || {}).checked;
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Genereren…';
+  try {
+    var resp = await fetch('/api/social-content/generate', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ project: currentProject, theme: theme, angle: angle, with_image: withImg, with_video: withVid }),
+    });
+    var d = await resp.json();
+    if (d.success && d.pack) {
+      socialToast('✓ Content pack aangemaakt — keur de posts goed');
+      renderSocialCreatieTab(document.getElementById('tab-content'));
+    } else {
+      alert('❌ ' + (d.error || d.detail || 'onbekend')); btn.textContent = orig;
+    }
+  } catch (e) { alert('❌ ' + e.message); btn.textContent = orig; }
+  finally { btn.disabled = false; }
+}
+
+async function scApprove(id, btn) {
+  btn.disabled = true;
+  try {
+    var resp = await fetch('/api/social-content/packs/' + encodeURIComponent(id) + '/approve', { method:'POST' });
+    var d = await resp.json();
+    if (d.success) { socialToast('✓ Goedgekeurd'); renderSocialCreatieTab(document.getElementById('tab-content')); }
+    else { alert('❌ ' + (d.error || 'onbekend')); btn.disabled = false; }
+  } catch (e) { alert('❌ ' + e.message); btn.disabled = false; }
+}
+
+async function scReject(id, btn) {
+  if (!confirm('Content pack afwijzen?')) return;
+  btn.disabled = true;
+  try {
+    var resp = await fetch('/api/social-content/packs/' + encodeURIComponent(id) + '/reject', { method:'POST' });
+    var d = await resp.json();
+    if (d.success) { socialToast('Afgewezen'); renderSocialCreatieTab(document.getElementById('tab-content')); }
+    else { alert('❌ ' + (d.error || 'onbekend')); btn.disabled = false; }
+  } catch (e) { alert('❌ ' + e.message); btn.disabled = false; }
+}
+
+async function scPublish(id, btn) {
+  if (!confirm('Content pack plaatsen? Goedgekeurde posts gaan naar de gekoppelde kanalen.')) return;
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Plaatsen…';
+  try {
+    var pack = (await (await fetch('/api/social-content/packs/' + encodeURIComponent(id))).json());
+    var platforms = Object.keys(pack.copy || {});
+    for (var i = 0; i < platforms.length; i++) {
+      var r = await (await fetch('/api/social-content/packs/' + encodeURIComponent(id) + '/publish', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ platform: platforms[i] }),
+      })).json();
+      if (r.manual) {
+        socialToast('ℹ️ ' + _socialPlatformLabel(platforms[i]) + ': plak de tekst handmatig op het kanaal');
+      } else if (r.success) {
+        socialToast('✓ Geplaatst op ' + _socialPlatformLabel(platforms[i]));
+      }
+    }
+    renderSocialCreatieTab(document.getElementById('tab-content'));
+  } catch (e) { alert('❌ ' + e.message); btn.textContent = orig; }
+  finally { btn.disabled = false; }
+}
+
+async function scOpenPack(id) {
+  var box = document.getElementById('sc-detail'); if (!box) return;
+  box.innerHTML = '<div class="loading" style="padding:20px"><div class="spinner"></div></div>';
+  try {
+    var p = await (await fetch('/api/social-content/packs/' + encodeURIComponent(id))).json();
+    var html = '<div class="section-card" style="margin-top:16px;border-color:#e5a500">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
+      '<strong style="font-size:14px">' + escHtml(p.theme) + '</strong>' + _scBadge(p.status) + '</div>';
+    html += '<h4 style="font-size:12px;font-weight:700;margin:14px 0 6px;color:#475569">Posts per kanaal</h4>';
+    Object.keys(p.copy || {}).forEach(function(k) {
+      var txt = p.copy[k] || '';
+      html += '<div style="margin-bottom:10px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">' +
+        '<span style="font-size:11px;font-weight:700;color:#1e293b">' + _socialPlatformLabel(k) + '</span>' +
+        '<button onclick="scCopyText(this)" data-text="' + escHtml(txt) + '" style="padding:2px 8px;background:#fff;border:1px solid #cbd5e1;border-radius:4px;font-size:10px;cursor:pointer">Kopieer</button></div>' +
+        '<div style="font-size:12px;color:#334155;white-space:pre-wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px">' + escHtml(txt) + '</div></div>';
+    });
+    if (p.image_brief) {
+      var ib = p.image_brief;
+      html += '<h4 style="font-size:12px;font-weight:700;margin:14px 0 6px;color:#475569">Beeld-brief (Canva / Midjourney)</h4>' +
+        '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px;font-size:12px;color:#475569">' +
+        '<div><strong>Kop:</strong> ' + escHtml(ib.headline || '') + '</div>' +
+        (ib.subtext ? '<div><strong>Onderschrift:</strong> ' + escHtml(ib.subtext) + '</div>' : '') +
+        '<div><strong>Formaat:</strong> ' + escHtml(ib.dimensions || '') + ' · <strong>Type:</strong> ' + escHtml(ib.template_type || '') + '</div>' +
+        (ib.layout ? '<div><strong>Opmaak:</strong> ' + escHtml(ib.layout) + '</div>' : '') +
+        '<div style="margin-top:6px"><strong>Midjourney-prompt:</strong></div>' +
+        '<div style="font-size:11px;background:#fff;border:1px solid #fde68a;border-radius:6px;padding:6px;white-space:pre-wrap;color:#7c2d12">' + escHtml(ib.midjourney_prompt || '') + '</div>' +
+        '<div style="margin-top:6px;font-size:11px;color:#92400e">' + escHtml(ib.canva_note || '') + '</div></div>';
+    }
+    if (p.tiktok_pack) {
+      var tp = p.tiktok_pack;
+      html += '<h4 style="font-size:12px;font-weight:700;margin:14px 0 6px;color:#475569">TikTok / Reels-scriptpack</h4>' +
+        '<div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:10px;font-size:12px;color:#475569">' +
+        '<div><strong>Hook:</strong> ' + escHtml(tp.hook || '') + '</div>' +
+        (tp.script ? '<div style="margin-top:4px"><strong>Script:</strong></div><div style="white-space:pre-wrap">' + escHtml(tp.script) + '</div>' : '') +
+        (tp.shotlist && tp.shotlist.length ? '<div style="margin-top:4px"><strong>Shotlist:</strong><ul style="margin:4px 0 0 16px">' + tp.shotlist.map(function(s){ return '<li>' + escHtml(s) + '</li>'; }).join('') + '</ul></div>' : '') +
+        (tp.voiceover_cues ? '<div style="margin-top:4px"><strong>Voiceover:</strong> ' + escHtml(tp.voiceover_cues) + '</div>' : '') +
+        (tp.captions ? '<div style="margin-top:4px"><strong>Captions:</strong> ' + escHtml(tp.captions) + '</div>' : '') +
+        (tp.hashtags && tp.hashtags.length ? '<div style="margin-top:4px"><strong>Hashtags:</strong> ' + tp.hashtags.map(function(h){ return '#' + escHtml(h); }).join(' ') + '</div>' : '') +
+        '</div>';
+    }
+    html += '<div style="margin-top:12px"><button onclick="document.getElementById(\'sc-detail\').innerHTML=\'\'" style="padding:5px 14px;background:#fff;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">Sluiten</button></div></div>';
+    box.innerHTML = html;
+    box.scrollIntoView({ behavior:'smooth', block:'nearest' });
+  } catch (e) {
+    box.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+function scCopyText(btn) {
+  var txt = btn.getAttribute('data-text') || '';
+  navigator.clipboard.writeText(txt).then(function(){ socialToast('📋 Gekopieerd'); });
+}
+
 

@@ -889,6 +889,33 @@ def _migrate(conn) -> None:
         "ON social_inbox_msg(inbox_id, status)"
     )
 
+    # ── Social Content Creatie (posts + beeld-brief + TikTok-scriptpack) ────
+    # De CREATIE-laag: agents maken eigen posts/beeld/TikTok i.p.v. reageren op
+    # andermans berichten (dat doet social_inbox). Alles achter een review-gate
+    # (status=pending_review) — niets wordt automatisch gepost. Eén pack =
+    # per-platform tekst + optioneel image_brief_json + tiktok_pack_json.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS social_posts (
+            id               TEXT PRIMARY KEY,
+            project          TEXT NOT NULL,           -- 'weareimpact','bijeen',...
+            theme            TEXT NOT NULL,           -- waar de post over gaat
+            angle            TEXT DEFAULT '',          -- gekozen invalshoek
+            brand_context    TEXT DEFAULT '',          -- merkstem-hint (projectnaam)
+            copy_json        TEXT DEFAULT '{}',         -- {"linkedin":"...","facebook":"...",...}
+            image_brief_json TEXT DEFAULT '{}',        -- Canva-ready brief + MJ-prompt
+            tiktok_pack_json TEXT DEFAULT '{}',        -- hook/script/shotlist/hashtags
+            status           TEXT DEFAULT 'pending_review', -- pending_review|approved|rejected|posted
+            concept          INTEGER DEFAULT 0,        -- 1 = lokale fallback (geen LLM), niet productieklaar
+            approved_at      TEXT DEFAULT '',
+            posted_result_json TEXT DEFAULT '{}',      -- resultaat van publish_pack()
+            created_at       TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_social_posts_project "
+        "ON social_posts(project, status)"
+    )
+
     # ── LLM-kosten-telemetrie ──────────────────────────────────────────────
     # Elke OpenModel/Claude/Hermes-aanroep (ook de autonome achtergrond-jobs)
     # wordt hier gelogd zodat token-verbruik zichtbaar is vóórdat de echte
