@@ -718,7 +718,7 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
                     "content": optimized_html.strip(),
                     "slug": slug,
                     "excerpt": excerpt,
-                    "seoTitle": (parsed_title or title)[:60],
+                    "seoTitle": (parsed_title or final_title)[:60],
                     "seoDescription": meta_desc,
                     "tags": [keyword] if keyword else [],
                     "source": "agent-os",

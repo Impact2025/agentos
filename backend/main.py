@@ -51,11 +51,13 @@ from .domains.publish import router as publish_router
 from .domains.outlook import router as outlook_router
 from .domains.linkedin import router as linkedin_router
 from .domains.social import router as social_router
+from .domains.social_inbox import router as social_inbox_router
 from .domains.content_queue import router as content_queue_router
 from .domains.projects import router as projects_router
 from .domains.projects import weareimpact  # noqa — activity/content/blog routes
 from .domains.projects.weareimpact import activity_router
 from .domains.goal import router as goal_router
+from .domains.health import router as health_router
 from .infinite_context import router as infinite_context_router
 from .domains.strategist import router as strategist_router
 from .domains.seo import optimizer as seo_optimizer
@@ -165,10 +167,12 @@ app.include_router(publish_router.router)
 app.include_router(outlook_router.router)
 app.include_router(linkedin_router.router)
 app.include_router(social_router.router)
+app.include_router(social_inbox_router.router)
 app.include_router(content_queue_router.router)
 app.include_router(projects_router.router)
 app.include_router(activity_router)
 app.include_router(goal_router.router)
+app.include_router(health_router.router)
 app.include_router(infinite_context_router.router)
 app.include_router(strategist_router.router)
 app.include_router(seo_optimizer.router)

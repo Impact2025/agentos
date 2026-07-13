@@ -133,10 +133,15 @@ async def _stream_openai_compat(
 ) -> AsyncGenerator[str, None]:
     if backend == "local":
         base_url = HERMES_LOCAL_URL.rstrip("/")
-        model = "hermes"
+        # De 'local' tier spreekt het OpenAI-compat /chat/completions-protocol
+        # (Ollama, LiteLLM, LM Studio, …). Gebruik het geconfigureerde
+        # lokale model in plaats van de hardcoded 'hermes' — anders 404't
+        # Ollama op een niet-bestaand model ('hermes'). Valt terug op
+        # OLLAMA_MODEL zodat de live lokale LLM ook echt wordt aangesproken.
+        model = OLLAMA_MODEL or "hermes"
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {HERMES_LOCAL_KEY}",
+            "Authorization": f"Bearer {HERMES_LOCAL_KEY or 'ollama'}",
         }
     elif backend == "ollama":
         base_url = OLLAMA_BASE_URL.rstrip("/")

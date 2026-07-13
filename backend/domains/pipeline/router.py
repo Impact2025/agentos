@@ -114,3 +114,37 @@ def triage_update_status(task_id: str, body: dict):
     if not task:
         raise HTTPException(status_code=404, detail="Taak niet gevonden")
     return task
+
+
+@router.post("/cleanup-stale")
+def cleanup_stale_tasks(
+    older_than_hours: int = Body(24, embed=True),
+    dry_run: bool = Body(True, embed=True),
+):
+    """Ruim 'running' taken op die al urenlang vastlijken (de conveyor is ze
+    kwijtgeraakt bij een crash/herstart). Ze worden teruggezet naar 'todo'
+    met een leesbare error-noot — NIET naar 'ready', want de conveyor pikt
+    alleen 'ready' op en zou ze anders meteen opnieuw starten.
+
+    Default dry_run=True: eerst zien wat er geraakt wordt, dan expliciet
+    uitvoeren met dry_run=false. Idempotent en veilig."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, title, started_at FROM tasks "
+            "WHERE status='running' AND started_at IS NOT NULL "
+            "AND started_at < datetime('now', ?)",
+            (f"-{older_than_hours} hours",),
+        ).fetchall()
+        affected = [dict(r) for r in rows]
+        if not dry_run:
+            for r in rows:
+                set_task_status(
+                    r["id"], "todo",
+                    error=f"Stale 'running' gereset ({older_than_hours}h+) — conveyor kwijt bij restart; opnieuw starten of verwijderen.",
+                )
+    return {
+        "dry_run": dry_run,
+        "older_than_hours": older_than_hours,
+        "count": len(affected),
+        "affected": affected,
+    }

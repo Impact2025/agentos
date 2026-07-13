@@ -316,7 +316,54 @@ def _mailbox_specs() -> list[JobSpec]:
     return specs
 
 
-_SPECS = _SPECS + _mailbox_specs()
+# ── Social Inbox: per project/kanaal een eigen poll-job ─────────────────
+# Elk project krijgt per kanaal (LinkedIn/IG/FB/TikTok) een eigen inbox
+# (tabel `social_inboxes`). Hier maken we automatisch één JobSpec per
+# ingeschakelde inbox, met poll-interval uit de inbox-rij. Zo hoeft de
+# scheduler niet handmatig per project bijgewerkt. Review-gate: deze jobs
+# VERSTUREN nooit — ze zetten concept-antwoorden klaar ter goedkeuring.
+
+def _social_inbox_job(inbox_id: str) -> None:
+    from .shared.social_inbox import run_inbox
+    try:
+        asyncio.run(run_inbox(inbox_id))
+    except Exception as e:
+        logger.exception("Social inbox %s poll mislukt", inbox_id)
+        try:
+            from .shared.outcomes import log_outcome
+            log_outcome(
+                project="Social", action="social_poll",
+                detail=f"Social inbox poll mislukt: {e}",
+                next_step="Controleer de kanaal-tokens in de Social-tab.",
+                status="error",
+            )
+        except Exception:
+            pass
+
+
+def _social_inbox_specs() -> list[JobSpec]:
+    try:
+        from .shared.database import get_conn
+        with get_conn() as conn:
+            boxes = conn.execute(
+                "SELECT id, project, platform, poll_minutes FROM social_inboxes WHERE enabled=1"
+            ).fetchall()
+    except Exception:
+        return []
+    specs = []
+    for b in boxes:
+        bid = b["id"]
+        specs.append(JobSpec(
+            f"social_{bid}",
+            f"Social {b['platform']} ({b['project']})",
+            partial(_social_inbox_job, bid),
+            IntervalTrigger(minutes=int(b["poll_minutes"] or 30)),
+            misfire_grace_time=600, coalesce=True,
+        ))
+    return specs
+
+
+_SPECS = _SPECS + _mailbox_specs() + _social_inbox_specs()
 _BY_ID: dict[str, JobSpec] = {s.id: s for s in _SPECS}
 
 

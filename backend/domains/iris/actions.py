@@ -152,14 +152,36 @@ async def seo_refresh(site_ref: str, count: Any, reason: str) -> Optional[str]:
         logger.info("[iris] seo_refresh: geen open refresh-suggesties voor %s", site["name"])
         return None
     n = _clamp(count, 1, _SEO_REFRESH_MAX, 1)
-    job_ids, failed = [], 0
+    job_ids, failed, skipped = [], 0, 0
     for sug in suggestions[:n]:
         try:
             job_ids.append(await optimizer.refresh_article(sug, site))
-        except Exception as e:
-            failed += 1
-            logger.warning("[iris] refresh van %s mislukt: %s", sug.get("page"), e)
+        except Exception as e:  # noqa: BLE001
+            msg = str(e)
+            # Een SPA-shell (bv. de homepage) heeft geen server-rendered
+            # body-tekst → refresh_article kan de pagina niet ophalen. Dat is
+            # géén bug om dagelijks op te blijven proberen: markeer de
+            # suggestie als afgehandeld en log een heldere notitie i.p.v. een
+            # rode foutkaart die elke Iris-run terugkomt.
+            if "pagina-inhoud niet ophalen" in msg or "te kort" in msg:
+                skipped += 1
+                optimizer._update_suggestion(sug["id"], status="done")
+                log_outcome(
+                    site["name"], ACTION,
+                    f"SEO-refresh overgeslagen voor {sug.get('page')}: pagina is een "
+                    f"SPA-shell zonder extracteerbare body-tekst — niet automatisch "
+                    f"verwerkbaar.",
+                    next_step="Ververs de pagina handmatig in het CMS (de homepage "
+                              "is een Next.js-SPA zonder server-rendered tekst).",
+                    status="ok",
+                )
+            else:
+                failed += 1
+                logger.warning("[iris] refresh van %s mislukt: %s", sug.get("page"), e)
     if not job_ids:
+        if skipped and not failed:
+            # Alles overgeslagen wegens SPA-shell — geen error-kaart.
+            return None
         log_outcome(
             site["name"], ACTION,
             f"SEO-refresh gestart door Iris maar alle {failed} poging(en) faalden",

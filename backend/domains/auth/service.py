@@ -32,7 +32,7 @@ COOKIE_NAME = "agentos_session"
 
 # Routes die altijd open zijn: auth zelf, health-check, en de statische assets
 # (zodat het login-scherm kan laden). Alles in /api/* anders is beschermd.
-PUBLIC_PREFIXES = ("/api/auth/", "/api/status")
+PUBLIC_PREFIXES = ("/api/auth/", "/api/status", "/api/healthcheck")
 
 
 def _secret() -> bytes:

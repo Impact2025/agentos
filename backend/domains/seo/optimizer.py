@@ -490,7 +490,10 @@ async def refresh_article(sug: Dict, site: Dict) -> str:
     pages = await _fetch_pages([sug["page"]])
     page = pages.get(sug["page"])
     if not page or len(page.get("text", "")) < 300:
-        raise RuntimeError("Kon de huidige pagina-inhoud niet ophalen — refresh niet mogelijk.")
+        raise RuntimeError(
+            "Kon de huidige pagina-inhoud niet ophalen — refresh niet mogelijk "
+            "(pagina is waarschijnlijk een SPA-shell zonder server-rendered body-tekst)."
+        )
 
     keyword = sug.get("query") or urlparse(sug["page"]).path.rsplit("/", 1)[-1].replace("-", " ")
 

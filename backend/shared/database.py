@@ -839,6 +839,56 @@ def _migrate(conn) -> None:
         "ON mail_reply(mailbox_id, status)"
     )
 
+    # ── Social Inbox (per project, per kanaal: LinkedIn/IG/FB/TikTok) ────────
+    # Gespiegeld aan de mail-helpdesk: de agent leest reacties/DM's, schrijft
+    # een concept in de merkstem, en zet dat klaar achter de review-gate.
+    # Nooit auto-antwoorden — de mens keurt eerst (net als mail_reply).
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS social_inboxes (
+            id              TEXT PRIMARY KEY,
+            project         TEXT NOT NULL,            -- 'bewaardvoorjou','weareimpact',...
+            platform        TEXT NOT NULL,            -- 'linkedin'|'facebook'|'instagram'|'tiktok'
+            label           TEXT DEFAULT '',
+            creds_json      TEXT DEFAULT '{}',         -- page_id/token, ig_id, li urn, tiktok open_id
+            brand_context   TEXT DEFAULT '',          -- merkstem-hint (projectnaam -> Schrijf-DNA)
+            poll_minutes    INTEGER DEFAULT 30,
+            enabled         INTEGER DEFAULT 1,
+            created_at      TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_social_inboxes_project "
+        "ON social_inboxes(project)"
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS social_inbox_msg (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            inbox_id        TEXT NOT NULL REFERENCES social_inboxes(id) ON DELETE CASCADE,
+            platform        TEXT NOT NULL,
+            external_id     TEXT NOT NULL,             -- comment/post/DM id op het kanaal (dedupe)
+            author_name     TEXT DEFAULT '',
+            author_handle   TEXT DEFAULT '',
+            text            TEXT DEFAULT '',
+            kind            TEXT DEFAULT 'unknown',    -- question|praise|complaint|spam|other
+            parent_url      TEXT DEFAULT '',           -- link naar de post (UI-context)
+            thread_json     TEXT DEFAULT '[]',         -- eerdere reacties in dezelfde thread
+            draft_body      TEXT DEFAULT '',
+            status          TEXT DEFAULT 'pending_review', -- pending_review|sent|edited|rejected|ignored
+            edited_body     TEXT DEFAULT '',
+            manual          INTEGER DEFAULT 0,         -- 1 = kanaal staat geen API-antwoord toe (plak-adapter)
+            created_at      TEXT DEFAULT (datetime('now')),
+            sent_at         TEXT DEFAULT ''
+        )"""
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_social_ext "
+        "ON social_inbox_msg(inbox_id, external_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_social_msg_status "
+        "ON social_inbox_msg(inbox_id, status)"
+    )
+
     # ── LLM-kosten-telemetrie ──────────────────────────────────────────────
     # Elke OpenModel/Claude/Hermes-aanroep (ook de autonome achtergrond-jobs)
     # wordt hier gelogd zodat token-verbruik zichtbaar is vóórdat de echte

@@ -101,47 +101,40 @@ function stopAgentStatusPoll() {
   if (_agentStatusTimer) { clearInterval(_agentStatusTimer); _agentStatusTimer = null; }
 }
 function pollAgentStatus() {
-  fetch('/api/goals?limit=1').then(function(r){return r.json();}).then(function(goals){
-    var hasRunning = false, hasFailed = false, hasReady = false;
-    if (goals && goals.length) {
-      goals.forEach(function(g){
-        if (g.status === 'running') hasRunning = true;
-        if (g.status === 'failed') hasFailed = true;
-        if (g.status === 'ready' || g.status === 'draft') hasReady = true;
-      });
-    }
-    // Also check control room for running count
-    fetch('/api/strategist/control-room').then(function(r2){return r2.json();}).then(function(data){
-      var gs = data.goals_summary || {};
-      var running = (gs.running || 0);
-      var failed = (gs.failed || 0);
-      var total = (gs.total || 0);
-      updateStatusIndicator(running > 0, failed > 0, total > 0, failed);
-    }).catch(function(){});
-  }).catch(function(){});
-}
-function updateStatusIndicator(busy, hasError, hasGoals, failedCount) {
-  var el = document.getElementById('agent-status-indicator');
-  if (!el) return;
-  if (busy) {
-    el.innerHTML = '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:12px;background:#dcfce7;color:#166534;font-size:10px;font-weight:600">' +
-      '<span style="width:6px;height:6px;border-radius:50%;background:#16a34a;animation:pulse 1.5s infinite"></span> Bezig</span>';
-  } else if (hasError) {
-    el.innerHTML = '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:12px;background:#fef2f2;color:#dc2626;font-size:10px;font-weight:600">' +
-      '<span style="width:6px;height:6px;border-radius:50%;background:#ef4444"></span> Mislukt (' + (failedCount||'?') + ')</span>';
+  // Eén call naar de geconsolideerde healthcheck geeft backend-gezondheid,
+  // tokengebruik en actieve-status in één keer — geen 2 aparte fetches meer.
+  fetch('/api/healthcheck').then(function(r){return r.json();}).catch(function(){return null;}).then(function(h){
+    if (!h) return;
+    var b = h.backend || {};
+    var active = b.active || '?';
+    var llm = h.llm || {};
+    var t = llm.today || {};
+    var pct = t.budget_pct != null ? t.budget_pct : 0;
+    var color, label, dot;
+    if (h.status === 'degraded') { color = '#dc2626'; dot = '#ef4444'; label = 'Degraded'; }
+    else if (h.status === 'warning') { color = '#d97706'; dot = '#f59e0b'; label = 'Let op'; }
+    else { color = '#16a34a'; dot = '#22c55e'; label = 'Gezond'; }
+
+    var extra = active;
+    if (b.local && b.local.live === false && active === 'local') extra = active + ' (DOOD)';
+    else if (b.local && b.local.live) extra = 'local·Ollama';
+
+    var el = document.getElementById('agent-status-indicator');
+    if (!el) return;
+    el.innerHTML = '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:12px;background:'
+      + (h.status==='degraded' ? '#fef2f2' : h.status==='warning' ? '#fffbeb' : '#f0fdf4')
+      + ';color:' + color + ';font-size:10px;font-weight:600" title="'
+      + escHtml(h.summary || '') + '">'
+      + '<span style="width:6px;height:6px;border-radius:50%;background:' + dot
+      + (h.status==='ok' ? ';animation:pulse 1.5s infinite' : '')
+      + '"></span> ' + label + ' · ' + escHtml(extra)
+      + (pct != null ? ' · ' + pct + '% tokens' : '') + '</span>';
+
+    // Mislukte doelen tonen nog steeds de Oplossen-knop (bestaand gedrag).
+    var failed = (h.active_work && h.active_work.goals) ? h.active_work.goals.filter(function(g){return g.status==='failed';}).length : 0;
     var resEl = document.getElementById('resolve-failed-btn-container');
-    if (resEl) resEl.innerHTML = '<button onclick="resolveAllFailed()" style="padding:3px 10px;background:#ef4444;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">\u{1F9E0} Oplossen</button>';
-  } else if (hasGoals) {
-    el.innerHTML = '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:12px;background:#f0fdf4;color:#16a34a;font-size:10px;font-weight:600">' +
-      '<span style="width:6px;height:6px;border-radius:50%;background:#22c55e"></span> Idle</span>';
-    var resEl = document.getElementById('resolve-failed-btn-container');
-    if (resEl) resEl.innerHTML = '';
-  } else {
-    el.innerHTML = '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:12px;background:#f1f5f9;color:#94a3b8;font-size:10px;font-weight:600">' +
-      '<span style="width:6px;height:6px;border-radius:50%;background:#94a3b8"></span> Standby</span>';
-    var resEl = document.getElementById('resolve-failed-btn-container');
-    if (resEl) resEl.innerHTML = '';
-  }
+    if (resEl) resEl.innerHTML = failed ? '<button onclick="resolveAllFailed()" style="padding:3px 10px;background:#ef4444;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">\u{1F9E0} Oplossen</button>' : '';
+  });
 }
 
 // ── Resolve all failed goals ────────────────────────────────────────

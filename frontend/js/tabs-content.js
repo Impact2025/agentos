@@ -100,6 +100,9 @@ async function renderHelpdeskTab(el) {
   // badge verversen
   var badge = document.getElementById('helpdesk-badge');
   if (badge) { if (pending.length>0) { badge.style.display='inline-block'; badge.textContent=pending.length; } else { badge.style.display='none'; } }
+
+  // ── Social Inbox sectie (LinkedIn/IG/FB/TikTok) ──
+  renderSocialInboxSection(el);
 }
 
 // ── Acties ──
@@ -1082,3 +1085,227 @@ async function retryFailedGoal(goalId) {
   } catch(e) { alert('Fout: ' + e.message); }
   if (btn) { btn.disabled = false; btn.textContent = '✨ Los het op met AI'; }
 }
+
+
+// ═══════════════════════════════════════════════════════════════════
+//  SOCIAL INBOX — per-project social kanalen, review-gate voor antwoorden
+//  Gespiegeld aan de mail-helpdesk: de agent leest reacties/DM's, schrijft
+//  een concept in de merkstem, en Vincent keurt één keer om te plaatsen.
+// ═══════════════════════════════════════════════════════════════════
+
+function _socialPlatformLabel(p) {
+  return ({ linkedin:'LinkedIn', facebook:'Facebook', instagram:'Instagram', tiktok:'TikTok' })[p] || p;
+}
+
+async function renderSocialInboxSection(el) {
+  if (!currentProject) return;
+  var wrap = document.createElement('div');
+  wrap.style.marginTop = '22px';
+  wrap.innerHTML = '<div class="loading"><div class="spinner"></div><p>Social inbox laden...</p></div>';
+  el.appendChild(wrap);
+  try {
+    var [inbResp, pendResp] = await Promise.all([
+      fetch('/api/social-inbox/inboxes?project=' + encodeURIComponent(currentProject)).then(function(r){return r.json();}),
+      fetch('/api/social-inbox/' + encodeURIComponent(currentProject) + '/pending').then(function(r){return r.json();}),
+    ]);
+    var inboxes = inbResp || [];
+    var pending = pendResp || [];
+    var byInbox = {};
+    pending.forEach(function(m){ (byInbox[m.inbox_id] = byInbox[m.inbox_id] || []).push(m); });
+
+    var html = '<div class="section-card" style="margin-bottom:16px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">' +
+      '<div><h3 style="margin:0;font-size:15px;font-weight:700">📱 Social inbox — ' + escHtml(currentProject) + '</h3>' +
+      '<p style="font-size:11px;color:#64748b;margin:2px 0 0">' + inboxes.length + ' kanaal(en) · ' + pending.length + ' concept-antwoord(en) wacht op goedkeuring</p></div>' +
+      '<div style="display:flex;gap:6px">' +
+      '<button onclick="socialShowAddForm()" style="padding:6px 14px;background:#fff;color:#0ea5e9;border:1px solid #bae6fd;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Kanaal</button>' +
+      '<button onclick="socialRunAll(this)" style="padding:6px 16px;background:#0ea5e9;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">↻ Nu ophalen</button>' +
+      '</div></div>';
+
+    if (!inboxes.length) {
+      html += '<div class="empty-state"><p style="font-size:13px;font-weight:600;color:#475569;margin-bottom:6px">Nog geen social kanalen voor ' + escHtml(currentProject) + '</p>' +
+        '<p style="color:#94a3b8;font-size:12px;margin-bottom:10px">Koppel LinkedIn, Instagram, Facebook of TikTok. De agent leest reacties/DM\'s, schrijft een concept in jouw stijl, en jij keurt één keer.</p>' +
+        '<button onclick="socialShowAddForm()" style="padding:7px 16px;background:#0ea5e9;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Kanaal toevoegen</button></div>';
+    } else {
+      inboxes.forEach(function(ib) {
+        var msgs = byInbox[ib.id] || [];
+        var statusCls = ib.enabled ? '#16a34a' : '#94a3b8';
+        html += '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:10px;background:#fff">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:8px">' +
+          '<div style="display:flex;align-items:center;gap:8px"><span style="width:9px;height:9px;border-radius:50%;background:' + statusCls + '"></span>' +
+          '<h4 style="margin:0;font-size:13px;font-weight:700">' + escHtml(_socialPlatformLabel(ib.platform)) + (ib.label ? ' · ' + escHtml(ib.label) : '') + '</h4>' +
+          '<span style="font-size:10px;color:#94a3b8;background:#f1f5f9;padding:1px 7px;border-radius:10px">' + escHtml(ib.project) + '</span></div>' +
+          '<div style="display:flex;gap:6px">' +
+          '<button onclick="socialRunOne(\'' + escHtml(ib.id) + '\',this)" style="padding:4px 12px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">↻ Ophalen</button>' +
+          '<button onclick="socialToggle(\'' + escHtml(ib.id) + '\',' + (ib.enabled ? 0 : 1) + ',this)" style="padding:4px 12px;background:#fff;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">' + (ib.enabled ? 'Pauzeer' : 'Activeer') + '</button>' +
+          '<button onclick="socialDelete(\'' + escHtml(ib.id) + '\',\'' + escHtml(_socialPlatformLabel(ib.platform)) + '\',this)" style="padding:4px 10px;background:#fff;color:#ef4444;border:1px solid #fecaca;border-radius:6px;font-size:11px;cursor:pointer">Verwijder</button>' +
+          '</div></div>';
+        if (!msgs.length) {
+          html += '<p style="color:#94a3b8;font-size:12px;text-align:center;padding:12px">Geen open concepten — kanaal is bijgewerkt.</p>';
+        } else {
+          msgs.forEach(function(m) {
+            var isEdited = m.status === 'edited';
+            var kindBadge = ({ question:'#0ea5e9', complaint:'#ef4444', praise:'#16a34a', spam:'#94a3b8', other:'#94a3b8' })[m.kind] || '#94a3b8';
+            var body = m.edited_body || m.draft_body || '';
+            html += '<div class="social-item" id="soc-item-' + m.id + '" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:10px;background:#fff">' +
+              '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
+              '<span style="font-size:10px;font-weight:600;color:#fff;background:' + kindBadge + ';padding:2px 8px;border-radius:10px">' + m.kind + '</span>' +
+              '<span style="font-size:12px;font-weight:600;color:#1e293b">Van: ' + escHtml(m.author_name || m.author_handle || 'iemand') + '</span>' +
+              (m.manual ? '<span style="font-size:10px;font-weight:600;color:#d97706;background:#fef3c7;padding:1px 7px;border-radius:10px">plak-antwoord</span>' : '') +
+              '</div>' +
+              (m.text ? '<div style="font-size:12px;color:#475569;white-space:pre-wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px;margin-bottom:8px;max-height:140px;overflow-y:auto">' + escHtml(m.text) + '</div>' : '') +
+              (m.parent_url ? '<div style="font-size:11px;margin-bottom:6px"><a href="' + escHtml(m.parent_url) + '" target="_blank" style="color:#2563eb">Bekijk originele post ↗</a></div>' : '') +
+              '<textarea id="soc-body-' + m.id + '" style="width:100%;min-height:90px;font-size:12px;line-height:1.5;padding:8px;border:1px solid #e2e8f0;border-radius:6px;resize:vertical;font-family:inherit;background:' + (isEdited ? '#fffbeb' : '#f8fafc') + '">' + escHtml(body) + '</textarea>' +
+              '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' +
+              '<button onclick="socialApprove(' + m.id + ',this)" style="padding:6px 16px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">✓ Plaats antwoord</button>' +
+              '<button onclick="socialSave(' + m.id + ',this)" style="padding:6px 14px;background:#fff;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;cursor:pointer">Opslaan</button>' +
+              '<button onclick="copySocialReply(' + m.id + ')" style="padding:6px 14px;background:#fff;color:#0ea5e9;border:1px solid #bae6fd;border-radius:6px;font-size:12px;cursor:pointer">⧉ Kopieer</button>' +
+              '<button onclick="socialReject(' + m.id + ',this)" style="padding:6px 14px;background:#fff;color:#ef4444;border:1px solid #fecaca;border-radius:6px;font-size:12px;cursor:pointer">Afwijzen</button>' +
+              '</div></div>';
+          });
+        }
+        html += '</div>';
+      });
+    }
+    html += '<div id="social-add-form"></div>';
+    wrap.innerHTML = html;
+  } catch(e) {
+    wrap.innerHTML = '<div class="empty-state">Social inbox fout: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+async function socialApprove(id, btn) {
+  if (!confirm('Antwoord plaatsen op het sociale kanaal?')) return;
+  btn.disabled = true; btn.textContent = 'Plaatsen...';
+  try {
+    var resp = await fetch('/api/social-inbox/msg/' + id + '/approve', { method:'POST' });
+    var d = await resp.json();
+    if (d.success) {
+      if (d.manual) {
+        alert('ℹ️ Dit kanaal staat geen API-antwoord toe (LinkedIn/TikTok zonder partner-toegang).\n\nHet antwoord is gemarkeerd als geplaatst — kopieer het hierboven en plaats het handmatig op het kanaal.');
+      } else {
+        alert('✅ Antwoord geplaatst' + (d.url ? ':\n' + d.url : '.'));
+      }
+      var item = document.getElementById('soc-item-' + id); if (item) item.remove();
+    } else {
+      alert('❌ Kon niet plaatsen: ' + (d.error || 'onbekend'));
+      btn.disabled = false; btn.textContent = '✓ Plaats antwoord';
+    }
+  } catch(e) { alert('❌ Fout: ' + e.message); btn.disabled = false; btn.textContent = '✓ Plaats antwoord'; }
+}
+
+async function socialSave(id, btn) {
+  var ta = document.getElementById('soc-body-' + id); if (!ta) return;
+  btn.disabled = true; btn.textContent = 'Opslaan...';
+  try {
+    var resp = await fetch('/api/social-inbox/msg/' + id + '/edit', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text: ta.value }),
+    });
+    var d = await resp.json();
+    if (d.success) { ta.style.background = '#fffbeb'; btn.textContent = 'Opgeslagen ✓'; setTimeout(function(){ btn.textContent='Opslaan'; }, 1500); }
+    else { alert('❌ ' + (d.error || 'onbekend')); btn.textContent = 'Opslaan'; }
+  } catch(e) { alert('❌ ' + e.message); btn.textContent = 'Opslaan'; }
+  finally { btn.disabled = false; }
+}
+
+function copySocialReply(id) {
+  var ta = document.getElementById('soc-body-' + id); if (!ta) return;
+  navigator.clipboard.writeText(ta.value).then(function(){
+    alert('📋 Antwoord gekopieerd — plak het op het kanaal.');
+  });
+}
+
+async function socialReject(id, btn) {
+  if (!confirm('Concept afwijzen?')) return;
+  btn.disabled = true;
+  try {
+    var resp = await fetch('/api/social-inbox/msg/' + id + '/reject', { method:'POST' });
+    var d = await resp.json();
+    if (d.success) { var item = document.getElementById('soc-item-' + id); if (item) item.remove(); }
+    else { alert('❌ ' + (d.error || 'onbekend')); btn.disabled = false; }
+  } catch(e) { alert('❌ ' + e.message); btn.disabled = false; }
+}
+
+async function socialRunAll(btn) {
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Ophalen...';
+  try {
+    var inboxes = (await (await fetch('/api/social-inbox/inboxes?project=' + encodeURIComponent(currentProject))).json()) || [];
+    for (var i = 0; i < inboxes.length; i++) {
+      await fetch('/api/social-inbox/inboxes/' + encodeURIComponent(inboxes[i].id) + '/poll', { method:'POST' });
+    }
+    renderHelpdeskTab(document.getElementById('tab-content'));
+  } catch(e) { alert('❌ ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = orig; }
+}
+
+async function socialRunOne(inboxId, btn) {
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = '...';
+  try {
+    await fetch('/api/social-inbox/inboxes/' + encodeURIComponent(inboxId) + '/poll', { method:'POST' });
+    renderHelpdeskTab(document.getElementById('tab-content'));
+  } catch(e) { alert('❌ ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = orig; }
+}
+
+async function socialToggle(inboxId, enabled, btn) {
+  btn.disabled = true;
+  try {
+    var resp = await fetch('/api/social-inbox/inboxes/' + encodeURIComponent(inboxId), {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: enabled }),
+    });
+    var d = await resp.json();
+    if (d.success) renderHelpdeskTab(document.getElementById('tab-content'));
+    else { alert('❌ ' + (d.error || d.detail || 'onbekend')); btn.disabled = false; }
+  } catch(e) { alert('❌ ' + e.message); btn.disabled = false; }
+}
+
+async function socialDelete(inboxId, label, btn) {
+  if (!confirm('Kanaal ' + label + ' verwijderen? De opgehaalde berichten verdwijnen uit Agent OS.')) return;
+  btn.disabled = true;
+  try {
+    var resp = await fetch('/api/social-inbox/inboxes/' + encodeURIComponent(inboxId), { method:'DELETE' });
+    var d = await resp.json();
+    if (d.success) renderHelpdeskTab(document.getElementById('tab-content'));
+    else { alert('❌ ' + (d.error || d.detail || 'onbekend')); btn.disabled = false; }
+  } catch(e) { alert('❌ ' + e.message); btn.disabled = false; }
+}
+
+function socialShowAddForm() {
+  var box = document.getElementById('social-add-form');
+  if (!box) return;
+  box.innerHTML = '<div class="section-card" style="margin-top:16px">' +
+    '<h4 style="margin-bottom:10px">Nieuw sociaal kanaal voor ' + escHtml(currentProject || 'dit project') + '</h4>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px">' +
+    field('soc-project','Project', currentProject || 'bewaardvoorjou', false, currentProject || '') +
+    '<label style="font-size:11px;color:#475569;display:flex;flex-direction:column;gap:3px">Kanaal' +
+    '<select id="soc-platform" style="padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px">' +
+    '<option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option>' +
+    '<option value="instagram">Instagram</option><option value="tiktok">TikTok</option></select></label>' +
+    field('soc-label','Label','BVJ FB') +
+    '</div>' +
+    '<div style="font-size:11px;color:#64748b;margin-top:8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px">' +
+    'Facebook/Instagram delen het FB Page-token uit <code>.env</code> (of vul page_id + token hier). ' +
+    'LinkedIn posten werkt direct; reacties via plak-antwoord. TikTok vraagt een geregistreerde app ' +
+    '(<code>TIKTOK_CLIENT_KEY/SECRET</code>).</div>' +
+    '<div style="margin-top:10px"><button onclick="socialAdd(this)" style="padding:7px 18px;background:#0ea5e9;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Aanmaken</button></div></div>';
+}
+
+async function socialAdd(btn) {
+  var v = function(id){ var e = document.getElementById(id); return e ? e.value.trim() : ''; };
+  var platform = (document.getElementById('soc-platform') || {}).value || 'linkedin';
+  var payload = {
+    project: v('soc-project') || currentProject || '', platform: platform,
+    label: v('soc-label'), brand_context: v('soc-project') || currentProject || '',
+    enabled: 1, poll_minutes: 30,
+  };
+  if (!payload.project) { alert('Vul een project in.'); return; }
+  btn.disabled = true; btn.textContent = 'Aanmaken...';
+  try {
+    var resp = await fetch('/api/social-inbox/inboxes', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    var d = await resp.json();
+    if (d.success || d.id) { document.getElementById('social-add-form').innerHTML=''; renderHelpdeskTab(document.getElementById('tab-content')); }
+    else { alert('❌ ' + (d.error || d.detail || 'onbekend')); btn.textContent='Aanmaken'; }
+  } catch(e) { alert('❌ ' + e.message); btn.textContent = 'Aanmaken'; }
+  finally { btn.disabled = false; }
+}
+
