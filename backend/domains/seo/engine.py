@@ -420,8 +420,12 @@ def list_opportunities(site_id: Optional[str] = None, status: Optional[str] = No
         clauses.append("site_id = ?")
         params.append(site_id)
     if status:
-        clauses.append("status = ?")
-        params.append(status)
+        if status == "open":
+            # "Open" = nog niet afgerond (niet gepubliceerd en niet genegeerd)
+            clauses.append("status IN ('new', 'in_progress')")
+        else:
+            clauses.append("status = ?")
+            params.append(status)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     with get_conn() as conn:
         rows = conn.execute(
@@ -430,6 +434,96 @@ def list_opportunities(site_id: Optional[str] = None, status: Optional[str] = No
             params,
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def _published_job_for_query(site_id: str, query: str) -> Optional[Dict]:
+    """Zoek de meest recente gepubliceerd-live content_job voor een query.
+
+    `content_jobs` is de canonieke bron van wat er écht op de site live staat
+    (status='published' + een site-URL in publish_result). Als die er is,
+    is de opportunity de facto 'published' — ongeacht wat het opportunities-
+    vlaggetje zegt. Zo kan de Kansen-UI nooit meer liegen.
+    """
+    if not query:
+        return None
+    q = (query or "").strip().lower()
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, title, keyword, status, slug, publish_result "
+            "FROM content_jobs WHERE site_id = ? AND status = 'published' "
+            "ORDER BY created_at DESC",
+            (site_id,),
+        ).fetchall()
+    for r in rows:
+        kw = (r["keyword"] or "").strip().lower()
+        # Match op exacte query, of keyword dat de query bevat/erdoor bevat wordt
+        if kw and (kw == q or q.startswith(kw) or kw.startswith(q) or q in kw or kw in q):
+            pr = r["publish_result"]
+            url = None
+            if pr:
+                try:
+                    import json as _json
+                    parsed = _json.loads(pr) if isinstance(pr, str) else pr
+                    url = (parsed.get("site") or {}).get("url") or parsed.get("url")
+                except Exception:
+                    url = None
+            if not url and r["slug"]:
+                # URL uit vault-site base_url opbouwen kan hier niet (geen site-row);
+                # frontend heeft de base_url en kan dit aanvullen indien nodig.
+                pass
+            return {"content_job_id": r["id"], "title": r["title"],
+                    "slug": r["slug"], "live_url": url}
+    return None
+
+
+def list_opportunities_truth(site_id: Optional[str] = None,
+                             status: Optional[str] = None) -> List[Dict]:
+    """Als `list_opportunities`, maar corrigeert de status naar de WAARHEID.
+
+    Een opportunity telt pas als 'published' als er daadwerkelijk een live
+    artikel (content_job, status='published' + URL) aan hangt. Zo wordt de
+    "Open (n)"-telling en de kaart-status nooit meer vertekend door een
+    mislukte/ontbrekende terugkoppeling uit de schrijfpipeline.
+    """
+    kansen = list_opportunities(site_id=site_id, status=status)
+    if not site_id:
+        return kansen
+    for opp in kansen:
+        has_live_flag = bool(opp.get("live_url"))
+        if opp.get("status") == "published":
+            # Gepubliceerd volgens de vlag. Respecteer een bestaande live_url
+            # (die is de sterkste waarheid — artikel staat daadwerkelijk live,
+            # ook al is de bijbehorende content_job later bv. ge-reject).
+            if has_live_flag:
+                continue
+            # Geen live_url: check of er wél een gepubliceerd artikel is dat
+            # we alsnog kunnen koppelen.
+            job = _published_job_for_query(site_id, opp.get("query", ""))
+            if job:
+                opp["live_url"] = job["live_url"]
+                opp["content_job_id"] = job["content_job_id"]
+            else:
+                # Vlag zegt gepubliceerd, maar niets live gevonden → degradeer.
+                opp["status"] = "in_progress"
+                opp["published_at"] = None
+        else:
+            # Niet-published volgens de vlag: upgrade als er wél een live
+            # artikel voor deze query bestaat (de pipeline-sync kan gemist zijn).
+            job = _published_job_for_query(site_id, opp.get("query", ""))
+            if job:
+                opp["status"] = "published"
+                opp["live_url"] = job["live_url"]
+                opp["content_job_id"] = job["content_job_id"]
+                opp["published_at"] = opp.get("published_at") or _now()
+    # Als er expliciet op een status gefilterd werd, filter opnieuw op de
+    # *gecorrigeerde* status — anders blijft een kans die we net naar
+    # 'published' hebben gezet tellen in een 'in_progress'-query (en omgekeerd).
+    if status:
+        if status == "open":
+            kansen = [o for o in kansen if o["status"] in ("new", "in_progress")]
+        else:
+            kansen = [o for o in kansen if o["status"] == status]
+    return kansen
 
 
 def update_opportunity(opp_id: str, status: Optional[str] = None,

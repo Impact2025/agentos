@@ -81,6 +81,7 @@ async function renderHelpdeskTab(el) {
         '<input type="checkbox" onclick="helpdeskToggleAll(\'' + escHtml(mb.id) + '\',this.checked)" style="cursor:pointer"> Alles selecteren</label>' +
         '<span id="hd-selcount-' + escHtml(mb.id) + '" style="font-size:12px;color:#64748b">0 geselecteerd</span>' +
         '<button onclick="helpdeskRejectSelected(\'' + escHtml(mb.id) + '\',this)" style="margin-left:auto;padding:5px 14px;background:#fff;color:#ef4444;border:1px solid #fecaca;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Geselecteerde afwijzen</button>' +
+        '<button onclick="helpdeskDeleteSelected(\'' + escHtml(mb.id) + '\',this)" style="padding:5px 14px;background:#ef4444;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Definitief verwijderen</button>' +
         '</div>';
 
       replies.forEach(function(r) {
@@ -186,6 +187,29 @@ async function helpdeskRejectSelected(mbId, btn) {
   btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Afwijzen...';
   try {
     var resp = await fetch('/api/mail/replies/reject-bulk', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ ids: ids }),
+    });
+    var d = await resp.json();
+    if (d.ok) {
+      ids.forEach(function(id){ var it = document.getElementById('hd-item-' + id); if (it) it.remove(); });
+      helpdeskUpdateSelCount(mbId);
+      pollHelpdeskBadge();
+    } else {
+      alert('❌ ' + (d.error || 'onbekend')); btn.disabled = false; btn.textContent = orig;
+    }
+  } catch(e) { alert('❌ ' + e.message); btn.disabled = false; btn.textContent = orig; }
+}
+
+async function helpdeskDeleteSelected(mbId, btn) {
+  var checks = document.querySelectorAll('.hd-check-' + CSS.escape(mbId));
+  var ids = [];
+  checks.forEach(function(c){ if (c.checked) ids.push(parseInt(c.getAttribute('data-id'), 10)); });
+  if (!ids.length) { alert('Geen concepten geselecteerd.'); return; }
+  if (!confirm(ids.length + ' bericht' + (ids.length===1?'':'en') + ' DEFINITIEF verwijderen?\n\nHet concept én het bericht verdwijnen uit Agent OS en komen niet meer terug bij het ophalen. De mail op de server zelf blijft staan.')) return;
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Verwijderen...';
+  try {
+    var resp = await fetch('/api/mail/replies/delete-bulk', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ ids: ids }),
     });
@@ -520,7 +544,7 @@ async function renderKansenTab(el) {
   var newCount = kansen.filter(function(o){return o.status==='new';}).length;
   var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px"><div><h3 style="font-size:15px;font-weight:700">Striking distance kansen (' + kansen.length + ')</h3>' + (newCount>0?'<p style="font-size:11px;color:#64748b;margin-top:2px">' + newCount + ' nieuwe kansen</p>':'') + '</div><div style="display:flex;gap:6px;flex-wrap:wrap">' +
     '<select id="kansen-filter" onchange="oppStatusFilter=this.value;renderKansenTab(document.getElementById(\'tab-content\'))" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;background:#fff">' +
-    '<option value="">Alle</option><option value="new">Nieuw (' + kansen.filter(function(o){return o.status==='new';}).length + ')</option><option value="in_progress">In behandeling</option><option value="published">Gepubliceerd</option><option value="dismissed">Genegeerd</option></select>' +
+    '<option value="open"'+(oppStatusFilter==='open'?' selected':'')+'>Open · niet afgerond (' + kansen.filter(function(o){return o.status==='new'||o.status==='in_progress';}).length + ')</option><option value="">Alle</option><option value="new">Nieuw (' + kansen.filter(function(o){return o.status==='new';}).length + ')</option><option value="in_progress">In behandeling</option><option value="published">Gepubliceerd</option><option value="dismissed">Genegeerd</option></select>' +
     (newCount>=2?'<button onclick="writeAllNewKansen(this)" style="padding:4px 12px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Schrijf alle ' + newCount + '</button>':'') +
     '<button onclick="runDemandScan()" style="padding:4px 12px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Scan uitvoeren</button></div></div>';
   if (!kansen.length) { el.innerHTML = html + '<div class="empty-state"><p style="font-size:14px;font-weight:600;color:#475569;margin-bottom:4px">Nog geen kansen</p><p style="color:#94a3b8">Voer een scan uit</p></div>'; return; }
@@ -531,8 +555,14 @@ async function renderKansenTab(el) {
     var pos = typeof opp.position==='number'?opp.position:10;
     var GOAL_POS = 3;
     var posPct = function(p){ return Math.max(0, Math.min(100, ((20-p)/19)*100)); };
-    var curPct = posPct(pos), goalPct = posPct(GOAL_POS), atGoal = pos <= GOAL_POS;
+    var curPct = noData ? 0 : posPct(pos), goalPct = posPct(GOAL_POS), atGoal = pos <= GOAL_POS;
     var barColor = atGoal ? '#16a34a' : (pos<=10?'#4f46e5':'#d97706');
+    var hasData = (typeof opp.position==='number' && opp.position>0) || (opp.clicks&&opp.clicks>0) || (opp.impressions&&opp.impressions>0);
+    var noData = (!hasData);
+    if (noData) {
+      // Geen GSC-data: toon eerlijke "geen data"-staat in plaats van vals "✓ doel bereikt"
+      atGoal = false; barColor = '#94a3b8';
+    }
     html += '<div class="opp-card" style="'+(opp.status==='new'?'border-left:3px solid #4f46e5;':'')+'"><div class="opp-header"><div style="flex:1"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><p class="opp-query">'+escHtml(opp.query)+'</p><span style="font-size:10px;padding:2px 8px;border-radius:6px;background:'+sc+';font-weight:600">'+st+'</span><span style="font-size:10px;padding:2px 8px;border-radius:6px;background:'+(opp.action==='re-optimaliseren'?'#fef3c7':'#dbeafe')+'">'+(opp.action==='re-optimaliseren'?'Heroptimaliseren':'Nieuwe content')+'</span></div>' +
     '<div class="opp-meta"><span style="color:#16a34a;font-weight:600">'+opp.clicks+' clicks</span><span>'+opp.impressions+' impressies</span><span>Pos. '+pos.toFixed(1)+'</span><span style="font-weight:600">Score '+score+'</span></div></div></div>' +
     (opp.angle?'<div class="opp-angle" style="margin-top:6px">'+escHtml(opp.angle)+'</div>':'') + (opp.rationale?'<div class="opp-rationale" style="margin-top:4px">'+escHtml(opp.rationale)+'</div>':'') +
@@ -551,15 +581,18 @@ async function renderKansenTab(el) {
           '<div style="position:absolute;top:0;left:0;height:100%;width:'+curPct+'%;background:'+barColor+';border-radius:3px;transition:width .3s"></div>' +
           '<div style="position:absolute;top:-2px;left:'+goalPct+'%;width:2px;height:10px;background:#059669;transform:translateX(-1px)"></div>' +
         '</div>' +
-        '<span style="font-size:10px;width:64px;text-align:right;color:'+(atGoal?'#16a34a':'#94a3b8')+';font-weight:'+(atGoal?'700':'400')+'">'+(atGoal?'✓ doel bereikt':'positie 1 →')+'</span>' +
+        '<span style="font-size:10px;width:64px;text-align:right;color:'+(noData?'#94a3b8':(atGoal?'#16a34a':'#94a3b8'))+';font-weight:'+(atGoal?'700':'400')+'">'+(noData?'– geen data':(atGoal?'✓ doel bereikt':'positie 1 →'))+'</span>' +
       '</div>' +
     '</div>' +
     '<div class="opp-actions" style="display:flex;gap:6px;flex-wrap:wrap">' +
-    ((opp.status==='new'||opp.status==='in_progress')?'<button onclick="writeArticleFromOpp(this,'+idx+')" style="padding:5px 14px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">Schrijf artikel</button>':'') +
+    ((opp.status==='new'||opp.status==='in_progress')&&!opp.live_url?'<button onclick="writeArticleFromOpp(this,'+idx+')" style="padding:5px 14px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">Schrijf artikel</button>':'') +
     (opp.status==='new'?'<button onclick="updateOppStatus(\''+opp.id+'\',\'in_progress\')" style="padding:5px 12px;background:#fff;color:#92400e;border:1.5px solid #f59e0b;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">→ Pak aan</button>':'') +
-    (opp.status==='in_progress'?'<button onclick="updateOppStatus(\''+opp.id+'\',\'published\')" style="padding:5px 12px;background:#fff;color:#166534;border:1.5px solid #16a34a;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">✓ Markeer gepubliceerd</button>':'') +
-    (opp.status!=='dismissed'?'<button onclick="updateOppStatus(\''+opp.id+'\',\'dismissed\')" style="padding:5px 12px;background:#fff;color:#475569;border:1.5px solid #cbd5e1;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">✕ Negeren</button>':'') +
+    ((opp.status==='in_progress'&&!opp.live_url)?'<button onclick="publishOpportunity(this,'+idx+')" style="padding:5px 12px;background:#16a34a;color:#fff;border:none;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">🚀 Publiceren</button>':'') +
+    (opp.live_url?'<a href="'+escHtml(opp.live_url)+'" target="_blank" style="padding:5px 12px;background:#fff;color:#166534;border:1.5px solid #16a34a;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600;text-decoration:none">🔗 Bekijk live</a>':'') +
+    (opp.status!=='dismissed'&&!opp.live_url?'<button onclick="updateOppStatus(\''+opp.id+'\',\'dismissed\')" style="padding:5px 12px;background:#fff;color:#475569;border:1.5px solid #cbd5e1;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">✕ Negeren</button>':'') +
     (opp.status==='dismissed'?'<button onclick="updateOppStatus(\''+opp.id+'\',\'new\')" style="padding:5px 12px;background:#fff;color:#1e40af;border:1.5px solid #3b82f6;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">↺ Heropen</button>':'') +
+    '</div>' +
+    (opp.live_url?'<div style="margin-top:6px;font-size:10px;color:#16a34a">✓ Live: <a href="'+escHtml(opp.live_url)+'" target="_blank" style="color:#16a34a;text-decoration:underline">'+escHtml(opp.live_url)+'</a></div>':'') +
     '</div></div>';
   });
   el.innerHTML = html;
@@ -574,6 +607,23 @@ async function writeArticleFromOpp(btn, idx) {
       alert('Artikel opgeslagen: '+result.local_path+'\n'+formatSeoResultMsg(result));
       renderKansenTab(document.getElementById('tab-content'));
     } else alert('Mislukt: '+(result.detail||'onbekend'));
+  } catch(e) { alert('Fout: '+e.message); }
+}
+async function publishOpportunity(btn, idx) {
+  var opp = window._kansenData && window._kansenData[idx]; if (!opp) { alert('Kans niet gevonden'); return; }
+  if (!confirm('Artikel schrijven én live publiceren voor kans: "'+opp.query+'"?\n\nDit start de volledige SEO-pipeline (schrijven → review → optimaliseren → publiceren).')) return;
+  try {
+    var result = await runArticlePipeline({title: opp.angle||opp.query, rationale: opp.rationale||'SEO-kans', keyword: opp.query}, btn);
+    if (result && result.success) {
+      if (result.live_url) {
+        alert('✅ Live gepubliceerd: ' + result.live_url + '\n' + formatSeoResultMsg(result));
+      } else if (result.passed_gate === false) {
+        alert('Artikel geschreven maar NIET gepubliceerd — SEO-score ' + result.seo_score + '/10 onder de drempel.\nAls concept opgeslagen in: ' + result.local_path);
+      } else {
+        alert('Artikel geschreven (concept): ' + result.local_path + '\n' + formatSeoResultMsg(result));
+      }
+      renderKansenTab(document.getElementById('tab-content'));
+    } else if (result) alert('Mislukt: '+(result.detail||'onbekend'));
   } catch(e) { alert('Fout: '+e.message); }
 }
 async function writeAllNewKansen(btn) {
@@ -671,10 +721,14 @@ async function renderWachtrijTab(el) {
           '<div style="white-space:pre-wrap;font-size:11px;color:#334155;margin-top:6px">' + escHtml(copy) + '</div></details>';
       }).join('') + '</div>' +
       (job.image_path ? '<img src="data:image/png;base64,' + job.image_path + '" style="margin-top:8px;max-width:180px;border-radius:6px;border:1px solid #e2e8f0" />' : '') +
-      (job.status==='pending_review' ? '<div class="opp-actions" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">' +
-        '<button onclick="approveWachtrijJob(this,\'' + job.id + '\')" style="padding:6px 16px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">Goedkeuren &amp; publiceren</button>' +
+      '<div class="opp-actions" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">' +
+        '<button onclick="makeWachtrijVideo(this,\'' + job.id + '\')" style="padding:6px 12px;background:#7c3aed;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">🎬 Maak video</button>' +
+        (job.status==='pending_review' ? '<button onclick="approveWachtrijJob(this,\'' + job.id + '\')" style="padding:6px 16px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">Goedkeuren &amp; publiceren</button>' +
         '<button onclick="regenerateWachtrijJob(this,\'' + job.id + '\')" style="padding:6px 12px;background:#fef3c7;color:#92400e;border:1px solid #fde68a;border-radius:6px;font-size:11px;cursor:pointer">Opnieuw genereren</button>' +
-        '<button onclick="rejectWachtrijJob(this,\'' + job.id + '\')" style="padding:6px 12px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">Afwijzen</button></div>' : '') +
+        '<button onclick="rejectWachtrijJob(this,\'' + job.id + '\')" style="padding:6px 12px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">Afwijzen</button>' : '') +
+      '</div>' +
+      (job.video_path ? '<div style="margin-top:8px"><video src="/api/projects/' + encodeURIComponent(currentProject) + '/content-queue/' + job.id + '/video" controls style="max-width:240px;border-radius:8px;border:1px solid #e2e8f0"></video></div>' : '') +
+      '<div id="video-' + job.id + '" style="margin-top:8px"></div>' +
       (job.status==='published' && job.publish_result ? '<div style="margin-top:8px;font-size:11px;color:#64748b">' + renderPublishResult(job.publish_result) + '</div>' : '') +
       '</div>';
   });
@@ -731,6 +785,20 @@ async function regenerateWachtrijJob(btn, jobId) {
     if (!resp.ok) { var data = await resp.json(); alert('Mislukt: ' + (data.detail || 'onbekende fout')); if (btn) btn.disabled = false; return; }
     renderWachtrijTab(document.getElementById('tab-content'));
   } catch(e) { alert('Fout: ' + e.message); if (btn) btn.disabled = false; }
+}
+
+async function makeWachtrijVideo(btn, jobId) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Video maken... (30-60s)'; }
+  var box = document.getElementById('video-' + jobId);
+  try {
+    var resp = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/content-queue/' + jobId + '/make-video', { method: 'POST' });
+    var data = await resp.json();
+    if (!resp.ok) { alert('Mislukt: ' + (data.detail || data.error || 'onbekende fout')); if (btn) { btn.disabled = false; btn.textContent = '🎬 Maak video'; } return; }
+    var url = '/api/projects/' + encodeURIComponent(currentProject) + '/content-queue/' + jobId + '/video';
+    if (box) box.innerHTML = '<video src="' + url + '" controls style="max-width:240px;border-radius:8px;border:1px solid #e2e8f0"></video>' +
+      '<div style="font-size:10px;color:#64748b;margin-top:4px">' + (data.scenes||'?') + ' scènes · ' + Math.round(data.duration||0) + 's · ' + (data.attributions||[]).length + ' Pexels-attributies</div>';
+    renderWachtrijTab(document.getElementById('tab-content'));
+  } catch(e) { alert('Fout: ' + e.message); if (btn) { btn.disabled = false; btn.textContent = '🎬 Maak video'; } }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1183,7 +1251,6 @@ async function renderSocialInboxSection(el) {
           '<div style="display:flex;gap:6px">' +
           '<button onclick="socialRunOne(\'' + escHtml(ib.id) + '\',this)" style="padding:4px 12px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">↻ Ophalen</button>' +
           '<button onclick="socialToggle(\'' + escHtml(ib.id) + '\',' + (ib.enabled ? 0 : 1) + ',this)" style="padding:4px 12px;background:#fff;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">' + (ib.enabled ? 'Pauzeer' : 'Activeer') + '</button>' +
-          '<button onclick="socialDelete(\'' + escHtml(ib.id) + '\',\'' + escHtml(_socialPlatformLabel(ib.platform)) + '\',this)" style="padding:4px 10px;background:#fff;color:#ef4444;border:1px solid #fecaca;border-radius:6px;font-size:11px;cursor:pointer">Verwijder</button>' +
           '</div></div>';
         if (!msgs.length) {
           html += '<p style="color:#94a3b8;font-size:12px;text-align:center;padding:12px">Geen open concepten — kanaal is bijgewerkt.</p>';
@@ -1432,6 +1499,7 @@ async function renderSocialCreatieTab(el) {
           Object.keys(p.copy || {}).map(function(k){ return '<span style="background:#f1f5f9;padding:2px 7px;border-radius:10px">' + _socialPlatformLabel(k) + '</span>'; }).join('') +
           (p.image_brief ? '<span style="background:#fef3c7;padding:2px 7px;border-radius:10px">Beeld-brief</span>' : '') +
           (p.tiktok_pack ? '<span style="background:#ede9fe;padding:2px 7px;border-radius:10px">TikTok-pack</span>' : '') +
+          (p.video_url ? '<span style="background:#fee2e2;color:#991b1b;padding:2px 7px;border-radius:10px">🎬 Video</span>' : '') +
           '</div></div>';
       });
       html += '</div>';
@@ -1533,12 +1601,21 @@ async function scOpenPack(id) {
         (ib.subtext ? '<div><strong>Onderschrift:</strong> ' + escHtml(ib.subtext) + '</div>' : '') +
         '<div><strong>Formaat:</strong> ' + escHtml(ib.dimensions || '') + ' · <strong>Type:</strong> ' + escHtml(ib.template_type || '') + '</div>' +
         (ib.layout ? '<div><strong>Opmaak:</strong> ' + escHtml(ib.layout) + '</div>' : '') +
+        (ib.canva_edit_url ? '<div style="margin-top:6px"><a href="' + escHtml(ib.canva_edit_url) + '" target="_blank" style="display:inline-block;padding:5px 12px;background:#00c4cc;color:#fff;border-radius:6px;font-size:11px;font-weight:600;text-decoration:none">Open in Canva ↗</a></div>' : '') +
+        (ib.canva_template_url ? '<div style="margin-top:6px"><a href="' + escHtml(ib.canva_template_url) + '" target="_blank" style="display:inline-block;padding:4px 10px;background:#fff;border:1px solid #00c4cc;color:#0e7490;border-radius:6px;font-size:11px;font-weight:600;text-decoration:none">Open basis-template ↗</a></div>' : '') +
+        (ib.canva_method ? '<div style="margin-top:6px;font-size:10px;color:#64748b">' + (ib.canva_method === 'autofill' ? '✅ Automatisch ingevuld uit template' : ib.canva_method === 'create' ? '⚠️ Leeg design aangemaakt (geen template-id)' : '') + '</div>' : '') +
         '<div style="margin-top:6px"><strong>Midjourney-prompt:</strong></div>' +
         '<div style="font-size:11px;background:#fff;border:1px solid #fde68a;border-radius:6px;padding:6px;white-space:pre-wrap;color:#7c2d12">' + escHtml(ib.midjourney_prompt || '') + '</div>' +
         '<div style="margin-top:6px;font-size:11px;color:#92400e">' + escHtml(ib.canva_note || '') + '</div></div>';
     }
     if (p.tiktok_pack) {
       var tp = p.tiktok_pack;
+      // Verdedigend: shotlist kan uit oude rows een string zijn (newline-lijst).
+      // Normaliseer naar een array zodat .map nooit crasht.
+      if (typeof tp.shotlist === 'string') {
+        tp.shotlist = tp.shotlist.split('\n').map(function(s){ return s.trim().replace(/^[-*]\s*/, ''); }).filter(Boolean);
+      }
+      if (!Array.isArray(tp.shotlist)) tp.shotlist = [];
       html += '<h4 style="font-size:12px;font-weight:700;margin:14px 0 6px;color:#475569">TikTok / Reels-scriptpack</h4>' +
         '<div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:10px;font-size:12px;color:#475569">' +
         '<div><strong>Hook:</strong> ' + escHtml(tp.hook || '') + '</div>' +
@@ -1549,6 +1626,20 @@ async function scOpenPack(id) {
         (tp.hashtags && tp.hashtags.length ? '<div style="margin-top:4px"><strong>Hashtags:</strong> ' + tp.hashtags.map(function(h){ return '#' + escHtml(h); }).join(' ') + '</div>' : '') +
         '</div>';
     }
+    // Video (9:16 short) — gerenderd uit het scriptpack (edge-tts + merk-slides + ffmpeg).
+    html += '<h4 style="font-size:12px;font-weight:700;margin:14px 0 6px;color:#475569">Video (9:16 short)</h4>' +
+      '<div id="sc-video-' + escHtml(p.id) + '" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px">';
+    if (p.video_url) {
+      html += '<video src="' + escHtml(p.video_url) + '" controls playsinline style="width:230px;max-width:100%;border-radius:10px;background:#000;display:block"></video>' +
+        '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' +
+        '<a href="' + escHtml(p.video_url) + '" download style="padding:5px 12px;background:#0f172a;color:#fff;border-radius:6px;font-size:11px;text-decoration:none">Download mp4</a>' +
+        '<button onclick="scRenderVideo(\'' + escHtml(p.id) + '\',this)" style="padding:5px 12px;background:#fff;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">Opnieuw renderen</button>' +
+        '</div>';
+    } else {
+      html += '<button onclick="scRenderVideo(\'' + escHtml(p.id) + '\',this)" style="padding:6px 14px;background:#e5a500;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">🎬 Render video</button>' +
+        '<span style="font-size:11px;color:#94a3b8;margin-left:8px">Merk-slides + Nederlandse voice-over — ~30 sec</span>';
+    }
+    html += '</div>';
     html += '<div style="margin-top:12px"><button onclick="document.getElementById(\'sc-detail\').innerHTML=\'\'" style="padding:5px 14px;background:#fff;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">Sluiten</button></div></div>';
     box.innerHTML = html;
     box.scrollIntoView({ behavior:'smooth', block:'nearest' });
@@ -1560,6 +1651,20 @@ async function scOpenPack(id) {
 function scCopyText(btn) {
   var txt = btn.getAttribute('data-text') || '';
   navigator.clipboard.writeText(txt).then(function(){ socialToast('📋 Gekopieerd'); });
+}
+
+async function scRenderVideo(id, btn) {
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Renderen… (~30 sec)';
+  try {
+    var resp = await fetch('/api/social-content/packs/' + encodeURIComponent(id) + '/render-video', { method:'POST' });
+    var d = await resp.json();
+    if (resp.ok && d.success) {
+      socialToast('🎬 Video klaar — ' + (d.scenes || '?') + ' scènes, ' + Math.round(d.duration || 0) + 's');
+      scOpenPack(id); // herlaad detail → toont de <video>-preview
+    } else {
+      alert('❌ ' + (d.error || d.detail || 'renderen mislukt')); btn.textContent = orig; btn.disabled = false;
+    }
+  } catch (e) { alert('❌ ' + e.message); btn.textContent = orig; btn.disabled = false; }
 }
 
 

@@ -384,10 +384,11 @@ def project_advice(name: str, days: int = Query(28)):
         except Exception:
             pass
 
-    # 3. Kansen check
+    # 3. Kansen check — truth-modus: status afgeleid uit content_jobs
+    # (wat er écht live staat), zodat "in behandeling" niet liegt.
     try:
         from ..seo import engine as demand_engine
-        kansen = demand_engine.list_opportunities(site_id=site["id"], status="new")
+        kansen = demand_engine.list_opportunities_truth(site_id=site["id"], status="new")
         if kansen:
             advice["alerts"].append({
                 "type": "opportunity",
@@ -401,7 +402,7 @@ def project_advice(name: str, days: int = Query(28)):
                 "action": "write_all_kansen",
                 "primary": True,
             })
-        in_prog = demand_engine.list_opportunities(site_id=site["id"], status="in_progress")
+        in_prog = demand_engine.list_opportunities_truth(site_id=site["id"], status="in_progress")
         if in_prog:
             advice["quick_actions"].append({
                 "label": f"{len(in_prog)} kansen in behandeling",

@@ -933,6 +933,46 @@ async def project_content_queue_regenerate(name: str, job_id: str):
         raise HTTPException(400, detail=str(e))
 
 
+@router.post("/{name}/content-queue/{job_id}/make-video")
+def project_content_queue_make_video(name: str, job_id: str):
+    """Maak een korte verticale video vánuit dit blog (zie backend/shared/blog_video)."""
+    site = _resolve_site(name)
+    if not site:
+        raise HTTPException(404, f"Project '{name}' niet gevonden")
+    from ...shared import blog_video
+    job = content_pipeline.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Content-job niet gevonden")
+    try:
+        result = blog_video.make_blog_video(
+            job_id, name.lower(), job.get("title", ""), job.get("blog_html") or ""
+        )
+    except Exception as e:
+        logger.exception("Blog-video mislukt voor job %s", job_id)
+        raise HTTPException(500, detail=str(e)[:300])
+    if not result.get("success"):
+        raise HTTPException(500, detail=result.get("error", "onbekende fout"))
+    return result
+
+
+@router.get("/{name}/content-queue/{job_id}/video")
+def project_content_queue_video(name: str, job_id: str):
+    """Stream de gegenereerde video voor dit blog."""
+    from ...shared import blog_video as bv
+    from fastapi.responses import FileResponse
+    job = content_pipeline.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Content-job niet gevonden")
+    rel = job.get("video_path") or ""
+    if not rel:
+        raise HTTPException(404, "Nog geen video voor dit blog")
+    path = bv._REPO / rel
+    if not path.exists():
+        raise HTTPException(404, "Videobestand niet gevonden")
+    return FileResponse(str(path), media_type="video/mp4",
+                        filename=f"blog_{job_id}.mp4")
+
+
 # ── Striking Distance Kansen (via Demand Engine) ─────────────────────
 
 @router.get("/{name}/kansen")
@@ -943,7 +983,9 @@ def project_kansen(name: str, status: Optional[str] = Query(None)):
         raise HTTPException(404, f"Project '{name}' niet gevonden")
 
     from ..seo import engine as demand_engine
-    kansen = demand_engine.list_opportunities(site_id=site["id"], status=status)
+    # Truth-modus: status wordt afgeleid uit content_jobs (wat er écht live
+    # staat), zodat de Kansen-UI de waarheid toont en nooit dubbel werk doet.
+    kansen = demand_engine.list_opportunities_truth(site_id=site["id"], status=status)
     return {
         "site": {"name": site["name"], "gsc_property": site.get("gsc_property", "")},
         "count": len(kansen),
