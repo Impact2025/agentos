@@ -725,12 +725,29 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
                 }
             try:
                 import httpx
+                # We volgen redirects HANDMATIG en sturen de Authorization-header
+                # op ELKE hop opnieuw mee. Reden: httpx/requests strippen bij
+                # follow_redirects=True de Authorization-header op een cross-host
+                # redirect (apex→www of www→apex). Vercel-sites verschillen: TBI
+                # redirect apex→www (307), Bijeen redirect www→apex (301). Door de
+                # header per hop mee te sturen werkt beide zonder een host-aanname.
+                def _post_follow(url, payload, key):
+                    hdrs = {"Authorization": f"Bearer {key}",
+                            "Content-Type": "application/json"}
+                    cur = url
+                    for _ in range(5):
+                        r = httpx.post(cur, json=payload, headers=hdrs,
+                                       timeout=90, follow_redirects=False)
+                        if r.status_code in (301, 302, 303, 307, 308):
+                            loc = r.headers.get("location")
+                            if not loc:
+                                return r
+                            cur = httpx.URL(cur).join(loc)
+                            continue
+                        return r
+                    return r
                 resp = await asyncio.to_thread(
-                    httpx.post,
-                    publish_url,
-                    json=payload,
-                    headers={"Authorization": f"Bearer {publish_key}"},
-                    timeout=90,
+                    _post_follow, publish_url, payload, publish_key,
                 )
                 if resp.status_code == 201:
                     live_result = resp.json()
