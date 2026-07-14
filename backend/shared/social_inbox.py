@@ -174,6 +174,9 @@ def _creds(inbox: dict) -> dict:
 # ── Facebook ────────────────────────────────────────────────────────────────
 
 _FB_GRAPH = "https://graph.facebook.com/v19.0"
+# Tijdstip (epoch) van de laatste 'token verlopen'-WARNING — throttlet de
+# 30-minuten-spam van een verlopen FB-token tot max. 1× per uur.
+_FB_TOKEN_WARN_TS = 0.0
 
 
 async def fb_fetch(inbox: dict) -> List[dict]:
@@ -189,22 +192,52 @@ async def fb_fetch(inbox: dict) -> List[dict]:
         return []
     out: List[dict] = []
     async with httpx.AsyncClient(timeout=30) as client:
-        # Reacties op de pagina's posts (de afgelopen encounters)
+        # Reacties op de pagina's posts. Een Page heeft GEEN directe /comments
+        # edge (Graph geeft "nonexisting field comments"); comments hangen onder
+        # posts. Haal daarom recente posts op mét genest comments-veld, en vlak
+        # dat uit tot losse berichten. Vereist een PAGE-token (geen user-token).
         try:
             r = await client.get(
-                f"{_FB_GRAPH}/{page_id}/comments",
-                params={"access_token": token, "fields": "id,message,from,created_time,permalink", "limit": 50},
+                f"{_FB_GRAPH}/{page_id}/posts",
+                params={
+                    "access_token": token,
+                    "fields": "id,permalink_url,comments.limit(50){id,message,from,created_time}",
+                    "limit": 25,
+                },
             )
             if r.status_code == 200:
-                for cm in r.json().get("data", []):
-                    out.append({
-                        "external_id": cm.get("id", ""),
-                        "author_name": (cm.get("from") or {}).get("name", ""),
-                        "author_handle": (cm.get("from") or {}).get("id", ""),
-                        "text": cm.get("message", ""),
-                        "parent_url": cm.get("permalink", ""),
-                        "thread": "",
-                    })
+                for post in r.json().get("data", []):
+                    post_url = post.get("permalink_url", "")
+                    for cm in (post.get("comments") or {}).get("data", []):
+                        if not cm.get("message"):
+                            continue
+                        out.append({
+                            "external_id": cm.get("id", ""),
+                            "author_name": (cm.get("from") or {}).get("name", ""),
+                            "author_handle": (cm.get("from") or {}).get("id", ""),
+                            "text": cm.get("message", ""),
+                            "parent_url": post_url,
+                            "thread": "",
+                        })
+            else:
+                # Een verlopen/ongeldig token (OAuthException code 190) blijft
+                # anders elke scheduler-tick (30 min) dezelfde WARNING spammen.
+                # Log 'm daarom max. 1× per uur zodat de logs leesbaar blijven —
+                # de gebruiker moet het Page-token vernieuwen om dit echt op te
+                # lossen.
+                import time as _time
+                _body = r.text[:200]
+                if r.status_code == 400 and '"code":190' in r.text:
+                    global _FB_TOKEN_WARN_TS
+                    _now = _time.time()
+                    if _now - _FB_TOKEN_WARN_TS > 3600:
+                        _FB_TOKEN_WARN_TS = _now
+                        logger.warning(
+                            "FB posts fetch: access token verlopen/ongeldig "
+                            "(code 190) — vernieuw het Page-token. Verdere "
+                            "meldingen onderdrukt voor 1 uur.")
+                else:
+                    logger.warning("FB posts fetch HTTP %s: %s", r.status_code, _body)
         except Exception as e:
             logger.warning("FB comments fetch: %s", e)
         # DM's (conversations) — vereist pages_messaging scope
@@ -232,6 +265,11 @@ async def fb_fetch(inbox: dict) -> List[dict]:
 async def fb_post_reply(inbox: dict, msg: dict, text: str) -> dict:
     c = _creds(inbox)
     token = c.get("token") or ""
+    if not token:
+        # Val terug op globale config (page-token uit .env)
+        from . import facebook as fb_svc
+        if fb_svc.is_configured():
+            _, token = fb_svc._get_site_data(inbox.get("project"))
     if not token:
         return {"success": False, "error": "Geen FB-token"}
     async with httpx.AsyncClient(timeout=30) as client:
@@ -294,6 +332,10 @@ async def ig_fetch(inbox: dict) -> List[dict]:
 async def ig_post_reply(inbox: dict, msg: dict, text: str) -> dict:
     c = _creds(inbox)
     token = c.get("token") or ""
+    if not token:
+        from . import instagram as ig_svc
+        if ig_svc.is_configured():
+            _, token = ig_svc._get_site_data(inbox.get("project"))
     if not token:
         return {"success": False, "error": "Geen IG-token"}
     parent = msg.get("external_id", "")
