@@ -282,6 +282,31 @@ def get_next_ready_task() -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+def get_ready_tasks(limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Alle taken met status 'ready' in één query.
+
+    Belangrijk: in deze state-machine wordt een taak pas 'ready' zodra zijn
+    keten-voorganger 'done' is (zie set_task_status). Elke 'ready' taak is
+    daarmee *dependency-safe* en mag parallel met de andere 'ready' taken
+    worden afgevuurd — ze horen altijd tot verschillende ketens (per keten
+    staat hooguit één taak tegelijk op 'ready'). Dit is de "segmentatie" van
+    het conveyor: onafhankelijke taken tegelijk, afhankelijke wachten tot hun
+    voorganger klaar is.
+
+    `limit` begrenst het aantal taken per batch (concurrency-cap) zodat de
+    LLM-gateway niet onder 50 tegelijke calls bezwijkt.
+    """
+    with get_conn() as conn:
+        sql = (
+            "SELECT * FROM tasks WHERE status = 'ready' "
+            "ORDER BY position ASC, created_at ASC"
+        )
+        if limit:
+            sql += f" LIMIT {int(limit)}"
+        rows = conn.execute(sql).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_agent_profile(profile_id: Optional[int]) -> Optional[Dict[str, Any]]:
     """Haal een agent-profiel op (model + system_prompt) voor de conveyor."""
     if not profile_id:

@@ -16,7 +16,7 @@ from typing import Optional
 from ...shared.config import BASE_DIR, hermes_backend
 from ...shared import agent_runner as agent_service
 from ...domains.pipeline.service import (
-    get_next_ready_task,
+    get_ready_tasks,
     set_task_status,
     get_agent_profile,
     get_previous_result,
@@ -45,19 +45,21 @@ def _now() -> str:
 
 
 def _resolve_model_override(profile_model: Optional[str]) -> Optional[str]:
-    """Vertaal een profiel-model naar een waarde die de actieve backend snapt.
+    """Profielmodel → bare model-string die de cloud-gateway snapt.
 
-    Profielen slaan modellen op als 'openrouter/<vendor>/<model>'. Voor de
-    OpenRouter-backend strippen we de 'openrouter/'-prefix. Voor lokale Hermes /
-    Ollama is het model vast (gateway bepaalt dit), dus geen override.
-    """
+    Geeft de model-string terug (eventuele 'openrouter/'-prefix gestript)
+    zodra een cloud-sleutel aanwezig is — ongeacht welke backend de app
+    standaard gebruikt. Zo wordt een 'pro'-profiel (bv. claude-sonnet-4-6 via
+    OpenModel) echt gehonoreerd en niet stilzwijgend overschreven door het
+    goedkope default-model. Bij geen profielmodel of geen cloud-sleutel → None."""
     if not profile_model:
         return None
     model = profile_model.strip()
-    backend = hermes_backend()
-    if backend == "openrouter":
-        return model[len("openrouter/"):] if model.startswith("openrouter/") else model
-    return None
+    if model.startswith("openrouter/"):
+        from ...shared.config import OPENROUTER_API_KEY
+        return model[len("openrouter/"):] if OPENROUTER_API_KEY else None
+    from ...shared.config import OPENMODEL_API_KEY
+    return model if OPENMODEL_API_KEY else None
 
 
 async def _run_agent_for_task(
@@ -234,11 +236,28 @@ async def _execute_task(task: dict) -> dict:
 
 async def conveyor_loop(
     poll_interval: float = 2.0,
+    max_parallel: int = 5,
     stop_event: Optional[asyncio.Event] = None,
 ) -> None:
+    """Segmented Batch Dispatch voor de conveyor.
+
+    In plaats van taken strikt één-voor-één af te vuren, pakt de loop elke
+    poll-ronde alle 'ready' taken en vuurt ze *parallel* af via asyncio.gather.
+
+    Waarom dat veilig is: een taak wordt pas 'ready' zodra zijn keten-
+    voorganger 'done' is (state-machine in set_task_status). Twee 'ready'
+    taken horen dus altijd tot verschillende ketens en zijn volledig
+    onafhankelijk — precies de "veilige" taken uit een segmented-dispatch.
+    Afhankelijke (ketting-)stappen wachten automatisch tot hun voorganger klaar
+    is, omdat ze pas daarna op 'ready' komen.
+
+    `max_parallel` is een concurrency-cap: hooguit N taken tegelijk, zodat de
+    LLM-gateway niet onder een grote fan-out bezwijkt. Onafhankelijke taken
+    boven de cap wachten op de volgende poll-ronde.
+    """
     logger.info(
-        "Conveyor loop gestart (interval %.1fs, states=%s)",
-        poll_interval,
+        "Conveyor loop gestart (interval %.1fs, max_parallel=%d, states=%s)",
+        poll_interval, max_parallel,
         ", ".join(STATE_TRANSITIONS),
     )
     if stop_event is None:
@@ -246,27 +265,40 @@ async def conveyor_loop(
 
     while not stop_event.is_set():
         try:
-            task = get_next_ready_task()
-            if task:
+            ready = get_ready_tasks(limit=max_parallel)
+            if ready:
                 logger.info(
-                    "Pick next ready task: %s (%s)",
-                    task.get("title"),
-                    task.get("id"),
+                    "Batch-dispatch: %d onafhankelijke taak/taken parallel", len(ready)
                 )
-                result = await _execute_task(task)
-                logger.info(
-                    "Task transitioned to %s in %sms",
-                    result.get("status"),
-                    result.get("duration_ms"),
+                # asyncio.gather vuurt alle taken tegelijk af. return_exceptions
+                # zorgt dat één crashende taak de andere nooit blokkeert —
+                # net als de delegate-fan-out. Fouten worden hierna per-taak
+                # gelogd, niet herraise'd.
+                results = await asyncio.gather(
+                    *(_execute_task(task) for task in ready),
+                    return_exceptions=True,
                 )
-                # Zelfstandige doorrol: als een AEO-listicle klaar is, schuif hem
+                for task, res in zip(ready, results):
+                    if isinstance(res, Exception):
+                        logger.exception(
+                            "Taak %s crashte in batch-dispatch: %s",
+                            task.get("id"), res,
+                        )
+                    else:
+                        logger.info(
+                            "Taak %s -> %s in %sms",
+                            task.get("id"),
+                            res.get("status"),
+                            res.get("duration_ms"),
+                        )
+                # Zelfstandige doorrol: als AEO-listicles klaar zijn, schuif ze
                 # meteen door naar de Wachtrij-gate (menselijke publish-klik).
                 try:
                     staged = await _auto_stage_ready_listicles()
                     if staged:
                         logger.info("Auto-stage: %d listicle(s) naar Wachtrij", staged)
                 except Exception:  # noqa: BLE001
-                    logger.exception("Auto-stage na taak mislukt (niet fataal)")
+                    logger.exception("Auto-stage na batch mislukt (niet fataal)")
             else:
                 await asyncio.sleep(poll_interval)
         except Exception as exc:  # noqa: BLE001
