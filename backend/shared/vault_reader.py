@@ -139,6 +139,41 @@ class VaultReader:
                     actions.append(line.strip("- [] ").strip())
         return actions
 
+    def mark_action_done(self, project_name: str, action_text: str) -> bool:
+        """Vink een actiepunt aan in de vault: '- [ ] tekst' -> '- [x] tekst'.
+
+        Zoekt in zowel 10_Projects/{project}.md als 20_Areas/{project}.md.
+        Geeft True terug als er tenminste één vinkje is omgezet. Dit is de
+        bron-van-waarheid: als de gebruiker 'Doen' drukt op een actiepunt,
+        moet het vinkje direct dicht — onafhankelijk van of de agent later
+        slaagt. Anders blijft het item eeuwig in de dashboard-todo staan.
+        """
+        if not self.is_configured:
+            return False
+        needle = action_text.strip().lower()
+        targets = [
+            self._find_file("10_Projects", f"{project_name}.md"),
+            self._find_file("20_Areas", f"{project_name}.md"),
+        ]
+        changed = False
+        for f in targets:
+            if not f or not f.exists():
+                continue
+            text = f.read_text("utf-8", errors="ignore")
+            out_lines = []
+            for line in text.split("\n"):
+                if re.match(r"-\s*\[\s*\]", line):
+                    # Vergelijk op de 'kern' van de tekst (na het vinkje),
+                    # zodat een exacte match én een prefix-match werken.
+                    body = line.strip("- [] ").strip().lower()
+                    if body == needle or body.startswith(needle[:40]) or needle.startswith(body[:40]):
+                        line = line.replace("[ ]", "[x]", 1)
+                        changed = True
+                out_lines.append(line)
+            if changed:
+                f.write_text("\n".join(out_lines), "utf-8")
+        return changed
+
     def get_recent_analytics(self) -> str:
         """Lees het meest recente Analytics rapport voor inzicht."""
         if not self.is_configured:

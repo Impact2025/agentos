@@ -2,6 +2,24 @@
 // Onderdeel van de SPA: klassieke scripts, gedeelde globale scope.
 // Laadvolgorde staat in index.html — core.js eerst.
 
+// HTML-attribuut-escaper: voorkomt dat quotes/apostrofen in actie-strings de
+// inline handlers breken (o.a. de "Oplossen"-knoppen op het dashboard).
+function escAttr(s) { if (!s) return ''; return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// Gedelegeerde listener voor alle advies-actieknoppen. We lezen de actie uit een
+// data-attribuut i.p.v. een inline onclick met string-interpolatie — daardoor
+// blijven apostrofen (bv. "pagina's") veilig en werkt de klik altijd.
+if (!window.__adviceActionBound) {
+  window.__adviceActionBound = true;
+  document.addEventListener('click', function(e) {
+    var holder = e.target.closest('[data-advice-action]');
+    if (!holder) return;
+    var action = holder.getAttribute('data-advice-action');
+    var btn = holder.classList.contains('dash-alert') ? (holder.querySelector('button') || holder) : holder;
+    handleAdviceAction(btn, action);
+  });
+}
+
 function renderSidebar() {
   return '<div class="sidebar"><div class="sidebar-logo"><img src="logo.png" alt="AO" onerror="this.style.display=\'none\'"><span>Agent OS</span></div><nav class="sidebar-nav">' +
     (currentProject ? TABS.map(function(t) {
@@ -137,9 +155,10 @@ async function renderDashboardTab(el) {
       var bg = a.type === 'danger' ? '#fef2f2' : a.type === 'warning' ? '#fffbeb' : a.type === 'opportunity' ? '#f0fdf4' : '#f8fafc';
       var border = a.type === 'danger' ? '#fecaca' : a.type === 'warning' ? '#fde68a' : a.type === 'opportunity' ? '#bbf7d0' : '#e2e8f0';
       var hasAction = !!a.action;
-      var onClickAttr = hasAction ? ' onclick="handleAdviceAction(this,' + "'" + escHtml(a.action) + "'" + ')" style="cursor:pointer"' : '';
-      var actionBtn = hasAction ? '<button onclick="event.stopPropagation();handleAdviceAction(this,' + "'" + escHtml(a.action) + "'" + ')" style="padding:4px 14px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0;white-space:nowrap">' + escHtml(a.action_label || 'Oplossen') + '</button>' : '';
-      html += '<div class="dash-alert" ' + onClickAttr + ' style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:6px;background:' + bg + ';border:1px solid ' + border + ';border-radius:6px;transition:all .15s">' +
+      var dataAttr = hasAction ? ' data-advice-action="' + escAttr(a.action) + '"' : '';
+      var onClickStyle = hasAction ? ' style="cursor:pointer"' : '';
+      var actionBtn = hasAction ? '<button type="button" ' + dataAttr + ' style="padding:4px 14px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0;white-space:nowrap">' + escHtml(a.action_label || 'Oplossen') + '</button>' : '';
+      html += '<div class="dash-alert" ' + dataAttr + onClickStyle + ' style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:6px;background:' + bg + ';border:1px solid ' + border + ';border-radius:6px;transition:all .15s">' +
         '<span style="font-size:14px;flex-shrink:0">' + (a.icon||'') + '</span>' +
         '<span style="font-size:12px;color:#475569;line-height:1.5;flex:1">' + escHtml(a.text) + '</span>' + actionBtn + '</div>';
     });
@@ -151,10 +170,10 @@ async function renderDashboardTab(el) {
       '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">' +
       '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:200px"><span style="font-size:18px;flex-shrink:0">🎯</span><span style="font-size:13px;font-weight:600;color:#1e293b;flex-shrink:0">Beste volgende stap:</span><span style="font-size:12px;color:#475569">' + escHtml(advice.next_step) + '</span></div>' +
       '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
-      (advice.next_step_action ? '<button onclick="handleAdviceAction(this,\'' + escHtml(advice.next_step_action) + '\')" style="padding:7px 18px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Nu uitvoeren</button>' : '') +
+      (advice.next_step_action ? '<button type="button" data-advice-action="' + escAttr(advice.next_step_action) + '" style="padding:7px 18px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Nu uitvoeren</button>' : '') +
       (advice.quick_actions && advice.quick_actions.length ? advice.quick_actions.map(function(qa) {
         var isPrimary = qa.primary ? ';background:#4f46e5;color:#fff;border:none' : ';background:#fff;color:#475569;border:1px solid #e2e8f0';
-        return '<button onclick="handleAdviceAction(this,\'' + escHtml(qa.action) + '\')" style="padding:6px 14px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s' + isPrimary + '">' + escHtml(qa.label) + '</button>';
+        return '<button type="button" data-advice-action="' + escAttr(qa.action) + '" style="padding:6px 14px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s' + isPrimary + '">' + escHtml(qa.label) + '</button>';
       }).join('') : '') +
       '</div></div></div>';
   }
@@ -406,9 +425,21 @@ function startGoalFromAction(opts, btn) {
   createAndStartGoal(opts.title, opts.objective || opts.title, opts.project, btn);
 }
 
-function solveAlert(objective, btn) {
+async function solveAlert(objective, btn) {
   var title = 'Actiepunt: ' + objective.slice(0, 60);
-  if (!confirm('Agent dit laten oplossen?\n\n"' + objective.slice(0, 160) + (objective.length > 160 ? '...' : '') + '"')) return;
+  if (!confirm('Actiepunt als gedaan markeren?\n\n"' + objective.slice(0, 160) + (objective.length > 160 ? '...' : '') + '"\n\nHet vinkje wordt direct in je Obsidian-vault gezet. De agent kan daarna optioneel verder werken.')) return;
+  // 1) Bron van waarheid direct afvinken in de vault — item verdwijnt meteen uit de todo.
+  try {
+    var doneResp = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/action/done', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({text: objective})
+    });
+    if (doneResp.ok) {
+      if (btn) { btn.textContent = '✅ Gedaan'; btn.disabled = true; }
+      loadCurrentTab();
+    }
+  } catch(e) { /* niet blokkerend — agent-start hieronder probeert het alsnog */ }
+  // 2) Agent op de achtergrond laten werken (niet-blokkerend, geen confirm-loop).
   createAndStartGoal(title, objective, currentProject, btn);
 }
 

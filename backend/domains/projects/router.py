@@ -424,7 +424,7 @@ def project_advice(name: str, days: int = Query(28)):
                 # bestaat voor dit project, anders blijft de app hetzelfde werk voorstellen.
                 completed_titles = [
                     g["title"].strip().lower()
-                    for g in goal_service.list_goals(limit=50, project=name)
+                    for g in goal_service.list_goals(limit=500, project=name)
                     if g["status"] == "completed"
                 ]
                 pending = [
@@ -474,6 +474,27 @@ def project_advice(name: str, days: int = Query(28)):
         })
 
     return advice
+
+
+@router.post("/{name}/action/done")
+def mark_action_done(name: str, payload: Dict = {}):
+    """Vink een actiepunt aan in de Obsidian vault (bron van waarheid).
+
+    De dashboard-actiepunten komen uit de '- [ ]' vinkjes in de vault.
+    Als de gebruiker op 'Doen' drukt, moet het vinkje direct dicht —
+    anders blijft het item eeuwig in de todo staan (de oude bug: 'Doen'
+    startte alleen een agent en vinkte nooit de bron aan). De frontend
+    vinkt hiermee de vault af EN start daarna optioneel de agent.
+    """
+    action_text = (payload or {}).get("text", "")
+    if not action_text:
+        raise HTTPException(400, "Geen 'text' meegegeven")
+    from ...shared.vault_reader import VaultReader
+    vr = VaultReader()
+    if not vr.is_configured:
+        raise HTTPException(409, "Obsidian vault niet geconfigureerd")
+    ok = vr.mark_action_done(name, action_text)
+    return {"ok": ok, "text": action_text}
 
 
 @router.get("/{name}/skill")
