@@ -107,9 +107,12 @@ async def regenerate_content_job(job_id: str):
 @router.post("/{job_id}/save-manual-edit")
 async def save_manual_edit_job(job_id: str, body: Dict = Body(...)):
     """Sla een handmatig (in Claude/Gemini of inline) bewerkte body terug op en
-    laat 'm opnieuw scoren. Bij >= grens wordt de job 'pending_review'."""
+    laat 'm opnieuw scoren. Bij >= grens wordt de job 'pending_review'.
+    body.force=True slaat de score over en zet de job direct op 'pending_review'
+    (handmatig vrijgegeven door de mens, bv. als de LLM-quota in backoff zit)."""
     try:
-        result = await content_pipeline.save_manual_edit(job_id, body.get("html_body", ""))
+        result = await content_pipeline.save_manual_edit(
+            job_id, body.get("html_body", ""), force=bool(body.get("force", False)))
         return {"success": True, **result}
     except ValueError as e:
         raise HTTPException(400, detail=str(e))

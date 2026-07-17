@@ -814,6 +814,9 @@ async function acManualEdit(btn, action) {
     var saveBtn = document.createElement('button');
     saveBtn.textContent = 'Opslaan & opnieuw scoren';
     saveBtn.style.cssText = 'padding:4px 12px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;margin:8px 6px 0 0';
+    var forceBtn = document.createElement('button');
+    forceBtn.textContent = 'Toch naar Wachtrij (score overslaan)';
+    forceBtn.style.cssText = 'padding:4px 12px;background:#fff;color:#0f766e;border:1px solid #99f6e4;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;margin:8px 6px 0 0';
     var cancelBtn = document.createElement('button');
     cancelBtn.textContent = 'Annuleren';
     cancelBtn.style.cssText = 'padding:4px 12px;background:#f8fafc;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer;margin-top:8px';
@@ -826,6 +829,7 @@ async function acManualEdit(btn, action) {
     inner.appendChild(copyClaude);
     inner.appendChild(copyGemini);
     inner.appendChild(saveBtn);
+    inner.appendChild(forceBtn);
     inner.appendChild(cancelBtn);
     inner.appendChild(status);
 
@@ -843,6 +847,24 @@ async function acManualEdit(btn, action) {
     };
     copyClaude.onclick = function(){ copyTo('Claude', 'https://claude.ai/new'); };
     copyGemini.onclick = function(){ copyTo('Gemini', 'https://gemini.google.com/app'); };
+
+    forceBtn.onclick = async function(){
+      if (!confirm('Zeker? De LLM-score wordt overgeslagen en het artikel gaat naar de Wachtrij om te publiceren. Je kunt dit niet ongedaan maken via deze knop.')) { return; }
+      forceBtn.disabled = true; forceBtn.textContent = 'Vrijgeven...';
+      status.textContent = 'Bezig met vrijgeven naar de Wachtrij...';
+      try {
+        var resp = await fetch('/api/content-queue/' + encodeURIComponent(action.id) + '/save-manual-edit', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ html_body: ta.value, force: true })
+        });
+        var d = await resp.json();
+        if (d.success) {
+          status.style.color = '#166534';
+          status.textContent = '✅ Vrijgegeven naar de Wachtrij — klaar om te publiceren.';
+          setTimeout(loadActionCenter, 1400);
+        } else { alert('❌ ' + (d.detail || 'onbekend')); forceBtn.disabled = false; forceBtn.textContent = 'Toch naar Wachtrij (score overslaan)'; }
+      } catch(e) { alert('❌ ' + e.message); forceBtn.disabled = false; forceBtn.textContent = 'Toch naar Wachtrij (score overslaan)'; }
+    };
 
     cancelBtn.onclick = function(){ loadActionCenter(); };
     saveBtn.onclick = async function(){

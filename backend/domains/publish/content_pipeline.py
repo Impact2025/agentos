@@ -1536,7 +1536,7 @@ async def regenerate_job(job_id: str) -> str:
     return job_id
 
 
-async def save_manual_edit(job_id: str, html_body: str) -> Dict:
+async def save_manual_edit(job_id: str, html_body: str, force: bool = False) -> Dict:
     """Sla een handmatig (in Claude/Gemini of inline) bewerkte artikel-body terug
     op. De body wordt opnieuw door dezelfde kwaliteitsgate gehaald als automatische
     content; haalt die de grens, dan gaat de job naar 'pending_review' (klaar om te
@@ -1544,6 +1544,10 @@ async def save_manual_edit(job_id: str, html_body: str) -> Dict:
     De herscoreslag is time-out-beschermd: als de LLM (Claude/Hermes) in quota-backoff
     hangt, wordt de body wél opgeslagen en krijgt de caller scored=False terug i.p.v.
     dat de request eeuwig blijft hangen.
+
+    force=True: sla de LLM-score over en zet de job direct op 'pending_review'
+    (handmatig beoordeeld door de mens — nuttig als de quota in backoff zit maar de
+    redacteur zeker weet dat het artikel goed is).
     """
     import asyncio
     job = get_job(job_id)
@@ -1563,6 +1567,19 @@ async def save_manual_edit(job_id: str, html_body: str) -> Dict:
     scored = False
     score = int(float(job.get("seo_score") or 0))
     feedback = ""
+    if force:
+        scored = True  # force telt als "beoordeeld door mens"
+        status = "pending_review"
+        _update_job(job_id, seo_score=score, status=status)
+        _log_activity(
+            site.get("name", "?"), "content-handmatig-verbeterd",
+            f"'{title}' handmatig aangepast en door jou vrijgegeven naar de Wachtrij (score overslagen).",
+            artifact=job_id, status="ok",
+        )
+        return {"job_id": job_id, "score": score, "passed": True, "scored": True,
+                "forced": True, "feedback": "Door jou vrijgegeven naar de Wachtrij (score overslagen).",
+                "status": status}
+
     try:
         review = await asyncio.wait_for(
             _review_article(site, job["keyword"], html_body), timeout=45)
@@ -1574,7 +1591,8 @@ async def save_manual_edit(job_id: str, html_body: str) -> Dict:
                        job_id, str(e)[:160])
         feedback = ("Scoren mislukt (LLM tijdelijk niet bereikbaar — waarschijnlijk "
                     "quota-backoff). Body is opgeslagen; klik later opnieuw op "
-                    "'Handmatig aanpassen' → 'Opslaan' om alsnog te scoren.")
+                    "'Handmatig aanpassen' → 'Opslaan' om alsnog te scoren, of gebruik "
+                    "'Toch naar Wachtrij' als je zeker weet dat het artikel goed is.")
 
     passed = scored and score >= CONTENT_MIN_SCORE
     status = "pending_review" if passed else "needs_work"
