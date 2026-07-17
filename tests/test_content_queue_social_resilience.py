@@ -101,9 +101,10 @@ async def test_website_publishes_even_when_linkedin_fails(bijeen_job, monkeypatc
     assert status == "published"
 
 
-async def test_no_project_endpoint_still_marks_published(bijeen_job, monkeypatch):
+async def test_no_project_endpoint_marks_publish_failed(bijeen_job, monkeypatch):
     """Defensive: if NEITHER netlify nor a project endpoint is configured, the
-    job must still transition to published and not raise."""
+    publish is skipped (not crashed) AND the job is marked 'publish_failed' —
+    never 'published', because nothing actually went live."""
     monkeypatch.delenv("BIJEEN_PUBLISH_URL", raising=False)
     monkeypatch.delenv("BIJEEN_PUBLISH_KEY", raising=False)
 
@@ -113,4 +114,4 @@ async def test_no_project_endpoint_still_marks_published(bijeen_job, monkeypatch
     with get_conn() as conn:
         status = conn.execute(
             "SELECT status FROM content_jobs WHERE id=?", (bijeen_job,)).fetchone()[0]
-    assert status == "published"
+    assert status == "publish_failed"
