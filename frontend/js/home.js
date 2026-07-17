@@ -34,6 +34,16 @@ function renderHome(main) {
       '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:#334155">\u{2615} Ochtendrapport — fouten · wacht-op-jou · gisteren opgeleverd · vandaag gepland</summary>' +
       '<div id="digest-panel" style="margin-top:10px;font-size:12px"><div style="color:#64748b">Klik om te laden...</div></div></details>';
 
+    // ── Linkbuilding — funnel, live links en open kansen per site ──
+    html += '<details class="section-card" style="margin-bottom:16px;padding:10px 16px" ontoggle="if(this.open)loadLinkbuilding()">' +
+      '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:#334155">\u{1F517} Linkbuilding — kansen · outreach · links live</summary>' +
+      '<div style="display:flex;gap:6px;margin-top:8px">' +
+      '<button onclick="runLinkbuildingProspecting(this)" style="padding:3px 10px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:4px;font-size:10px;cursor:pointer">Zoek kansen</button>' +
+      '<button onclick="runLinkbuildingBatch(this)" style="padding:3px 10px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:4px;font-size:10px;cursor:pointer">Maak concepten (review)</button>' +
+      '<button onclick="loadLinkbuilding()" style="padding:3px 10px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:4px;font-size:10px;cursor:pointer">Ververs</button>' +
+      '</div>' +
+      '<div id="linkbuilding-panel" style="margin-top:10px;font-size:12px"><div style="color:#64748b">Klik om te laden...</div></div></details>';
+
     // ── Recent Activity logs (Vercel-style) ──
     html += '<div class="section-card" style="margin-bottom:16px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
       '<h4 style="font-size:13px;font-weight:700">\u{1F4DC} Recente activiteit</h4>' +
@@ -132,6 +142,7 @@ var _acKindMeta = {
   task_approval: { icon: '✓',    color: '#0ea5e9', label: 'Taak wacht op goedkeuring' },
   vacancies:     { icon: '\u{1F4BC}', color: '#10b981', label: 'Opdracht-kansen' },
   leads:         { icon: '\u{1F465}', color: '#10b981', label: 'Nieuwe leads' },
+  linkbuilding_review: { icon: '\u{1F517}', color: '#0ea5e9', label: 'Link-outreach ter review' },
   error:         { icon: '⚠',    color: '#ef4444', label: 'Fout' }
 };
 
@@ -217,6 +228,91 @@ function loadDigest() {
   });
 }
 
+// ── Linkbuilding — funnel, live links en open kansen ───────────────
+// Gedeelde HTML-builder: gebruikt door het Control Room-paneel (alle sites)
+// én de Links-tab per project (tabs-business.js, gescoped op site_id).
+function buildLinkbuildingHtml(f, prospects, live) {
+    var by = f.by_status || {}, r = f.reached || {};
+    var html = '<div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:10px">' +
+      kpiBox('Kansen', f.total_prospects||0) +
+      kpiBox('Gekwalificeerd', by.qualified||0) +
+      kpiBox('Benaderd', r.contacted||0) +
+      kpiBox('Links live', r.link_live||0, '', (f.dofollow_live||0) + ' dofollow') +
+      kpiBox('Geverifieerd', r.verified||0) + '</div>';
+    if (f.formula) html += '<div style="font-size:12px;font-weight:600;color:#16a34a;margin-bottom:8px">\u{1F4C8} ' + escHtml(f.formula) + '</div>';
+    var review = by.outreach_review || 0;
+    if (review) html += '<div style="font-size:12px;color:#b45309;margin-bottom:8px">\u{270B} ' + review + ' concept(en) wachten op je verzendklik — zie het Actiecentrum bovenaan.</div>';
+    if (live.length) {
+      html += '<div style="font-size:12px;font-weight:600;margin-bottom:4px">Links live (' + live.length + ')</div>';
+      live.slice(0, 10).forEach(function(pl){
+        html += '<div style="font-size:11px;color:#475569;margin-bottom:2px">\u{2713} ' +
+          '<a href="' + escHtml(pl.source_url) + '" target="_blank" rel="noopener">' + escHtml(pl.source_url) + '</a>' +
+          ' \u{2192} ' + escHtml(pl.target_url) +
+          (pl.rel ? ' <span style="color:#94a3b8">(' + escHtml(pl.rel) + ')</span>'
+                  : ' <span style="color:#16a34a">(dofollow)</span>') + '</div>';
+      });
+    }
+    var open = prospects.filter(function(p){ return p.status === 'qualified' || p.status === 'new'; }).slice(0, 10);
+    if (open.length) {
+      html += '<div style="font-size:12px;font-weight:600;margin:8px 0 4px">Beste open kansen</div>';
+      open.forEach(function(p){
+        html += '<div style="font-size:11px;color:#475569;margin-bottom:2px">' +
+          '<span style="font-weight:600">' + (p.relevance_score||0) + '</span> \u{00B7} ' + escHtml(p.domain) +
+          ' <span style="color:#94a3b8">(' + escHtml(p.prospect_type||'overig') +
+          (p.contact_email ? ' \u{00B7} ' + escHtml(p.contact_email) : ' \u{00B7} geen e-mail') + ')</span>' +
+          (p.rationale ? '<div style="color:#94a3b8;margin-left:14px">' + escHtml(p.rationale) + '</div>' : '') + '</div>';
+      });
+    }
+    if (!(f.total_prospects||0)) html += '<div style="color:#64748b">Nog geen linkkansen — klik "Zoek kansen" (of wacht op de wekelijkse run van woensdag).</div>';
+    return html;
+}
+
+function loadLinkbuilding() {
+  var el = document.getElementById('linkbuilding-panel');
+  if (!el) return;
+  el.innerHTML = '<div style="color:#64748b">Laden...</div>';
+  Promise.all([
+    fetch('/api/linkbuilding/funnel').then(function(r){return r.json();}),
+    fetch('/api/linkbuilding/prospects').then(function(r){return r.json();}),
+    fetch('/api/linkbuilding/placements?status=live').then(function(r){return r.json();})
+  ]).then(function(res){
+    el.innerHTML = buildLinkbuildingHtml(res[0] || {}, res[1] || [], res[2] || []);
+  }).catch(function(e){ el.innerHTML = '<div style="color:#ef4444">Laden mislukt: ' + escHtml(e.message) + '</div>'; });
+}
+
+// Herlaad wat er zichtbaar is: het Control Room-paneel of de Links-tab.
+function _refreshLinkbuildingView() {
+  if (document.getElementById('linkbuilding-panel')) loadLinkbuilding();
+  if (typeof currentTab !== 'undefined' && currentTab === 'Links') {
+    var tc = document.getElementById('tab-content');
+    if (tc) renderLinksTab(tc);
+  }
+}
+
+function runLinkbuildingProspecting(btn, siteId) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Agent zoekt... (kan een minuut duren)'; }
+  post('/api/linkbuilding/prospect-run' + (siteId ? '?site_id=' + encodeURIComponent(siteId) : '')).then(function(){
+    if (btn) { btn.disabled = false; btn.textContent = 'Zoek kansen'; }
+    _refreshLinkbuildingView();
+  }).catch(function(e){
+    if (btn) { btn.disabled = false; btn.textContent = 'Zoek kansen'; }
+    alert('Prospect-run mislukt: ' + e.message);
+  });
+}
+
+function runLinkbuildingBatch(btn, siteId) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Agent schrijft... (kan even duren)'; }
+  post('/api/linkbuilding/outreach-batch' + (siteId ? '?site_id=' + encodeURIComponent(siteId) : '')).then(function(d){
+    if (btn) { btn.disabled = false; btn.textContent = 'Maak concepten (review)'; }
+    _refreshLinkbuildingView();
+    if (typeof loadActionCenter === 'function' && document.getElementById('action-center-panel')) loadActionCenter();
+    alert((d.drafted||0) + ' concept(en) klaargezet ter review — versturen blijft jouw klik.');
+  }).catch(function(e){
+    if (btn) { btn.disabled = false; btn.textContent = 'Maak concepten (review)'; }
+    alert('Batch mislukt: ' + e.message);
+  });
+}
+
 // ── OpenModel-credits — live verbruik (llm_usage-telemetrie) ───────
 // Toont waar de credits vandaag heengaan: budgetbalk, grootverbruikers
 // per doel/model en de 7-daagse trend. Ververst elke 30s, net als de inbox.
@@ -226,6 +322,7 @@ var _llmRouteLabels = {
   'goal': 'Doelen (synthese)',
   'mail': 'Mail-helpdesk (concepten)',
   'outreach': 'Outreach-concepten',
+  'linkbuilding': 'Linkbuilding (kwalificatie & concepten)',
   'seo-engine': 'SEO Demand Engine',
   'seo-optimizer': 'SEO-optimalisatie',
   'agent-openmodel': 'Chat-agent (tools)',
@@ -361,6 +458,17 @@ function loadIrisBriefing() {
       var g = grades[n]; var c = _irisGradeColor(g.cijfer || 0);
       return '<span title="' + escHtml(g.oordeel || '') + '" style="padding:3px 8px;border-radius:12px;background:' + c[0] + ';color:' + c[1] + ';font-size:11px;font-weight:600;cursor:default">' + escHtml(n) + ' ' + (g.cijfer != null ? g.cijfer : '?') + '</span>';
     }).join('') + '</div>';
+    // ── "Wil je dat ik dit fix?" — Iris' kant-en-klare actie-knoppen ──
+    fetch('/api/iris/suggestions?report_date=' + encodeURIComponent(d.report_date||''))
+      .then(function(r){return r.ok ? r.json() : {suggestions:[]};})
+      .then(function(sd){
+        var sugs = sd.suggestions || [];
+        var block = _irisSuggestionBlock(sugs);
+        var holder = document.getElementById('iris-suggestions');
+        if (holder) holder.innerHTML = block;
+      })
+      .catch(function(){ var h=document.getElementById('iris-suggestions'); if(h) h.innerHTML=''; });
+    html += '<div id="iris-suggestions"></div>';
     var advice = d.advice || [];
     if (advice.length) {
       html += '<div style="margin-bottom:8px">' + advice.slice(0,3).map(function(a){
@@ -458,6 +566,92 @@ function runIrisNow() {
   });
 }
 
+// ── Iris actie-voorstellen: "Wil je dat ik dit fix?" ──────────────
+// Elke kaart = één kant-en-klare fix met een agent erachter.
+// Vincent keurt per stuk: goedkeuren (apply) of wijzen (reject).
+function _irisSugIcon(type) {
+  return ({content_run:'✎', seo_refresh:'⤴', outreach_run:'✉',
+           goal_draft:'🎯', gsc_connect:'🔌'})[type] || '⚙';
+}
+function _irisSugStatusLabel(s) {
+  return ({pending:'Wacht op jou', approved:'Goedgekeurd',
+           rejected:'Afgewezen', applied:'Uitgevoerd ✓',
+           failed:'Mislukt'})[s] || s;
+}
+function _irisSuggestionBlock(sugs) {
+  if (!sugs || !sugs.length) return '';
+  var cards = sugs.map(function(s, i){
+    if (s.type === 'goal_draft' && s.goal_id) {
+      // Reeds toegepast: toon niet nóg een keer als "Uitgevoerd ✓". Het echte
+      // wacht-item is de goal-card in "Vandaag — wacht op jou".
+      return '';
+    }
+    var st = s.status || 'pending';
+    var done = (st === 'applied');
+    var rejected = (st === 'rejected');
+    var approved = (st === 'approved');
+    var btnHtml = '';
+    if (st === 'pending') {
+      btnHtml =
+        '<button onclick="irisActie(\'approve\',\'' + s.id + '\',this)" ' +
+        'style="padding:4px 12px;background:#7c3aed;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;margin-right:5px">Ja, fix dit</button>' +
+        '<button onclick="irisActie(\'reject\',\'' + s.id + '\',this)" ' +
+        'style="padding:4px 10px;background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">Nee, wijs af</button>';
+    } else if (approved) {
+      btnHtml = '<button onclick="irisActie(\'apply\',\'' + s.id + '\',this)" ' +
+        'style="padding:4px 12px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Voer uit →</button>';
+    } else if (st === 'failed') {
+      // Goedkeuring was er al — de uitvoering strandde. Herkansen mag.
+      btnHtml = '<button onclick="irisActie(\'apply\',\'' + s.id + '\',this)" ' +
+        'style="padding:4px 12px;background:#d97706;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Probeer opnieuw</button>';
+    }
+    var detailHtml = (s.detail ? '<div style="font-size:11px;color:#64748b;margin:4px 0 6px">' + escHtml(s.detail) + '</div>' : '');
+    var resultHtml = (done && s.applied_detail ? '<div style="font-size:11px;color:#166534;margin-top:4px">✓ ' + escHtml(s.applied_detail) + '</div>' : '');
+    if (st === 'failed' && s.applied_detail) {
+      resultHtml = '<div style="font-size:11px;color:#b45309;margin-top:4px">⚠ ' + escHtml(s.applied_detail) + '</div>';
+    }
+    var border = done ? '#bbf7d0' : (rejected ? '#fecaca' : (approved ? '#ddd6fe' : '#ede9fe'));
+    return '<div data-sug-id="' + s.id + '" style="border:1px solid ' + border + ';border-radius:8px;padding:8px 10px;margin-bottom:6px;background:' + (done?'#f0fdf4':'#fff') + '">' +
+      '<div style="display:flex;align-items:center;gap:6px"><span style="font-size:13px">' + _irisSugIcon(s.type) + '</span>' +
+      '<strong style="font-size:12px;color:#334155;flex:1">' + escHtml(s.title) + '</strong>' +
+      '<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:#f1f5f9;color:#64748b">' + _irisSugStatusLabel(st) + '</span></div>' +
+      detailHtml + btnHtml + resultHtml + '</div>';
+  }).filter(function(x){ return x !== ''; }).join('');
+  if (!cards) return '';
+  return '<div style="margin:10px 0 4px;border-top:1px solid #ede9fe;padding-top:10px">' +
+    '<div style="font-size:12px;font-weight:700;color:#7c3aed;margin-bottom:6px">⚡ Wil je dat ik dit fix? <span style="font-weight:400;color:#94a3b8">(klik om de juiste agent aan het werk te zetten)</span></div>' +
+    cards + '</div>';
+}
+
+function irisActie(action, sid, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Bezig...'; }
+  var base = '/api/iris/suggestions/' + encodeURIComponent(sid) + '/';
+  var check = function(r){
+    if (r.ok) return r.json();
+    // Toon de échte reden (FastAPI 'detail') i.p.v. een kaal 'HTTP 400'.
+    return r.json().catch(function(){ return {}; }).then(function(body){
+      throw new Error((body && body.detail) ? body.detail : ('HTTP ' + r.status));
+    });
+  };
+  var p = fetch(base + action, { method: 'POST' }).then(check);
+  if (action === 'approve') {
+    // Eén klik = goedkeuren + direct uitvoeren: dat is de menselijke gate,
+    // een tweede knop erbovenop voegt niets toe (alles landt tóch in de
+    // Wachtrij/het Actiecentrum, nooit direct live).
+    p = p.then(function(){
+      if (btn) btn.textContent = 'Iris werkt eraan...';
+      return fetch(base + 'apply', { method: 'POST' }).then(check);
+    });
+  }
+  p.then(function(){
+    loadIrisBriefing();
+  }).catch(function(e){
+    console.error('[Iris actie]', e);
+    if (btn) { btn.disabled = false; btn.textContent = 'Opnieuw'; }
+    alert('Actie mislukt: ' + (e.message || e));
+  });
+}
+
 function acBulkDrafts(btn, mode) {
   var drafts = _acLastItems.filter(function(i){ return i.kind === 'goal_draft'; });
   if (!drafts.length) return;
@@ -519,11 +713,18 @@ function acAction(btn, action, project) {
   } else if (type === 'content_regenerate') {
     if (btn) btn.textContent = 'Agent herschrijft... (kan even duren)';
     post('/api/content-queue/' + encodeURIComponent(action.id) + '/regenerate').then(done).catch(fail);
+  } else if (type === 'content_manual_edit') {
+    acManualEdit(btn, action); return;
   } else if (type === 'outreach_send') {
     if (!confirm('Deze outreach-mail wordt ECHT verstuurd naar de lead. Doorgaan?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
     post('/api/leads/' + encodeURIComponent(action.id) + '/outreach-approve').then(done).catch(fail);
   } else if (type === 'outreach_dismiss') {
     post('/api/leads/' + encodeURIComponent(action.id) + '/outreach-dismiss').then(done).catch(fail);
+  } else if (type === 'linkbuilding_send') {
+    if (!confirm('Deze link-outreach-mail wordt ECHT verstuurd. Doorgaan?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
+    post('/api/linkbuilding/' + encodeURIComponent(action.id) + '/outreach-approve').then(done).catch(fail);
+  } else if (type === 'linkbuilding_dismiss') {
+    post('/api/linkbuilding/' + encodeURIComponent(action.id) + '/outreach-dismiss').then(done).catch(fail);
   } else if (type === 'task_approve') {
     fetch('/api/tasks/' + encodeURIComponent(action.id) + '/status', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status:'done'}) })
       .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(done).catch(fail);
@@ -581,6 +782,101 @@ async function acMailEdit(btn, action) {
       } catch(e) { alert('❌ ' + e.message); saveBtn.disabled = false; saveBtn.textContent = 'Opslaan'; }
     };
   } catch(e) { alert('❌ ' + e.message); }
+}
+
+// ── Inline editor voor het Actiecentrum (content → Handmatig aanpassen) ──
+// Haal de huidige artikel-body op, toon een tekstvak met de ruwe HTML en
+// knoppen om de tekst naar Claude/Gemini te kopiëren (zodat je hem daar zelf
+// kunt verbeteren) en de bewerkte versie terug te plakken + op te slaan. Bij
+// opslaan scort Agent OS opnieuw en zet de job op 'pending_review' als de grens
+// gehaald is.
+async function acManualEdit(btn, action) {
+  var actionsDiv = btn ? btn.parentNode : null;
+  var card = actionsDiv ? actionsDiv.closest('[id^="ac-item-"]') : null;
+  if (!card || !actionsDiv) { alert('Editor kon niet worden geopend — ververs de pagina.'); return; }
+  var inner = actionsDiv.parentNode;
+  actionsDiv.innerHTML = '<span style="font-size:11px;color:#64748b">Artikel laden...</span>';
+  try {
+    var job = await (await fetch('/api/content-queue/' + encodeURIComponent(action.id))).json();
+    var html = job.blog_html || '';
+    if (!html) { alert('Geen body gevonden voor dit artikel.'); loadActionCenter(); return; }
+
+    var ta = document.createElement('textarea');
+    ta.value = html;
+    ta.style.cssText = 'width:100%;min-height:200px;font-size:11px;line-height:1.5;padding:8px;border:1px solid #e2e8f0;border-radius:6px;resize:vertical;font-family:monospace;background:#fffbeb;margin-top:8px';
+
+    var copyClaude = document.createElement('button');
+    copyClaude.textContent = '📋 Kopieer naar Claude';
+    copyClaude.style.cssText = 'padding:4px 10px;background:#fff;color:#d97757;border:1px solid #fcd9c9;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;margin:8px 6px 0 0';
+    var copyGemini = document.createElement('button');
+    copyGemini.textContent = '✨ Kopieer naar Gemini';
+    copyGemini.style.cssText = 'padding:4px 10px;background:#fff;color:#1a73e8;border:1px solid #c5d9fb;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;margin:8px 6px 0 0';
+    var saveBtn = document.createElement('button');
+    saveBtn.textContent = 'Opslaan & opnieuw scoren';
+    saveBtn.style.cssText = 'padding:4px 12px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;margin:8px 6px 0 0';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Annuleren';
+    cancelBtn.style.cssText = 'padding:4px 12px;background:#f8fafc;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer;margin-top:8px';
+
+    var status = document.createElement('div');
+    status.style.cssText = 'font-size:11px;color:#64748b;margin-top:6px';
+
+    actionsDiv.innerHTML = '';
+    inner.appendChild(ta);
+    inner.appendChild(copyClaude);
+    inner.appendChild(copyGemini);
+    inner.appendChild(saveBtn);
+    inner.appendChild(cancelBtn);
+    inner.appendChild(status);
+
+    var promptFor = function(model){
+      return 'Verbeter onderstaand artikel zodat het een SEO-score van minimaal 85/100 haalt ' +
+        '(wereldklasse E-E-A-T, AEO/FAQ, leesbaar, geen AI-taal). Lever ALLEEN de volledige HTML-body ' +
+        'terug zonder <html>/<head>/<body>.\n\n=== ARTIKEL ===\n' + html;
+    };
+    var copyTo = async function(model, url){
+      try {
+        await navigator.clipboard.writeText(promptFor(model));
+        status.textContent = '✓ Tekst gekopieerd — plak in ' + model + ' (Ctrl+V / Cmd+V) en verbeter daar.';
+        if (url) window.open(url, '_blank');
+      } catch(e) { status.textContent = '⚠ Kon niet kopiëren: ' + e.message + ' — selecteer de tekst handmatig.'; }
+    };
+    copyClaude.onclick = function(){ copyTo('Claude', 'https://claude.ai/new'); };
+    copyGemini.onclick = function(){ copyTo('Gemini', 'https://gemini.google.com/app'); };
+
+    cancelBtn.onclick = function(){ loadActionCenter(); };
+    saveBtn.onclick = async function(){
+      saveBtn.disabled = true; saveBtn.textContent = 'Opslaan...';
+      status.textContent = 'Bezig met opslaan en opnieuw scoren...';
+      try {
+        var ctrl = new AbortController();
+        var to = setTimeout(function(){ ctrl.abort(); }, 50000);
+        var resp = await fetch('/api/content-queue/' + encodeURIComponent(action.id) + '/save-manual-edit', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ html_body: ta.value }), signal: ctrl.signal
+        });
+        clearTimeout(to);
+        var d = await resp.json();
+        if (d.success) {
+          if (!d.scored) {
+            status.style.color = '#b45309';
+            status.textContent = '⚠ ' + (d.feedback || 'Scoren mislukt — body wel opgeslagen.');
+          } else if (d.passed) {
+            status.style.color = '#166534';
+            status.textContent = '✅ Score ' + d.score + ' — boven grens, klaar om te publiceren.';
+          } else {
+            status.style.color = '#b45309';
+            status.textContent = '⚠ Score ' + d.score + ' — nog onder grens. ' + (d.feedback || '').slice(0,160);
+          }
+          setTimeout(loadActionCenter, d.passed ? 1400 : 2600);
+        } else { alert('❌ ' + (d.detail || 'onbekend')); saveBtn.disabled = false; saveBtn.textContent = 'Opslaan & opnieuw scoren'; }
+      } catch(e) {
+        if (e.name === 'AbortError') { alert('⏱ Opslaan duurde te lang (LLM-score hangt waarschijnlijk in quota-backoff). De body is wellicht wel opgeslagen — ververs en controleer.'); }
+        else { alert('❌ ' + e.message); }
+        saveBtn.disabled = false; saveBtn.textContent = 'Opslaan & opnieuw scoren';
+      }
+    };
+  } catch(e) { alert('❌ ' + e.message); loadActionCenter(); }
 }
 
 // ── Systeemgezondheid (herbruikbaar: Control Room + per-project Dashboard) ──

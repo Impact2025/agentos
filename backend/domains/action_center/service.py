@@ -22,6 +22,11 @@ VACANCY_FIT_THRESHOLD = 60
 # Fouten ouder dan dit aantal dagen vervallen vanzelf uit de inbox.
 ERROR_WINDOW_DAYS = 3
 
+# De SPA pollt dit endpoint elke ~30s; de onder-de-grens-WARNING per job
+# daarom max 1×/uur loggen in plaats van bij elke poll (log-spam).
+_LOW_SCORE_WARNED: Dict[str, float] = {}
+_LOW_SCORE_WARN_INTERVAL = 3600.0
+
 
 def _dismissed(conn) -> set:
     return {
@@ -101,11 +106,17 @@ def build_inbox() -> Dict[str, Any]:
                 # Inconsistent: onder grens maar wél in de goedkeuringsqueue.
                 # Niet aan Vincent tonen — de agent lost het op (zie
                 # content-pipeline improve-loop / scheduler verbeter-taak).
-                logger.warning(
-                    "[actiecentrum] Job %s (%s) staat op pending_review met score %s "
-                    "< grens %s — weggelaten uit inbox, agent moet verbeteren.",
-                    j["id"], j["title"], score, CONTENT_MIN_SCORE,
-                )
+                import time as _time
+                _now_ts = _time.monotonic()
+                if _now_ts - _LOW_SCORE_WARNED.get(j["id"], -_LOW_SCORE_WARN_INTERVAL) \
+                        >= _LOW_SCORE_WARN_INTERVAL:
+                    _LOW_SCORE_WARNED[j["id"]] = _now_ts
+                    logger.warning(
+                        "[actiecentrum] Job %s (%s) staat op pending_review met score %s "
+                        "< grens %s — weggelaten uit inbox, agent moet verbeteren. "
+                        "(melding onderdrukt voor 1 uur)",
+                        j["id"], j["title"], score, CONTENT_MIN_SCORE,
+                    )
                 continue
             items.append({
                 "kind": "content_review",
@@ -144,6 +155,7 @@ def build_inbox() -> Dict[str, Any]:
                 ),
                 "actions": [
                     {"label": "Verbeter met AI", "type": "content_regenerate", "id": j["id"]},
+                    {"label": "Handmatig aanpassen", "type": "content_manual_edit", "id": j["id"]},
                     {"label": "Wijs af", "type": "content_reject", "id": j["id"], "danger": True},
                 ],
             })
@@ -269,6 +281,33 @@ def build_inbox() -> Dict[str, Any]:
                 "actions": [
                     {"label": "Verstuur", "type": "outreach_send", "id": l["id"]},
                     {"label": "Wijs af (lead vervalt)", "type": "outreach_dismiss", "id": l["id"], "danger": True},
+                ],
+            })
+
+        # ── 5c. Linkbuilding-concepten die op jouw verzendklik wachten ──
+        # Zelfde gate als de acquisitie: de agent schreef het concept
+        # (incl. concrete linksuggestie), alleen jij kunt versturen.
+        for p in conn.execute(
+            "SELECT id, domain, contact_email, outreach_subject, outreach_draft, "
+            "outreach_drafted_at, relevance_score, target_url FROM link_prospects "
+            "WHERE status='outreach_review' "
+            "ORDER BY relevance_score DESC, outreach_drafted_at DESC"
+        ):
+            if ("linkbuilding", p["id"]) in skip:
+                continue
+            preview = (p["outreach_draft"] or "").replace("\n", " ")[:140]
+            items.append({
+                "kind": "linkbuilding_review",
+                "dismiss_kind": "linkbuilding",
+                "id": p["id"],
+                "title": f"Link-outreach klaar: {p['domain']} (score {p['relevance_score']})",
+                "project": "Linkbuilding",
+                "created_at": p["outreach_drafted_at"] or None,
+                "summary": f"‘{p['outreach_subject']}’ → link naar {p['target_url']} — {preview}",
+                "actions": [
+                    {"label": "Verstuur", "type": "linkbuilding_send", "id": p["id"]},
+                    {"label": "Wijs af (kans vervalt)", "type": "linkbuilding_dismiss",
+                     "id": p["id"], "danger": True},
                 ],
             })
 

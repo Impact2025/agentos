@@ -47,7 +47,11 @@ logger = logging.getLogger(__name__)
 
 _FALLBACK_WRITE_PROMPT = (
     "Je bent een ervaren Nederlandse SEO-copywriter. Schrijf heldere, feitelijke, "
-    "praktische content op B1-niveau. Geen AI-cliches, geen verzonnen cijfers of bronnen."
+    "praktische content op B1-niveau. Geen AI-cliches, geen verzonnen cijfers of bronnen. "
+    "SCHRIJF MINIMAAL 1000 WOORDEN — een wereldklasse-artikel heeft diepgang: uitgewerkte "
+    "voorbeelden, herkenbare situaties uit de praktijk, een concreet stappenplan en per "
+    "hoofdpunt verdiepende uitleg. Voeg GEEN vulling toe, maar behandel het onderwerp "
+    "grondig en volledig. Structureer met H2/H3-koppen en een FAQ-sectie."
 )
 _FALLBACK_REVIEW_PROMPT = (
     "Je bent een strenge Nederlandse SEO-eindredacteur. Beoordeel het artikel eerlijk."
@@ -155,15 +159,52 @@ def _profile_prompt(name: str) -> str:
     return row["system_prompt"] if row else ""
 
 
-def _vault_context(project_name: str) -> str:
+def _vault_context(project_name: str, keyword: str = "") -> str:
+    parts = []
     try:
         from ...shared.vault_reader import VaultReader
         vr = VaultReader()
         if vr.is_configured:
-            return vr.get_core_context(project_name)
+            core = vr.get_core_context(project_name)
+            if core:
+                parts.append(core)
     except Exception:
         pass
-    return ""
+    # NIEUW: verse NotebookLM-onderzoeksrapporten optellen als context
+    # zodat blogs automatisch gevoed worden door diepte-onderzoek. Met een
+    # `keyword` krijgen rapporten over dát zoekwoord voorrang (de Demand→
+    # Researcher-brug grondt per kans; zonder deze match pakt een artikel
+    # willekeurig de laatste rapporten i.p.v. zijn eigen onderzoek).
+    try:
+        from ...domains.researcher.service import _slugify  # noqa
+        from ...shared.config import OBSIDIAN_VAULT_PATH
+        from pathlib import Path
+        kw_tokens = _slug_tokens(keyword)
+
+        def _matches_keyword(md) -> bool:
+            if not kw_tokens:
+                return False
+            stem_tokens = set(md.stem.lower().split("-"))
+            return len(kw_tokens & stem_tokens) / len(kw_tokens) >= 0.5
+
+        if OBSIDIAN_VAULT_PATH:
+            vault = Path(OBSIDIAN_VAULT_PATH)
+            # 1) project-specifiek: 10_Projects/{project}/onderzoek/
+            if project_name:
+                pdir = vault / "10_Projects" / project_name / "onderzoek"
+                if pdir.exists():
+                    mds = sorted(pdir.glob("*.md"))
+                    matched = [m for m in mds if _matches_keyword(m)]
+                    for md in (matched[-3:] or mds[-3:]):
+                        parts.append(f"## Onderzoek ({md.stem})\n{md.read_text('utf-8', errors='ignore')[:2500]}")
+            # 2) project-loos: 30_Resources/Onderzoek/
+            rdir = vault / "30_Resources" / "Onderzoek"
+            if rdir.exists():
+                for md in sorted(rdir.glob("*.md"))[-2:]:
+                    parts.append(f"## Onderzoek ({md.stem})\n{md.read_text('utf-8', errors='ignore')[:2000]}")
+    except Exception:
+        pass
+    return "\n\n".join(parts)
 
 
 def _iris_writing_guidance(project_name: str) -> str:
@@ -258,7 +299,7 @@ def select_topic(site: Dict) -> Optional[Dict]:
 
 async def _write_article(site: Dict, keyword: str, angle: str, rationale: str) -> str:
     project_name = site["name"]
-    vault_context = _vault_context(project_name)
+    vault_context = _vault_context(project_name, keyword)
     skill_body = _skill_body(project_name)
     base_prompt = _profile_prompt("SEO Copywriter") or _FALLBACK_WRITE_PROMPT
 
@@ -435,7 +476,7 @@ async def _optimize_article(site: Dict, keyword: str, html_body: str, feedback: 
         f"Kernzoekwoord: {keyword}\n\nORIGINEEL:\n{html_body}\n\n"
         "Lever ALLEEN de verbeterde HTML-body zonder <html>/<head>/<body>."
     )
-    out = await _llm(optimize_system, prompt, max_tokens=8000)
+    out = await _llm(optimize_system, prompt, max_tokens=16000)
     return out if len(out) > 50 else html_body
 
 
@@ -448,7 +489,7 @@ async def _write_article_best(site: Dict, keyword: str, angle: str,
     case_study = knowledge_service.match_case_study(site["id"], keyword, angle)
     # Iris' kennisbank-principes mee in de merkcontext, zodat de meertraps-
     # schrijver (outline → secties) de GEO/AEO/SEO-kennis vanaf de eerste stap toepast.
-    brand_context = _vault_context(site["name"])
+    brand_context = _vault_context(site["name"], keyword)
     iris_guidance = _iris_writing_guidance(site["name"])
     if iris_guidance:
         brand_context = (brand_context + "\n\n## Kennisbank-principes (Iris — pas toe)\n"
@@ -562,7 +603,7 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
     'needs_work' = onder de kwaliteitsgate — eerst verbeteren of afwijzen.
 
     dedupe=True (default): als er al een job voor (site_id, slug) bestaat met
-    status in ('pending_review','needs_work','published','approved') wordt die
+    status in ('pending_review','needs_work','published','approved','publish_failed') wordt die
     bijgewerkt in plaats van een nieuwe rij aangemaakt. Voorkomt dat een
     content-goal in een oneindige loop hetzelfde artikel tientallen keren in de
     wachtrij dumpt (zie de 17x 'gelukkige hond'-incident)."""
@@ -572,7 +613,7 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
             existing = conn.execute(
                 "SELECT id, status FROM content_jobs "
                 "WHERE site_id=? AND slug=? AND status IN "
-                "('pending_review','needs_work','published','approved') "
+                "('pending_review','needs_work','published','approved','publish_failed') "
                 "ORDER BY created_at DESC LIMIT 1",
                 (site_id, slug),
             ).fetchone()
@@ -706,6 +747,33 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
             ).fetchone()
         return row["id"] if row else None
 
+    # ── Volledige modus: social copy + quote-card + infographic, dan opslaan ──
+    # (light_mode retourneert hierboven; deze tak draait alleen voor de volledige
+    # cyclus die de UI-knop, de biweekly scheduler en Iris' content_run gebruiken.)
+    social_copy = await _generate_social_copy(site, title, keyword, html_body)
+    image_bytes = generate_quote_card(title, site["name"])
+
+    from ...shared.config import CONTENT_MIN_SCORE
+    passed = review["score"] >= CONTENT_MIN_SCORE
+    # Infographic alleen voor artikelen die de gate halen — anders verspilde LLM-calls.
+    infographic_bytes = (await _generate_article_infographic(site, title, keyword, html_body)
+                         if passed else None)
+    job_id = create_job(site["id"], title, keyword, rationale, html_body,
+                        review["score"], social_copy, image_bytes, slug,
+                        status="pending_review" if passed else "needs_work",
+                        qc_report=qc_report, case_study_id=case_study_id,
+                        infographic_bytes=infographic_bytes)
+    if passed:
+        _log_activity(site["name"], "auto-content-klaar",
+                      f"'{title}' (SEO-score {review['score']}) klaar voor review",
+                      next_step="Keur goed of wijs af in de Wachtrij")
+    else:
+        _log_activity(site["name"], "auto-content-onder-grens",
+                      f"'{title}' haalde na verbeterrondes {review['score']}/100 "
+                      f"(grens {CONTENT_MIN_SCORE}) — niet publiceerbaar",
+                      next_step="Laat de agent het opnieuw proberen of wijs af (Actiecentrum)")
+    return job_id
+
 
 
 # ── Listicle-instroom vanuit Mission Radar ──────────────────────────────────
@@ -838,19 +906,29 @@ def _unwrap_code_fence(html_body: str) -> str:
     Robuust tegen varianten die de oude regex miste: de taal-tag kan direct
     gevolgd worden door een spatie i.p.v. een newline (bv. '```html <h1>').
     Als er géén fence staat, blijft de input ongewijzigd.
+
+    BUG-FIX: de oude implementatie zocht de sluitende fence via
+    ``s.rfind("\\n```")`` — maar de gegenereerde HTML bevat ZÉLF een
+    ``\\n``` `` binnen de JSON-LD/script (bv. in een code-voorbeeld), waardoor
+    het artikel abrupt werd afgekapt bij die valse sluiting. Nieuwe regel:
+    een fence wordt alleen als zodanig herkend als hij écht VOORAAN staat én
+    (correct) aan het EINDE sluit. Staat de openende fence er wel maar sluit
+    de generator hem niet (geen `` ``` `` aan het eind), dan strippen we
+    alleen de openende fence en houden de rest intact — we kappen nooit
+    middenin de content af op een valse ``\\n``` ``.
     """
     s = (html_body or "").strip()
     # Opening: '```' + optionele taal-tag + willekeurige witruimte (incl. spatie)
     m = re.match(r"^```[a-z]*\s*", s, re.IGNORECASE)
-    if m:
-        s = s[m.end():]
-    # Sluiting: laatste '```' (op eigen regel of aan het eind)
-    end = s.rfind("\n```")
-    if end != -1:
-        s = s[:end].rstrip()
-    elif s.endswith("```"):
-        s = s[:-3].rstrip()
-    return s.strip()
+    if not m:
+        return s  # geen fence -> ongewijzigd
+    body = s[m.end():]
+    # Sluiting: alleen een ECHTE fence telt, d.w.z. aan het allerlaatste eind.
+    if body.endswith("```"):
+        body = body[:-3].rstrip()
+    # (geen sluiting aan het eind -> generator zette enkel de openende fence;
+    #  de eventuele '\\n```' binnen de content is geen echte sluiting -> negeren)
+    return body.strip()
 
 
 def _smart_truncate(text: str, max_len: int) -> str:
@@ -1040,7 +1118,12 @@ async def run_content_improver_job() -> Dict:
         logger.warning("[content-pipeline] Verbeter-ronde overgeslagen: %s", e)
         return {"improved": [], "still_under_threshold": [], "failed": [],
                 "stuck": [], "queue_remaining": 0, "budget_exceeded": True}
-    jobs = [j for j in list_jobs(status="needs_work")
+    # Naast 'needs_work' ook 'pending_review'-jobs ónder de grens meenemen:
+    # het Actiecentrum verbergt die voor de mens ("agent moet verbeteren"),
+    # dus als de verbeteraar ze ook overslaat hangen ze voorgoed in een limbo
+    # (incident 2026-07-16: twee jobs op 72/83 spamden dagenlang het log).
+    jobs = [j for j in (list_jobs(status="needs_work")
+                        + list_jobs(status="pending_review"))
             if int(j.get("seo_score") or 0) < CONTENT_MIN_SCORE]
     # Sla jobs die al op 'stuck' staan over vóór de LLM-dans — die zijn al
     # CONTENT_IMPROVER_MAX_ATTEMPTS keer vastgelopen en horen niet opnieuw
@@ -1326,9 +1409,31 @@ async def approve_and_publish(job_id: str) -> Dict:
             twitter_service.post_update(
                 social_copy["twitter"], article_url=article_url, site_name=site_name))
 
-    _update_job(job_id, status="published", publish_result=json.dumps(result), reviewed_at=_now())
+    # Status correct weerspiegelen: pas 'published' als de site-publicatie écht
+    # gelukt is. Mislukt die (geen env, HTTP-fout, exception), zet dan
+    # 'publish_failed' — anders staat de job op 'published' terwijl er niets
+    # online staat (de oorspronkelijke IctusGo-bug: 7 jobs 'published' maar 0 live).
+    site_ok = bool(result.get("site", {}).get("success"))
+    job_status = "published" if site_ok else "publish_failed"
+    _update_job(job_id, status=job_status, publish_result=json.dumps(result), reviewed_at=_now())
     _log_activity(site_name, "publicatie", f"'{job['title']}' goedgekeurd en gepubliceerd",
                   artifact=article_url or "")
+
+    # ── Content Multiplier: format-waaier als achtergrondtaak ────────────────
+    # Uit één goedgekeurd artikel automatisch social-pack + video genereren.
+    # Achter de review-gates (pending_review) — er wordt niets gepost. Als
+    # create_task hier draait, leeft de taak op de uvicorn-event-loop door
+    # nadat deze request al beantwoord is.
+    from ...shared.config import CONTENT_MULTIPLIER_ENABLED
+    if CONTENT_MULTIPLIER_ENABLED:
+        try:
+            from . import multiplier
+            asyncio.create_task(multiplier.multiply_job_safe(job_id))
+            result["multiplier"] = "gestart (achtergrond)"
+        except Exception as e:
+            logger.warning("[content-pipeline] Multiplier starten mislukt: %s", e)
+            result["multiplier"] = f"niet gestart: {str(e)[:120]}"
+
     return result
 
 
@@ -1371,7 +1476,7 @@ async def regenerate_job(job_id: str) -> str:
         try:
             from ...shared.outcomes import log_outcome
             log_outcome(
-                job.get("site_id") or "?",
+                site["name"],
                 "content-stuck",
                 f"'{job['title']}' ({job['keyword']}) haalt na {attempts} verbeter-pogingen "
                 f"de kwaliteitsgrens ({CONTENT_MIN_SCORE}) niet — vastgezet voor menselijke review.",
@@ -1429,3 +1534,63 @@ async def regenerate_job(job_id: str) -> str:
         updates["case_study_id"] = case_study_id
     _update_job(job_id, **updates)
     return job_id
+
+
+async def save_manual_edit(job_id: str, html_body: str) -> Dict:
+    """Sla een handmatig (in Claude/Gemini of inline) bewerkte artikel-body terug
+    op. De body wordt opnieuw door dezelfde kwaliteitsgate gehaald als automatische
+    content; haalt die de grens, dan gaat de job naar 'pending_review' (klaar om te
+    publiceren), anders blijft 'needs_work' staan en krijgt de mens de feedback terug.
+    De herscoreslag is time-out-beschermd: als de LLM (Claude/Hermes) in quota-backoff
+    hangt, wordt de body wél opgeslagen en krijgt de caller scored=False terug i.p.v.
+    dat de request eeuwig blijft hangen.
+    """
+    import asyncio
+    job = get_job(job_id)
+    if not job:
+        raise ValueError("Content-job niet gevonden.")
+    html_body = (html_body or "").strip()
+    if len(html_body) < 80:
+        raise ValueError("Body te kort — plak de volledige (verbeterde) HTML terug.")
+
+    site = sites_service.get_site(job["site_id"]) or {}
+    from ...shared.config import CONTENT_MIN_SCORE
+    title = _extract_title(html_body, fallback=job["title"])
+    slug = slugify_title(title)
+    # Body altijd eerst terugschrijven, ongeacht of scoren lukt.
+    _update_job(job_id, title=title, blog_html=html_body, slug=slug, reviewed_at=_now())
+
+    scored = False
+    score = int(float(job.get("seo_score") or 0))
+    feedback = ""
+    try:
+        review = await asyncio.wait_for(
+            _review_article(site, job["keyword"], html_body), timeout=45)
+        score = int(review["score"])
+        feedback = review.get("feedback", "")
+        scored = True
+    except Exception as e:  # timeout, quota-403, lege response — niet blokkeren
+        logger.warning("[content-pipeline] Handmatig-edit scoren overgeslagen voor job %s: %s",
+                       job_id, str(e)[:160])
+        feedback = ("Scoren mislukt (LLM tijdelijk niet bereikbaar — waarschijnlijk "
+                    "quota-backoff). Body is opgeslagen; klik later opnieuw op "
+                    "'Handmatig aanpassen' → 'Opslaan' om alsnog te scoren.")
+
+    passed = scored and score >= CONTENT_MIN_SCORE
+    status = "pending_review" if passed else "needs_work"
+    _update_job(job_id, seo_score=score, status=status)
+    if scored:
+        if passed:
+            _log_activity(
+                site.get("name", "?"), "content-handmatig-verbeterd",
+                f"'{title}' handmatig aangepast en haalt nu de grens ({score} ≥ {CONTENT_MIN_SCORE}) — klaar om te publiceren.",
+                artifact=job_id, status="ok",
+            )
+        else:
+            _log_activity(
+                site.get("name", "?"), "content-handmatig-verbeterd",
+                f"'{title}' handmatig aangepast maar zit nog onder de grens ({score} < {CONTENT_MIN_SCORE}). Feedback: {feedback[:160]}",
+                artifact=job_id, status="error",
+            )
+    return {"job_id": job_id, "score": score, "passed": passed, "scored": scored,
+            "feedback": feedback, "status": status}

@@ -7,13 +7,14 @@ menselijke goedkeuring voordat er iets live/gepost wordt.
   POST /api/content-queue/{id}/approve     → publiceer + post naar alle geconfigureerde platformen
   POST /api/content-queue/{id}/reject      → afwijzen, geen actie
   POST /api/content-queue/{id}/regenerate  → herschrijf hetzelfde onderwerp opnieuw
+  POST /api/content-queue/{id}/save-manual-edit → sla handmatig (Claude/Gemini) bewerkte body op + herscore
   POST /api/content-queue/run-now          → (handmatig) draai de auto-content-generatie nu voor 1 site
 """
 import json
 import logging
-from typing import Optional
+from typing import Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 
 from ..publish import content_pipeline
 from ..seo import sites as sites_service
@@ -103,6 +104,20 @@ async def regenerate_content_job(job_id: str):
         raise HTTPException(500, detail=str(e)[:300])
 
 
+@router.post("/{job_id}/save-manual-edit")
+async def save_manual_edit_job(job_id: str, body: Dict = Body(...)):
+    """Sla een handmatig (in Claude/Gemini of inline) bewerkte body terug op en
+    laat 'm opnieuw scoren. Bij >= grens wordt de job 'pending_review'."""
+    try:
+        result = await content_pipeline.save_manual_edit(job_id, body.get("html_body", ""))
+        return {"success": True, **result}
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+    except Exception as e:
+        logger.exception("Handmatig-edit opslaan mislukt voor job %s", job_id)
+        raise HTTPException(500, detail=str(e)[:300])
+
+
 @router.post("/run-now")
 async def run_now(site_id: str = Query(...), count: Optional[int] = Query(None, ge=1, le=10)):
     """Handmatig een content-batch draaien voor 1 site (buiten het 2x/week-schema
@@ -118,3 +133,70 @@ async def run_now(site_id: str = Query(...), count: Optional[int] = Query(None, 
     except Exception as e:
         logger.exception("run-now mislukt voor site %s", site_id)
         raise HTTPException(500, detail=str(e)[:300])
+
+
+def _project_for_job(job: dict) -> str:
+    """Project-naam achterhalen: site.name == project-naam (bv. 'bewaardvoorjou')."""
+    site = sites_service.get_site(job.get("site_id")) or {}
+    return (site.get("name") or job.get("site_id") or "").lower()
+
+
+@router.post("/{job_id}/multiply")
+async def multiply_content_job(job_id: str):
+    """Draai de Content Multiplier voor een gepubliceerd artikel: social-pack
+    (alle platforms) + 9:16-video, alles achter de review-gates. Synchroon —
+    de video-render kan even duren, maar je krijgt het volledige verslag terug."""
+    from ..publish import multiplier
+    try:
+        result = await multiplier.multiply_job(job_id)
+        return {"success": True, "result": result}
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+    except Exception as e:
+        logger.exception("Multiplier mislukt voor job %s", job_id)
+        raise HTTPException(500, detail=str(e)[:300])
+
+
+@router.post("/{job_id}/make-video")
+def make_job_video(job_id: str):
+    """Maak een korte verticale video vánuit dit blogartikel.
+
+    De agent schrijft een eigen spreekbaar script op basis van het blog, Pexels
+    levert het beeld, en de video wordt opgeslagen + teruggekoppeld als
+    SocialPack (verschijnt in Social Creatie).
+    """
+    job = content_pipeline.get_job(job_id)
+    if not job:
+        raise HTTPException(404, detail="Content-job niet gevonden")
+    project = _project_for_job(job)
+    if not project:
+        raise HTTPException(400, detail="Kan geen project koppelen aan deze job")
+    from ...shared import blog_video
+    try:
+        result = blog_video.make_blog_video(
+            job_id, project, job.get("title", ""), job.get("blog_html") or ""
+        )
+    except Exception as e:
+        logger.exception("Blog-video mislukt voor job %s", job_id)
+        raise HTTPException(500, detail=str(e)[:300])
+    if not result.get("success"):
+        raise HTTPException(500, detail=result.get("error", "onbekende fout"))
+    return result
+
+
+@router.get("/{job_id}/video")
+def get_job_video(job_id: str):
+    """Stream de gegenereerde video voor dit blog (404 als er nog geen is)."""
+    from ...shared import blog_video as bv
+    from fastapi.responses import FileResponse
+    job = content_pipeline.get_job(job_id)
+    if not job:
+        raise HTTPException(404, detail="Content-job niet gevonden")
+    rel = job.get("video_path") or ""
+    if not rel:
+        raise HTTPException(404, detail="Nog geen video voor dit blog")
+    path = bv._REPO / rel
+    if not path.exists():
+        raise HTTPException(404, detail="Videobestand niet gevonden")
+    return FileResponse(str(path), media_type="video/mp4",
+                        filename=f"blog_{job_id}.mp4")
