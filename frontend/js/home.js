@@ -571,7 +571,7 @@ function runIrisNow() {
 // Vincent keurt per stuk: goedkeuren (apply) of wijzen (reject).
 function _irisSugIcon(type) {
   return ({content_run:'✎', seo_refresh:'⤴', outreach_run:'✉',
-           goal_draft:'🎯', gsc_connect:'🔌'})[type] || '⚙';
+           lead_search_run:'🔍', goal_draft:'🎯', gsc_connect:'🔌'})[type] || '⚙';
 }
 function _irisSugStatusLabel(s) {
   return ({pending:'Wacht op jou', approved:'Goedgekeurd',
@@ -680,6 +680,25 @@ function acBulkDrafts(btn, mode) {
   next(0);
 }
 
+// Toon een blokkerende deel-instructie (bijv. agenda-agent weigert te boeken
+// omdat conflict_checked != 'ok') IN de Actiecentrum-kaart, zodat de gebruiker
+// leest wát er aan de hand is — niet alleen een 502 in de console.
+function showCalendarInstruction(btn, msg) {
+  if (!btn) return;
+  var card = btn.closest('[id^="ac-item-"]');
+  if (!card) return;
+  var existing = card.querySelector('.ac-instruction');
+  if (existing) existing.remove();
+  var box = document.createElement('div');
+  box.className = 'ac-instruction';
+  box.style.cssText = 'margin-top:8px;padding:8px 10px;background:#fff7ed;border:1px solid #fdba74;' +
+    'border-radius:8px;font-size:12px;color:#9a3412;line-height:1.45';
+  box.textContent = '⚠ ' + (msg || '');
+  // zet het blokje ónder de knoppenrij (de eerste .actions-div, of direct in de card-body)
+  var body = card.querySelector('div[style*="flex:1"]') || card;
+  body.appendChild(box);
+}
+
 function acAction(btn, action, project) {
   var type = action.type;
   if (type === 'open_tab') {
@@ -691,8 +710,24 @@ function acAction(btn, action, project) {
   }
   if (btn) { btn.disabled = true; btn.textContent = 'Bezig...'; }
   var done = function(){ loadActionCenter(); loadActivityLogs(); };
-  var fail = function(e){ if (btn) { btn.disabled = false; btn.textContent = 'Mislukt — opnieuw'; } console.error('[Actiecentrum]', e); };
-  var post = function(url, body){ return fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined }).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }); };
+  var fail = function(e){
+    if (btn) { btn.disabled = false; btn.textContent = 'Mislukt — opnieuw'; }
+    // Toon de foutmelding ook inline (niet alleen console): post() stopt de
+    // FastAPI-`detail` in e.message, dus de gebruiker leest wát er stuk is in
+    // plaats van blind "Mislukt — opnieuw" te zien en te blijven klikken.
+    if (btn && e && e.message) {
+      var card = btn.closest('[id^="ac-item-"]');
+      if (card) {
+        var body = card.querySelector('div[style*="flex:1"]') || card;
+        var box = body.querySelector('.ac-inline-error');
+        if (!box) { box = document.createElement('div'); box.className = 'ac-inline-error';
+          box.style.cssText = 'margin-top:8px;padding:6px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#991b1b;line-height:1.4';
+          body.appendChild(box); }
+        box.textContent = '❌ ' + e.message;
+      }
+    }
+    console.error('[Actiecentrum]', e);
+  };
 
   if (type === 'goal_confirm_start') {
     post('/api/goals/confirm', { goal_id: action.id })
@@ -736,6 +771,26 @@ function acAction(btn, action, project) {
   } else if (type === 'mail_reject') {
     if (!confirm('Concept afwijzen? Wordt niet verstuurd.')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
     post('/api/mail/reply/' + encodeURIComponent(action.id) + '/reject').then(done).catch(fail);
+  } else if (type === 'mail_ignore_sender') {
+    if (!confirm('Niet meer reageren op deze afzender? Alle openstaande concepten van deze afzender worden afgewezen en toekomstige mails krijgen nooit meer een concept-antwoord.')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
+    post('/api/mail/reply/' + encodeURIComponent(action.id) + '/ignore-sender').then(done).catch(fail);
+  } else if (type === 'calendar_approve') {
+    if (!confirm('Afspraak in Google Agenda planen? (incl. reistijd/conflict-check)')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
+    post('/api/calendar/proposals/approve', JSON.stringify({ proposal_id: action.id }), 'application/json')
+      .then(function(d){
+        if (d && d.ok) { done(d); return; }
+        // Bewust geblokkeerd (conflict_checked != 'ok') of geweigerd: toon de
+        // deel-instructie IN de kaart, gooi hem niet naar de console. De knop
+        // wordt een neutraal "Begrijp ik" i.p.v. "Mislukt — opnieuw" — het is
+        // geen systeemfout, dus opnieuw klikken lost niets op en verwart.
+        if (btn) { btn.textContent = 'Begrijp ik'; btn.disabled = false; btn.onclick = function(){ var c = btn.closest('[id^="ac-item-"]'); if (c) { var b = c.querySelector('.ac-instruction'); if (b) b.remove(); } }; }
+        showCalendarInstruction(btn, (d && d.error) || 'Goedkeuren geweigerd door de agenda-agent.');
+      })
+      .catch(fail);
+  } else if (type === 'calendar_reject') {
+    if (!confirm('Afspraak-voorstel weigeren?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
+    post('/api/calendar/proposals/reject', JSON.stringify({ proposal_id: action.id }), 'application/json')
+      .then(done).catch(fail);
   } else if (type === 'mail_edit') {
     acMailEdit(btn, action); return;
   } else {

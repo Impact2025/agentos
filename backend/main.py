@@ -39,6 +39,7 @@ from .domains.chat import journeys_router
 from .domains.pipeline import router as tasks_router
 from .domains.pipeline import profiles as agent_profiles_router
 from .domains.prospecting import router as leads_router
+from .domains.linkbuilding import router as linkbuilding_router
 from .domains.vacancies import router as vacancies_router
 from .domains.seo import router as demand_router
 from .domains.seo import sites_router
@@ -58,6 +59,7 @@ from .domains.projects import router as projects_router
 from .domains.projects import weareimpact  # noqa — activity/content/blog routes
 from .domains.projects.weareimpact import activity_router
 from .domains.goal import router as goal_router
+from .domains.learning import router as learning_router
 from .domains.health import router as health_router
 from .infinite_context import router as infinite_context_router
 from .domains.strategist import router as strategist_router
@@ -65,6 +67,7 @@ from .domains.seo import optimizer as seo_optimizer
 from .domains.radar import router as radar_router
 from .domains.action_center import router as action_center_router
 from .domains.iris import router as iris_router
+from .domains.researcher import router as researcher_router
 from .domains.auth import router as auth_router
 from .domains.auth import service as auth_service
 
@@ -147,6 +150,20 @@ from .domains.auth import service as _auth_service  # noqa: E402
 async def auth_guard_middleware(request: Request, call_next):
     return await _auth_service.auth_guard(request, call_next)
 
+
+@app.middleware("http")
+async def static_no_cache_middleware(request: Request, call_next):
+    # Zonder Cache-Control past de browser heuristische caching toe op de
+    # frontend-bestanden en draait een gebruiker na een deploy nog dagen oude
+    # JS (knoppen die niet meer bestaan, oude flows). no-cache = altijd even
+    # hervalideren; ongewijzigde bestanden blijven een goedkope 304.
+    response = await call_next(request)
+    path = request.url.path
+    if not path.startswith("/api/") and (
+            path.endswith((".js", ".css", ".html")) or path in ("/", "")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
 # ── Monteer alle domein-routers ─────────────────────────────────────────────
 app.include_router(chat_router.router)
 app.include_router(sessions_router.router)
@@ -158,6 +175,8 @@ app.include_router(agent_profiles_router.router)
 app.include_router(delegate_router.router)
 app.include_router(loops_router.router)
 app.include_router(leads_router.router)
+app.include_router(learning_router.router)
+app.include_router(linkbuilding_router.router)
 app.include_router(vacancies_router.router)
 app.include_router(demand_router.router)
 app.include_router(sites_router.router)
@@ -181,11 +200,14 @@ app.include_router(seo_optimizer.router)
 app.include_router(radar_router.router)
 app.include_router(action_center_router.router)
 app.include_router(iris_router.router)
+app.include_router(researcher_router.router)
 app.include_router(auth_router.router)
 from .domains.mail import router as mail_router
 app.include_router(mail_router.router)
 from .domains.calendar import router as calendar_router
 app.include_router(calendar_router.router)
+from .domains.bridge import router as bridge_router
+app.include_router(bridge_router.router)
 
 
 # ── Status / health endpoints ──────────────────────────────────────────────

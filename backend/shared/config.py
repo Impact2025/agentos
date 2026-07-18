@@ -15,6 +15,9 @@ CLAUDE_MODEL_2: str = os.getenv("CLAUDE_MODEL_2", "claude-haiku-4-5-20251001")
 HERMES_LOCAL_URL: str = os.getenv("HERMES_LOCAL_URL", "")
 HERMES_LOCAL_KEY: str = os.getenv("HERMES_LOCAL_KEY", "")
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+AGNES_API_KEY: str = os.getenv("AGNES_API_KEY", "")
+AGNES_BASE_URL: str = os.getenv("AGNES_BASE_URL", "https://apihub.agnes-ai.com/v1")
+AGNES_MODEL: str = os.getenv("AGNES_MODEL", "agnes-2.0-flash")
 
 # OpenModel.ai — Anthropic-compatible gateway (DeepSeek V4 Flash e.a.)
 OPENMODEL_API_KEY: str = os.getenv("OPENMODEL_API_KEY", "")
@@ -28,6 +31,11 @@ OPENMODEL_MODEL: str = os.getenv("OPENMODEL_MODEL", "deepseek-v4-flash")
 # pad, zet dan expliciet OPENMODEL_SMART_MODEL=claude-sonnet-4-6 in .env.
 OPENMODEL_SMART_MODEL: str = os.getenv("OPENMODEL_SMART_MODEL", "deepseek-v4-flash")
 HERMES_MODEL: str = os.getenv("HERMES_MODEL", "meta-llama/llama-3.1-8b-instruct")
+
+# Pexels (gratis stock-foto's/video voor video-footage). Geen creditcard.
+# Haal een key op via https://www.pexels.com/api/ (gratis account, email + naam)
+# en zet hem hier. Zonder key valt de video-render terug op lokale foto's / merk-slides.
+PEXELS_API_KEY: str = os.getenv("PEXELS_API_KEY", "")
 # Fallback-modellen (OpenRouter) waar de agent naartoe schakelt bij een 429
 # (rate-limit) op het primaire HERMES_MODEL. Komma-gescheiden, in volgorde van
 # voorkeur. Alleen relevant voor de openrouter-backend.
@@ -48,6 +56,9 @@ OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "")
 OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "hermes3")
 
 TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
+# Fallback-zoekprovider (Brave Search API) — springt bij als Tavily faalt of
+# zijn quota op is, zodat radar/leads/websearch niet stilvallen op één provider.
+BRAVE_SEARCH_API_KEY: str = os.getenv("BRAVE_SEARCH_API_KEY", "")
 HUNTER_API_KEY: str = os.getenv("HUNTER_API_KEY", "")
 
 # Netlify publisher — globale fallback-token (Personal Access Token). Per site kun
@@ -55,6 +66,29 @@ HUNTER_API_KEY: str = os.getenv("HUNTER_API_KEY", "")
 NETLIFY_TOKEN: str = os.getenv("NETLIFY_TOKEN", "")
 
 OBSIDIAN_VAULT_PATH: str = os.getenv("OBSIDIAN_VAULT_PATH", "")
+
+# ── NotebookLM MCP (onderzoek-agent) ───────────────────────────────
+# Spreekt de lokaal gedraaide `notebooklm-mcp`-server aan in HTTP-modus
+# (start hem vanuit agentos_service.cmd op NOTEBOOKLM_PORT). De server
+# drijft een echte Chrome en laat ons RAG-onderzoek doen tegen onze
+# eigen notebooks, bronnen injecteren en Audio Overviews genereren.
+# Zie backend/tools/notebooklm.py en backend/domains/researcher/.
+NOTEBOOKLM_BASE_URL: str = os.getenv(
+    "NOTEBOOKLM_BASE_URL", "http://127.0.0.1:3137"
+)
+NOTEBOOKLM_TIMEOUT: int = int(os.getenv("NOTEBOOKLM_TIMEOUT", "120"))
+# Of de onderzoek-agent aanstaat (scheduler + API). Zet op "0" om hem
+# te pauzeren zonder code te raken.
+NOTEBOOKLM_ENABLED: bool = os.getenv("NOTEBOOKLM_ENABLED", "1") == "1"
+# Default-notebook per project (id uit library.json van notebooklm-mcp).
+# Wordt gebruikt als een research-vraag geen explicit notebook noemt.
+# LET OP (2026-07-13): de SEO-notebooks in library.json (weareimpact-seo-research,
+# bewaardvoorjou-seo-content) geven "Request access" — dit account heeft er geen
+# toegang toe. Tijdelijk op de podcast gezet (bewezen werkend) tot Vincent de
+# juiste, gedeelde SEO-notebook-URL's levert. Zie NOTES in researcher/service.py.
+NOTEBOOKLM_DEFAULT_NOTEBOOK: str = os.getenv(
+    "NOTEBOOKLM_DEFAULT_NOTEBOOK", "weareimpact-podcast"
+)
 
 # Google Analytics 4
 GA4_PROPERTY_ID: str = os.getenv("GA4_PROPERTY_ID", "")
@@ -83,6 +117,22 @@ REPORT_EMAIL_TO: str = os.getenv("REPORT_EMAIL_TO", "v.munster@weareimpact.nl")
 # en het service-account moet Owner zijn in Search Console. De nette route
 # (sitemap-submit bij GSC) staat altijd aan.
 GOOGLE_INDEXING_ENABLED: bool = os.getenv("GOOGLE_INDEXING_ENABLED", "0") == "1"
+
+# Content Multiplier: na 'Goedkeuren & publiceren' automatisch de format-waaier
+# genereren uit het artikel (social-pack voor alle platforms + 9:16-video).
+# Alles landt achter de bestaande review-gates (pending_review) — er wordt
+# nooit automatisch gepost. Default aan; uitzetten bij LLM-budgetzorgen.
+CONTENT_MULTIPLIER_ENABLED: bool = os.getenv("CONTENT_MULTIPLIER_ENABLED", "1") == "1"
+
+# ── Bridge: cloud-companion (Vercel + Neon) ─────────────────────────────
+# De bridge spiegelt de review-gates naar een klein cloud-app zodat Vincent
+# onderweg (of met de pc uit) kan goedkeuren/afwijzen; besluiten worden bij de
+# eerstvolgende sync hier lokaal uitgevoerd via dezelfde servicefuncties als de
+# UI-knoppen. Pull-model: alleen uitgaand HTTPS, geen open poorten. Leeg laten
+# = bridge uit (de sync-job slaat dan stil over). Zie remote/README.md.
+BRIDGE_REMOTE_URL: str = os.getenv("BRIDGE_REMOTE_URL", "")
+BRIDGE_TOKEN: str = os.getenv("BRIDGE_TOKEN", "")
+BRIDGE_SYNC_MINUTES: int = int(os.getenv("BRIDGE_SYNC_MINUTES", "3"))
 
 # Kwaliteitsgate voor content (0-100): onder deze score komt een artikel niet
 # in de Wachtrij als publiceerbaar en weigert de publish-API. De pipeline
@@ -128,7 +178,7 @@ ANTHROPIC_OUTPUT_COST_PER_MTOK: float = float(os.getenv("ANTHROPIC_OUTPUT_COST_P
 
 # Waarschuw (log-WARN + activiteit) zodra het geschatte dagverbruik deze grens
 # overschrijdt — vóórdat de echte quota hard tegen de limiet aanloopt.
-DAILY_TOKEN_BUDGET: int = int(os.getenv("DAILY_TOKEN_BUDGET", "600000"))
+DAILY_TOKEN_BUDGET: int = int(os.getenv("DAILY_TOKEN_BUDGET", "3000000"))
 
 # Zelf-uitlijnende quota-rem: na een harde 403 "quota exceeded" van de provider
 # pauzeren autonome LLM-runs deze periode vanzelf (de provider is de bron van
@@ -147,6 +197,16 @@ AEO_AUTO_ATTACK: bool = os.getenv("AEO_AUTO_ATTACK", "1") == "1"
 AEO_AUTO_MIN_SCORE: float = float(os.getenv("AEO_AUTO_MIN_SCORE", "75"))
 # Maximaal aantal auto-AEO-aanvallen per scan-run (kosten/overload-beheersing).
 AEO_AUTO_MAX_PER_SCAN: int = int(os.getenv("AEO_AUTO_MAX_PER_SCAN", "3"))
+# Minimale WERKENDE relevantiescore (ai_match_score) voordat de agent autonoom
+# aanvalt. Een hoge signaal-score op louter versheid + keyword-boost is geen
+# bewijs van topische fit; zonder een aantoonbaar relevant onderwerp mag de
+# agent nooit zelfstandig de Wachtrij in. -1 (onbekend/gefaald) telt als NIET
+# gehaald. Zet op 0 om deze rem uit te schakelen (oud gedrag).
+AEO_AUTO_MIN_MATCH: float = float(os.getenv("AEO_AUTO_MIN_MATCH", "60"))
+# NB: bewust GEEN "sterke match overrulet de score"-drempel. Zolang het
+# match-model bijna alles 85-95 stempelt (ongecalibreerd), zou zo'n uitzondering
+# off-topic ruis met een toevallig hoge match terug de Wachtrij in laten. Pas
+# invoeren als ai_match_score aantoonbaar discrimineert.
 
 # ── Lokale fallback ──────────────────────────────────────────────────────
 # Als de primaire Hermes-backend faalt (geen API-key, timeout, 429-exhaust),
@@ -159,6 +219,13 @@ HERMES_LOCAL_FALLBACK: bool = os.getenv("HERMES_LOCAL_FALLBACK", "1") == "1"
 # elke werkdag klaarzet ter review. Er wordt NOOIT automatisch verstuurd —
 # versturen gebeurt alleen na expliciete goedkeuring in het Actiecentrum.
 OUTREACH_DAILY_TARGET: int = int(os.getenv("OUTREACH_DAILY_TARGET", "10"))
+
+# Linkbuilding: wekelijkse batch link-outreach-concepten die de agent klaarzet
+# ter review, plus de kwalificatiedrempel (LLM-relevantiescore 0-100) waaronder
+# een gevonden linkkans niet in de funnel komt. Er wordt NOOIT automatisch
+# verstuurd — versturen kan alleen via de approve-knop in het Actiecentrum.
+LINKBUILD_WEEKLY_TARGET: int = int(os.getenv("LINKBUILD_WEEKLY_TARGET", "10"))
+LINKBUILD_MIN_SCORE: int = int(os.getenv("LINKBUILD_MIN_SCORE", "60"))
 
 BASE_DIR = Path(__file__).parent.parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -179,22 +246,33 @@ def anthropic_configured() -> bool:
 def hermes_backend() -> str:
     """Returns which backend Hermes will use based on configured env vars.
 
-    Volgorde: lokaal > OpenModel (deepseek-v4-flash, primair/goedkoop) >
-    Ollama (lokaal llama3.1, gratis backup) > OpenRouter > Anthropic.
-    Als de OpenModel-provider recent 403 quota zei, slaan we OpenModel over en
-    vallen we meteen terug op Ollama — zo blijven de agents draaien zonder
-    dure cloud-tokens te verbranden (incident 2026-07-10/11)."""
+    Volgorde: OpenModel (deepseek-v4-flash, primair) > lokaal/Ollama (gratis
+    vangnet) > OpenRouter > Agnes > Anthropic.
+
+    OpenModel/deepseek staat bewust vóór de local/Ollama-tier: die 'local'-tier
+    wijst in de praktijk naar de Ollama-endpoint (llama3.1), een veel zwakker
+    model. Met local eerst belandde ál het bulk/tool-werk op Ollama en werd
+    deepseek nooit aangesproken (incident 2026-07-15). Nu is deepseek standaard
+    voor het agent-pad, gelijk aan het denk-pad (claude.py).
+
+    De quota-rem blijft het kostenvangnet: zegt de gateway 403 quota, dan slaan
+    we OpenModel over en zakken we naar de gratis lokale Ollama-tier — zo blijven
+    de agents draaien zonder dure cloud-tokens te verbranden (incident
+    2026-07-10/11). Zonder local/Ollama proberen we OpenModel alsnog (laatste
+    kans), dan OpenRouter/Agnes/Anthropic."""
     from .outcomes import llm_quota_backoff_active
-    if HERMES_LOCAL_URL and HERMES_LOCAL_KEY:
-        return "local"
     if OPENMODEL_API_KEY and not llm_quota_backoff_active():
         return "openmodel"
+    if HERMES_LOCAL_URL and HERMES_LOCAL_KEY:
+        return "local"
     if OLLAMA_BASE_URL:
         return "ollama"
     if OPENMODEL_API_KEY:
         return "openmodel"  # laatste poging ondanks quota-backoff
     if OPENROUTER_API_KEY:
         return "openrouter"
+    if AGNES_API_KEY:
+        return "agnes"  # allerlaatste fallback — nooit primair
     return "anthropic"
 
 
@@ -220,7 +298,17 @@ CALENDAR_SERVICE_ACCOUNT_PATH: str = (
     os.getenv("CALENDAR_SERVICE_ACCOUNT_PATH", "") or GSC_SERVICE_ACCOUNT_PATH
 )
 CALENDAR_SUB: str = os.getenv("CALENDAR_SUB", "")
+# Schrijf-agenda: hier landen goedgekeurde afspraak-voorstellen.
 CALENDAR_CALENDAR_ID: str = os.getenv("CALENDAR_CALENDAR_ID", "primary")
+# Lees-agenda's voor conflict-detectie (komma-gescheiden). Bewust los van de
+# schrijf-agenda: de agent schrijft naar zijn eigen agenda, maar "is dit slot
+# vrij?" moet óók Vincents persoonlijke agenda meenemen — anders plant hij
+# vrolijk bovenop een klantafspraak die hij niet kan zien. Leeg = alleen de
+# schrijf-agenda (en dan is de conflict-check dus zo blind als die agenda).
+CALENDAR_BUSY_CALENDAR_IDS: list = [
+    c.strip() for c in os.getenv("CALENDAR_BUSY_CALENDAR_IDS", "").split(",")
+    if c.strip()
+] or [CALENDAR_CALENDAR_ID]
 
 # Microsoft Outlook / Graph API
 # Registreer een Azure AD app (portal.azure.com > App registrations) met:
@@ -241,6 +329,29 @@ FACEBOOK_PAGE_TOKEN: str = os.getenv("FACEBOOK_PAGE_TOKEN", "")
 # Instagram — Graph API content publishing via een aan de Facebook-pagina gekoppeld
 # Business/Creator-account. Gebruikt hetzelfde page-token als Facebook.
 INSTAGRAM_BUSINESS_ID: str = os.getenv("INSTAGRAM_BUSINESS_ID", "")
+
+# Canva Connect API (server-to-server design-aanmaak). Vereist een OAuth-app
+# met client_id + client_secret + een refresh-token uit de éénmalige browser-
+# flow. LET OP: CANVA_APP_ID / CANVA_APP_ORIGIN / CANVA_HMR_ENABLED zijn de
+# Canva *Apps SDK* vars en werken NIET voor Connect — die zijn voor het bouwen
+# van een app binnen de Canva-editor, niet voor backend-design-creatie.
+CANVA_CLIENT_ID: str = os.getenv("CANVA_CLIENT_ID", "")
+CANVA_CLIENT_SECRET: str = os.getenv("CANVA_CLIENT_SECRET", "")
+CANVA_REFRESH_TOKEN: str = os.getenv("CANVA_REFRESH_TOKEN", "")
+# OAuth-redirect-URI — moet exact overeenkomen met wat je in de Canva
+# Connect-app hebt ingevuld (developer.canva.com > je app > OAuth redirect).
+CANVA_REDIRECT_URI: str = os.getenv("CANVA_REDIRECT_URI", "https://www.canva.com/design/")
+# Brand-Template Autofill: het ID van JE vaste 'Insta/FB advertenties'-template
+# (moet een Canva Brand Template zijn waarvan de tekstvelden als data-veld
+# zijn gemarkeerd). Zonder dit maakt Canva Connect alleen een LEEG poster-design.
+CANVA_BRAND_TEMPLATE_ID: str = os.getenv("CANVA_BRAND_TEMPLATE_ID", "")
+# Optioneel: map van brief-veld -> Canva data-veldnaam (komma-gescheiden "k=v").
+# Zonder dit: headline->Headline, subtext->Subtext.
+CANVA_TEMPLATE_FIELDS: str = os.getenv(
+    "CANVA_TEMPLATE_FIELDS", "headline=Headline,subtext=Subtext"
+)
+# Optioneel: zet nieuwe designs in deze Canva-folder (folder-id).
+CANVA_FOLDER_ID: str = os.getenv("CANVA_FOLDER_ID", "")
 
 # X (Twitter) — API v2, OAuth 1.0a user-context (nodig voor POST /2/tweets).
 TWITTER_API_KEY: str = os.getenv("TWITTER_API_KEY", "")

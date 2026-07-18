@@ -60,14 +60,37 @@ def _now() -> str:
 
 
 def _resolve_model_override(profile_model: Optional[str]) -> Optional[str]:
-    """Vertaal een profiel-model naar een waarde die de actieve backend snapt.
-    (Zelfde logica als de conveyor: alleen OpenRouter krijgt een override.)"""
+    """Profielmodel → bare model-string die de cloud-gateway snapt.
+
+    Geeft de model-string terug (eventuele 'openrouter/'-prefix gestript)
+    zodra een cloud-sleutel aanwezig is — ongeacht welke backend de app
+    standaard gebruikt. run_agent routeert automatisch naar de juiste
+    cloud-backend (zie _cloud_backend_for_model), dus een 'pro'-profiel
+    (claude-sonnet-4-6 via OpenModel) wordt echt gehonoreerd i.p.v. op het
+    goedkope default-model te vallen. Bij geen profielmodel/sleutel → None."""
     if not profile_model:
         return None
     model = profile_model.strip()
-    if hermes_backend() == "openrouter":
-        return model[len("openrouter/"):] if model.startswith("openrouter/") else model
-    return None
+    if model.startswith("openrouter/"):
+        from ...shared.config import OPENROUTER_API_KEY
+        return model[len("openrouter/"):] if OPENROUTER_API_KEY else None
+    from ...shared.config import OPENMODEL_API_KEY
+    return model if OPENMODEL_API_KEY else None
+
+
+def _profile_backend(profile_model: Optional[str]) -> Optional[str]:
+    """Legacy helper — wordt niet meer gebruikt sinds run_agent auto-route doet.
+    Bestaat nog voor backwards-compat met oudere aanroepers; geeft de cloud-
+    backend terug als het profiel een cloud-model noemt én de sleutel aanwezig
+    is, anders None (standaard-backend)."""
+    if not profile_model:
+        return None
+    model = profile_model.strip()
+    if model.startswith("openrouter/"):
+        from ...shared.config import OPENROUTER_API_KEY
+        return "openrouter" if OPENROUTER_API_KEY else None
+    from ...shared.config import OPENMODEL_API_KEY
+    return "openmodel" if OPENMODEL_API_KEY else None
 
 
 # ── Shared memory / brand brief (Obsidian) ───────────────────────────────────
@@ -175,6 +198,9 @@ async def _run_worker(delegation_id: str, objective: str, brand_brief: str, work
     profile = get_agent_profile(worker.get("profile_id"))
     base_prompt = (profile.get("system_prompt") if profile else "") or DEFAULT_WORKER_PROMPT
     model_override = _resolve_model_override(profile.get("model") if profile else None)
+    # Als het profiel een cloud-model noemt, forceer dan die cloud-backend —
+    # anders draait een 'pro'-profiel stilzwijgend op de lokale Ollama-default.
+    backend_override = _profile_backend(profile.get("model") if profile else None)
     system_prompt = base_prompt
     if brand_brief:
         system_prompt += "\n\n" + brand_brief
@@ -206,6 +232,7 @@ async def _run_worker(delegation_id: str, objective: str, brand_brief: str, work
             agent="hermes",
             model_override=model_override,
             use_tools=worker.get("use_tools", False),
+            backend_override=backend_override,
         ):
             etype = event.get("type")
             if etype == "error":

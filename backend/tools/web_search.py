@@ -1,7 +1,6 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from .base import Tool, ToolResult
-from ..shared.config import TAVILY_API_KEY
 
 _executor = ThreadPoolExecutor(max_workers=4)
 
@@ -29,15 +28,12 @@ class WebSearchTool(Tool):
         return result
 
     def _search(self, query: str, max_results: int) -> ToolResult:
-        if not TAVILY_API_KEY:
-            return ToolResult(self.name, "Geen TAVILY_API_KEY geconfigureerd in .env", error=True)
+        from ..shared import websearch
         try:
-            from tavily import TavilyClient
-            client = TavilyClient(api_key=TAVILY_API_KEY)
-            response = client.search(query=query, max_results=max_results, search_depth="advanced")
+            results = websearch.search(query, max_results=max_results)
             hits = [
-                f"**{r['title']}**\n{r['content']}\nBron: {r['url']}"
-                for r in response.get("results", [])
+                f"**{r['title']}**\n{r['snippet']}\nBron: {r['url']}"
+                for r in results
             ]
             if not hits:
                 return ToolResult(self.name, f"Geen zoekresultaten voor '{query}'.")

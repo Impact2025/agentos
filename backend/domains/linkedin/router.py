@@ -27,12 +27,14 @@ async def linkedin_test(body: dict = {"site_name": None}):
     """Test de LinkedIn verbinding voor een specifieke site."""
     site_name = body.get("site_name") if isinstance(body, dict) else None
     try:
-        member_id = await linkedin_service.get_member_id(site_name)
+        author_urn = await linkedin_service.get_author_urn(site_name)
+        member_id = author_urn.split(":")[-1]
         token, _ = linkedin_service._get_site_data(site_name)
         return {
             "success": True,
+            "author_urn": author_urn,
+            "urn_type": "openid" if not member_id.isdigit() else "member",
             "member_id": member_id,
-            "author_urn": f"urn:li:member:{member_id}",
             "site_name": site_name,
             "token_prefix": token[:8] + "..." if token else "geen",
         }
@@ -54,5 +56,14 @@ async def linkedin_post(body: dict):
         if result.get("success"):
             return result
         raise HTTPException(400, detail=result.get("error", "Onbekende fout"))
+    except Exception as e:
+        raise HTTPException(400, detail=str(e)[:300])
+
+
+@router.get("/posts")
+async def linkedin_posts(site_name: Optional[str] = Query(None), limit: int = Query(20)):
+    """Analyse: haal je eigen recente LinkedIn-posts op mét statistieken."""
+    try:
+        return await linkedin_service.get_my_posts(site_name, limit)
     except Exception as e:
         raise HTTPException(400, detail=str(e)[:300])

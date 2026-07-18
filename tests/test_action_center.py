@@ -102,6 +102,29 @@ def test_mislukte_publish_job_heeft_retry(conn, clean_tables):
     assert any(a["type"] == "content_approve" for a in items[0]["actions"])
 
 
+def test_publish_failed_job_heeft_retry(conn, clean_tables):
+    """'publish_failed' is de status die approve_and_publish écht schrijft.
+
+    De test hierboven zaait 'error' — de oudere naam — waardoor deze sectie
+    jarenlang groen bleef terwijl er in de praktijk niets in de inbox kwam:
+    drie Daar-artikelen faalden in juli 2026 zonder enige melding.
+    """
+    from backend.domains.action_center.service import build_inbox
+
+    _seed_site(conn)
+    conn.execute(
+        "INSERT INTO content_jobs (id, site_id, title, keyword, status, error, created_at) "
+        "VALUES ('job-test-pf', 'site-x', 'Daar-artikel', 'kw', 'publish_failed', "
+        "'Geen DAAR_PUBLISH_URL/_PUBLISH_KEY', datetime('now'))"
+    )
+    conn.commit()
+
+    items = [i for i in build_inbox()["items"] if i["id"] == "job-test-pf"]
+    assert len(items) == 1, "publish_failed-job hoort in het Actiecentrum te staan"
+    assert items[0]["kind"] == "error"
+    assert any(a["type"] == "content_approve" for a in items[0]["actions"])
+
+
 def test_opgeloste_live_fout_verdwijnt_uit_inbox(conn, clean_tables):
     """Een live-fout gevolgd door een geslaagde 'live' van hetzelfde artikel
     is opgelost en hoort niet meer in de inbox."""

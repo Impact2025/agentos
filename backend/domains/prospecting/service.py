@@ -26,7 +26,7 @@ from ...shared.config import (
     OPENROUTER_API_KEY, HERMES_MODEL, HERMES_FALLBACK_MODELS,
     HERMES_LOCAL_URL, HERMES_LOCAL_KEY,
     OLLAMA_BASE_URL, OLLAMA_MODEL,
-    OBSIDIAN_VAULT_PATH, TAVILY_API_KEY,
+    OBSIDIAN_VAULT_PATH,
     hermes_backend,
 )
 from ...shared.database import get_conn
@@ -189,46 +189,87 @@ class LeadsService:
             except Exception:
                 pass
 
-        self._tavily = None
-        if TAVILY_API_KEY:
-            try:
-                from tavily import TavilyClient
-                self._tavily = TavilyClient(api_key=TAVILY_API_KEY)
-            except Exception:
-                pass
 
     # ── Zoeken ───────────────────────────────────────────────────────────────
 
-    def search_web(self, query: str, max_results: int = 6, include_linkedin: bool = False) -> List[Dict]:
-        """Web search via Tavily. Optioneel: LinkedIn niet uitsluiten."""
-        if not self._tavily:
-            log.warning("[leads] Geen TAVILY_API_KEY geconfigureerd")
-            return []
+    def search_web(self, query: str, max_results: int = 6, include_linkedin: bool = False,
+                   raise_errors: bool = False) -> List[Dict]:
+        """Web search via de gedeelde zoeklaag (Tavily → Brave-fallback).
+        Optioneel: LinkedIn niet uitsluiten. `raise_errors=True` laat een
+        provider-fout (bv. quota op alle providers) doorborrelen — de UI-flows
+        houden het oude stille []-gedrag, agent-flows (Iris) willen luid falen."""
+        from ...shared import websearch
         exclude = [] if include_linkedin else _NOISE_DOMAINS
         try:
-            resp = self._tavily.search(
-                query=query,
-                max_results=max_results + 4,
-                search_depth="advanced",
-                include_answer=False,
-                exclude_domains=exclude,
-            )
-            return [
-                {
-                    "title": r.get("title", ""),
-                    "url": r.get("url", ""),
-                    "snippet": r.get("content", ""),
-                }
-                for r in resp.get("results", [])
-            ][:max_results]
+            return websearch.search(query, max_results=max_results,
+                                    exclude_domains=exclude)
         except Exception as e:
-            log.error("[leads] Tavily fout: %s", e)
+            log.error("[leads] Zoekfout voor '%s': %s", query, e)
+            if raise_errors:
+                raise
             return []
 
     def search_linkedin_people(self, query: str, max_results: int = 6) -> List[Dict]:
         """Zoek LinkedIn-profielen van beslissers in een sector/organisatie."""
         linkedin_query = f"site:linkedin.com/in {query}"
         return self.search_web(linkedin_query, max_results, include_linkedin=True)
+
+    def run_search_batch(self, queries: List[str], lead_type: str = "overig",
+                         max_per_query: int = 4) -> Dict:
+        """Programmatische (niet-SSE) batch-zoekactie — dezelfde keten als de
+        Leads-tab (zoeken → dedupe → scrapen → AI-analyse → Obsidian + DB),
+        maar aanroepbaar door agents zoals Iris' lead_search_run. Een
+        provider-fout op álle queries gooit door, zodat de aanroeper een
+        foutkaart kan loggen i.p.v. stil met 0 leads te eindigen."""
+        found = saved = failed_queries = 0
+        last_error = ""
+        for query in queries:
+            try:
+                results = self.search_web(query, max_per_query, raise_errors=True)
+            except Exception as e:  # noqa: BLE001
+                failed_queries += 1
+                last_error = str(e)[:200]
+                continue
+            results = [r for r in results if not self.is_duplicate(r["url"])]
+            found += len(results)
+            for r in results:
+                try:
+                    scraped = self.scrape_and_enrich(r["url"], r["title"])
+                    analysis = self.analyze_lead(r["title"], r["url"], r["snippet"], scraped)
+                    lead = {
+                        "org_name":    r["title"],
+                        "website":     r["url"],
+                        "summary":     analysis.get("summary", ""),
+                        "contacts":    analysis.get("contacts", []),
+                        "relevance":   analysis.get("relevance", "gemiddeld"),
+                        "tags":        analysis.get("tags", []),
+                        "status":      "new",
+                        "search_query": query,
+                        "lead_type":   lead_type,
+                        "phone":       scraped.get("phone") or analysis.get("phone", ""),
+                        "email":       scraped.get("email") or analysis.get("email", ""),
+                        "address":     scraped.get("address") or scraped.get("address_raw", "")
+                                       or analysis.get("address", ""),
+                        "city":        scraped.get("city") or analysis.get("city", ""),
+                        "postal_code": scraped.get("postal_code") or analysis.get("postal_code", ""),
+                        "kvk_number":  scraped.get("kvk_number") or analysis.get("kvk_number", ""),
+                        "enriched_at": "",
+                        "score":       analysis.get("score", 50),
+                    }
+                    if lead["phone"] or lead["address"] or lead["email"]:
+                        lead["enriched_at"] = _now()
+                        lead["status"] = "enriched"
+                    lead["obsidian_path"] = self.save_to_obsidian(lead) or ""
+                    self.save_to_db(lead)
+                    saved += 1
+                except Exception as e:  # noqa: BLE001
+                    log.warning("[leads] Lead verwerken mislukt (%s): %s", r.get("url"), e)
+        if failed_queries == len(queries) and queries:
+            raise RuntimeError(
+                f"Alle {len(queries)} zoekopdrachten faalden — zoekprovider plat "
+                f"(laatste fout: {last_error})")
+        return {"queries": len(queries), "failed_queries": failed_queries,
+                "found": found, "saved": saved}
 
     # ── Scraping & verrijking ─────────────────────────────────────────────────
 
@@ -365,7 +406,8 @@ Regels:
             base_url = HERMES_LOCAL_URL.rstrip("/")
             model = "hermes"
             headers = {
-                "Authorization": f"Bearer {HERMES_LOCAL_KEY}",
+                # Keyless Ollama/LM Studio-tier: lege key → `Bearer ` crasht h11.
+                "Authorization": f"Bearer {HERMES_LOCAL_KEY or 'ollama'}",
                 "Content-Type": "application/json",
             }
         else:

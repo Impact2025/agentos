@@ -5,7 +5,7 @@ import json, logging, uuid, asyncio, os, re
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Any
-from fastapi import Query, HTTPException
+from fastapi import Body, Query, HTTPException
 from pydantic import BaseModel
 
 # Importeer dezelfde router uit dit bestand
@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 # nooit een sub-85 blog live gaan.
 WORLD_CLASS_SCORE = 85
 MAX_OPTIMIZE_ROUNDS = 6
+# Minimaal aantal woorden voor een écht wereldklasse-artikel. Een SEO-score van
+# 85+ zegt niets over diepgang: de optimalisatie-rondes sneden het artikel terug
+# tot 446 woorden (te kort voor autoriteit). We eisen nu eenminimum-lengte zodat
+# de optimalisatie pas stopt als het artikel én goed én voldoende diep is.
+MIN_WORD_COUNT = 1000
 
 # Harde publicatie-gate (0-10): onder deze score wordt een artikel alleen als
 # concept opgeslagen — géén Netlify-deploy en géén zoekmachine-indiening.
@@ -482,7 +487,16 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
     """
     site_id = site["id"]
     project_dir = _find_project_dir(name)
-    content_dir = (project_dir / "content") if project_dir else Path(os.getenv("TEMP", "")) / "agentos-content"
+    # BUG-FIX: als _find_project_dir None geeft (project niet in vault én niet
+    # in de fallback 'projects/'-map), viel content vroeger op TEMP/agentos-content
+    # — een onvoorspelbaar pad waar het artikel na de run onvindbaar bleef (job
+    # meldde 'success' maar het bestand bestond nergens). We dwingen nu altijd
+    # een stabiel, absoluut pad binnen de agentos-tree, zodat het artikel
+    # garandeerd terug te vinden is onder projects/<name>/content/.
+    if project_dir:
+        content_dir = project_dir / "content"
+    else:
+        content_dir = PROJECTS_DIR / name / "content"
     content_dir.mkdir(parents=True, exist_ok=True)
 
     # ── FASE 1: Schrijven (meertraps-generator: outline → secties → opmaak →
@@ -510,37 +524,72 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
     # Pauze om 429-rate-limit te voorkomen
     await asyncio.sleep(10)
 
-    # ── FASE 3: Optimaliseren tot wereldklasse-niveau (score >= 85/100) ──────
-    # Eén optimalisatieronde was vaak niet genoeg om echt hoog te scoren — dus
-    # blijf itereren op de laatste feedback tot de score de lat haalt of het
-    # rondemaximum bereikt is (kostenbeheersing + garantie dat het ooit stopt).
+    # ── FASE 3: Optimaliseren tot wereldklasse-niveau (score >= 85/100 én
+    #    >= MIN_WORD_COUNT woorden) ───────────────────────────────────────────
+    # De optimalisatie laat de SEO-Editor het HELE artikel herschrijven; die
+    # neigt sterk naar inkorten (1866 -> 241 -> 131 woorden in de praktijk),
+    # wat de diepgang vernietigt. Daarom accepteren we een ronde ALLEEN als hij
+    # de score verbetert ÉN de lengte niet onder MIN_WORD_COUNT drukt. De BESTE
+    # versie (hoogste score, bij voorkeur met voldoende lengte) houden we vast
+    # in best_html/best_score — niet blind de laatste ronde.
     optimized_html = html_body
+    best_html = html_body
+    best_score = review["score"]
+    best_wc = len(html_body.split())
     rounds = 0
-    while review["score"] < WORLD_CLASS_SCORE and rounds < MAX_OPTIMIZE_ROUNDS:
+    while rounds < MAX_OPTIMIZE_ROUNDS:
+        # Stop als we al wereldklasse ÉN diep genoeg zijn.
+        if best_score >= WORLD_CLASS_SCORE and best_wc >= MIN_WORD_COUNT:
+            break
         rounds += 1
+        wc = len(optimized_html.split())
+        feedback = review["feedback"]
+        if wc < MIN_WORD_COUNT:
+            feedback = (
+                f"{feedback}\n\nBELANGRIJK: het artikel telt nu {wc} woorden, ruim onder "
+                f"het minimum van {MIN_WORD_COUNT} voor een wereldklasse-artikel. Breid het "
+                f"substantieel uit met concrete voorbeelden, herkenbare situaties uit de "
+                f"praktijk, een uitgewerkt stappenplan en diepere uitleg per mechanisme. "
+                f"Voeg GEEN vulling toe, maar verdiep echt. Lever de volledige, langere HTML."
+            )
         logger.info(f"[SEO-pipeline] Fase 3: Optimaliseren ronde {rounds}/{MAX_OPTIMIZE_ROUNDS} "
-                    f"(score {review['score']}/100) — '{body.title}'")
-        _set_job(job_id, phase=f"Optimaliseren voor wereldklasse-score (ronde {rounds}/{MAX_OPTIMIZE_ROUNDS}, "
-                                f"huidige score {review['score']}/100)...", percent=min(60 + rounds * 10, 90))
+                    f"(score {review['score']}/100, {wc}w) — '{body.title}'")
+        _set_job(job_id, phase=f"Optimaliseren voor wereldklasse (ronde {rounds}/{MAX_OPTIMIZE_ROUNDS}, "
+                                f"score {review['score']}/100, {wc}w)...", percent=min(60 + rounds * 10, 90))
 
-        optimized_html = await content_pipeline._optimize_article(
-            site, keyword, optimized_html, review["feedback"]
+        candidate = await content_pipeline._optimize_article(
+            site, keyword, optimized_html, feedback
         )
         # Een herschrijfronde kan gevalideerde interne links laten vallen of nieuwe
         # verzinnen — die zijn dan niet meer gevet, dus opnieuw wieden vóór de
         # volgende beoordeling (anders belanden 404-links op de live site).
-        optimized_html, n_stripped = content_pipeline.article_writer.strip_unvetted_internal_links(
-            optimized_html, site
+        candidate, n_stripped = content_pipeline.article_writer.strip_unvetted_internal_links(
+            candidate, site
         )
+        cand_wc = len(candidate.split())
         if n_stripped:
             logger.info(f"[SEO-pipeline] Optimalisatieronde {rounds}: {n_stripped} ongevette interne link(s) verwijderd")
-
-        _set_job(job_id, phase=f"Herbeoordelen na optimalisatieronde {rounds}...", percent=min(65 + rounds * 10, 92))
+        # Accepteer de ronde alleen als: score stijgt EN niet korter dan MIN_WORD_COUNT.
+        cand_review = await content_pipeline._review_article(site, keyword, candidate)
+        if cand_review["score"] > best_score and cand_wc >= MIN_WORD_COUNT:
+            optimized_html = candidate
+            best_html = candidate
+            best_score = cand_review["score"]
+            best_wc = cand_wc
+            review = cand_review
+        else:
+            # Rond verworpen (inkorting of geen verbetering) — behoud de beste versie.
+            logger.info(f"[SEO-pipeline] Rond {rounds} verworpen (score {cand_review['score']}/100, "
+                        f"{cand_wc}w) — behoud beste ({best_score}/100, {best_wc}w)")
         # Pauze om 429-rate-limit te voorkomen
         await asyncio.sleep(10)
+        _set_job(job_id, phase=f"Herbeoordelen na optimalisatieronde {rounds}...", percent=min(65 + rounds * 10, 92))
+        await asyncio.sleep(10)
 
-        review = await content_pipeline._review_article(site, keyword, optimized_html)
-        seo_score = review["score"] / 10.0
+    # Eind-beoordeling op de BESTE versie (niet de laatste/verworpen ronde).
+    optimized_html = best_html
+    review = await content_pipeline._review_article(site, keyword, optimized_html)
+    seo_score = review["score"] / 10.0
 
     if rounds:
         logger.info(f"[SEO-pipeline] Optimalisatie klaar na {rounds} ronde(s) — eindscore {review['score']}/100")
@@ -600,6 +649,11 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
         meta_desc = f"Praktische gids over {keyword} — met concrete stappen en voorbeelden."
         excerpt = excerpt or meta_desc
 
+    # BUG-FIX: de raw schrijver-output bevat vaak een ```html ... ``` code-fence
+    # (en soms zichtbare meta/suggestie-blokken). Die moeten eraf vóór de write,
+    # anders toont de live site straks markdown-code in plaats van HTML.
+    optimized_html = content_pipeline.clean_for_publish(optimized_html)
+
     word_count = len(optimized_html.split())
 
     full_content = (
@@ -617,7 +671,16 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
     )
 
     filepath = content_dir / f"{slug}.html"
-    filepath.write_text(full_content, encoding="utf-8")
+    try:
+        filepath.write_text(full_content, encoding="utf-8")
+    except OSError as e:
+        # BUG-FIX: vroeger faalde de write stilletjes en meldde de job toch
+        # 'success' met een local_path naar een bestand dat niet bestond. Nu
+        # gooien we een expliciete fout zodat de job eerlijk 'error' geeft.
+        raise RuntimeError(
+            f"Kon artikel niet wegschrijven naar {filepath} ({e})"
+        ) from e
+    logger.info(f"[SEO-pipeline] Artikel opgeslagen: {filepath}")
 
     # ── Obsidian opslag ──────────────────────────────────────────────
     obsidian_path = None
@@ -923,9 +986,12 @@ async def project_content_queue_run_now(name: str, count: Optional[int] = Query(
 
 
 @router.post("/{name}/content-queue/{job_id}/approve")
-async def project_content_queue_approve(name: str, job_id: str):
+async def project_content_queue_approve(name: str, job_id: str,
+                                        body: Optional[dict] = Body(None)):
+    from ..content_queue.router import _channels_from_body
     try:
-        result = await content_pipeline.approve_and_publish(job_id)
+        result = await content_pipeline.approve_and_publish(
+            job_id, social_channels=_channels_from_body(body))
         return {"success": True, "result": result}
     except ValueError as e:
         raise HTTPException(400, detail=str(e))

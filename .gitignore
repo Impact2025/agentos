@@ -36,3 +36,15 @@ frontend/tailwind.css
 Thumbs.db
 .DS_Store
 backend/data/
+
+# Extra secrets & scratch — nooit committen
+.env.bak*
+_cookies.txt
+publish_env_additions.txt
+
+# Door agents geproduceerde project-output & goal-werkmappen (media, zwaar)
+projects/
+scripts/.tbi_import_state.json
+
+# Windows-artefact
+nul

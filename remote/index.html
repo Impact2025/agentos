@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html class="dark" lang="nl">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport"/>
+<meta name="theme-color" content="#101415"/>
+<title>Iris Remote</title>
+<link rel="manifest" href="/manifest.json"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="/style.css" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        colors: {
+          "surface": "#101415", "background": "#101415",
+          "surface-variant": "#323537", "surface-container": "#1d2022",
+          "surface-container-low": "#191c1e", "surface-container-lowest": "#0b0f10",
+          "surface-container-high": "#272a2c", "surface-container-highest": "#323537",
+          "primary": "#8ed5ff", "on-primary": "#00354a",
+          "primary-container": "#38bdf8", "on-primary-container": "#004965",
+          "secondary": "#b9c8de", "on-secondary": "#233143",
+          "secondary-container": "#39485a", "tertiary": "#c5cce6",
+          "error": "#ffb4ab", "error-container": "#93000a",
+          "on-surface": "#e0e3e5", "on-surface-variant": "#bdc8d1",
+          "on-background": "#e0e3e5", "outline": "#87929a", "outline-variant": "#3e484f"
+        },
+        borderRadius: { DEFAULT: "0.25rem", lg: "0.5rem", xl: "0.75rem", full: "9999px" },
+        spacing: {
+          "unit": "4px", "container-padding": "20px", "gutter": "16px",
+          "stack-sm": "8px", "stack-md": "16px", "stack-lg": "32px"
+        },
+        fontFamily: {
+          "headline-md": ["Inter"], "headline-sm": ["Inter"], "body-md": ["Inter"],
+          "body-lg": ["Inter"], "display-lg": ["Inter"], "display-lg-mobile": ["Inter"],
+          "label-caps": ["JetBrains Mono"]
+        },
+        fontSize: {
+          "headline-md": ["24px", {lineHeight: "32px", letterSpacing: "-0.01em", fontWeight: "600"}],
+          "headline-sm": ["20px", {lineHeight: "28px", fontWeight: "600"}],
+          "body-md": ["14px", {lineHeight: "20px", fontWeight: "400"}],
+          "body-lg": ["16px", {lineHeight: "24px", fontWeight: "400"}],
+          "display-lg": ["32px", {lineHeight: "40px", letterSpacing: "-0.02em", fontWeight: "700"}],
+          "display-lg-mobile": ["28px", {lineHeight: "36px", fontWeight: "700"}],
+          "label-caps": ["12px", {lineHeight: "16px", letterSpacing: "0.05em", fontWeight: "500"}]
+        }
+      }
+    }
+  }
+</script>
+</head>
+<body class="bg-surface text-on-surface antialiased overflow-x-hidden pb-32">
+
+<!-- TopAppBar -->
+<header class="flex justify-between items-center w-full px-container-padding h-16 fixed top-0 z-50 bg-surface/80 backdrop-blur-xl border-b border-white/10">
+  <div class="flex items-center gap-3">
+    <span class="material-symbols-outlined text-primary">hub</span>
+    <h1 class="font-headline-md text-headline-md font-bold text-on-surface">Iris Remote</h1>
+  </div>
+  <button class="text-primary hover:opacity-80 active:scale-95 transition-transform" id="syncTrigger" title="Verversen">
+    <span class="material-symbols-outlined">sync</span>
+  </button>
+</header>
+
+<main class="pt-24 px-container-padding max-w-[768px] mx-auto min-h-screen space-y-stack-lg">
+
+  <!-- Login -->
+  <section id="view-login" hidden>
+    <div class="glass-panel rounded-xl p-6 mt-10 space-y-4">
+      <div class="flex items-center gap-2">
+        <span class="status-dot pulse"></span>
+        <span class="font-label-caps text-label-caps text-primary uppercase tracking-widest">Secure Access</span>
+      </div>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile">Inloggen</h2>
+      <form id="login-form" class="space-y-4">
+        <input type="password" id="login-pw" placeholder="Wachtwoord" autocomplete="current-password"
+          class="w-full bg-[#020617] border-none rounded-lg p-4 text-on-surface font-body-lg focus:ring-2 focus:ring-primary/50 placeholder:text-on-surface-variant/40"/>
+        <button type="submit"
+          class="w-full bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm flex items-center justify-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-[0_0_15px_rgba(142,213,255,0.3)]">
+          <span class="material-symbols-outlined">lock_open</span> Inloggen
+        </button>
+        <p id="login-error" class="font-body-md text-body-md text-error"></p>
+      </form>
+    </div>
+  </section>
+
+  <!-- Actiecentrum -->
+  <section id="view-inbox" hidden class="space-y-stack-lg">
+    <div class="space-y-stack-sm">
+      <div class="flex items-center gap-2">
+        <span class="status-dot pulse"></span>
+        <span class="font-label-caps text-label-caps text-primary uppercase" id="inbox-sub">Besluiten in de wachtrij</span>
+      </div>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile">Actiecentrum</h2>
+      <p class="font-body-md text-body-md text-on-surface-variant" id="sync-info"></p>
+    </div>
+    <div id="items" class="space-y-stack-md"></div>
+  </section>
+
+  <!-- Briefings -->
+  <section id="view-briefing" hidden class="space-y-stack-lg">
+    <div class="space-y-stack-sm">
+      <div class="flex items-center gap-2">
+        <span class="status-dot pulse"></span>
+        <span class="font-label-caps text-label-caps text-primary uppercase">Agent Iris</span>
+      </div>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile">Briefings &amp; Analyse</h2>
+    </div>
+    <div id="briefing" class="space-y-stack-md"></div>
+
+    <!-- Cloud-Iris chat -->
+    <div class="glass-panel rounded-xl p-4 flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <span class="font-label-caps text-label-caps text-primary uppercase">Vraag Iris</span>
+        <div class="flex items-center gap-2">
+          <span class="status-dot pulse"></span>
+          <span class="font-label-caps text-label-caps text-on-surface-variant">Cloud · Snapshot</span>
+        </div>
+      </div>
+      <div id="chat-messages" class="space-y-3 max-h-[45dvh] overflow-y-auto custom-scrollbar"></div>
+      <form id="chat-form" class="flex gap-2">
+        <input id="chat-input" placeholder="Vraag Iris iets over je cijfers of besluiten…" autocomplete="off"
+          class="flex-1 bg-[#020617] border-none rounded-lg p-3 text-on-surface font-body-md focus:ring-2 focus:ring-primary/50 placeholder:text-on-surface-variant/40"/>
+        <button type="submit" id="chat-send"
+          class="bg-primary text-on-primary px-4 rounded-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all shadow-[0_0_15px_rgba(142,213,255,0.3)]">
+          <span class="material-symbols-outlined">send</span>
+        </button>
+      </form>
+      <p class="font-label-caps text-[10px] text-on-surface-variant/60">Iris voert hier niets uit — besluiten lopen via het Actiecentrum.</p>
+    </div>
+  </section>
+
+  <!-- Notities -->
+  <section id="view-note" hidden class="space-y-stack-lg">
+    <div class="space-y-stack-sm">
+      <span class="font-label-caps text-label-caps text-primary tracking-widest uppercase">Contextual Engine</span>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile">Notities &amp; Gedachten</h2>
+      <p class="font-body-md text-body-md text-on-surface-variant">Vang vluchtige ideeën op voor AgentOS. Elke notitie landt bij de volgende sync in je vault.</p>
+    </div>
+    <div class="glass-panel rounded-xl p-4 flex flex-col gap-4">
+      <div class="flex items-center justify-between">
+        <label class="font-label-caps text-label-caps text-on-surface-variant">Nieuwe instructie of gedachte</label>
+        <div class="flex items-center gap-2">
+          <span class="status-dot pulse"></span>
+          <span class="font-label-caps text-label-caps text-primary">Live Context</span>
+        </div>
+      </div>
+      <textarea id="note-text" rows="5" placeholder="Typ hier je 'thought-dump'..."
+        class="w-full bg-[#020617] border-none rounded-lg p-4 text-on-surface font-body-lg focus:ring-2 focus:ring-primary/50 placeholder:text-on-surface-variant/40"></textarea>
+      <div class="flex justify-between items-center">
+        <span class="font-label-caps text-label-caps text-on-surface-variant/60" id="charCount">0 tekens</span>
+        <button id="saveBtn"
+          class="bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm flex items-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-[0_0_15px_rgba(142,213,255,0.3)]">
+          <span class="material-symbols-outlined">cloud_upload</span> Opslaan voor sync
+        </button>
+      </div>
+    </div>
+    <div class="bg-primary-container/10 border border-primary/20 rounded-lg p-4 flex items-start gap-3">
+      <span class="material-symbols-outlined text-primary mt-0.5">info</span>
+      <p class="font-body-md text-body-md text-primary">Wordt ingeladen door <span class="font-bold">AgentOS</span> bij de volgende sync.</p>
+    </div>
+    <div>
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-headline-sm text-headline-sm">Recente Logs</h3>
+        <span class="font-label-caps text-label-caps text-on-surface-variant">Tabel: notes</span>
+      </div>
+      <div id="notes-list" class="space-y-4"></div>
+    </div>
+  </section>
+
+  <!-- Systeem -->
+  <section id="view-system" hidden class="space-y-stack-lg">
+    <div class="space-y-stack-sm">
+      <span class="font-label-caps text-label-caps text-primary uppercase">Network Infrastructure</span>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile">Systeemstatus</h2>
+    </div>
+    <div id="system-status"></div>
+    <div class="space-y-stack-md">
+      <div class="flex items-center justify-between">
+        <h3 class="font-label-caps text-label-caps text-outline">KLAARGEZETTE BESLUITEN (OUTBOX)</h3>
+        <span class="font-label-caps text-label-caps text-primary px-2 py-0.5 border border-primary/30 rounded" id="outbox-count"></span>
+      </div>
+      <div id="outbox-list" class="space-y-unit"></div>
+    </div>
+    <div class="glass-panel rounded-xl p-6" id="notif-card">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="material-symbols-outlined text-primary">notifications_active</span>
+        <h3 class="font-headline-sm text-headline-sm">Meldingen</h3>
+      </div>
+      <p class="font-body-md text-body-md text-on-surface-variant mb-4">Krijg een push-melding zodra er een nieuw besluit klaarstaat of een besluit onderweg mislukt.</p>
+      <button id="notifBtn"
+        class="w-full bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm flex items-center justify-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-[0_0_15px_rgba(142,213,255,0.3)]">
+        <span class="material-symbols-outlined">notifications</span> Meldingen inschakelen
+      </button>
+      <p id="notif-status" class="font-body-md text-body-md text-on-surface-variant mt-3"></p>
+    </div>
+    <div class="glass-panel rounded-xl p-6 overflow-hidden relative">
+      <div class="absolute -right-4 -bottom-4 opacity-10"><span class="material-symbols-outlined text-[120px]">database</span></div>
+      <div class="relative z-10">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="material-symbols-outlined text-primary">security</span>
+          <h3 class="font-headline-sm text-headline-sm">Beveiliging &amp; Opslag</h3>
+        </div>
+        <p class="font-body-lg text-body-lg text-on-surface-variant leading-relaxed">
+          Besluiten en previews staan in <span class="text-white font-medium">Neon Postgres</span>; uitvoering gebeurt
+          uitsluitend lokaal door AgentOS, achter de bestaande review-gates. Pull-model: je machine belt zelf naar buiten.
+        </p>
+        <button id="logoutBtn" class="mt-4 text-on-surface-variant font-label-caps text-label-caps hover:text-primary transition-colors">UITLOGGEN</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Detail bottom-sheet -->
+<div id="detail-overlay" class="fixed inset-0 z-[60] bg-black/60 items-end justify-center" hidden>
+  <div id="detail-card" class="glass-panel w-full max-w-[768px] max-h-[92dvh] overflow-y-auto custom-scrollbar rounded-t-xl p-5"></div>
+</div>
+
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-2 bg-surface/80 backdrop-blur-xl border-t border-white/10 shadow-[0_-4px_20px_rgba(0,0,0,0.3)] rounded-t-xl">
+  <button class="nav-btn flex flex-col items-center justify-center transition-all active:scale-90 duration-200" data-view="inbox">
+    <span class="material-symbols-outlined">center_focus_strong</span>
+    <span class="font-label-caps text-[10px] mt-1">Actiecentrum</span>
+  </button>
+  <button class="nav-btn flex flex-col items-center justify-center transition-all active:scale-90 duration-200" data-view="briefing">
+    <span class="material-symbols-outlined">assignment</span>
+    <span class="font-label-caps text-[10px] mt-1">Briefings</span>
+  </button>
+  <button class="nav-btn flex flex-col items-center justify-center transition-all active:scale-90 duration-200" data-view="note">
+    <span class="material-symbols-outlined">edit_note</span>
+    <span class="font-label-caps text-[10px] mt-1">Notities</span>
+  </button>
+  <button class="nav-btn flex flex-col items-center justify-center transition-all active:scale-90 duration-200" data-view="system">
+    <span class="material-symbols-outlined">settings_input_component</span>
+    <span class="font-label-caps text-[10px] mt-1">Systeem</span>
+  </button>
+</nav>
+
+<script src="/app.js"></script>
+</body>
+</html>

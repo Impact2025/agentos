@@ -63,14 +63,21 @@ def _now() -> str:
 
 
 def _resolve_model_override(profile_model: Optional[str]) -> Optional[str]:
-    """Vertaal een profiel-model naar een waarde die de actieve backend snapt.
-    (Zelfde logica als conveyor/delegate: alleen OpenRouter krijgt een override.)"""
+    """Profielmodel → bare model-string die de cloud-gateway snapt.
+
+    Geeft de model-string terug (eventuele 'openrouter/'-prefix gestript)
+    zodra een cloud-sleutel aanwezig is — ongeacht welke backend de app
+    standaard gebruikt. Zo wordt een 'pro'-profiel (bv. claude-sonnet-4-6 via
+    OpenModel) echt gehonoreerd en niet stilzwijgend overschreven door het
+    goedkope default-model. Bij geen profielmodel of geen cloud-sleutel → None."""
     if not profile_model:
         return None
     model = profile_model.strip()
-    if hermes_backend() == "openrouter":
-        return model[len("openrouter/"):] if model.startswith("openrouter/") else model
-    return None
+    if model.startswith("openrouter/"):
+        from ...shared.config import OPENROUTER_API_KEY
+        return model[len("openrouter/"):] if OPENROUTER_API_KEY else None
+    from ...shared.config import OPENMODEL_API_KEY
+    return model if OPENMODEL_API_KEY else None
 
 
 def _extract_json(raw: str) -> str:

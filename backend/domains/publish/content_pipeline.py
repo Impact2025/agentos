@@ -25,6 +25,8 @@ import logging
 import os
 import re
 import uuid
+
+import httpx
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -217,6 +219,16 @@ def _iris_writing_guidance(project_name: str) -> str:
         return ""
 
 
+def _learned_writing_lessons() -> str:
+    """Gemeten vorm-lessen uit de content-leerlus (welke artikel-kenmerken
+    clicks opleveren). Defensief: geen lessen of fout = lege string."""
+    try:
+        from ...shared.learning import lessons_block
+        return lessons_block("content")
+    except Exception:
+        return ""
+
+
 def _skill_body(project_name: str) -> str:
     try:
         from ..projects.router import _find_project_dir
@@ -320,6 +332,11 @@ async def _write_article(site: Dict, keyword: str, angle: str, rationale: str) -
     iris_guidance = _iris_writing_guidance(project_name)
     if iris_guidance:
         write_system += f"\n\n## Kennisbank-principes (Iris — pas toe)\n{iris_guidance}"
+    # Content-leerlus: vorm-lessen gemeten uit de GSC-prestaties van eerdere
+    # artikelen (zie publish/content_learning.py).
+    learned = _learned_writing_lessons()
+    if learned:
+        write_system += f"\n\n## Gemeten vorm-lessen (pas toe waar passend)\n{learned}"
 
     write_prompt = (
         f"Schrijf een compleet blogartikel voor {project_name}.\n\n"
@@ -494,6 +511,12 @@ async def _write_article_best(site: Dict, keyword: str, angle: str,
     if iris_guidance:
         brand_context = (brand_context + "\n\n## Kennisbank-principes (Iris — pas toe)\n"
                          + iris_guidance).strip()
+    # Content-leerlus: gemeten vorm-lessen mee in de merkcontext, zodat ook de
+    # meertraps-schrijver (outline → secties) ze vanaf de eerste stap toepast.
+    learned = _learned_writing_lessons()
+    if learned:
+        brand_context = (brand_context + "\n\n## Gemeten vorm-lessen (pas toe waar passend)\n"
+                         + learned).strip()
     try:
         html_body, qc_report = await article_writer.write_article_staged(
             site, keyword, angle, rationale,
@@ -532,30 +555,178 @@ def _extract_title(html_body: str, fallback: str) -> str:
 
 # ── Social copy + afbeelding ─────────────────────────────────────────────────
 
+# Kwaliteitsgrens voor het social-pack, analoog aan de artikel-gate: onder deze
+# score krijgt de schrijver één verbeterronde met de reviewer-feedback.
+_SOCIAL_MIN_SCORE = 80
+
+_SOCIAL_PLATFORM_RULES = (
+    "Je schrijft een wereldklasse social-pack voor één blogartikel: vier platformen, "
+    "elk volgens de wetten van dát platform. Algemene eisen (alle platformen):\n"
+    "- De eerste regel is een scroll-stopper: een prikkelende vraag, een verrassend "
+    "inzicht of een herkenbaar pijnpunt uit het artikel. NOOIT de artikeltitel "
+    "letterlijk als opener.\n"
+    "- Concreet en menselijk (B1-niveau). Geen AI-clichés ('in de wereld van vandaag', "
+    "'ontdek', 'naadloos', 'game-changer', 'duik in'), geen verzonnen cijfers — gebruik "
+    "alleen wat écht in het artikel staat.\n"
+    "- Sluit af met een duidelijke call-to-action richting het artikel. Plak NOOIT zelf "
+    "een URL in de tekst — de link wordt bij het posten automatisch toegevoegd.\n"
+    "- Hashtags: Nederlands en specifiek voor het onderwerp; nooit generiek of spammy "
+    "(#succes, #blessed, #motivatie).\n\n"
+    "Per platform:\n"
+    "- linkedin (600-1300 tekens): professioneel maar persoonlijk. Korte alinea's met "
+    "witregels; werk één kerninzicht uit het artikel uit (verklap niet alles); eindig "
+    "met een vraag aan de lezer of een CTA; precies 3-5 hashtags op de laatste regel.\n"
+    "- facebook (250-600 tekens): conversationeel en warm, alsof je het een bekende "
+    "vertelt; hooguit 1-2 emoji's; CTA om verder te lezen; 1-3 hashtags.\n"
+    "- instagram (400-1000 tekens): visueel geschreven caption met korte regels en "
+    "witruimte; 2-4 passende emoji's; CTA 'link in bio'; 5-8 hashtags op de laatste "
+    "regel (mix van brede en niche-tags).\n"
+    "- twitter (max 250 tekens INCLUSIEF hashtags): één scherpe uitspraak of vraag uit "
+    "het artikel; 1-2 hashtags; geen emoji-rijen.\n\n"
+    "Antwoord UITSLUITEND met JSON: "
+    '{"linkedin": "...", "facebook": "...", "instagram": "...", "twitter": "..."}'
+)
+
+_SOCIAL_REVIEW_SYSTEM = (
+    "Je bent een strenge Nederlandse social-media-eindredacteur. Beoordeel het "
+    "social-pack (vier platform-teksten bij één blogartikel) op: (1) scroll-stoppende "
+    "eerste regel per platform, (2) platform-fit (toon, lengte, opmaak), (3) kwaliteit "
+    "en specificiteit van de hashtags, (4) heldere CTA zonder geplakte URL, (5) geen "
+    "AI-clichés of verzonnen feiten, (6) klopt inhoudelijk met het artikel. "
+    "Wees eerlijk hard: middelmaat is een onvoldoende. Antwoord UITSLUITEND met JSON: "
+    '{"score": <0-100>, "feedback": "concrete verbeterpunten per platform, kort"}'
+)
+
+
+def _derive_hashtags(keyword: str, site_name: str = "", max_tags: int = 3) -> str:
+    """Deterministische hashtags uit het zoekwoord — vangnet als de LLM ze vergeet."""
+    tags: List[str] = []
+    words = [w for w in re.split(r"[^\w]+", keyword or "") if len(w) > 2]
+    if words:
+        tags.append("#" + "".join(w.capitalize() for w in words[:3]))
+        if len(words) > 1:
+            tags.append("#" + words[0].capitalize())
+    if site_name:
+        tags.append("#" + re.sub(r"[^\w]+", "", site_name.title()))
+    seen: set = set()
+    uniq = [t for t in tags if len(t) > 3 and not (t.lower() in seen or seen.add(t.lower()))]
+    return " ".join(uniq[:max_tags])
+
+
+def _polish_social_pack(pack: Dict[str, str], keyword: str, site_name: str) -> Dict[str, str]:
+    """Harde validatie na de LLM: lengtes afdwingen, hashtags garanderen,
+    rommel (fences, aanhalingstekens, geplakte URL's) opruimen."""
+    out: Dict[str, str] = {}
+    for platform, text in pack.items():
+        t = (text or "").strip()
+        t = re.sub(r"^```[a-z]*\s*|\s*```$", "", t).strip().strip('"').strip()
+        # De post-functies plakken de artikel-URL zelf achter de tekst — een
+        # door de LLM verzonnen/geplakte URL zou dubbel of fout linken.
+        t = re.sub(r"https?://\S+", "", t).strip()
+        if not t:
+            out[platform] = ""
+            continue
+        if "#" not in t:
+            tags = _derive_hashtags(keyword, site_name)
+            if tags:
+                t = f"{t}\n\n{tags}" if platform != "twitter" else f"{t} {tags.split()[0]}"
+        if platform == "twitter" and len(t) > 270:
+            # Knip op woordgrens maar bewaar de hashtags aan het eind.
+            tags = " ".join(w for w in t.split() if w.startswith("#"))
+            body = " ".join(w for w in t.split() if not w.startswith("#"))
+            room = 270 - (len(tags) + 1 if tags else 0)
+            body = body[:room].rsplit(" ", 1)[0].rstrip(".,;: ")
+            t = f"{body} {tags}".strip() if tags else body
+        out[platform] = t
+    return out
+
+
+def _fallback_social_copy(title: str, keyword: str, site_name: str) -> Dict[str, str]:
+    """Laatste redmiddel als élke LLM-poging faalt: nette, complete captions
+    i.p.v. de kale titel (de oude terugval postte letterlijk alleen de titel)."""
+    tags = _derive_hashtags(keyword, site_name)
+    body = (f"Nieuw op de blog: {title}.\n\n"
+            f"We zetten de belangrijkste inzichten over {keyword} op een rij — "
+            "praktisch en zonder omwegen. Lees het volledige artikel via de link.")
+    insta = (f"Nieuw artikel over {keyword} 📖\n\n{title}\n\n"
+             f"Link in bio!\n\n{tags}")
+    tweet = f"Nieuw: {title}"[:230] + (f" {tags.split()[0]}" if tags else "")
+    return _polish_social_pack(
+        {"linkedin": f"{body}\n\n{tags}", "facebook": f"{body}\n\n{tags}",
+         "instagram": insta, "twitter": tweet},
+        keyword, site_name)
+
+
+def _parse_social_json(raw: str) -> Optional[Dict[str, str]]:
+    try:
+        obj = json.loads(_extract_json(raw))
+        pack = {p: str(obj.get(p) or "").strip()
+                for p in ("linkedin", "facebook", "instagram", "twitter")}
+        return pack if any(pack.values()) else None
+    except Exception:
+        return None
+
+
 async def _generate_social_copy(site: Dict, title: str, keyword: str, html_body: str) -> Dict[str, str]:
-    system = _profile_prompt("Social Media Copywriter")
+    """Wereldklasse social-pack: per-platform regels + kennisbank-principes,
+    daarna een eigen review-ronde (score < grens → één verbeterronde met de
+    feedback), en tot slot harde validatie op lengtes/hashtags/URL's."""
+    system = (_profile_prompt("Social Media Copywriter") or
+              "Je bent een Nederlandse social-media-copywriter van topniveau.")
+    system += "\n\n" + _SOCIAL_PLATFORM_RULES
     vault_context = _vault_context(site["name"])
     if vault_context:
         system += f"\n\n## Merkcontext uit Obsidian vault\n{vault_context[:2500]}"
+    iris_guidance = _iris_writing_guidance(site["name"])
+    if iris_guidance:
+        system += f"\n\n## Kennisbank-principes (Iris — pas toe)\n{iris_guidance[:1500]}"
 
     plain = re.sub(r"<[^>]+>", " ", html_body)
     plain = re.sub(r"\s+", " ", plain).strip()[:3000]
-
     prompt = (
         f"Titel: {title}\nKernzoekwoord: {keyword}\n\nArtikel (platte tekst):\n{plain}"
     )
-    raw = await _llm(system, prompt, max_tokens=1500)
+
+    pack: Optional[Dict[str, str]] = None
+    for attempt in range(2):
+        raw = await _llm(system, prompt, max_tokens=2500)
+        pack = _parse_social_json(raw)
+        if pack:
+            break
+        logger.warning("Social-copy JSON-parse mislukt (poging %d/2)", attempt + 1)
+    if not pack:
+        logger.warning("Social-copy: alle schrijfpogingen faalden — deterministische terugval")
+        return _fallback_social_copy(title, keyword, site["name"])
+
+    # Review-ronde naar het patroon van de artikel-gate: één eerlijke score,
+    # onder de grens één herschrijf met de concrete feedback. Faalt de review
+    # zelf (parse/LLM), dan accepteren we het pack — de harde validatie
+    # hieronder vangt de ergste gebreken alsnog af.
     try:
-        obj = json.loads(_extract_json(raw))
-        return {
-            "linkedin": str(obj.get("linkedin") or "").strip(),
-            "facebook": str(obj.get("facebook") or "").strip(),
-            "instagram": str(obj.get("instagram") or "").strip(),
-            "twitter": str(obj.get("twitter") or "").strip(),
-        }
-    except Exception:
-        logger.warning("Social-copy JSON-parse mislukt, val terug op titel-only captions")
-        return {"linkedin": title, "facebook": title, "instagram": title, "twitter": title[:260]}
+        review_raw = await _llm(
+            _SOCIAL_REVIEW_SYSTEM,
+            f"Artikel-titel: {title}\nKernzoekwoord: {keyword}\n\n"
+            f"Artikel (platte tekst, ingekort):\n{plain[:1500]}\n\n"
+            f"Social-pack:\n{json.dumps(pack, ensure_ascii=False)}",
+            max_tokens=800)
+        review = json.loads(_extract_json(review_raw))
+        score = int(review.get("score") or 0)
+        feedback = str(review.get("feedback") or "").strip()
+        if score < _SOCIAL_MIN_SCORE and feedback:
+            logger.info("Social-pack scoorde %d/<%d — één verbeterronde", score, _SOCIAL_MIN_SCORE)
+            raw = await _llm(
+                system,
+                prompt + "\n\nJe eerdere versie scoorde onvoldoende. Verwerk deze "
+                f"eindredacteur-feedback volledig:\n{feedback}\n\n"
+                f"Eerdere versie:\n{json.dumps(pack, ensure_ascii=False)}",
+                max_tokens=2500)
+            improved = _parse_social_json(raw)
+            if improved:
+                pack = improved
+    except Exception as e:
+        logger.warning("Social-pack review-ronde overgeslagen: %s", str(e)[:150])
+
+    return _polish_social_pack(pack, keyword, site["name"])
 
 
 async def _generate_article_infographic(site: Dict, title: str, keyword: str,
@@ -1177,6 +1348,76 @@ async def run_content_improver_job() -> Dict:
     return summary
 
 
+# Titel-voorvoegsels waarmee een agent een intern werkstuk aflevert: een plan,
+# rapport of tussenstap voor Vincent — nooit een artikel voor bezoekers.
+_INTERNAL_TITLE_PREFIXES = (
+    "plan:", "plan ", "rapport:", "rapport ", "analyse:", "eindredactie:",
+    "status:", "statusrapport", "voorstel:", "notitie:", "concept:",
+    "samenvatting:", "onderzoek:", "audit:", "evaluatie:", "checklist:",
+    "todo", "to-do", "actieplan:", "stappenplan voor het team",
+    "briefing:", "memo:", "verslag:", "logboek:", "backlog",
+)
+
+# Zinsneden die verraden dat de tekst over het eigen werkproces gaat in plaats
+# van over het onderwerp van de site.
+_INTERNAL_BODY_MARKERS = (
+    "agent os", "agentos", "wachtrij", "content_jobs", "seo-score",
+    "deze goal", "deze taak", "de agent", "onze website aanpassen",
+    "pagina's aanpassen", "implementatieplan", "sprint", "ticket",
+)
+
+
+def is_internal_document(title: str, html_body: str = "") -> Optional[str]:
+    """Is dit een intern werkstuk (plan/rapport/tussenstap) in plaats van een
+    artikel voor bezoekers? Retourneert de reden, of None als het publiceerbaar is.
+
+    Waarom deterministisch en niet via de score: de kwaliteitsgate meet
+    schrijfkwaliteit en de relevantie-gate meet of het onderwerp bij de site
+    past. Een intern SEO-plan over de eigen site scoort op beide hoog — en
+    stond daardoor op 14-07-2026 als 'blog' live op bijeen.app ("Plan: Directe
+    antwoorden toevoegen aan alle 28 pagina's", score 85). Publiceerbaarheid is
+    een aparte vraag en hoort een aparte, harde gate te zijn."""
+    t = (title or "").strip().lower()
+    for prefix in _INTERNAL_TITLE_PREFIXES:
+        if t.startswith(prefix):
+            return f"titel begint met '{prefix.strip()}' — dit is een intern werkstuk, geen artikel"
+
+    text = re.sub(r"<[^>]+>", " ", html_body or "")
+    text = re.sub(r"\s+", " ", text).lower()
+    if text:
+        hits = [m for m in _INTERNAL_BODY_MARKERS if m in text]
+        # Eén losse hit kan toeval zijn (een artikel mág 'sprint' noemen);
+        # drie of meer betekent dat de tekst over het eigen werkproces gaat.
+        if len(hits) >= 3:
+            return ("tekst gaat over het eigen werkproces "
+                    f"({', '.join(hits[:3])}) — geen artikel voor bezoekers")
+    return None
+
+
+async def _verify_live(url: str) -> Optional[str]:
+    """Haal de zojuist gepubliceerde URL op. Retourneert een foutreden als de
+    pagina niet echt live staat, anders None.
+
+    Waarom: het publish-endpoint van een project meldt 201 Created, maar dat
+    zegt alleen dat de rij is aangemaakt — niet dat de pagina rendert. Op
+    07-07-2026 gaf bijeen.app 201 voor 'Rapport: Status aanpassingen templates
+    en one-pager' terwijl de URL 404 gaf; de job stond een week op 'published'
+    zonder dat er iets online stond. Vertrouw de statuscode niet, kijk zelf."""
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            resp = await client.get(url, headers={"User-Agent": "AgentOS-publish-check"})
+        if resp.status_code != 200:
+            return f"live-controle: {url} gaf HTTP {resp.status_code}"
+        return None
+    except Exception as e:
+        # Een mislukte controle is geen bewijs van een mislukte publicatie —
+        # meld het, maar verklaar de publicatie niet ten onrechte mislukt.
+        logger.warning("[content-pipeline] Live-controle onbeslist voor %s: %s", url, e)
+        return None
+
+
 async def _publish_to_project_site(site: Dict, title: str, html_body: str,
                                     keyword: str, slug: str, seo_score: int) -> Dict:
     """Publiceer naar de eigen site van een project via de per-project
@@ -1245,14 +1486,30 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
 
     try:
         import httpx
-        # follow_redirects=True: Vercel stuurt non-www → www met een 308; zonder
-        # deze vlag faalt de POST ("HTTP 308: Redirecting") en komt het artikel
-        # niet op de site (terwijl AgentOS de job wél op 'published' zet).
-        resp = await asyncio.to_thread(
-            httpx.post, publish_url, json=payload,
-            headers={"Authorization": f"Bearer {publish_key}"}, timeout=90,
-            follow_redirects=True,
-        )
+        # Volg redirects HANDMATIG en stuur de Authorization-header op ELKE hop
+        # opnieuw mee. httpx (net als requests) stript bij follow_redirects=True de
+        # Authorization-header op een cross-host redirect (apex→www of www→apex) —
+        # en Vercel-sites doen precies zo'n 307/308. Zonder dit arriveert de POST bij
+        # de www-host zónder token → 401, komt het artikel niet live, en eindigt de
+        # job als 'publish_failed'. (De weareimpact-schrijfflow doet dit al zo met
+        # _post_follow; dit trekt de content-wachtrij-publisher gelijk, zodat ook een
+        # apex-URL werkt i.p.v. stil te falen op de redirect.)
+        def _post_follow(url: str, body: dict, key: str):
+            headers = {"Authorization": f"Bearer {key}",
+                       "Content-Type": "application/json"}
+            cur, resp = url, None
+            for _ in range(5):
+                resp = httpx.post(cur, json=body, headers=headers, timeout=90,
+                                  follow_redirects=False)
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    loc = resp.headers.get("location")
+                    if not loc:
+                        break
+                    cur = str(httpx.URL(cur).join(loc))
+                    continue
+                break
+            return resp
+        resp = await asyncio.to_thread(_post_follow, publish_url, payload, publish_key)
         if resp.status_code in (200, 201):
             try:
                 data = resp.json()
@@ -1274,11 +1531,17 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
 
 # ── Goedkeuren → publiceren + posten ────────────────────────────────────────
 
-async def approve_and_publish(job_id: str) -> Dict:
+async def approve_and_publish(job_id: str,
+                              social_channels: Optional[List[str]] = None) -> Dict:
     """Publiceer naar de website van de site (Netlify óf de per-project
     publish-endpoint), dien de sitemap in bij Google Search Console, en post
     naar elk platform waarvoor de site credentials heeft. Wordt uitsluitend
     getriggerd door een menselijke goedkeuring (nooit automatisch).
+
+    `social_channels` is de per-artikel-keuze van de reviewer: None = alle
+    geconfigureerde platformen (het oude gedrag), een lege lijst = alleen de
+    website (geen social, ook geen Content Multiplier), een deellijst
+    (bv. ["linkedin"]) = alleen die platformen.
 
     Een falend social-platform (bv. LinkedIn in 'Review in progress') blokkeert
     de website-publicatie nooit — het wordt als mislukt genoteerd en overgeslagen.
@@ -1286,8 +1549,14 @@ async def approve_and_publish(job_id: str) -> Dict:
     job = get_job(job_id)
     if not job:
         raise ValueError("Content-job niet gevonden.")
-    if job["status"] != "pending_review":
-        raise ValueError(f"Job heeft status '{job['status']}', niet 'pending_review'.")
+    # 'publish_failed' is óók geldig: dat is een job die de review al passeerde en
+    # alleen op de publicatie-stap struikelde (bv. een 404-endpoint). De
+    # Actiecentrum-knop "Opnieuw publiceren" biedt exact die jobs aan; zonder
+    # 'publish_failed' hier gaf die knop een harde 400. De kwaliteits- en
+    # publiceerbaarheidsgates hieronder blijven onverkort gelden.
+    if job["status"] not in ("pending_review", "publish_failed"):
+        raise ValueError(
+            f"Job heeft status '{job['status']}', niet 'pending_review' of 'publish_failed'.")
 
     # Harde kwaliteitsgate: onder de grens wordt er níet gepubliceerd —
     # ook niet met een handmatige goedkeuring. Eerst verbeteren (regenerate).
@@ -1298,9 +1567,22 @@ async def approve_and_publish(job_id: str) -> Dict:
             f"({CONTENT_MIN_SCORE}) — laat de agent het artikel eerst verbeteren of wijs het af."
         )
 
+    # Publiceerbaarheidsgate: een intern plan/rapport gaat nooit live, hoe hoog
+    # de SEO-score ook is (zie is_internal_document).
+    intern = is_internal_document(job["title"], job.get("blog_html") or "")
+    if intern:
+        raise ValueError(
+            f"'{job['title']}' is niet publiceerbaar: {intern}. "
+            "Wijs het af of herschrijf het als artikel voor bezoekers."
+        )
+
     site = sites_service.get_site(job["site_id"])
     if not site:
         raise ValueError("Site niet gevonden.")
+
+    # Alleen-website-sites (bv. Daar): wél publiceren + zoekmachine-indiening,
+    # géén social-fan-out en géén Content Multiplier.
+    website_only = bool(site.get("website_only"))
 
     social_copy = json.loads(job["social_copy"] or "{}")
     import base64
@@ -1311,6 +1593,11 @@ async def approve_and_publish(job_id: str) -> Dict:
     result: Dict = {"netlify": None, "gsc": None, "bing": None, "social": {}}
     article_url = None
     image_url = None
+    # De URL die de publish-route zélf teruggaf — het enige adres waarvan we
+    # weten dát het de gepubliceerde pagina is. article_url kan verderop
+    # terugvallen op een gegokt /blog/<slug>-adres; dat gokje mag nooit de
+    # live-controle voeden (een 404 zou dan een geslaagde publicatie afkeuren).
+    published_url = None
     base_url = (site.get("base_url") or "").rstrip("/")
 
     # ── Website-publicatie ───────────────────────────────────────────────────
@@ -1325,6 +1612,7 @@ async def approve_and_publish(job_id: str) -> Dict:
             )
             result["netlify"] = netlify_result
             article_url = netlify_result.get("url")
+            published_url = article_url
             image_url = netlify_result.get("image_url")
         except Exception as e:
             result["netlify"] = {"error": str(e)[:300]}
@@ -1337,6 +1625,7 @@ async def approve_and_publish(job_id: str) -> Dict:
             result["site"] = site_result
             if site_result.get("url"):
                 article_url = site_result["url"]
+                published_url = article_url
                 image_url = site_result.get("image_url")
         except Exception as e:
             result["site"] = {"success": False, "error": str(e)[:300]}
@@ -1384,48 +1673,95 @@ async def approve_and_publish(job_id: str) -> Dict:
             logger.warning("Social-post %s overgeslagen (mislukt): %s", platform, e)
             return {"success": False, "error": str(e)[:200]}
 
-    if social_copy.get("linkedin") and linkedin_service.is_configured(site_name):
-        result["social"]["linkedin"] = await _post(
-            "linkedin",
-            linkedin_service.post_update(
-                social_copy["linkedin"], article_url=article_url, site_name=site_name))
-    if social_copy.get("facebook") and facebook_service.is_configured(site_name):
-        result["social"]["facebook"] = await _post(
-            "facebook",
-            facebook_service.post_update(
-                social_copy["facebook"], article_url=article_url, site_name=site_name))
-    if social_copy.get("instagram") and instagram_service.is_configured(site_name):
-        if image_url:
-            result["social"]["instagram"] = await _post(
-                "instagram",
-                instagram_service.post_image(
-                    image_url, social_copy["instagram"], site_name=site_name))
-        else:
-            result["social"]["instagram"] = {"success": False,
-                "error": "Geen publieke image-url (site publish geeft geen image_url)"}
-    if social_copy.get("twitter") and twitter_service.is_configured(site_name):
-        result["social"]["twitter"] = await _post(
-            "twitter",
-            twitter_service.post_update(
-                social_copy["twitter"], article_url=article_url, site_name=site_name))
+    chosen = ({c.strip().lower() for c in social_channels}
+              if social_channels is not None else None)
+
+    def _wants(platform: str) -> bool:
+        return chosen is None or platform in chosen
+
+    if website_only:
+        # Bewust geen social voor deze site — alleen de website + zoekmachines.
+        result["social"] = {"skipped": "website_only — social uitgeschakeld voor deze site"}
+    elif chosen is not None and not chosen:
+        result["social"] = {"skipped": "social uitgeschakeld bij goedkeuren (keuze reviewer)"}
+    else:
+        if social_copy.get("linkedin") and _wants("linkedin") and linkedin_service.is_configured(site_name):
+            result["social"]["linkedin"] = await _post(
+                "linkedin",
+                linkedin_service.post_update(
+                    social_copy["linkedin"], article_url=article_url, site_name=site_name))
+        if social_copy.get("facebook") and _wants("facebook") and facebook_service.is_configured(site_name):
+            result["social"]["facebook"] = await _post(
+                "facebook",
+                facebook_service.post_update(
+                    social_copy["facebook"], article_url=article_url, site_name=site_name))
+        if social_copy.get("instagram") and _wants("instagram") and instagram_service.is_configured(site_name):
+            if image_url:
+                result["social"]["instagram"] = await _post(
+                    "instagram",
+                    instagram_service.post_image(
+                        image_url, social_copy["instagram"], site_name=site_name))
+            else:
+                result["social"]["instagram"] = {"success": False,
+                    "error": "Geen publieke image-url (site publish geeft geen image_url)"}
+        if social_copy.get("twitter") and _wants("twitter") and twitter_service.is_configured(site_name):
+            result["social"]["twitter"] = await _post(
+                "twitter",
+                twitter_service.post_update(
+                    social_copy["twitter"], article_url=article_url, site_name=site_name))
 
     # Status correct weerspiegelen: pas 'published' als de site-publicatie écht
     # gelukt is. Mislukt die (geen env, HTTP-fout, exception), zet dan
     # 'publish_failed' — anders staat de job op 'published' terwijl er niets
     # online staat (de oorspronkelijke IctusGo-bug: 7 jobs 'published' maar 0 live).
-    site_ok = bool(result.get("site", {}).get("success"))
+    # De twee routes rapporteren verschillend: de Netlify-route levert een dict
+    # met een 'url' (of een 'error'), de project-route een expliciete 'success'.
+    # Alleen op result["site"] kijken zette elke geslaagde Netlify-publicatie op
+    # 'publish_failed' — die route vult de 'site'-sleutel namelijk nooit.
+    if site.get("publish_api_url"):
+        netlify = result.get("netlify") or {}
+        site_ok = bool(netlify.get("url")) and not netlify.get("error")
+    else:
+        site_ok = bool((result.get("site") or {}).get("success"))
+
+    # En vertrouw de statuscode niet: controleer dat de pagina écht rendert.
+    if site_ok and published_url:
+        reden = await _verify_live(published_url)
+        if reden:
+            site_ok = False
+            result["live_check"] = reden
+            logger.warning("[content-pipeline] %s", reden)
+
     job_status = "published" if site_ok else "publish_failed"
     _update_job(job_id, status=job_status, publish_result=json.dumps(result), reviewed_at=_now())
-    _log_activity(site_name, "publicatie", f"'{job['title']}' goedgekeurd en gepubliceerd",
-                  artifact=article_url or "")
+    if site_ok:
+        _log_activity(site_name, "publicatie", f"'{job['title']}' goedgekeurd en gepubliceerd",
+                      artifact=article_url or "")
+    else:
+        reden = (result.get("live_check")
+                 or (result.get("site") or {}).get("error")
+                 or (result.get("netlify") or {}).get("error")
+                 or "onbekende fout")
+        _log_activity(site_name, "publicatie_mislukt",
+                      f"'{job['title']}' goedgekeurd maar NIET gepubliceerd: {reden}",
+                      artifact="")
 
     # ── Content Multiplier: format-waaier als achtergrondtaak ────────────────
     # Uit één goedgekeurd artikel automatisch social-pack + video genereren.
     # Achter de review-gates (pending_review) — er wordt niets gepost. Als
     # create_task hier draait, leeft de taak op de uvicorn-event-loop door
     # nadat deze request al beantwoord is.
+    # Alleen na een geslaagde publicatie: een social-pack en video die naar een
+    # niet-bestaande pagina linken zijn waardeloos en kosten LLM-quota.
     from ...shared.config import CONTENT_MULTIPLIER_ENABLED
-    if CONTENT_MULTIPLIER_ENABLED:
+    if website_only:
+        # Multiplier maakt social-pack + video — niet gewenst voor alleen-website-sites.
+        result["multiplier"] = "overgeslagen (website_only)"
+    elif chosen is not None and not chosen:
+        # De reviewer zette social voor dít artikel uit — dan is een social-pack
+        # + video genereren zinloos werk (en LLM-quota).
+        result["multiplier"] = "overgeslagen (social uitgeschakeld bij goedkeuren)"
+    elif CONTENT_MULTIPLIER_ENABLED and site_ok:
         try:
             from . import multiplier
             asyncio.create_task(multiplier.multiply_job_safe(job_id))
@@ -1502,6 +1838,14 @@ async def regenerate_job(job_id: str) -> str:
 
     from ...shared.config import CONTENT_MIN_SCORE
     passed = review["score"] >= CONTENT_MIN_SCORE
+    if review["score"] <= 0:
+        # Score 0 = de review kon helemaal niet draaien (LLM/quota down), geen
+        # oordeel over het artikel. NIET als verbeter-poging tellen — anders
+        # raakt een artikel 'stuck' door drie provider-storingen zonder dat er
+        # één echte ronde is gedraaid (incident 2026-07-17, OpenModel-403-uren).
+        logger.info("[content-pipeline] Regenerate zonder werkende review (score 0) "
+                    "— bestaande versie en teller ongemoeid.")
+        return job_id
     # Teller pas optellen als we écht een verbeter-cyclus hebben gedraaid; een
     # no-op (bestaande versie behouden) telt niet als nieuwe poging.
     new_attempts = attempts + (1 if review["score"] != old_score or review["score"] < CONTENT_MIN_SCORE else 0)

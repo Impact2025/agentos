@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="nl"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Iris Remote - Notities &amp; Context</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        :root {
+            --iris-blue: #8ed5ff;
+            --surface-bg: #101415;
+        }
+        body {
+            background-color: var(--surface-bg);
+            color: #e0e3e5;
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+        }
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .glass-panel:focus-within {
+            border-color: var(--iris-blue);
+            box-shadow: inset 0 0 10px rgba(142, 213, 255, 0.1);
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--iris-blue);
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .pulse {
+            animation: pulse-glow 2s infinite;
+        }
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 0 0 rgba(142, 213, 255, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(142, 213, 255, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(142, 213, 255, 0); }
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.02);
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(142, 213, 255, 0.2);
+            border-radius: 10px;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "surface-bright": "#363a3b",
+                      "error-container": "#93000a",
+                      "surface": "#101415",
+                      "surface-variant": "#323537",
+                      "tertiary": "#c5cce6",
+                      "surface-container-low": "#191c1e",
+                      "on-tertiary-container": "#3c4459",
+                      "on-primary-container": "#004965",
+                      "inverse-on-surface": "#2d3133",
+                      "on-error": "#690005",
+                      "on-tertiary": "#283044",
+                      "tertiary-container": "#a9b1ca",
+                      "on-secondary-container": "#a7b6cc",
+                      "on-tertiary-fixed-variant": "#3f465c",
+                      "primary": "#8ed5ff",
+                      "on-secondary-fixed": "#0d1c2d",
+                      "outline-variant": "#3e484f",
+                      "on-secondary-fixed-variant": "#39485a",
+                      "background": "#101415",
+                      "primary-fixed": "#c4e7ff",
+                      "on-surface": "#e0e3e5",
+                      "primary-container": "#38bdf8",
+                      "on-background": "#e0e3e5",
+                      "primary-fixed-dim": "#7bd0ff",
+                      "on-tertiary-fixed": "#131b2e",
+                      "secondary-fixed": "#d4e4fa",
+                      "secondary-fixed-dim": "#b9c8de",
+                      "error": "#ffb4ab",
+                      "tertiary-fixed": "#dae2fd",
+                      "on-secondary": "#233143",
+                      "surface-dim": "#101415",
+                      "secondary": "#b9c8de",
+                      "on-primary": "#00354a",
+                      "on-primary-fixed-variant": "#004c69",
+                      "inverse-primary": "#00668a",
+                      "surface-container-highest": "#323537",
+                      "surface-tint": "#7bd0ff",
+                      "tertiary-fixed-dim": "#bec6e0",
+                      "inverse-surface": "#e0e3e5",
+                      "on-surface-variant": "#bdc8d1",
+                      "surface-container": "#1d2022",
+                      "on-error-container": "#ffdad6",
+                      "surface-container-lowest": "#0b0f10",
+                      "secondary-container": "#39485a",
+                      "surface-container-high": "#272a2c",
+                      "on-primary-fixed": "#001e2c",
+                      "outline": "#87929a"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "unit": "4px",
+                      "container-padding": "20px",
+                      "gutter": "16px",
+                      "stack-sm": "8px",
+                      "stack-lg": "32px",
+                      "stack-md": "16px"
+              },
+              "fontFamily": {
+                      "headline-md": ["Inter"],
+                      "body-md": ["Inter"],
+                      "display-lg": ["Inter"],
+                      "body-lg": ["Inter"],
+                      "label-caps": ["JetBrains Mono"],
+                      "display-lg-mobile": ["Inter"],
+                      "headline-sm": ["Inter"]
+              },
+              "fontSize": {
+                      "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                      "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                      "display-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                      "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                      "label-caps": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500"}],
+                      "display-lg-mobile": ["28px", {"lineHeight": "36px", "fontWeight": "700"}],
+                      "headline-sm": ["20px", {"lineHeight": "28px", "fontWeight": "600"}]
+              }
+            },
+          },
+        }
+      </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-surface text-on-surface">
+<!-- TopAppBar -->
+<header class="bg-surface/80 dark:bg-surface/80 backdrop-blur-xl flex justify-between items-center w-full px-container-padding h-16 fixed top-0 z-50 border-b border-white/10">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary" data-icon="hub">hub</span>
+<h1 class="font-headline-md text-headline-md font-bold text-on-surface">Iris Remote</h1>
+</div>
+<button class="text-primary hover:opacity-80 active:scale-95 transition-transform" id="syncTrigger">
+<span class="material-symbols-outlined" data-icon="sync">sync</span>
+</button>
+</header>
+<!-- Main Content Canvas -->
+<main class="pt-24 pb-32 px-container-padding max-w-[768px] mx-auto min-h-screen">
+<!-- Header Section -->
+<section class="mb-stack-lg">
+<div class="flex items-center gap-2 mb-2">
+<span class="font-label-caps text-label-caps text-primary tracking-widest uppercase">Contextual Engine</span>
+</div>
+<h2 class="font-display-lg-mobile text-display-lg-mobile text-on-surface mb-2">Notities &amp; Gedachten</h2>
+<p class="font-body-md text-body-md text-on-surface-variant">Vang vluchtige ideeën op voor AgentOS. Elke gedachte wordt als context toegevoegd aan je persoonlijke model.</p>
+</section>
+<!-- Input Area (Thought Dump) -->
+<section class="mb-stack-lg">
+<div class="glass-panel rounded-xl p-4 flex flex-col gap-4">
+<div class="flex items-center justify-between">
+<label class="font-label-caps text-label-caps text-on-surface-variant">Nieuwe instructie of gedachte</label>
+<div class="flex items-center gap-2">
+<span class="status-dot pulse"></span>
+<span class="font-label-caps text-label-caps text-primary">Live Context</span>
+</div>
+</div>
+<textarea class="w-full bg-[#020617] border-none rounded-lg p-4 text-on-surface font-body-lg focus:ring-2 focus:ring-primary/50 transition-all placeholder:text-on-surface-variant/40" id="noteInput" placeholder="Typ hier je 'thought-dump'..." rows="5"></textarea>
+<div class="flex justify-between items-center">
+<span class="font-label-caps text-label-caps text-on-surface-variant/60" id="charCount">0 tekens</span>
+<button class="bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm flex items-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-[0_0_15px_rgba(142,213,255,0.3)]" id="saveBtn">
+<span class="material-symbols-outlined" data-icon="cloud_upload">cloud_upload</span>
+                        Opslaan voor sync
+                    </button>
+</div>
+</div>
+</section>
+<!-- Sync Message -->
+<div class="mb-stack-lg bg-primary-container/10 border border-primary/20 rounded-lg p-4 flex items-start gap-3">
+<span class="material-symbols-outlined text-primary mt-0.5" data-icon="info">info</span>
+<p class="font-body-md text-body-md text-primary">Wordt ingeladen door <span class="font-bold">AgentOS</span> bij volgende sync. Dit verbetert je persoonlijke assistent met nieuwe context en voorkeuren.</p>
+</div>
+<!-- Recent Notes List -->
+<section>
+<div class="flex items-center justify-between mb-4">
+<h3 class="font-headline-sm text-headline-sm">Recente Logs</h3>
+<span class="font-label-caps text-label-caps text-on-surface-variant">Tabel: notes</span>
+</div>
+<div class="space-y-4">
+<!-- Note Item 1 -->
+<div class="glass-panel rounded-lg p-4 group hover:border-primary/40 transition-colors cursor-pointer">
+<div class="flex justify-between items-start mb-2">
+<span class="font-label-caps text-label-caps text-on-surface-variant">14 Okt, 2023 • 22:14</span>
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+<p class="font-body-md text-body-md text-on-surface line-clamp-2">Herinnering om de API-sleutels te roteren voor het Iris Project en de documentatie over de nieuwe endpoint-structuur te bekijken voor de volgende sprint.</p>
+</div>
+<!-- Note Item 2 -->
+<div class="glass-panel rounded-lg p-4 group hover:border-primary/40 transition-colors cursor-pointer">
+<div class="flex justify-between items-start mb-2">
+<span class="font-label-caps text-label-caps text-on-surface-variant">13 Okt, 2023 • 09:45</span>
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+<p class="font-body-md text-body-md text-on-surface line-clamp-2">Voorkeur: Geef antwoorden altijd in een beknopt formaat met bullet points, tenzij expliciet gevraagd om meer detail.</p>
+</div>
+<!-- Note Item 3 -->
+<div class="glass-panel rounded-lg p-4 group hover:border-primary/40 transition-colors cursor-pointer">
+<div class="flex justify-between items-start mb-2">
+<span class="font-label-caps text-label-caps text-on-surface-variant">12 Okt, 2023 • 18:30</span>
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+<p class="font-body-md text-body-md text-on-surface line-clamp-2">Nieuwe strategie voor workflow-automatisering. Gebruik de web-hooks van het systeem in plaats van periodieke polling om batterijduur op mobile te sparen.</p>
+</div>
+</div>
+<button class="w-full mt-6 py-4 border border-white/5 rounded-lg text-on-surface-variant font-label-caps text-label-caps hover:bg-white/5 transition-colors">
+                Bekijk volledige historie
+            </button>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-2 bg-surface/80 dark:bg-surface/80 backdrop-blur-xl border-t border-white/10 shadow-[0_-4px_20px_rgba(0,0,0,0.3)] rounded-t-xl">
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="center_focus_strong">center_focus_strong</span>
+<span class="font-label-caps text-[10px] mt-1">Actiecentrum</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="assignment">assignment</span>
+<span class="font-label-caps text-[10px] mt-1">Briefings</span>
+</a>
+<a class="flex flex-col items-center justify-center text-primary bg-primary-container/20 rounded-xl px-4 py-1 shadow-[0_0_15px_rgba(142,213,255,0.3)] animate-pulse" href="#">
+<span class="material-symbols-outlined" data-icon="edit_note">edit_note</span>
+<span class="font-label-caps text-[10px] mt-1">Notities</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="settings_input_component">settings_input_component</span>
+<span class="font-label-caps text-[10px] mt-1">Systeem</span>
+</a>
+</nav>
+<script>
+        // Character counter for the textarea
+        const noteInput = document.getElementById('noteInput');
+        const charCount = document.getElementById('charCount');
+        const saveBtn = document.getElementById('saveBtn');
+        const syncTrigger = document.getElementById('syncTrigger');
+
+        noteInput.addEventListener('input', () => {
+            const length = noteInput.value.length;
+            charCount.textContent = `${length} tekens`;
+        });
+
+        // Simple animation on save
+        saveBtn.addEventListener('click', () => {
+            if (noteInput.value.trim() === '') return;
+            
+            saveBtn.innerHTML = `<span class="material-symbols-outlined animate-spin" data-icon="progress_activity">progress_activity</span> Syncen...`;
+            saveBtn.classList.add('opacity-50');
+            saveBtn.disabled = true;
+
+            setTimeout(() => {
+                saveBtn.innerHTML = `<span class="material-symbols-outlined" data-icon="check_circle">check_circle</span> Opgeslagen`;
+                saveBtn.classList.remove('bg-primary');
+                saveBtn.classList.add('bg-green-500/20', 'text-green-400', 'border', 'border-green-400/30');
+                
+                setTimeout(() => {
+                    noteInput.value = '';
+                    charCount.textContent = '0 tekens';
+                    saveBtn.innerHTML = `<span class="material-symbols-outlined" data-icon="cloud_upload">cloud_upload</span> Opslaan voor sync`;
+                    saveBtn.classList.remove('bg-green-500/20', 'text-green-400', 'border', 'border-green-400/30', 'opacity-50');
+                    saveBtn.classList.add('bg-primary', 'text-on-primary');
+                    saveBtn.disabled = false;
+                }, 2000);
+            }, 1200);
+        });
+
+        // Top sync trigger rotation
+        syncTrigger.addEventListener('click', () => {
+            const icon = syncTrigger.querySelector('.material-symbols-outlined');
+            icon.classList.add('animate-spin');
+            setTimeout(() => {
+                icon.classList.remove('animate-spin');
+            }, 1000);
+        });
+    </script>
+</body></html>

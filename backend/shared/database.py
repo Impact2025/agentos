@@ -257,6 +257,61 @@ CREATE TABLE IF NOT EXISTS published_pages (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_published_pages_site_slug ON published_pages(site_id, slug);
 
+-- Linkbuilding: linkkans-funnel per site. De agent zoekt en kwalificeert
+-- prospects en zet mailconcepten klaar; versturen kan ALLEEN via de
+-- approve-endpoint (review-gate). Tijdstempels vanaf 'contacted' zijn de
+-- basis voor de linkbuilding-formule ("X mails -> 1 link live").
+CREATE TABLE IF NOT EXISTS link_prospects (
+    id                  TEXT PRIMARY KEY,
+    site_id             TEXT NOT NULL,
+    domain              TEXT NOT NULL,
+    url                 TEXT DEFAULT '',
+    page_title          TEXT DEFAULT '',
+    prospect_type       TEXT DEFAULT 'overig',       -- gastblog | resource | partner | gids | mention | overig
+    relevance_score     INTEGER DEFAULT 0,
+    rationale           TEXT DEFAULT '',
+    contact_email       TEXT DEFAULT '',
+    target_url          TEXT DEFAULT '',             -- onze pagina die de link moet krijgen
+    anchor_text         TEXT DEFAULT '',
+    status              TEXT NOT NULL DEFAULT 'new', -- new|qualified|outreach_review|contacted|replied|agreed|link_live|verified (zijuitgang: lost)
+    outreach_subject    TEXT DEFAULT '',
+    outreach_draft      TEXT DEFAULT '',
+    outreach_drafted_at TEXT DEFAULT '',
+    contacted_at        TEXT DEFAULT '',
+    replied_at          TEXT DEFAULT '',
+    agreed_at           TEXT DEFAULT '',
+    link_live_at        TEXT DEFAULT '',
+    verified_at         TEXT DEFAULT '',
+    lost_at             TEXT DEFAULT '',
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_link_prospects_site_domain ON link_prospects(site_id, domain);
+
+-- Linkbuilding: de concrete afspraak (welke link, waar) en of hij er staat.
+-- De monitor crawlt source_url en zoekt de link naar target_url:
+-- pending -> live (-> verified op de prospect) en live -> lost bij verdwijnen.
+CREATE TABLE IF NOT EXISTS link_placements (
+    id           TEXT PRIMARY KEY,
+    prospect_id  TEXT NOT NULL,
+    site_id      TEXT NOT NULL,
+    source_url   TEXT NOT NULL,
+    target_url   TEXT NOT NULL,
+    anchor_text  TEXT DEFAULT '',
+    rel          TEXT DEFAULT '',                    -- '' (dofollow) | nofollow | sponsored | ugc
+    status       TEXT NOT NULL DEFAULT 'pending',    -- pending | live | lost
+    first_seen   TEXT DEFAULT '',
+    last_checked TEXT DEFAULT '',
+    check_fails  INTEGER DEFAULT 0,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    FOREIGN KEY (prospect_id) REFERENCES link_prospects(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_link_placements_status ON link_placements(status, site_id);
+
 -- Content-wachtrij: 2x/week auto-gegenereerde blog + social-copy, wacht op
 -- menselijke goedkeuring voordat er iets live/gepost wordt (nooit auto-publish).
 CREATE TABLE IF NOT EXISTS content_jobs (
@@ -474,6 +529,9 @@ def _migrate(conn) -> None:
         ("outreach_subject", "ALTER TABLE leads ADD COLUMN outreach_subject TEXT DEFAULT ''"),
         ("outreach_draft",   "ALTER TABLE leads ADD COLUMN outreach_draft TEXT DEFAULT ''"),
         ("outreach_drafted_at", "ALTER TABLE leads ADD COLUMN outreach_drafted_at TEXT DEFAULT ''"),
+        # Outreach-leerlus: welke concept-stijl dit concept gebruikte (JSON:
+        # opening/toon/lengte) — de koppeling tussen aanpak en reply-uitkomst.
+        ("outreach_variant", "ALTER TABLE leads ADD COLUMN outreach_variant TEXT DEFAULT ''"),
     ):
         if col not in lead_cols:
             conn.execute(ddl)
@@ -553,9 +611,18 @@ def _migrate(conn) -> None:
         ("ctas",               "ALTER TABLE sites ADD COLUMN ctas TEXT DEFAULT '[]'"),
         ("content_batch_size", "ALTER TABLE sites ADD COLUMN content_batch_size INTEGER DEFAULT 1"),
         ("indexnow_key",       "ALTER TABLE sites ADD COLUMN indexnow_key TEXT DEFAULT ''"),
+        # Testsites tellen niet mee in Iris' cijfers/prioritering — anders wordt
+        # "TestSite omhoog tillen" het topadvies terwijl het geen echt project is.
+        ("is_test",            "ALTER TABLE sites ADD COLUMN is_test INTEGER DEFAULT 0"),
+        # Alleen-website-publicatie: geen social-fan-out en geen Content Multiplier
+        # (social-pack + video). Voor sites die bewust niet op social willen (Daar).
+        ("website_only",       "ALTER TABLE sites ADD COLUMN website_only INTEGER DEFAULT 0"),
     ):
         if col not in site_cols:
             conn.execute(ddl)
+    if "is_test" not in site_cols:
+        # Eenmalige nulmeting: bestaande sites met 'test' in de naam markeren.
+        conn.execute("UPDATE sites SET is_test = 1 WHERE lower(name) LIKE '%test%'")
 
     # Demand Engine kansen: live-URL + publicatietimestamp, zodat de Kansen-card
     # in de UI direct kan tonen of een artikel écht live staat (ipv alleen de
@@ -771,6 +838,46 @@ def _migrate(conn) -> None:
         "ON iris_knowledge(active, scope)"
     )
 
+    # Iris' actie-voorstellen ("Wil je dat ik dit fix?") — de brug van
+    # analyse naar uitvoering. Iris legt per briefing concreet uitvoerbare
+    # acties klaar; Vincent keurt per stuk goed (apply) of wijst af (reject).
+    # Elke rij is idempotent: dezelfde (report, type, target) wordt niet
+    # twee keer aangeboden, en een eenmaal goedgekeurde/afgewezen actie
+    # blijft gesloten. Agenten publiceren/versturen NOOIT zelf — alles
+    # landt achter de bestaande review-gates (Wachtrij / Actiecentrum).
+    # status: pending | approved | rejected | applied | failed
+    # type: content_run | seo_refresh | outreach_run | gsc_connect | goal_draft
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS iris_suggestions ("
+        "  id            TEXT PRIMARY KEY,"
+        "  report_date   TEXT NOT NULL,"
+        "  scope         TEXT NOT NULL DEFAULT 'all',"
+        "  type          TEXT NOT NULL,"
+        "  title         TEXT NOT NULL,"
+        "  detail        TEXT DEFAULT '',"
+        "  target        TEXT DEFAULT '',"
+        "  payload       TEXT DEFAULT '{}',"
+        "  priority      INTEGER DEFAULT 5,"
+        "  status        TEXT NOT NULL DEFAULT 'pending',"
+        "  applied_detail TEXT DEFAULT '',"
+        "  decided_at    TEXT DEFAULT '',"
+        "  applied_at    TEXT DEFAULT '',"
+        "  goal_id       TEXT DEFAULT '',"
+        "  created_at    TEXT NOT NULL"
+        ")"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_iris_suggestions_report "
+        "ON iris_suggestions(report_date, status)"
+    )
+    # goal_id linkt een goal_draft-suggestie aan het concept-doel dat Iris
+    # bij apply() aanmaakte. Zonder die link tonen het Actiecentrum (goal
+    # draft) en de Iris-suggestie (applied) dezelfde intentie tweemaal met
+    # tegenstrijdige statussen ("Uitgevoerd ✓" én "Bevestig & start").
+    sug_cols = {r["name"] for r in conn.execute("PRAGMA table_info(iris_suggestions)").fetchall()}
+    if "goal_id" not in sug_cols:
+        conn.execute("ALTER TABLE iris_suggestions ADD COLUMN goal_id TEXT DEFAULT ''")
+
     # ── Mail helpdesk (review-gate): per project een eigen mailbox ──────────
     # Een mailbox koppelt een project aan zijn POP3-inbox + SMTP-verzender.
     # AgentOS haalt mail op, filtert spam, laat de LLM een concept-antwoord
@@ -837,6 +944,17 @@ def _migrate(conn) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_mail_reply_status "
         "ON mail_reply(mailbox_id, status)"
+    )
+    # Negeerlijst: afzenders waarop de helpdesk nooit meer een concept maakt
+    # ("Niet meer reageren" in het Actiecentrum). pattern is een lowercase
+    # e-mailadres, of '@domein' voor een heel domein.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS mail_ignored_senders (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            pattern      TEXT NOT NULL UNIQUE,     -- 'x@y.nl' of '@y.nl'
+            reason       TEXT DEFAULT '',           -- bv. onderwerp van de mail die ertoe leidde
+            created_at   TEXT DEFAULT (datetime('now'))
+        )"""
     )
 
     # ── Social Inbox (per project, per kanaal: LinkedIn/IG/FB/TikTok) ────────
@@ -908,12 +1026,32 @@ def _migrate(conn) -> None:
             concept          INTEGER DEFAULT 0,        -- 1 = lokale fallback (geen LLM), niet productieklaar
             approved_at      TEXT DEFAULT '',
             posted_result_json TEXT DEFAULT '{}',      -- resultaat van publish_pack()
+            video_path       TEXT DEFAULT '',           -- projectrelatief pad naar gerenderde 9:16 short
             created_at       TEXT NOT NULL
         )"""
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_social_posts_project "
         "ON social_posts(project, status)"
+    )
+    # Bestaande databases (tabel al aangemaakt vóór de video-feature): kolom bijzetten.
+    sp_cols = {row["name"] for row in conn.execute("PRAGMA table_info(social_posts)").fetchall()}
+    if "video_path" not in sp_cols:
+        conn.execute("ALTER TABLE social_posts ADD COLUMN video_path TEXT DEFAULT ''")
+
+    # ── LinkedIn posts log (eigen posts die AgentOS plaatst) ──────────────
+    # Basis voor de lokale analyse-laag: de LinkedIn Posts API (statistieken
+    # lezen) vereist partner-toegang die een solo-founder niet heeft, dus houden
+    # we hier bij wat wij zélf hebben geplaatst.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS linkedin_posts (
+            id          TEXT PRIMARY KEY,    -- LinkedIn post URN (urn:li:share:xxx)
+            project     TEXT DEFAULT '',
+            text        TEXT DEFAULT '',
+            url         TEXT DEFAULT '',
+            posted_at   TEXT NOT NULL,
+            source      TEXT DEFAULT 'api'   -- api | pack
+        )"""
     )
 
     # ── LLM-kosten-telemetrie ──────────────────────────────────────────────
@@ -960,6 +1098,20 @@ def _migrate(conn) -> None:
     # (poort 995). Zonder deze vlag strandde elke Exchange-mailbox stilzwijgend.
     if "pop_ssl" not in mb_cols:
         conn.execute("ALTER TABLE mailboxes ADD COLUMN pop_ssl INTEGER NOT NULL DEFAULT 0")
+    # ── Microsoft Graph (OAuth2 client_credentials) voor Office365/Exchange ──
+    # Basic auth (POP3/IMAP/SMTP-wachtwoord) is sinds 1 okt 2022 uitgeschakeld
+    # bij Exchange Online. Mailboxen op M365 authenticeren daarom via Graph met
+    # een Entra-app (client_credentials). Deze kolommen bewaren de app-creds
+    # per mailbox — NIET het accountwachtwoord, en niet in .env.
+    for col, ddl in (
+        ("auth_method",       "ALTER TABLE mailboxes ADD COLUMN auth_method TEXT DEFAULT 'pop'"),
+        ("graph_tenant_id",   "ALTER TABLE mailboxes ADD COLUMN graph_tenant_id TEXT DEFAULT ''"),
+        ("graph_client_id",   "ALTER TABLE mailboxes ADD COLUMN graph_client_id TEXT DEFAULT ''"),
+        ("graph_client_secret", "ALTER TABLE mailboxes ADD COLUMN graph_client_secret TEXT DEFAULT ''"),
+        ("graph_user_upn",    "ALTER TABLE mailboxes ADD COLUMN graph_user_upn TEXT DEFAULT ''"),
+    ):
+        if col not in mb_cols:
+            conn.execute(ddl)
     mi_cols = {r["name"] for r in conn.execute("PRAGMA table_info(mail_inbox)").fetchall()}
     for col, ddl in (
         ("message_id",  "ALTER TABLE mail_inbox ADD COLUMN message_id TEXT DEFAULT ''"),
@@ -976,6 +1128,46 @@ def _migrate(conn) -> None:
     ):
         if col not in mr_cols:
             conn.execute(ddl)
+
+    # ── Agenda-voorstellen (mail → afspraak, human-in-the-loop) ──
+    # Iris detecteert afspraak-verzoeken in mail en stelt een slot voor met
+    # conflict- + reistijd-logica. Niét direct in de agenda geschreven: eerst
+    # pending_review, Vincent keurt goed → pas dan block_time() naar Google.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS calendar_proposals (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            mailbox_id       TEXT NOT NULL,
+            inbox_id         INTEGER NOT NULL,
+            from_addr        TEXT DEFAULT '',
+            subject          TEXT DEFAULT '',
+            title            TEXT DEFAULT '',
+            proposed_start   TEXT DEFAULT '',
+            proposed_end     TEXT DEFAULT '',
+            location         TEXT DEFAULT '',
+            is_remote        INTEGER DEFAULT 0,
+            duration_min     INTEGER DEFAULT 30,
+            travel_buffer_min INTEGER DEFAULT 0,
+            priority         TEXT DEFAULT 'normal',
+            conflict_note    TEXT DEFAULT '',
+            -- 'ok' = tegen de agenda's gecontroleerd, 'unavailable' = geen
+            -- agenda gekoppeld, 'error' = check mislukt. Die laatste twee zijn
+            -- géén bewijs van een vrij slot; goedkeuren weigert erop.
+            conflict_checked TEXT DEFAULT 'ok',
+            rationale        TEXT DEFAULT '',
+            status           TEXT NOT NULL DEFAULT 'pending_review',
+            booked_event_id  TEXT DEFAULT '',
+            booked_link      TEXT DEFAULT '',
+            created_at       TEXT DEFAULT (datetime('now')),
+            decided_at       TEXT DEFAULT ''
+        )"""
+    )
+    # Bestaande databases: kolom bijtrekken. Oude rijen krijgen 'ok' — die zijn
+    # gemaakt onder het oude gedrag, waar een mislukte check als "vrij" gold.
+    cp_cols = {r["name"] for r in
+               conn.execute("PRAGMA table_info(calendar_proposals)").fetchall()}
+    if "conflict_checked" not in cp_cols:
+        conn.execute("ALTER TABLE calendar_proposals ADD COLUMN "
+                     "conflict_checked TEXT DEFAULT 'ok'")
 
 
     # ── Google Agenda-cache (Fase 1: lezen + blokkeren) ────────────────────
@@ -1000,6 +1192,58 @@ def _migrate(conn) -> None:
         "ON calendar_events(start_at)"
     )
 
+    # ── Generiek leer-raamwerk (shared/learning.py) ────────────────────────
+    # Het Iris-patroon (lessen + falsifieerbare voorspellingen, afgerekend
+    # tegen échte cijfers) veralgemeend naar élke agent via een `agent`-kolom.
+    # Iris zelf blijft (voorlopig) op haar eigen iris_*-tabellen draaien.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS agent_lessons (
+            id                  TEXT PRIMARY KEY,
+            agent               TEXT NOT NULL,        -- outreach | content | vacancy | ...
+            lesson              TEXT NOT NULL,        -- de les, in één stabiele zin
+            category            TEXT DEFAULT '',
+            evidence            TEXT DEFAULT '{}',    -- JSON: de cijfers waarop de les rust
+            times_confirmed     INTEGER DEFAULT 1,
+            predictions_made    INTEGER DEFAULT 0,
+            predictions_correct INTEGER DEFAULT 0,
+            confidence          REAL DEFAULT 0.5,     -- Laplace-gladgestreken trefkans
+            active              INTEGER DEFAULT 1,    -- 0 = ingetrokken (bewijs won)
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_lessons_agent "
+        "ON agent_lessons(agent, active)"
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS agent_predictions (
+            id              TEXT PRIMARY KEY,
+            agent           TEXT NOT NULL,
+            context         TEXT DEFAULT '',          -- waarover (bv. 'opening:observatie>vraag')
+            metric          TEXT NOT NULL,            -- agent-eigen metriek (resolver rekent hem uit)
+            direction       TEXT NOT NULL,            -- up | down (= beter | slechter)
+            comparison      TEXT DEFAULT 'trend',     -- trend (beweging t.o.v. baseline) | threshold (haalt outcome de target)
+            lower_is_better INTEGER DEFAULT 0,        -- bv. GSC-positie: lager getal = beter
+            noise           REAL DEFAULT 0.5,         -- beweging kleiner dan dit = 'unclear'
+            baseline        REAL NOT NULL,            -- waarde op moment van voorspellen (uit échte data)
+            target          REAL,
+            horizon_days    INTEGER DEFAULT 14,
+            due_date        TEXT NOT NULL,
+            lesson_id       TEXT DEFAULT '',          -- de les die deze voorspelling toetst
+            statement       TEXT DEFAULT '',          -- de voorspelling in mensentaal
+            status          TEXT NOT NULL DEFAULT 'open',  -- open | correct | wrong | unclear
+            outcome_value   REAL,
+            outcome_note    TEXT DEFAULT '',
+            evaluated_at    TEXT DEFAULT '',
+            created_at      TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_predictions_due "
+        "ON agent_predictions(agent, status, due_date)"
+    )
+
 
 @contextmanager
 def get_conn():
@@ -1007,6 +1251,17 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    # Wacht op een vergrendelde DB in plaats van direct "database is locked" te
+    # gooien. Onder gelijktijdige schrijvers (scheduler, conveyor, mail-poll) is
+    # een korte lock normaal; zonder busy_timeout mislukt elke write die niet
+    # binnen microseconden de lock krijgt — precies wat de Graph-mailflow
+    # (langzame network-fetch vóór de write) blootlegde. 5s bleek te krap: de
+    # mail-poll classificeert/draft per bericht via de LLM terwijl hij de write-
+    # transactie vasthoudt, en de piepkleine scheduler-writes (`_record_run`)
+    # gaven dan "database is locked". De echte oplossing is de lock niet over
+    # traag werk vasthouden (zie social_inbox.run_inbox); 15s is de vangrail
+    # voor de flows waar dat nog wél gebeurt.
+    conn.execute("PRAGMA busy_timeout=15000")
     try:
         yield conn
         conn.commit()

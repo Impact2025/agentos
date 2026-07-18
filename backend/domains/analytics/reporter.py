@@ -50,13 +50,21 @@ _HERMES_SYSTEM = _FALLBACK_PERSONA + "\n\n" + _REPORT_STRUCTURE
 
 
 def _resolve_model_override(profile_model: Optional[str]) -> Optional[str]:
-    """Profielmodel → waarde die de actieve backend snapt (alleen openrouter krijgt override)."""
+    """Profielmodel → bare model-string die de cloud-gateway snapt.
+
+    Geeft de model-string terug (eventuele 'openrouter/'-prefix gestript)
+    zodra een cloud-sleutel aanwezig is — ongeacht welke backend de app
+    standaard gebruikt. Zo wordt een 'pro'-profiel (bv. claude-sonnet-4-6 via
+    OpenModel) echt gehonoreerd en niet stilzwijgend overschreven door het
+    goedkope default-model. Bij geen profielmodel of geen cloud-sleutel → None."""
     if not profile_model:
         return None
     m = profile_model.strip()
-    if hermes_backend() == "openrouter":
-        return m[len("openrouter/"):] if m.startswith("openrouter/") else m
-    return None
+    if m.startswith("openrouter/"):
+        from ...shared.config import OPENROUTER_API_KEY
+        return m[len("openrouter/"):] if OPENROUTER_API_KEY else None
+    from ...shared.config import OPENMODEL_API_KEY
+    return m if OPENMODEL_API_KEY else None
 
 
 def _analyst_config() -> tuple[str, Optional[str]]:

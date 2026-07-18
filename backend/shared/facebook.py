@@ -77,12 +77,35 @@ async def post_update(text: str, article_url: Optional[str] = None,
             "site": site_name,
         }
     else:
-        error_body = resp.text[:500]
-        logger.error(f"❌ Facebook post failed ({site_name}): {resp.status_code}")
-        return {"success": False, "error": f"HTTP {resp.status_code}: {error_body}"}
-
-
-async def get_page_info(site_name: Optional[str] = None) -> Dict[str, Any]:
+        # Lees de FB-fout netjes uit zodat we een actiegerichte melding kunnen
+        # geven. Een verlopen/on­geldige access-token (OAuthException 190) is de
+        # meest voorkomende oorzaak van een 400 — zeg dát expliciet, zodat er
+        # niet naar de payload gezocht wordt maar het token vernieuwd wordt.
+        try:
+            err_json = resp.json()
+            fb_msg = err_json.get("error", {}).get("message", resp.text[:300])
+            fb_code = err_json.get("error", {}).get("code")
+        except Exception:
+            fb_msg, fb_code = resp.text[:300], None
+        if fb_code == 190 or "session has expired" in fb_msg.lower() \
+                or "error validating access token" in fb_msg.lower():
+            logger.error(
+                "❌ Facebook post mislukt (%s): access token verlopen/on­geldig "
+                "(FB code %s). Verleng via developers.facebook.com → Graph API "
+                "Explorer (Page Access Token, scope pages_manage_posts + "
+                "pages_read_engagement), zet 'm in .env (FACEBOOK_PAGE_TOKEN) en "
+                "herstart Agent OS.",
+                site_name, fb_code,
+            )
+        else:
+            logger.error(
+                "❌ Facebook post mislukt (%s): HTTP %s — %s",
+                site_name, resp.status_code, fb_msg[:300],
+            )
+        return {
+            "success": False,
+            "error": f"HTTP {resp.status_code}: {fb_msg[:500]}",
+        }
     """Haal paginanaam op — gebruikt om de verbinding te testen."""
     page_id, token = _get_site_data(site_name)
     if not page_id or not token:

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="nl"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Iris Remote - Briefings</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass-card {
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .iris-glow {
+            box-shadow: 0 0 15px rgba(142, 213, 255, 0.2);
+        }
+        .status-pulse {
+            animation: pulse-dot 2s infinite;
+        }
+        @keyframes pulse-dot {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(1.2); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        body {
+            background-color: #101415;
+            color: #e0e3e5;
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "surface-bright": "#363a3b",
+                      "error-container": "#93000a",
+                      "surface": "#101415",
+                      "surface-variant": "#323537",
+                      "tertiary": "#c5cce6",
+                      "surface-container-low": "#191c1e",
+                      "on-tertiary-container": "#3c4459",
+                      "on-primary-container": "#004965",
+                      "inverse-on-surface": "#2d3133",
+                      "on-error": "#690005",
+                      "on-tertiary": "#283044",
+                      "tertiary-container": "#a9b1ca",
+                      "on-secondary-container": "#a7b6cc",
+                      "on-tertiary-fixed-variant": "#3f465c",
+                      "primary": "#8ed5ff",
+                      "on-secondary-fixed": "#0d1c2d",
+                      "outline-variant": "#3e484f",
+                      "on-secondary-fixed-variant": "#39485a",
+                      "background": "#101415",
+                      "primary-fixed": "#c4e7ff",
+                      "on-surface": "#e0e3e5",
+                      "primary-container": "#38bdf8",
+                      "on-background": "#e0e3e5",
+                      "primary-fixed-dim": "#7bd0ff",
+                      "on-tertiary-fixed": "#131b2e",
+                      "secondary-fixed": "#d4e4fa",
+                      "secondary-fixed-dim": "#b9c8de",
+                      "error": "#ffb4ab",
+                      "tertiary-fixed": "#dae2fd",
+                      "on-secondary": "#233143",
+                      "surface-dim": "#101415",
+                      "secondary": "#b9c8de",
+                      "on-primary": "#00354a",
+                      "on-primary-fixed-variant": "#004c69",
+                      "inverse-primary": "#00668a",
+                      "surface-container-highest": "#323537",
+                      "surface-tint": "#7bd0ff",
+                      "tertiary-fixed-dim": "#bec6e0",
+                      "inverse-surface": "#e0e3e5",
+                      "on-surface-variant": "#bdc8d1",
+                      "surface-container": "#1d2022",
+                      "on-error-container": "#ffdad6",
+                      "surface-container-lowest": "#0b0f10",
+                      "secondary-container": "#39485a",
+                      "surface-container-high": "#272a2c",
+                      "on-primary-fixed": "#001e2c",
+                      "outline": "#87929a"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "unit": "4px",
+                      "container-padding": "20px",
+                      "gutter": "16px",
+                      "stack-sm": "8px",
+                      "stack-lg": "32px",
+                      "stack-md": "16px"
+              },
+              "fontFamily": {
+                      "headline-md": ["Inter"],
+                      "body-md": ["Inter"],
+                      "display-lg": ["Inter"],
+                      "body-lg": ["Inter"],
+                      "label-caps": ["JetBrains Mono"],
+                      "display-lg-mobile": ["Inter"],
+                      "headline-sm": ["Inter"]
+              },
+              "fontSize": {
+                      "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                      "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                      "display-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                      "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                      "label-caps": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500"}],
+                      "display-lg-mobile": ["28px", {"lineHeight": "36px", "fontWeight": "700"}],
+                      "headline-sm": ["20px", {"lineHeight": "28px", "fontWeight": "600"}]
+              }
+            },
+          },
+        }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="bg-background text-on-surface min-h-screen pb-24">
+<!-- TopAppBar -->
+<header class="bg-surface/80 dark:bg-surface/80 backdrop-blur-xl border-b border-white/10 flex justify-between items-center w-full px-container-padding h-16 fixed top-0 z-50">
+<div class="flex items-center gap-stack-sm">
+<span class="material-symbols-outlined text-primary" data-icon="hub">hub</span>
+<h1 class="font-headline-md text-headline-md font-bold text-on-surface">Iris Remote</h1>
+</div>
+<button class="text-primary animate-pulse hover:opacity-80 transition-transform active:scale-95">
+<span class="material-symbols-outlined" data-icon="sync">sync</span>
+</button>
+</header>
+<!-- Main Content -->
+<main class="max-w-[768px] mx-auto pt-24 px-container-padding space-y-stack-lg">
+<!-- Welcome / Atmosphere Section -->
+<section class="space-y-stack-sm">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-primary status-pulse"></span>
+<span class="font-label-caps text-label-caps text-primary uppercase">Agent Iris Actief</span>
+</div>
+<h2 class="font-display-lg-mobile md:font-display-lg text-display-lg-mobile md:text-display-lg">Briefings &amp; Analyse</h2>
+<p class="font-body-md text-body-md text-on-surface-variant max-w-lg">Geadvanceerd overzicht van operationele stromen en kritieke beslispunten voor vandaag.</p>
+</section>
+<!-- Bento Grid: Today in Focus -->
+<section class="glass-card rounded-xl p-gutter relative overflow-hidden">
+<div class="absolute top-0 right-0 p-4 opacity-10">
+<span class="material-symbols-outlined text-6xl" data-icon="assignment">assignment</span>
+</div>
+<h3 class="font-label-caps text-label-caps text-primary mb-stack-md">VANDAAG IN FOCUS</h3>
+<div class="space-y-4">
+<div class="flex gap-4">
+<span class="material-symbols-outlined text-primary shrink-0" data-icon="priority_high">priority_high</span>
+<div class="font-body-md text-body-md">
+<strong class="text-on-surface">Kritiek: Pipeline stagnatie bij Project X.</strong>
+<p class="text-on-surface-variant">Conversie van Lead naar Advies is met 12% gedaald t.o.v. vorige week.</p>
+</div>
+</div>
+<div class="flex gap-4">
+<span class="material-symbols-outlined text-tertiary shrink-0" data-icon="trending_up">trending_up</span>
+<div class="font-body-md text-body-md">
+<strong class="text-on-surface">Opportuniteit: Segment Groothandel.</strong>
+<p class="text-on-surface-variant">Iris detecteert een verhoogde activiteit in regio Noord-Oost.</p>
+</div>
+</div>
+<div class="flex gap-4">
+<span class="material-symbols-outlined text-outline shrink-0" data-icon="schedule">schedule</span>
+<div class="font-body-md text-body-md">
+<strong class="text-on-surface">Update: Quarterly Review voorbereid.</strong>
+<p class="text-on-surface-variant">Alle briefings zijn gesynchroniseerd en klaar voor presentatie.</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Pipeline Analyse -->
+<section class="space-y-stack-md">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant px-1">PIPELINE ANALYSE (CONVERSIE FUNNEL)</h3>
+<div class="glass-card rounded-xl p-gutter space-y-6">
+<!-- Funnel Item 1 -->
+<div class="space-y-2">
+<div class="flex justify-between items-end">
+<span class="font-body-md text-body-md">Leads (Top-of-Funnel)</span>
+<span class="font-label-caps text-label-caps text-primary">842 / 1000</span>
+</div>
+<div class="h-2 w-full bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-primary iris-glow" style="width: 84%;"></div>
+</div>
+</div>
+<!-- Funnel Item 2 -->
+<div class="space-y-2">
+<div class="flex justify-between items-end">
+<span class="font-body-md text-body-md">Gekwalificeerd</span>
+<span class="font-label-caps text-label-caps text-primary">312 / 842</span>
+</div>
+<div class="h-2 w-full bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-primary/70 iris-glow" style="width: 37%;"></div>
+</div>
+</div>
+<!-- Funnel Item 3 -->
+<div class="space-y-2">
+<div class="flex justify-between items-end">
+<span class="font-body-md text-body-md">Voorstel Verzonden</span>
+<span class="font-label-caps text-label-caps text-primary">58 / 312</span>
+</div>
+<div class="h-2 w-full bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-primary/40 iris-glow" style="width: 18%;"></div>
+</div>
+</div>
+</div>
+</section>
+<!-- Scannable Executive Summaries -->
+<section class="space-y-stack-md">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant px-1">EXECUTIVE SUMMARIES</h3>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-gutter">
+<!-- Summary 1 -->
+<div class="glass-card rounded-xl p-stack-md border-l-2 border-l-primary">
+<h4 class="font-headline-sm text-headline-sm mb-2 text-primary">Marktintegratie</h4>
+<p class="font-body-md text-body-md text-on-surface-variant">Iris adviseert versnelde integratie van API-v3. Data-latentie vermindert de beslissingssnelheid met 400ms.</p>
+</div>
+<!-- Summary 2 -->
+<div class="glass-card rounded-xl p-stack-md border-l-2 border-l-secondary">
+<h4 class="font-headline-sm text-headline-sm mb-2 text-secondary">Risicoprofiel</h4>
+<p class="font-body-md text-body-md text-on-surface-variant">Liquiditeit blijft stabiel. Geen directe bedreigingen gedetecteerd in de komende 30-daagse cyclus.</p>
+</div>
+</div>
+</section>
+<!-- Visualization placeholder for "AI Insight" -->
+<div class="relative w-full h-48 rounded-xl overflow-hidden glass-card flex items-center justify-center">
+
+<div class="relative z-10 text-center px-container-padding">
+<span class="material-symbols-outlined text-primary text-4xl mb-2" data-icon="auto_awesome">auto_awesome</span>
+<p class="font-label-caps text-label-caps text-on-surface">IRIS PREDICTIVE MODELLING RUNNING...</p>
+</div>
+</div>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-2 bg-surface/80 dark:bg-surface/80 backdrop-blur-xl border-t border-white/10 shadow-[0_-4px_20px_rgba(0,0,0,0.3)] rounded-t-xl">
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-colors active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="center_focus_strong">center_focus_strong</span>
+<span class="font-label-caps text-label-caps mt-1">Actiecentrum</span>
+</a>
+<a class="flex flex-col items-center justify-center text-primary bg-primary-container/20 rounded-xl px-4 py-1 shadow-[0_0_15px_rgba(142,213,255,0.3)] active:scale-90 transition-all duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="assignment" style="font-variation-settings: 'FILL' 1;">assignment</span>
+<span class="font-label-caps text-label-caps mt-1">Briefings</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-colors active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="edit_note">edit_note</span>
+<span class="font-label-caps text-label-caps mt-1">Notities</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-colors active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="settings_input_component">settings_input_component</span>
+<span class="font-label-caps text-label-caps mt-1">Systeem</span>
+</a>
+</nav>
+</body></html>

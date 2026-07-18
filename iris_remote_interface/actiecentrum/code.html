@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="nl"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&amp;family=JetBrains+Mono:wght@100..900&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass-card {
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .iris-glow {
+            box-shadow: 0 0 15px rgba(142, 213, 255, 0.2);
+        }
+        .active-glow {
+            box-shadow: 0 0 15px rgba(142, 213, 255, 0.3);
+        }
+        body {
+            background-color: #101415;
+            color: #e0e3e5;
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-bright": "#363a3b",
+                        "error-container": "#93000a",
+                        "surface": "#101415",
+                        "surface-variant": "#323537",
+                        "tertiary": "#c5cce6",
+                        "surface-container-low": "#191c1e",
+                        "on-tertiary-container": "#3c4459",
+                        "on-primary-container": "#004965",
+                        "inverse-on-surface": "#2d3133",
+                        "on-error": "#690005",
+                        "on-tertiary": "#283044",
+                        "tertiary-container": "#a9b1ca",
+                        "on-secondary-container": "#a7b6cc",
+                        "on-tertiary-fixed-variant": "#3f465c",
+                        "primary": "#8ed5ff",
+                        "on-secondary-fixed": "#0d1c2d",
+                        "outline-variant": "#3e484f",
+                        "on-secondary-fixed-variant": "#39485a",
+                        "background": "#101415",
+                        "primary-fixed": "#c4e7ff",
+                        "on-surface": "#e0e3e5",
+                        "primary-container": "#38bdf8",
+                        "on-background": "#e0e3e5",
+                        "primary-fixed-dim": "#7bd0ff",
+                        "on-tertiary-fixed": "#131b2e",
+                        "secondary-fixed": "#d4e4fa",
+                        "secondary-fixed-dim": "#b9c8de",
+                        "error": "#ffb4ab",
+                        "tertiary-fixed": "#dae2fd",
+                        "on-secondary": "#233143",
+                        "surface-dim": "#101415",
+                        "secondary": "#b9c8de",
+                        "on-primary": "#00354a",
+                        "on-primary-fixed-variant": "#004c69",
+                        "inverse-primary": "#00668a",
+                        "surface-container-highest": "#323537",
+                        "surface-tint": "#7bd0ff",
+                        "tertiary-fixed-dim": "#bec6e0",
+                        "inverse-surface": "#e0e3e5",
+                        "on-surface-variant": "#bdc8d1",
+                        "surface-container": "#1d2022",
+                        "on-error-container": "#ffdad6",
+                        "surface-container-lowest": "#0b0f10",
+                        "secondary-container": "#39485a",
+                        "surface-container-high": "#272a2c",
+                        "on-primary-fixed": "#001e2c",
+                        "outline": "#87929a"
+                    },
+                    "spacing": {
+                        "unit": "4px",
+                        "container-padding": "20px",
+                        "gutter": "16px",
+                        "stack-sm": "8px",
+                        "stack-lg": "32px",
+                        "stack-md": "16px"
+                    },
+                    "fontFamily": {
+                        "headline-md": ["Inter"],
+                        "body-md": ["Inter"],
+                        "display-lg": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "label-caps": ["JetBrains Mono"],
+                        "headline-sm": ["Inter"]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="antialiased overflow-x-hidden pb-32">
+<!-- TopAppBar -->
+<header class="flex justify-between items-center w-full px-container-padding h-16 fixed top-0 z-50 bg-surface/80 dark:bg-surface/80 backdrop-blur-xl border-b border-white/10">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary" data-icon="hub">hub</span>
+<span class="font-headline-md text-headline-md font-bold text-on-surface dark:text-on-surface">Iris Remote</span>
+</div>
+<div class="flex items-center gap-4">
+<button class="hover:opacity-80 transition-transform active:scale-95">
+<span class="material-symbols-outlined text-primary animate-pulse" data-icon="sync">sync</span>
+</button>
+</div>
+</header>
+<main class="mt-20 px-container-padding max-w-3xl mx-auto space-y-stack-lg">
+<!-- Animated Atmospheric Element -->
+<div class="relative w-full h-48 overflow-hidden rounded-xl">
+
+<div class="absolute inset-0 flex flex-col justify-end p-6 bg-gradient-to-t from-surface to-transparent">
+<h1 class="font-display-lg text-display-lg text-white mb-1">Actiecentrum</h1>
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 bg-primary rounded-full animate-pulse shadow-[0_0_8px_#8ed5ff]"></div>
+<span class="font-label-caps text-label-caps text-on-surface-variant uppercase">3 besluiten in de wachtrij</span>
+</div>
+</div>
+</div>
+<!-- Sync Items Queue -->
+<section class="space-y-stack-md">
+<!-- Calendar Proposal Card -->
+<div class="glass-card p-stack-md rounded-xl space-y-stack-md relative overflow-hidden group">
+<div class="flex justify-between items-start">
+<div class="flex gap-4">
+<div class="w-12 h-12 rounded-lg bg-primary-container/20 flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined text-primary" data-icon="calendar_month">calendar_month</span>
+</div>
+<div>
+<p class="font-label-caps text-label-caps text-primary mb-1 uppercase">Agenda Voorstel</p>
+<h3 class="font-headline-sm text-headline-sm text-on-surface">Executive Meeting: Q4 Strategy</h3>
+</div>
+</div>
+<span class="font-label-caps text-label-caps text-on-surface-variant">NU</span>
+</div>
+<div class="bg-surface-container-lowest/50 rounded-lg p-3 border border-white/5">
+<div class="flex items-center gap-2 text-on-surface-variant mb-1">
+<span class="material-symbols-outlined text-[16px]" data-icon="schedule">schedule</span>
+<span class="font-body-md text-body-md">Morgen, 14:00 - 15:30</span>
+</div>
+<div class="flex items-center gap-2 text-on-surface-variant">
+<span class="material-symbols-outlined text-[16px]" data-icon="location_on">location_on</span>
+<span class="font-body-md text-body-md">Boardroom A &amp; Zoom</span>
+</div>
+</div>
+<div class="flex gap-stack-sm pt-2">
+<button class="flex-1 bg-primary text-on-primary font-headline-sm text-sm py-3 rounded-lg font-semibold hover:opacity-90 active:scale-[0.98] transition-all iris-glow">
+                        Goedkeuren
+                    </button>
+<button class="flex-1 bg-transparent border border-white/10 text-on-surface font-headline-sm text-sm py-3 rounded-lg font-semibold hover:bg-white/5 active:scale-[0.98] transition-all">
+                        Afwijzen
+                    </button>
+</div>
+</div>
+<!-- Outreach Card -->
+<div class="glass-card p-stack-md rounded-xl space-y-stack-md relative overflow-hidden group">
+<div class="flex justify-between items-start">
+<div class="flex gap-4">
+<div class="w-12 h-12 rounded-lg bg-secondary-container/20 flex items-center justify-center border border-secondary/20">
+<span class="material-symbols-outlined text-secondary" data-icon="alternate_email">alternate_email</span>
+</div>
+<div>
+<p class="font-label-caps text-label-caps text-secondary mb-1 uppercase">LinkedIn Outreach</p>
+<h3 class="font-headline-sm text-headline-sm text-on-surface">LinkedIn bericht naar CEO van TechCorp</h3>
+</div>
+</div>
+<span class="font-label-caps text-label-caps text-on-surface-variant">12m</span>
+</div>
+<div class="bg-surface-container-lowest/50 rounded-lg p-3 border border-white/5 italic text-on-surface-variant font-body-md leading-relaxed">
+                    "Beste Sarah, ik zag jullie recente Q3 resultaten. Indrukwekkende groei in de AI-sector. Ik zou graag sparren over de integratie..."
+                </div>
+<div class="flex gap-stack-sm pt-2">
+<button class="flex-1 bg-transparent border border-white/10 text-on-surface font-headline-sm text-sm py-3 rounded-lg font-semibold flex items-center justify-center gap-2 hover:bg-white/5 active:scale-[0.98] transition-all">
+<span class="material-symbols-outlined text-[18px]" data-icon="edit">edit</span>
+                        Bewerken
+                    </button>
+<button class="flex-1 bg-secondary text-on-secondary font-headline-sm text-sm py-3 rounded-lg font-semibold hover:opacity-90 active:scale-[0.98] transition-all">
+                        Verzendklaar maken
+                    </button>
+</div>
+</div>
+<!-- Task Placeholder (The 3rd one mentioned in the count) -->
+<div class="glass-card p-stack-md rounded-xl border-dashed border-white/10 opacity-60">
+<div class="flex items-center gap-4">
+<div class="w-10 h-10 rounded-full border border-white/10 flex items-center justify-center">
+<span class="material-symbols-outlined text-on-surface-variant" data-icon="more_horiz">more_horiz</span>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant">Analyseren van wekelijkse rapportage...</p>
+</div>
+</div>
+</section>
+<!-- Dynamic Context Area (Bento Grid Style) -->
+<section class="grid grid-cols-2 gap-stack-md">
+<div class="glass-card p-4 rounded-xl flex flex-col justify-between aspect-square">
+<span class="material-symbols-outlined text-primary" data-icon="monitoring">monitoring</span>
+<div>
+<p class="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-widest">Systeemstatus</p>
+<p class="font-headline-sm text-headline-sm text-white">Optimaal</p>
+</div>
+</div>
+<div class="glass-card p-4 rounded-xl flex flex-col justify-between aspect-square bg-gradient-to-br from-primary-container/10 to-transparent border-primary/10">
+<div class="w-10 h-10 rounded-full bg-cover bg-center border border-white/10" data-alt="A futuristic digital interface showing a map of a high-tech city with pulsing data nodes and neon grid lines, high-contrast dark theme with glowing cyan highlights, executive clean digital art style." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuB7flovhGlcXssOcwLztp2d22ws5yf7u80OFNhzsSXvhfNXKI93MlwQ0ZZqE8UPqEiGcdVJsMx3ol_wOxWiZwWMAYOnf5xfvap3Xhdgju2zNew9ZRUcwkrEOvsaTZD7DISpomxP_vHwXDCL39i0n05AMTUE_RJVST5eKYYAUw5nJyP41b-KRaovJU8dVFKft62-Fdu_7Dg_mhEnaSnJC8_C2xCeGr_S6Gun9YGLyPcDApIZDuU11rt-vA')"></div>
+<div>
+<p class="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-widest">Actieve Hub</p>
+<p class="font-headline-sm text-headline-sm text-white">Amsterdam</p>
+</div>
+</div>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-2 bg-surface/80 dark:bg-surface/80 backdrop-blur-xl border-t border-white/10 shadow-[0_-4px_20px_rgba(0,0,0,0.3)]">
+<a class="flex flex-col items-center justify-center text-primary bg-primary-container/20 rounded-xl px-4 py-1 shadow-[0_0_15px_rgba(142,213,255,0.3)] active:scale-90 transition-all duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="center_focus_strong">center_focus_strong</span>
+<span class="font-label-caps text-label-caps mt-1">Actiecentrum</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-colors active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="assignment">assignment</span>
+<span class="font-label-caps text-label-caps mt-1">Briefings</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-colors active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="edit_note">edit_note</span>
+<span class="font-label-caps text-label-caps mt-1">Notities</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-colors active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="settings_input_component">settings_input_component</span>
+<span class="font-label-caps text-label-caps mt-1">Systeem</span>
+</a>
+</nav>
+<script>
+        // Micro-interactions for button glows and state changes
+        document.querySelectorAll('button').forEach(button => {
+            button.addEventListener('mousedown', () => {
+                button.classList.add('active-glow');
+            });
+            button.addEventListener('mouseup', () => {
+                button.classList.remove('active-glow');
+            });
+        });
+
+        // Simple observer for entrance animations
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('opacity-100', 'translate-y-0');
+                    entry.target.classList.remove('opacity-0', 'translate-y-4');
+                }
+            });
+        }, { threshold: 0.1 });
+
+        document.querySelectorAll('.glass-card').forEach(card => {
+            card.classList.add('transition-all', 'duration-700', 'opacity-0', 'translate-y-4');
+            observer.observe(card);
+        });
+    </script>
+</body></html>

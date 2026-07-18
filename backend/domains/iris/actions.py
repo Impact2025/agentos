@@ -11,6 +11,12 @@ het resultaat ALTIJD achter een bestaande review-gate landt:
 3. seo_refresh   — verrijkt de sterkst wegzakkende pagina's (open
                    refresh-suggesties van de Optimizer) → review-job in
                    de Wachtrij.
+4. linkbuilding_run — zet link-outreach-concepten klaar als
+                   `outreach_review` in de linkbuilding-funnel;
+                   versturen kan alleen via de Actiecentrum-knop.
+5. lead_search_run — vult de acquisitie-funnel met verse leads
+                   (zoeken → verrijken → opslaan als `new`); er wordt
+                   niets gemaild — outreach heeft zijn eigen gate.
 
 Elke actie logt een uitkomst-kaart (`iris_actie`) met artefact en next_step,
 en draait maximaal één keer per dag per doelwit — een herrun van de briefing
@@ -33,6 +39,9 @@ ACTION = "iris_actie"
 _CONTENT_RUN_MAX = 3
 _OUTREACH_MAX = 15
 _SEO_REFRESH_MAX = 2
+_LINKBUILD_MAX = 10
+_LEAD_SEARCH_MAX_QUERIES = 6
+_LEAD_SEARCH_PER_QUERY = 4
 
 
 def _clamp(value: Any, lo: int, hi: int, default: int) -> int:
@@ -67,7 +76,10 @@ async def content_run(site_ref: str, count: Any, reason: str) -> Optional[str]:
     n = _clamp(count, 1, _CONTENT_RUN_MAX, 1)
     if _already_done_today(site["name"], "Contentmotor gestart"):
         logger.info("[iris] content_run voor %s vandaag al gedraaid — overgeslagen", site["name"])
-        return None
+        # Benigne skip, geen fout: een kale None zou de fix-knop onterecht op
+        # 'Mislukt' (HTTP 400) zetten (zie seo_refresh). Meld het als uitkomst.
+        return (f"Contentmotor voor {site['name']} draaide vandaag al — geen tweede "
+                f"run (dedup houdt de Wachtrij en LLM-kosten in toom). Reden: {reason}")
     try:
         import asyncio
         from ..publish import content_pipeline
@@ -111,7 +123,9 @@ async def outreach_run(count: Any, reason: str) -> Optional[str]:
     n = _clamp(count, 1, _OUTREACH_MAX, 5)
     if _already_done_today("Leads", "Outreach-batch gestart"):
         logger.info("[iris] outreach_run vandaag al gedraaid — overgeslagen")
-        return None
+        # Benigne skip, geen fout (zie content_run/seo_refresh).
+        return (f"Outreach-batch draaide vandaag al — geen tweede run (dedup). "
+                f"Reden: {reason}")
     try:
         from ..prospecting import outreach
         result = await outreach.prepare_outreach_batch(count=n)
@@ -136,6 +150,88 @@ async def outreach_run(count: Any, reason: str) -> Optional[str]:
     return f"{detail}. Reden: {reason}"
 
 
+async def lead_search_run(queries: Any, reason: str, template: str = "",
+                          lead_type: str = "") -> Optional[str]:
+    """Vul de acquisitie-funnel: zoek, verrijk en bewaar nieuwe leads.
+
+    Veilig zonder extra gate: leads landen als `new`/`enriched` in de database
+    en de Leads-tab — er wordt niets gemaild (outreach kent zijn eigen
+    review-gate). Iris geeft bij voorkeur eigen zoekopdrachten mee; zonder
+    queries pakt ze een greep uit de sector-templates."""
+    from ..prospecting.service import BATCH_TEMPLATES, TEMPLATE_LEAD_TYPE, LeadsService
+    if _already_done_today("Leads", "Lead-zoekactie gestart"):
+        logger.info("[iris] lead_search_run vandaag al gedraaid — overgeslagen")
+        return (f"Lead-zoekactie draaide vandaag al — geen tweede run (dedup houdt "
+                f"de zoek-quota in toom). Reden: {reason}")
+    qlist = [str(q).strip() for q in (queries or []) if str(q).strip()][:_LEAD_SEARCH_MAX_QUERIES]
+    tmpl = (template or "").strip().lower()
+    if not qlist:
+        import random
+        pool = BATCH_TEMPLATES.get(tmpl) or BATCH_TEMPLATES["weareimpact_ai"]
+        qlist = random.sample(pool, min(5, len(pool)))
+    ltype = (lead_type or "").strip() or TEMPLATE_LEAD_TYPE.get(tmpl, "overig")
+    try:
+        import asyncio
+        result = await asyncio.to_thread(
+            LeadsService().run_search_batch, qlist, ltype, _LEAD_SEARCH_PER_QUERY)
+    except Exception as e:
+        logger.exception("[iris] lead_search_run mislukt")
+        log_outcome(
+            "Leads", ACTION,
+            f"Lead-zoekactie gestart door Iris maar gefaald: {str(e)[:200]}",
+            next_step="Controleer de zoekprovider-quota (Tavily/Brave in .env) en "
+                      "draai de zoekactie handmatig via de Leads-tab.",
+            status="error",
+        )
+        return None
+    saved = result.get("saved", 0)
+    detail = (f"Lead-zoekactie gestart: {saved} nieuwe lead(s) gevonden en bewaard "
+              f"({result.get('queries', 0)} zoekopdrachten)"
+              if saved else
+              f"Lead-zoekactie gestart ({result.get('queries', 0)} zoekopdrachten), "
+              "maar geen nieuwe leads — alles was al bekend of niet bruikbaar")
+    log_outcome("Leads", ACTION, detail, artifact="/api/leads/funnel",
+                next_step=("Bekijk de nieuwe leads in de Leads-tab; bruikbare leads "
+                           "gaan via een outreach-batch (review-gate) de funnel in."
+                           if saved else
+                           "Geef Iris in de volgende briefing scherpere zoekopdrachten "
+                           "of kies een andere sector-template."))
+    return f"{detail}. Reden: {reason}"
+
+
+async def linkbuilding_run(count: Any, reason: str) -> Optional[str]:
+    """Zet een extra linkbuilding-outreach-batch klaar ter review; verstuurt niets."""
+    n = _clamp(count, 1, _LINKBUILD_MAX, 5)
+    if _already_done_today("Linkbuilding", "Linkbuilding-batch gestart"):
+        logger.info("[iris] linkbuilding_run vandaag al gedraaid — overgeslagen")
+        # Benigne skip, geen fout (zie content_run/seo_refresh).
+        return (f"Linkbuilding-batch draaide vandaag al — geen tweede run (dedup). "
+                f"Reden: {reason}")
+    try:
+        from ..linkbuilding import outreach as lb_outreach
+        result = await lb_outreach.prepare_linkbuilding_batch(count=n)
+    except Exception as e:
+        logger.exception("[iris] linkbuilding_run mislukt")
+        log_outcome(
+            "Linkbuilding", ACTION,
+            f"Linkbuilding-batch gestart door Iris maar gefaald: {str(e)[:200]}",
+            next_step="Controleer de LLM-configuratie en draai de batch handmatig "
+                      "(POST /api/linkbuilding/outreach-batch).",
+            status="error",
+        )
+        return None
+    drafted = result.get("drafted", 0)
+    detail = (f"Linkbuilding-batch gestart: {drafted} concept(en) klaargezet ter review"
+              if drafted else
+              "Linkbuilding-batch gestart, maar geen gekwalificeerde linkkansen met "
+              "contactadres — de prospect-voorraad is op")
+    log_outcome("Linkbuilding", ACTION, detail, artifact="/api/linkbuilding/funnel",
+                next_step=("Keur de concepten goed in het Actiecentrum." if drafted else
+                           "Draai een prospect-run (POST /api/linkbuilding/prospect-run) "
+                           "om de linkkans-voorraad te vullen."))
+    return f"{detail}. Reden: {reason}"
+
+
 async def seo_refresh(site_ref: str, count: Any, reason: str) -> Optional[str]:
     """Verrijk de sterkst wegzakkende pagina's van een site (open
     refresh-suggesties) — resultaat als review-job in de Wachtrij."""
@@ -145,15 +241,25 @@ async def seo_refresh(site_ref: str, count: Any, reason: str) -> Optional[str]:
         return None
     if _already_done_today(site["name"], "SEO-refresh gestart"):
         logger.info("[iris] seo_refresh voor %s vandaag al gedraaid — overgeslagen", site["name"])
-        return None
+        # Benigne skip, geen fout (zie de SPA-shell-tak verderop).
+        return (f"SEO-refresh voor {site['name']} draaide vandaag al — geen tweede "
+                f"run (dedup). Reden: {reason}")
     from ..seo import optimizer
     suggestions = optimizer.list_suggestions(site["id"], stype="refresh", status="new")
     if not suggestions:
         logger.info("[iris] seo_refresh: geen open refresh-suggesties voor %s", site["name"])
-        return None
+        # Benigne: niks te verrijken (een eerdere refresh heeft de open
+        # suggesties al verwerkt). Geen None → geen valse HTTP 400.
+        return (f"SEO-refresh voor {site['name']}: geen open refresh-kandidaten meer "
+                f"— de wegzakkende pagina's zijn al verrijkt. Reden: {reason}")
     n = _clamp(count, 1, _SEO_REFRESH_MAX, 1)
     job_ids, failed, skipped = [], 0, 0
-    for sug in suggestions[:n]:
+    # Loop door álle open suggesties tot er n échte refreshes gelukt zijn:
+    # een SPA-shell (homepage) mag de poging niet opbranden terwijl er
+    # verrijkbare pagina's in de rij staan.
+    for sug in suggestions:
+        if len(job_ids) >= n:
+            break
         try:
             job_ids.append(await optimizer.refresh_article(sug, site))
         except Exception as e:  # noqa: BLE001
@@ -180,8 +286,12 @@ async def seo_refresh(site_ref: str, count: Any, reason: str) -> Optional[str]:
                 logger.warning("[iris] refresh van %s mislukt: %s", sug.get("page"), e)
     if not job_ids:
         if skipped and not failed:
-            # Alles overgeslagen wegens SPA-shell — geen error-kaart.
-            return None
+            # Alles overgeslagen wegens SPA-shell: netjes afgehandeld (de
+            # suggesties zijn gesloten), dus meld dat als uitkomst — een None
+            # zou de fix-knop onterecht op 'Mislukt' (HTTP 400) zetten.
+            return (f"SEO-refresh voor {site['name']}: {skipped} kandidaat/kandidaten "
+                    "overgeslagen (SPA-shell zonder leesbare tekst) — niets te verrijken. "
+                    f"Reden: {reason}")
         log_outcome(
             site["name"], ACTION,
             f"SEO-refresh gestart door Iris maar alle {failed} poging(en) faalden",

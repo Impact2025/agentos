@@ -12,6 +12,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
 
 from ...shared import social_content as svc
 
@@ -77,6 +78,26 @@ def export(pack_id: str):
     if not out:
         raise HTTPException(404, "Pack niet gevonden")
     return out
+
+
+@router.post("/packs/{pack_id}/render-video")
+def render_video(pack_id: str):
+    """Render een 9:16 short uit het scriptpack. Synchroon (def) zodat FastAPI
+    dit in de threadpool draait — edge-tts gebruikt intern asyncio.run, wat in
+    een aparte thread wél mag maar in een async endpoint zou botsen."""
+    result = svc.render_pack_video(pack_id)
+    if not result.get("success"):
+        raise HTTPException(400, result.get("error", "Renderen mislukt"))
+    return result
+
+
+@router.get("/packs/{pack_id}/video")
+def get_video(pack_id: str):
+    """Stream de gerenderde video (ondersteunt range-requests voor <video>)."""
+    path = svc.video_file_path(pack_id)
+    if not path:
+        raise HTTPException(404, "Geen video voor dit pack")
+    return FileResponse(str(path), media_type="video/mp4", filename=f"{pack_id}.mp4")
 
 
 @router.post("/packs/{pack_id}/publish")

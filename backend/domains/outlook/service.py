@@ -341,10 +341,13 @@ async def sync_inbox(limit: int = 50) -> List[dict]:
     # die we benaderd hebben → status 'replied' (+ uitkomst-kaart voor Vincent).
     try:
         from ..prospecting.funnel import mark_replied_if_lead
+        from ..linkbuilding.service import mark_replied_if_prospect
         for m in messages:
             from_addr = (m.get("from") or {}).get("emailAddress", {}).get("address", "")
             if from_addr:
                 mark_replied_if_lead(from_addr, m.get("receivedDateTime", ""))
+                # Zelfde detectie voor linkbuilding-partners.
+                mark_replied_if_prospect(from_addr, m.get("receivedDateTime", ""))
     except Exception as e:
         log.warning(f"Reply-detectie op leads mislukt: {e}")
 

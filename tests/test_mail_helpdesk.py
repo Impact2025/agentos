@@ -456,3 +456,90 @@ def test_reject_and_edit(mailbox_row, monkeypatch):
         row = conn.execute("SELECT status, edited_body FROM mail_reply").fetchone()
     assert row["status"] == "edited"
     assert "Nieuwe tekst" in row["edited_body"]
+
+
+# ── Negeerlijst: "Niet meer reageren" ───────────────────────────────────────
+
+def test_ignore_sender_rejects_and_blocks_future(mailbox_row, monkeypatch):
+    """De knop zet de afzender op de negeerlijst (zakelijk domein = heel
+    domein), wijst het openstaande concept af, en een volgende mail van
+    dezelfde afzender krijgt géén nieuw concept meer."""
+    monkeypatch.setattr(poplib, "POP3", FakePop)
+    monkeypatch.setattr(drafter, "_sync_openmodel", lambda system, user: "stub")
+    service.run_mailbox({"id": "mb_test", "pop_host": "h", "pop_port": 110,
+                          "pop_user": "u", "pop_password": "p",
+                          "brand_context": "", "knowledge_scope": "all"})
+    with db.get_conn() as conn:
+        rid = conn.execute("SELECT id FROM mail_reply").fetchone()["id"]
+
+    result = service.ignore_sender(rid)
+    assert result == {"address": "jan@x.nl", "domain_blocked": True}
+    with db.get_conn() as conn:
+        assert conn.execute("SELECT status FROM mail_reply WHERE id=?",
+                            (rid,)).fetchone()["status"] == "rejected"
+        patterns = {r["pattern"] for r in conn.execute(
+            "SELECT pattern FROM mail_ignored_senders")}
+        assert "jan@x.nl" in patterns and "@x.nl" in patterns
+        # oude inbox-mail is als 'ignored' gemarkeerd
+        assert conn.execute(
+            "SELECT classified FROM mail_inbox WHERE from_addr LIKE '%jan@x.nl%'"
+        ).fetchone()["classified"] == "ignored"
+
+    # Nieuwe mail van hetzelfde domein → geen nieuw concept
+    class SamePop(FakePop):
+        def __init__(self, *a, **k):
+            self._mails = [_make_msg("Klant <jan@x.nl>", "Nog een vraag?",
+                                     "Hoe werkt mijn account, help!")]
+        def list(self):
+            return (b"+OK 1", [b"1 1"], 10)
+        def uidl(self):
+            return (b"+OK", [b"1 U9"], 10)
+    monkeypatch.setattr(poplib, "POP3", SamePop)
+    n = service.run_mailbox({"id": "mb_test", "pop_host": "h", "pop_port": 110,
+                              "pop_user": "u", "pop_password": "p",
+                              "brand_context": "", "knowledge_scope": "all"})
+    assert n == 0
+    with db.get_conn() as conn:
+        assert conn.execute(
+            "SELECT classified FROM mail_inbox WHERE uidl='U9'"
+        ).fetchone()["classified"] == "ignored"
+        assert conn.execute(
+            "SELECT COUNT(*) c FROM mail_reply WHERE status IN ('pending_review','edited')"
+        ).fetchone()["c"] == 0
+
+
+def test_ignore_sender_freemail_blocks_only_address(mailbox_row):
+    """Gmail-achtige domeinen worden nooit domein-breed geblokkeerd."""
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM mail_ignored_senders")
+        cur = conn.execute(
+            "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,subject,body_text,classified) "
+            "VALUES('mb_test','UG1','Piet <piet@gmail.com>','Vraag','Hoe werkt dit?','question')")
+        inbox_id = cur.lastrowid
+        rid = conn.execute(
+            "INSERT INTO mail_reply(mailbox_id,inbox_id,to_addr,subject,draft_body) "
+            "VALUES('mb_test',?,'piet@gmail.com','Re: Vraag','concept')",
+            (inbox_id,)).lastrowid
+    result = service.ignore_sender(rid)
+    assert result == {"address": "piet@gmail.com", "domain_blocked": False}
+    with db.get_conn() as conn:
+        patterns = {r["pattern"] for r in conn.execute(
+            "SELECT pattern FROM mail_ignored_senders")}
+    assert "piet@gmail.com" in patterns
+    assert "@gmail.com" not in patterns
+    # andere gmail-afzender blijft welkom
+    with db.get_conn() as conn:
+        assert service.is_ignored_sender(conn, "Ans <ans@gmail.com>") is False
+        assert service.is_ignored_sender(conn, "Piet <piet@gmail.com>") is True
+
+
+def test_unignore_sender(mailbox_row):
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM mail_ignored_senders")
+        conn.execute("INSERT INTO mail_ignored_senders(pattern) VALUES('@ibood.com')")
+    lst = service.list_ignored_senders()
+    assert any(x["pattern"] == "@ibood.com" for x in lst)
+    iid = [x["id"] for x in lst if x["pattern"] == "@ibood.com"][0]
+    assert service.unignore_sender(iid) is True
+    with db.get_conn() as conn:
+        assert service.is_ignored_sender(conn, "deals@ibood.com") is False

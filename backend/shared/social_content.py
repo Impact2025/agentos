@@ -32,7 +32,7 @@ from .database import get_conn
 
 logger = logging.getLogger(__name__)
 
-PLATFORMS = ("linkedin", "facebook", "instagram", "tiktok")
+PLATFORMS = ("linkedin", "facebook", "instagram", "tiktok", "twitter")
 
 # Warm amber merkkleur (Vincent's huisstijl, zie Welzijnsklik/MJ-briefs).
 BRAND_AMBER = "#e5a500"
@@ -45,6 +45,8 @@ _PLATFORM_TONE = {
     "instagram": "Warm en kort, emoji-light (max 1 emoji). Max 40 woorden. Casual caption-toon.",
     "tiktok": "Casual en kort, alsof je met een vriend praat. Max 30 woorden. Geen hashtag-salvo "
               "in de body (hashtags komen in het aparte veld).",
+    "twitter": "Scherp en direct, één kerninzicht per tweet. Max 250 tekens (er komt nog een "
+               "link bij). Geen hashtags, geen emoji-salvo — de eerste zin is de hook.",
 }
 
 
@@ -65,6 +67,10 @@ class ImageBrief:
         "Open Canva > Templates > zoek een passende 'quote' of 'social post'-template, "
         "vervang tekst door headline/subtext, zet de merkkleur op amber (#e5a500)."
     )
+    canva_design_id: str = ""                  # gevuld als Canva Connect een design aanmaakte
+    canva_edit_url: str = ""                   # directe 'open in Canva'-link
+    canva_method: str = ""                     # 'autofill' | 'create' | '' (geen api)
+    canva_template_url: str = ""               # link naar je vaste basis-template
 
 
 @dataclass
@@ -92,6 +98,7 @@ class SocialPack:
     tiktok_pack: Optional[Dict] = None
     status: str = "pending_review"                          # pending_review|approved|rejected|posted
     concept: bool = False                                   # True = lokale fallback, niet productieklaar
+    video_path: str = ""                                    # projectrelatief pad naar gerenderde 9:16 short
     created_at: str = ""
     approved_at: str = ""
     posted_result: Dict = field(default_factory=dict)
@@ -153,11 +160,17 @@ def _brand_voice(project: str, brand_context: str) -> str:
 # ── Parsers (robust tegen deepseek-v4 tekst-output) ───────────────────────
 
 def _norm_header(line: str) -> str:
-    """Stripped een regel tot een header-sleutel: '**LinkedIn:**' -> 'linkedin'."""
+    """Stripped een regel tot een header-sleutel: '**LinkedIn:**' -> 'linkedin'.
+
+    Werkt zowel voor 'Header:' (gevolgd door waarde) als 'Header:' op zichzelf,
+    en strippt eventuele waarde die op dezelfde regel staat.
+    """
     s = line.strip().lower()
     s = s.strip("*").strip()
-    if s.endswith(":"):
-        s = s[:-1].strip()
+    # Verwijder een eventuele waarde na de eerste dubbele punt: 'voiceover: lees'
+    # -> 'voiceover'. Als er geen dubbele punt is, blijft de hele regel staan.
+    if ":" in s:
+        s = s.split(":", 1)[0].strip()
     return s
 
 
@@ -171,6 +184,7 @@ def _parse_platform_blocks(text: str, platforms: List[str]) -> Dict[str, str]:
         "facebook": ["facebook", "fb"],
         "instagram": ["instagram", "ig"],
         "tiktok": ["tiktok", "tt"],
+        "twitter": ["twitter", "x", "tweet", "twitter/x", "x (twitter)"],
     }
     current = None
     buf: List[str] = []
@@ -223,6 +237,18 @@ def _parse_image_brief(text: str, theme: str) -> ImageBrief:
     return b
 
 
+def _finalize_section(section: str, buf: List[str]):
+    """Zet een verzamelde buffer om in het juiste type voor die sectie.
+
+    shotlist → echte lijst (geen string!); andere secties → samengevoegde tekst.
+    """
+    if not buf:
+        return None
+    if section == "shotlist":
+        return list(buf)
+    return "\n".join(buf).strip()
+
+
 def _parse_tiktok_pack(text: str) -> TikTokPack:
     p = TikTokPack()
     section = None
@@ -230,34 +256,39 @@ def _parse_tiktok_pack(text: str) -> TikTokPack:
     for line in text.splitlines():
         hdr = _norm_header(line)
         if hdr == "hook":
+            if section and buf:
+                setattr(p, section, _finalize_section(section, buf))
             section, buf = "hook", [line.split(":", 1)[-1].strip().strip("*").strip()]
         elif hdr in ("script", "script:"):
             if section and buf:
-                setattr(p, section, "\n".join(buf).strip())
+                setattr(p, section, _finalize_section(section, buf))
             section, buf = "script", [line.split(":", 1)[-1].strip().strip("*").strip()]
         elif hdr in ("shotlist", "shot", "shots"):
             if section and buf:
-                setattr(p, section, "\n".join(buf).strip())
+                setattr(p, section, _finalize_section(section, buf))
             section, buf = "shotlist", []
         elif hdr in ("voiceover", "voice-over", "cue", "cues"):
             if section and buf:
-                setattr(p, section, "\n".join(buf).strip())
+                setattr(p, section, _finalize_section(section, buf))
             section, buf = "voiceover_cues", [line.split(":", 1)[-1].strip().strip("*").strip()]
         elif hdr in ("captions", "caption", "onderschrift"):
             if section and buf:
-                setattr(p, section, "\n".join(buf).strip())
+                setattr(p, section, _finalize_section(section, buf))
             section, buf = "captions", [line.split(":", 1)[-1].strip().strip("*").strip()]
         elif hdr in ("hashtags", "hashtag", "tags"):
             tags = line.split(":", 1)[-1].strip().strip("*").replace("#", "").replace(",", " ").split()
             p.hashtags = tags[:6]
         elif section == "shotlist":
-            if line.strip():
-                buf.append(line.strip().lstrip("-").strip())
+            # Alleen echte bullets (lijnen die met -/* beginnen) horen in de shotlist.
+            # Niet-bullet regels (bijv. een header die niet herkend werd) negeren we.
+            stripped = line.strip()
+            if stripped.startswith(("-", "*")):
+                buf.append(stripped.lstrip("-*").strip())
         else:
             if section and buf is not None and line.strip():
                 buf.append(line)
     if section and buf:
-        setattr(p, section, "\n".join(buf).strip())
+        setattr(p, section, _finalize_section(section, buf))
     if not p.hook and p.script:
         p.hook = p.script.split(".")[0][:80]
     if not p.hashtags:
@@ -309,17 +340,18 @@ def generate_content_pack(
                                      script=f"{theme}. {angle}")
     else:
         try:
-            # 1) Posts per platform
+            # 1) Posts per platform (headers/tonen dynamisch op de gevraagde platforms)
+            _labels = {"linkedin": "LinkedIn", "facebook": "Facebook",
+                       "instagram": "Instagram", "tiktok": "TikTok", "twitter": "Twitter"}
+            headers = ", ".join(f"'{_labels[p]}:'" for p in platforms)
+            tones = " ".join(f"{_labels[p]}: {_PLATFORM_TONE[p]}" for p in platforms)
             sys_posts = (
                 f"{voice}\n\nSchrijf voor elk platform een aparte post over het thema. "
-                f"Gebruik duidelijke headers: 'LinkedIn:', 'Facebook:', 'Instagram:', 'TikTok:'. "
-                f"Volg per platform de toon: "
-                f"LinkedIn: {_PLATFORM_TONE['linkedin']} "
-                f"Facebook: {_PLATFORM_TONE['facebook']} "
-                f"Instagram: {_PLATFORM_TONE['instagram']} "
-                f"TikTok: {_PLATFORM_TONE['tiktok']}"
+                f"Gebruik duidelijke headers: {headers}. "
+                f"Volg per platform de toon: {tones}"
             )
-            user_posts = f"Thema: {theme}\n{angle and ('Invalshoek: ' + angle + chr(10))}Geef de 4 posts."
+            user_posts = (f"Thema: {theme}\n{angle and ('Invalshoek: ' + angle + chr(10))}"
+                          f"Geef de {len(platforms)} posts.")
             raw = _sync_openmodel(sys_posts, user_posts, max_tokens=1600)
             copy = _parse_platform_blocks(raw, platforms)
 
@@ -332,6 +364,25 @@ def generate_content_pack(
                 )
                 raw_img = _sync_openmodel(sys_img, f"Thema: {theme}", max_tokens=400)
                 image_brief = _parse_image_brief(raw_img, theme)
+                # Echte Canva-design aanmaken als Connect geconfigureerd is.
+                try:
+                    from . import canva as canva_svc
+                    if canva_svc.canva_ready():
+                        # Voorkeur: Autofill van de vaste Brand Template; anders
+                        # een leeg design; zonder credentials blijft de brief leidend.
+                        cr = canva_svc.fill_or_create(asdict(image_brief))
+                        if cr.get("design_id"):
+                            image_brief.canva_design_id = cr["design_id"]
+                            image_brief.canva_edit_url = cr.get("edit_url", "")
+                            image_brief.canva_method = cr.get("method", "none")
+                            logger.info("Canva-design aangemaakt via %s: %s",
+                                        cr.get("method"), cr["design_id"])
+                        elif cr.get("error"):
+                            logger.warning("Canva-aanmaak overgeslagen: %s", cr["error"])
+                    # Link naar je vaste basis-template (altijd handig om te tonen).
+                    image_brief.canva_template_url = canva_svc.canva_template_edit_url()
+                except Exception as e:
+                    logger.warning("Canva-integratie mislukt (brief blijft fallback): %s", e)
 
             # 3) TikTok-pack
             if with_video:
@@ -405,6 +456,7 @@ def _row_to_pack(row) -> SocialPack:
         brand_context=row["brand_context"], status=row["status"],
         concept=bool(row["concept"]), created_at=row["created_at"],
         approved_at=row["approved_at"] or "",
+        video_path=(row["video_path"] if "video_path" in row.keys() else "") or "",
         posted_result=json.loads(row["posted_result_json"] or "{}"),
     )
     try:
@@ -463,11 +515,111 @@ def export_pack(pack_id: str) -> Dict:
         "id": p.id,
         "project": p.project,
         "theme": p.theme,
+        "status": p.status,
         "copy": p.copy,
         "image_brief": p.image_brief,
         "tiktok_pack": p.tiktok_pack,
         "concept": p.concept,
+        "video_path": p.video_path,
+        # Directe stream-URL voor de <video>-preview (leeg als er nog geen video is).
+        "video_url": (f"/api/social-content/packs/{p.id}/video" if p.video_path else ""),
     }
+
+
+# ── Video-render (9:16 short uit het scriptpack) ───────────────────────────
+
+def _cta_line(project: str) -> str:
+    """Korte merk-CTA voor de slotscène (per project; anders generiek)."""
+    if project.lower().replace(" ", "").replace("-", "") == "bewaardvoorjou":
+        return "Begin vandaag gratis en leg jouw verhaal vast voor de generaties na jou."
+    return "Benieuwd? Neem vandaag nog een kijkje."
+
+
+def video_file_path(pack_id: str) -> Optional["Path"]:
+    """Absoluut pad naar de gerenderde video van een pack (None als er geen is)."""
+    from pathlib import Path
+    from .video_template import REPO_ROOT
+    p = get_pack(pack_id)
+    if not p or not p.video_path:
+        return None
+    cand = REPO_ROOT / p.video_path
+    return cand if cand.exists() else None
+
+
+def render_pack_video(pack_id: str) -> Dict:
+    """Render een 9:16 short uit het TikTok-scriptpack van dit pack.
+
+    Bouwt scènes uit het scriptpack (hook + zinnen + CTA), rendert met de
+    project-template (kleuren/font/logo/stem/muziek) en slaat het projectrelatieve
+    pad op in social_posts.video_path. Volledig zelf-voorzienend (edge-tts +
+    Pillow + ffmpeg); geen automatische publicatie — het pack blijft achter de
+    review-gate. Retourneert {success, video_url|error, duration, scenes}.
+    """
+    from pathlib import Path
+    from .video_template import REPO_ROOT, load_template
+    from . import video_render as vr
+
+    p = get_pack(pack_id)
+    if not p:
+        return {"success": False, "error": "Pack niet gevonden"}
+
+    # 1) Scènes uit het scriptpack; anders een minimale hook+CTA uit thema/angle.
+    scenes: List = []
+    if p.tiktok_pack:
+        scenes = vr.scenes_from_scriptpack(p.tiktok_pack)
+    if not scenes:
+        hook = p.theme or "Jouw verhaal telt"
+        scenes = [vr.Scene(narration=hook, caption=hook, kind="hook")]
+        if p.angle:
+            scenes.append(vr.Scene(narration=p.angle, kind="body"))
+    # Sluit altijd af met een merk-CTA-scène.
+    scenes.append(vr.Scene(narration=_cta_line(p.project),
+                           caption="Start vandaag", kind="cta"))
+
+    # 2) Renderen naar projects/<project>/video/<pack_id>.mp4.
+    rel = f"projects/{p.project}/video/{p.id}.mp4"
+    out = REPO_ROOT / rel
+    try:
+        tpl = load_template(p.project)
+        res = vr.render_short(p.project, scenes, out, template=tpl)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("render_pack_video mislukt: %s", e)
+        _log_video_outcome(p, ok=False, detail=str(e)[:200])
+        return {"success": False, "error": str(e)[:300]}
+
+    if not res.ok:
+        _log_video_outcome(p, ok=False, detail=res.error or "onbekende renderfout")
+        return {"success": False, "error": res.error or "renderen mislukt"}
+
+    # 3) Pad opslaan + uitkomstkaart.
+    with get_conn() as conn:
+        conn.execute("UPDATE social_posts SET video_path=? WHERE id=?", (rel, pack_id))
+    _log_video_outcome(p, ok=True, detail=f"{res.scenes} scènes, {round(res.duration,1)}s",
+                       artifact=str(out))
+    return {
+        "success": True,
+        "video_url": f"/api/social-content/packs/{pack_id}/video",
+        "video_path": rel,
+        "duration": res.duration,
+        "scenes": res.scenes,
+        "voice": res.voice,
+    }
+
+
+def _log_video_outcome(pack: SocialPack, *, ok: bool, detail: str, artifact: str = "") -> None:
+    try:
+        from .outcomes import log_outcome
+        log_outcome(
+            project=pack.project,
+            action="social_video_gerenderd",
+            detail=f"Video voor '{pack.theme}': {detail}",
+            artifact=artifact,
+            next_step=("Bekijk de video in Social Creatie en keur het pack goed."
+                       if ok else "Bekijk de fout en probeer opnieuw te renderen."),
+            status="ok" if ok else "error",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("log_outcome (video) mislukt: %s", e)
 
 
 async def publish_pack(pack_id: str, platform: str) -> Dict:
@@ -504,9 +656,20 @@ async def publish_pack(pack_id: str, platform: str) -> Dict:
             from . import twitter as svc
             result = await svc.post_update(text, None, p.project)
         elif platform == "linkedin":
-            result = {"success": False, "error": "manual", "manual": True,
-                      "detail": "LinkedIn staat geen API-post toe zonder partner-toegang. "
-                                "Kopieer de tekst en plaats handmatig."}
+            from . import linkedin as li
+            try:
+                li_res = await li.post_update(text, None, p.project)
+                if li_res.get("success"):
+                    result = li_res
+                else:
+                    # Posten mislukt (bv. token verlopen) — val terug op plak-adapter
+                    # zodat de gebruiker de tekst tenminste kan kopiëren.
+                    result = {"success": False, "error": "manual", "manual": True,
+                              "detail": f"LinkedIn-post mislukt: {li_res.get('error','')}. "
+                                        f"Kopieer de tekst en plaats handmatig."}
+            except Exception as e:
+                result = {"success": False, "error": "manual", "manual": True,
+                          "detail": f"LinkedIn-post fout: {e}. Kopieer de tekst en plaats handmatig."}
         elif platform == "tiktok":
             result = {"success": False, "error": "manual", "manual": True,
                       "detail": "TikTok-video vereist het scriptpack + beeld. Monteer in "

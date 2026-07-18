@@ -228,7 +228,7 @@ async def _write_sections(site: Dict, keyword: str, outline: Dict,
             "Schrijf nu UITSLUITEND deze secties, in deze volgorde:\n"
             + "\n".join(f"- {s['heading']} — {s.get('goal', '')}" for s in batch)
         )
-        out = await _llm(system, "\n\n".join(prompt_parts), max_tokens=3000)
+        out = await _llm(system, "\n\n".join(prompt_parts), max_tokens=6000)
         if not out.strip():
             raise ValueError(f"Lege sectie-response (secties {start + 1}-{start + len(batch)})")
         html_parts.append(out.strip())
@@ -572,7 +572,7 @@ async def _qc_fix(site: Dict, keyword: str, html_body: str, issues: List[str],
     if ctas:
         prompt_parts.append("Beschikbare call-to-actions:\n" + "\n".join(f"- {c}" for c in ctas[:6]))
     prompt_parts.append(f"ARTIKEL:\n{html_body}")
-    out = await _llm(system, "\n\n".join(prompt_parts), max_tokens=4500)
+    out = await _llm(system, "\n\n".join(prompt_parts), max_tokens=6000)
     return out.strip() if len(out.strip()) >= len(html_body) * 0.6 else html_body
 
 

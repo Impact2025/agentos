@@ -215,10 +215,22 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str) -> Opt
 
         full_site = sites_service.get_site(site["id"]) or site
 
+        # Publiceerbaarheidsgate, vóór de kwaliteitsgate: een intern plan of
+        # rapport is geen artikel, ongeacht hoe goed het geschreven is. Reken
+        # hier niet op de score — "Plan: Directe antwoorden toevoegen aan alle
+        # 28 pagina's" haalde 85/100 en stond daardoor live op bijeen.app.
+        intern = content_pipeline.is_internal_document(title, html_body)
+        if intern:
+            _log_activity(
+                goal_id, "wachtrij_geweigerd",
+                f"'{title}' niet gestaged — {intern}; resultaat blijft een concept",
+            )
+            return None
+
         # Kwaliteitsgate: review → verbeter → review (max 3 rondes). Haalt het
-        # resultaat de grens niet (bv. omdat het een intern rapport of plan is,
-        # geen artikel), dan wordt er NIETS gestaged — de taak valt terug op
-        # een concept en de Wachtrij blijft vrij van niet-publiceerbare items.
+        # resultaat de grens niet, dan wordt er NIETS gestaged — de taak valt
+        # terug op een concept en de Wachtrij blijft vrij van niet-publiceerbare
+        # items.
         from ...shared.config import CONTENT_MIN_SCORE
         try:
             html_body, review = await content_pipeline.review_and_improve(full_site, "", html_body)
@@ -403,14 +415,22 @@ _DECOMPOSITION_PROMPT_TEMPLATE = (
 )
 
 
-async def _stream_text(system_prompt: str, user_prompt: str, max_tokens: int = 3000) -> str:
-    """Helper: stream response van Hermes."""
+async def _stream_text(system_prompt: str, user_prompt: str, max_tokens: int = 3000,
+                     model_override: Optional[str] = None) -> str:
+    """Helper: stream response van Hermes.
+
+    Optioneel model_override routeert naar een sterkere cloud-model (bv.
+    deepseek-v4-flash via OpenModel) voor plannings- en decompositiewerk, ook
+    als de standaard-backend lokaal/Ollama is. run_agent auto-routeert cloud-
+    modellen naar de juiste gateway."""
     full = ""
     async for chunk in agent_service.run_agent(
         messages=[{"role": "user", "content": user_prompt}],
         system_prompt=system_prompt,
         agent="hermes",
+        max_tokens=max_tokens,
         use_tools=False,
+        model_override=model_override,
     ):
         if chunk.get("type") == "text":
             full += chunk["text"]
@@ -525,7 +545,12 @@ async def decompose_goal(objective: str, project: str = "WeAreImpact") -> Dict[s
         system = _DECOMPOSITION_SYSTEM
 
     prompt = _DECOMPOSITION_PROMPT_TEMPLATE.format(objective=objective, project=project)
-    raw = await _stream_text(system, prompt, max_tokens=6000)
+    # Planning/decompositie is denkwerk: routeer naar een sterke cloud-model
+    # (OpenModel smart-model) in plaats van de trage lokale Ollama, zodat het
+    # plan snel én kwalitatief goed is — ook als de standaard-backend lokaal is.
+    from ...shared.config import OPENMODEL_SMART_MODEL
+    raw = await _stream_text(system, prompt, max_tokens=6000,
+                             model_override=OPENMODEL_SMART_MODEL)
 
     logger.info(f"Goal decompositie RAW ({len(raw)} chars): {raw[:500]}")
 
@@ -1933,8 +1958,12 @@ async def retry_failed_goal(goal_id: str) -> Dict[str, Any]:
         goal = conn.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone()
     if not goal:
         raise ValueError(f"Goal '{goal_id}' niet gevonden")
-    if goal["status"] != "failed":
-        raise ValueError(f"Goal '{goal_id}' heeft status '{goal['status']}', niet 'failed'")
+    # 'partial' = deels voltooid, deels gefaald — precies het geval waarin je de
+    # gefaalde taken opnieuw wil draaien; alleen 'failed' toestaan liet die goals
+    # onherstelbaar hangen (incident 2026-07-15). Voltooide taken blijven staan
+    # (de UPDATE hieronder raakt alleen status='failed'/'running').
+    if goal["status"] not in ("failed", "partial"):
+        raise ValueError(f"Goal '{goal_id}' heeft status '{goal['status']}', niet 'failed'/'partial'")
 
     with get_conn() as conn:
         # Reset failed tasks back to ready
@@ -1947,14 +1976,18 @@ async def retry_failed_goal(goal_id: str) -> Dict[str, Any]:
             "UPDATE goal_tasks SET status='ready', retry_count=0, error=NULL, started_at=NULL, finished_at=NULL WHERE goal_id=? AND status='running'",
             (goal_id,),
         )
-        # Reset failed phases back to pending
+        # Reset ELKE fase die nog een niet-voltooide taak bevat terug naar
+        # 'pending' — óók als de fase zelf 'completed' is. Een fase kan namelijk
+        # als 'done' zijn gemarkeerd terwijl één taak faalde (_mark_phase_done
+        # laat een fase sluiten zodra er geen ready/running-taken meer zijn,
+        # dus met alleen een gefaalde taak erin). Zonder deze reset blijven de
+        # zojuist naar 'ready' gezette taken in een completed-fase hangen en
+        # pakt de executie-lus ze nooit op (incident 2026-07-15).
         conn.execute(
-            "UPDATE goal_phases SET status='pending' WHERE goal_id=? AND status='failed'",
-            (goal_id,),
-        )
-        conn.execute(
-            "UPDATE goal_phases SET status='pending' WHERE goal_id=? AND status='running'",
-            (goal_id,),
+            "UPDATE goal_phases SET status='pending' WHERE goal_id=? AND id IN ("
+            "  SELECT DISTINCT phase_id FROM goal_tasks "
+            "  WHERE goal_id=? AND status <> 'completed')",
+            (goal_id, goal_id),
         )
         # Reset goal back to ready
         conn.execute(

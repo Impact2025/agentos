@@ -63,6 +63,13 @@ async def test_website_publishes_even_when_linkedin_fails(bijeen_job, monkeypatc
     monkeypatch.setenv("LINKEDIN_ACCESS_TOKEN", "fake-token")
     monkeypatch.setenv("LINKEDIN_USER_URN", "")
 
+    # De live-controle na publicatie hoort hier niet thuis (en mag het netwerk
+    # niet op): deze test gaat over social-veerkracht. Zie
+    # test_publiceerbaarheid_gate.py voor de controle zelf.
+    async def _no_live_check(url):
+        return None
+    monkeypatch.setattr(cp, "_verify_live", _no_live_check)
+
     captured = {}
 
     class FakeResp:

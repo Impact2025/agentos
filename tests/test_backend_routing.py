@@ -5,7 +5,8 @@ Voorkomt een herhaling van de 'quota in één dag leeg'-bug (2026-07-10/11):
 - Bij een provider-403 (quota op) slaat hij openmodel over en valt terug op
   de lokale/LiteLLM-backend (gratis, lokaal) i.p.v. duur cloud-werk.
 - De Claude-pad-route (content/Iris/mail) gebruikt OPENMODEL_SMART_MODEL
-  (deepseek-v4-flash), niet claude-sonnet.
+  (deepseek-v4-flash), niet claude-sonnet. Vincents harde eis (17 jul 2026):
+  alleen deepseek-v4-flash, Agnes en/of Ollama — nooit claude-sonnet.
 """
 import asyncio
 from unittest import mock
@@ -25,7 +26,9 @@ def test_hermes_backend_never_picks_claude_sonnet(monkeypatch):
     monkeypatch.setattr(config, "OLLAMA_BASE_URL", "")
     # geen quota-backoff actief
     monkeypatch.setattr(outcomes, "llm_quota_backoff_active", lambda: False)
-    assert config.hermes_backend() == "local"
+    # OpenModel/deepseek is primair vóór de local/Ollama-tier (die naar het
+    # zwakke llama3.1 wijst) — zie hermes_backend-docstring (incident 2026-07-15).
+    assert config.hermes_backend() == "openmodel"
     # model-string mag nergens claude-sonnet bevatten
     assert "claude-sonnet" not in config.OPENMODEL_MODEL
     assert "claude-sonnet" not in config.OPENMODEL_SMART_MODEL

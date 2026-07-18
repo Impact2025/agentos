@@ -153,14 +153,30 @@ def get_project(name: str) -> Dict:
 
 # ── Dashboard routes (hier in router.py om import-conflicten te voorkomen) ──
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from ..seo import gsc, sites as sites_service
 
 def _find_site(name: str):
     norm = lambda x: x.lower().replace(" ", "").replace("-", "").replace("_", "")
     target = norm(name)
-    for s in sites_service.list_sites():
+    sites = sites_service.list_sites()
+    for s in sites:
         if norm(s["name"]) == target:
+            return s
+    # Tolerante match: een projectsleutel als "daarwebsite" of "daarsite" hoort
+    # bij de site "Daar" (daar.nl). Strip een suffix en probeer ook de domein-root,
+    # zodat het dashboard niet leeg blijft door een cosmetisch naamverschil.
+    stripped = target
+    for suf in ("website", "site"):
+        if stripped.endswith(suf) and len(stripped) > len(suf) + 1:
+            stripped = stripped[: -len(suf)]
+            break
+    for s in sites:
+        if norm(s["name"]) == stripped:
+            return s
+        host = (s.get("base_url") or "").split("//")[-1].split("/")[0]
+        root = norm(host.split(".")[0]) if host else ""
+        if root and len(root) >= 3 and (root == target or root == stripped):
             return s
     return None
 
@@ -234,6 +250,29 @@ def project_dashboard(name: str, days: int = Query(28, ge=7, le=365)):
 # ── Project Advice (AI-vrij — op basis van data) ────────────────────
 
 
+def _goal_addresses(goals: List[Dict], *phrases: str, days: int = 14) -> bool:
+    """True als er de afgelopen `days` dagen al een niet-mislukt doel is aangemaakt
+    waarvan objective/titel één van de zinsdelen bevat. Dempt cijfer-alerts:
+    GSC-data loopt dagen achter, dus direct na 'Oplossen' zou dezelfde alert
+    anders blijven terugkomen alsof er niets gebeurd is."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    for g in goals:
+        if g.get("status") in ("failed", "cancelled"):
+            continue
+        haystack = ((g.get("objective") or "") + " " + (g.get("title") or "")).lower()
+        if not any(p.lower() in haystack for p in phrases):
+            continue
+        try:
+            created = datetime.fromisoformat(g.get("created_at") or "")
+        except ValueError:
+            continue
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if created >= cutoff:
+            return True
+    return False
+
+
 @router.get("/{name}/advice")
 def project_advice(name: str, days: int = Query(28)):
     """Data-gedreven advies voor het dashboard — geen LLM call."""
@@ -252,7 +291,7 @@ def project_advice(name: str, days: int = Query(28)):
 
     # 1. Running goals check
     from ..goal import service as goal_service
-    project_goals = goal_service.list_goals(limit=10, project=name)
+    project_goals = goal_service.list_goals(limit=30, project=name)
     running = [g for g in project_goals if g["status"] == "running"]
     failed = [g for g in project_goals if g["status"] == "failed"]
 
@@ -290,8 +329,16 @@ def project_advice(name: str, days: int = Query(28)):
                            for p in pages) / cur_imps, 1) if cur_imps else 0
             cur_ctr = round((cur_clicks / cur_imps * 100), 2) if cur_imps else 0
 
-            # Positie alert
-            if cur_pos > 15:
+            # Positie alert — gedempt zolang er al een doel voor loopt of recent
+            # is gestart (GSC-cijfers reageren pas dagen later op het werk).
+            position_addressed = _goal_addresses(
+                project_goals,
+                f"Optimaliseer de bestaande content van {name}",
+                f"Werk de striking-distance zoekwoorden van {name}",
+            )
+            if position_addressed:
+                pass
+            elif cur_pos > 15:
                 advice["alerts"].append({
                     "type": "danger",
                     "icon": "⚠️",
@@ -310,8 +357,9 @@ def project_advice(name: str, days: int = Query(28)):
                     "action_label": "Oplossen",
                 })
 
-            # CTR alert
-            if cur_ctr < 3.0 and cur_imps > 100:
+            # CTR alert — zelfde demping als de positie-alert
+            ctr_addressed = _goal_addresses(project_goals, f"Verbeter de CTR van {name}")
+            if not ctr_addressed and cur_ctr < 3.0 and cur_imps > 100:
                 advice["alerts"].append({
                     "type": "warning",
                     "icon": "🎯",
@@ -321,8 +369,9 @@ def project_advice(name: str, days: int = Query(28)):
                     "action_label": "Oplossen",
                 })
 
-            # Indexed pages alert
-            if len(pages) < 10:
+            # Indexed pages alert — zelfde demping
+            if len(pages) < 10 and not _goal_addresses(
+                    project_goals, f"Schrijf en publiceer nieuwe content voor {name}"):
                 advice["alerts"].append({
                     "type": "info",
                     "icon": "📝",
@@ -373,7 +422,7 @@ def project_advice(name: str, days: int = Query(28)):
                         advice["next_step_action"] = f"write_article:{kw}"
                 except Exception:
                     pass
-            elif not running and cur_pos > 10:
+            elif not running and cur_pos > 10 and not position_addressed:
                 advice["next_step"] = "🔧 Optimaliseer bestaande pagina's voor betere posities (meta descriptions, interne links)"
             elif not running:
                 advice["next_step"] = "📈 Voer een kansen-scan uit om nieuwe striking-distance kansen te vinden"

@@ -3,13 +3,13 @@
 // Laadvolgorde staat in index.html — core.js eerst.
 
 // ── Agent OS — Pro SEO Dashboard ──────────────────────────────────
-const PROJECTS = ['WeAreImpact', 'IctusGo', 'Pootgelukkig', 'BewaardVoorJou', 'Kappersassistent', 'DatingAssistent', 'Finance Expert', 'Bijeen', 'Brickme', 'Vrijwilligersmatch', 'Skillkaart', 'Steentjeapp', 'Zorgblik', 'Teambuildingmetimpact'];
+const PROJECTS = ['WeAreImpact', 'IctusGo', 'Pootgelukkig', 'BewaardVoorJou', 'Kappersassistent', 'DatingAssistent', 'Finance Expert', 'Bijeen', 'Brickme', 'Vrijwilligersmatch', 'Skillkaart', 'Steentjeapp', 'Zorgblik', 'Teambuildingmetimpact', 'Daar'];
 const COLORS = { WeAreImpact: ['from-indigo-500 to-indigo-600','indigo'], Pootgelukkig: ['from-emerald-500 to-emerald-600','emerald'], BewaardVoorJou: ['from-amber-500 to-amber-600','amber'], Kappersassistent: ['from-violet-500 to-violet-600','violet'], DatingAssistent: ['from-red-500 to-red-600','red'], 'Finance Expert': ['from-rose-500 to-rose-600','rose'], Bijeen: ['from-cyan-500 to-cyan-600','cyan'], Brickme: ['from-orange-500 to-orange-600','orange'], Vrijwilligersmatch: ['from-teal-500 to-teal-600','teal'], Skillkaart: ['from-pink-500 to-pink-600','pink'], Steentjeapp: ['from-sky-500 to-sky-600','sky'], Zorgblik: ['from-lime-500 to-lime-600','lime'], Teambuildingmetimpact: ['from-amber-500 to-amber-600','amber'], IctusGo: ['from-cyan-700 to-emerald-600','emerald'] };
 const DESCS = { WeAreImpact: 'AI en innovatie voor zorg, welzijn en gemeenten', Pootgelukkig: 'Adoptieplatform voor asieldieren', BewaardVoorJou: 'Digitaal levensboek voor 65-plussers', Kappersassistent: 'Project kappersbranche (in opstart)', DatingAssistent: 'AI dating coach & datingadvies', 'Finance Expert': 'Financiele rapportage en analyse', Bijeen: 'Sociale verbinding & bijeenkomsten', Brickme: 'Bouw & constructie', Vrijwilligersmatch: 'Vrijwilligers matching platform', Skillkaart: 'Vaardigheden & competenties', Steentjeapp: 'Mobiele app Steentjebijsteentje', Zorgblik: 'Zorginnovatie & inzicht', Teambuildingmetimpact: 'Bedrijfsvrijwilligerswerk, impact days & LEGO Serious Play', IctusGo: 'GPS teambuilding met sociale impact (Hoofddorp/Schiphol)' };
-const TABS = ['Dashboard', 'Content', 'Kansen', 'Optimalisatie', 'Wachtrij', 'Concurrentie', 'Radar', 'Keywords', 'Doelen', 'Geheugen', 'Leads', 'Opdrachten', 'Technisch', 'Activiteit', 'Social Creatie', 'Helpdesk', 'Instellingen'];
-const TAB_ICONS = { Dashboard: 'D', Content: 'C', Kansen: 'K', Optimalisatie: '↗', Wachtrij: 'Q', Concurrentie: 'R', Radar: '✦', Keywords: 'W', Doelen: 'G', Geheugen: 'I', Leads: 'L', Opdrachten: 'O', Technisch: 'T', Activiteit: 'A', 'Social Creatie': 'S', Helpdesk: '✉', Instellingen: 'S' };
+const TABS = ['Dashboard', 'Content', 'Kansen', 'Optimalisatie', 'Wachtrij', 'Concurrentie', 'Radar', 'Keywords', 'Doelen', 'Geheugen', 'Leads', 'Links', 'Opdrachten', 'Technisch', 'Activiteit', 'Social Creatie', 'Helpdesk', 'Instellingen'];
+const TAB_ICONS = { Dashboard: 'D', Content: 'C', Kansen: 'K', Optimalisatie: '↗', Wachtrij: 'Q', Concurrentie: 'R', Radar: '✦', Keywords: 'W', Doelen: 'G', Geheugen: 'I', Leads: 'L', Links: '🔗', Opdrachten: 'O', Technisch: 'T', Activiteit: 'A', 'Social Creatie': 'S', Helpdesk: '✉', Instellingen: 'S' };
 
-let currentProject = null, currentTab = 'Dashboard', weSuggestions = [], oppStatusFilter = null, scanningInProgress = false, chartInstances = {};
+let currentProject = null, currentTab = 'Dashboard', weSuggestions = [], oppStatusFilter = 'open', scanningInProgress = false, chartInstances = {};
 let _agentStatusTimer = null;
 
 // ── Recent Activity Logs (Vercel-stijl) ────────────────────────────
@@ -177,6 +177,27 @@ function resolveAllFailed() {
 }
 
 function escHtml(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// POST met JSON-body. De `detail` uit een FastAPI-HTTPException wordt de
+// foutmelding, zodat de gebruiker leest wat er stuk is ("Websearch niet
+// beschikbaar: quota op") in plaats van een kaal "HTTP 502".
+function post(url, body) {
+  // Een al-gestringificeerde body gaat ongemoeid door: sommige aanroepers geven
+  // JSON.stringify(...) mee, en die nog eens stringificeren levert de server een
+  // string in plaats van een object op.
+  var payload = (body === undefined || body === null) ? undefined
+    : (typeof body === 'string' ? body : JSON.stringify(body));
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: payload,
+  }).then(function (r) {
+    return r.json().catch(function () { return null; }).then(function (data) {
+      if (!r.ok) throw new Error((data && data.detail) ? data.detail : 'HTTP ' + r.status);
+      return data;
+    });
+  });
+}
 function kpiBox(label, val, change, sub) {
   var extra = '';
   if (change !== undefined && change !== '') { var cls = change >= 0 ? 'pos' : 'neg'; extra = '<p class="change ' + cls + '">' + (change >= 0 ? '+' : '') + change + '</p>'; }

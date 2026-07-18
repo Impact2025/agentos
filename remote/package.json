@@ -1,0 +1,11 @@
+{
+  "name": "agentos-remote",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent OS Remote — cloud-companion: review-gates goedkeuren als de pc uitstaat (Vercel + Neon).",
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.0",
+    "web-push": "^3.6.7"
+  }
+}

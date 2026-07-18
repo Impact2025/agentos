@@ -15,6 +15,7 @@ from ...shared.config import (
     OLLAMA_BASE_URL, OLLAMA_MODEL,
     HERMES_LOCAL_URL, HERMES_LOCAL_KEY,
     OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL,
+    AGNES_API_KEY, AGNES_BASE_URL, AGNES_MODEL,
     hermes_backend,
 )
 
@@ -38,6 +39,8 @@ def active_model() -> str:
         return f"openmodel/{OPENMODEL_MODEL}"
     if backend == "openrouter":
         return HERMES_MODEL
+    if backend == "agnes":
+        return f"agnes/{AGNES_MODEL}"
     return CLAUDE_MODEL_2
 
 
@@ -56,6 +59,12 @@ def _fallback_backends(primary: str) -> List[str]:
             chain.append("anthropic")
     elif primary == "openrouter" and anthropic_configured():
         chain.append("anthropic")
+    # Agnes is de allerlaatste reserve (nooit primair). Cruciaal tijdens een
+    # OpenModel-quota-backoff: dan is 'local' (Ollama) primair mét lege keten,
+    # en één trage/gefaalde lokale run legde anders de hele contentmotor stil
+    # (incident 2026-07-17: alle "Schrijf artikel"-acties faalden).
+    if AGNES_API_KEY and primary != "agnes":
+        chain.append("agnes")
     return chain
 
 
@@ -101,7 +110,9 @@ async def stream_response(
                 # Er is al tekst gestreamd — halverwege overschakelen zou een
                 # kapot/dubbel antwoord opleveren, dus de fout gewoon doorgeven.
                 raise
-            logger.warning(f"Hermes-backend '{be}' faalde vóór eerste chunk ({e}); volgende in keten proberen.")
+            # repr(e): een httpx-timeout heeft een lege str() en logde als "()",
+            # waardoor de oorzaak onzichtbaar was.
+            logger.warning(f"Hermes-backend '{be}' faalde vóór eerste chunk ({e!r}); volgende in keten proberen.")
 
     if last_error:
         raise last_error
@@ -156,6 +167,16 @@ async def _stream_openai_compat(
             "Content-Type": "application/json",
             "Authorization": f"Bearer {OPENMODEL_API_KEY}",
             "anthropic-version": "2023-06-01",
+        }
+    elif backend == "agnes":
+        # Sapiens AI "Agnes" gateway — standaard OpenAI-compat /chat/completions.
+        # Enige fallback-optie (nooit primair); routeert via de OpenAI-compat
+        # SSE-parse hieronder. Default-model agnes-2.0-flash (zie AGNES_MODEL).
+        base_url = AGNES_BASE_URL.rstrip("/")
+        model = AGNES_MODEL
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {AGNES_API_KEY}",
         }
     else:
         base_url = "https://openrouter.ai/api/v1"
@@ -226,7 +247,15 @@ async def _stream_openai_compat(
         "stream": True,
     }
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    # Lokale modellen (llama3.1 op eigen hardware) en de Agnes-gateway hebben
+    # bij grote schrijf-prompts ruim de tijd nodig vóór de eerste token —
+    # 120s totaal gaf httpx.ReadTimeout (lege foutstring) en brak de keten.
+    if backend in ("local", "ollama", "agnes"):
+        timeout = httpx.Timeout(600.0, connect=15.0)
+    else:
+        timeout = httpx.Timeout(120.0)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             async with client.stream(
                 "POST", f"{base_url}/chat/completions", json=payload, headers=headers

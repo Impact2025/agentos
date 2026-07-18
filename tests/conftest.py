@@ -54,5 +54,6 @@ def clean_tables():
     yield
     with get_conn() as c:
         for t in ("activity_log", "inbox_dismissals", "goals", "goal_phases",
-                  "goal_tasks", "content_jobs", "tasks", "vacancies", "leads"):
+                  "goal_tasks", "content_jobs", "tasks", "vacancies", "leads",
+                  "agent_lessons", "agent_predictions"):
             c.execute(f"DELETE FROM {t}")

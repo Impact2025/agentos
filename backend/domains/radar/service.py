@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional
 from ...shared.config import (
     TAVILY_API_KEY, OBSIDIAN_VAULT_PATH,
     AEO_AUTO_ATTACK, AEO_AUTO_MIN_SCORE, AEO_AUTO_MAX_PER_SCAN,
+    AEO_AUTO_MIN_MATCH,
 )
 from ...shared.database import get_conn
 from ...shared import agent_runner as agent_service
@@ -45,6 +46,7 @@ SCAN_LOOKBACK_DAYS = 14          # hoe ver terug we "trending" laten meetellen
 MAX_RESULTS_PER_WATCH = 6        # Tavily-resultaten per watch-item
 MAX_AI_ENRICH_PER_WATCH = 4      # LLM-verrijking alleen voor de beste hits
 MIN_SCORE_FOR_ENRICH = 30.0      # heuristische ondergrens voor AI-verrijking
+MIN_RELEVANCE_FOR_ANGLE = 45.0   # onder deze relevantie geen dure angle-generatie
 MIN_SCORE_FOR_OBSIDIAN = 70.0    # topsignalen gaan automatisch de vault in
 
 TRENDS_VAULT_DIR = "10_Projects/_trends"
@@ -80,6 +82,15 @@ class RadarService:
         ensure_schema()
         scorer.ensure_analyst_profile()
         self._tavily = None
+        # Stroomonderbreker: na een quota/usage-limit-fout heeft elke volgende
+        # call hetzelfde lot — zonder deze rem hamert één scan tientallen
+        # keren per seconde op de API (incident 13 jul 2026). Tijdgebonden
+        # zodat de radar na een quota-reset vanzelf weer gaat draaien.
+        self._tavily_backoff_until = 0.0
+        # Zet True zodra een scan op de quota-limiet stuit — de scan meldt dat
+        # daarna één keer zichtbaar (Actiecentrum-kaart), i.p.v. het alleen te
+        # loggen. Per scan-run gereset.
+        self._tavily_quota_hit = False
         if TAVILY_API_KEY:
             try:
                 from tavily import TavilyClient
@@ -140,11 +151,47 @@ class RadarService:
 
     # ── Bronnen ──────────────────────────────────────────────────────────────
 
+    def _note_tavily_error(self, e: Exception) -> None:
+        import time
+        msg = str(e)
+        if "usage limit" in msg.lower() or "quota" in msg.lower():
+            if time.time() >= self._tavily_backoff_until:
+                log.error("[radar] Tavily-quota op — 6 uur geen nieuwe calls: %s", msg)
+            self._tavily_backoff_until = time.time() + 6 * 3600
+            self._tavily_quota_hit = True
+        else:
+            log.error("[radar] Tavily fout: %s", msg)
+
+    def _brave_fallback(self, query: str, max_results: int) -> List[Dict]:
+        """Brave Search als vangnet wanneer Tavily plat ligt (quota/fout).
+        Generieke webresultaten zonder news-freshness — beter een iets ruwere
+        scan dan een sky-scan die volledig stilvalt (incident 18 jul 2026)."""
+        from ...shared import websearch
+        from ...shared.config import BRAVE_SEARCH_API_KEY
+        if not BRAVE_SEARCH_API_KEY:
+            return []
+        try:
+            hits = websearch.brave_search(query, max_results=max_results)
+        except Exception as e:  # noqa: BLE001
+            log.error("[radar] Brave-fallback faalde ook: %s", str(e)[:200])
+            return []
+        return [
+            {"title": h["title"], "url": h["url"], "snippet": h["snippet"],
+             "tavily_score": 0.5, "published_days_ago": None}
+            for h in hits if h.get("url")
+        ]
+
     def _tavily_search(self, query: str, days: int = SCAN_LOOKBACK_DAYS,
                        max_results: int = MAX_RESULTS_PER_WATCH) -> List[Dict]:
         if not self._tavily:
-            log.warning("[radar] Geen TAVILY_API_KEY geconfigureerd — scan levert niets op")
-            return []
+            fb = self._brave_fallback(query, max_results)
+            if not fb:
+                log.warning("[radar] Geen TAVILY_API_KEY (en geen Brave-resultaten) — scan levert niets op")
+            return fb
+        import time
+        if time.time() < self._tavily_backoff_until:
+            # Tavily in quota-backoff: probeer het vangnet i.p.v. niets doen.
+            return self._brave_fallback(query, max_results)
         try:
             resp = self._tavily.search(
                 query=query,
@@ -160,11 +207,11 @@ class RadarService:
                 resp = self._tavily.search(query=query, max_results=max_results,
                                            search_depth="advanced", include_answer=False)
             except Exception as e:
-                log.error("[radar] Tavily fout: %s", e)
-                return []
+                self._note_tavily_error(e)
+                return self._brave_fallback(query, max_results)
         except Exception as e:
-            log.error("[radar] Tavily fout: %s", e)
-            return []
+            self._note_tavily_error(e)
+            return self._brave_fallback(query, max_results)
         return [
             {
                 "title": r.get("title", ""),
@@ -237,9 +284,14 @@ class RadarService:
 
     # ── Scan (async generator — SSE-route én scheduler consumeren dit) ──────
 
-    async def run_scan(self, project: Optional[str] = None, enrich: bool = True):
+    async def run_scan(self, project: Optional[str] = None, enrich: bool = True, rss_only: bool = False):
+        self._tavily_quota_hit = False  # verse meting per scan-run
         watches = [w for w in self.list_watch(project) if w["active"]]
-        yield {"type": "scan_start", "watch_count": len(watches)}
+        if rss_only:
+            # Budget-bewuste modus: alleen RSS-feeds (geen Tavily, geen LLM).
+            # Houdt de sky-scan nuttig als het dagelijkse LLM-budget op is.
+            watches = [w for w in watches if w["type"] == "rss"]
+        yield {"type": "scan_start", "watch_count": len(watches), "rss_only": rss_only}
         if not watches:
             yield {"type": "scan_done", "total_saved": 0,
                    "note": "Watchlist is leeg — voeg concurrenten of keywords toe."}
@@ -279,10 +331,19 @@ class RadarService:
                     r["title"], r["url"], watch["value"],
                     r.get("published_days_ago", -1), r.get("tavily_score", 0.0),
                     r.get("source"), project=watch["project"],
+                    snippet=r.get("snippet", ""),
                 )
             fresh.sort(key=lambda r: r["signal_score"], reverse=True)
 
-            # AI-verrijking alleen voor de kansrijkste hits (kosten/tijd).
+            # AI-verrijking alleen voor de kansrijkste hits (kosten/tijd). Twee
+            # stappen, bewust gescheiden:
+            #   1. Onafhankelijke relevantie-rechter (score_relevance) — een
+            #      strenge eindredacteur die alleen de fit beoordeelt, zónder de
+            #      angle te zien. Dit is de calibratie-fix: het cijfer wordt niet
+            #      meer opgeblazen door de zojuist verkochte invalshoek.
+            #   2. Pas de dure angle-generatie voor stukken die de relevantie-lat
+            #      halen. Zo besparen we creatief werk op off-topic ruis én komt
+            #      een eerlijk match_score in de blend.
             enriched = 0
             for r in fresh:
                 r.update({"ai_hook": "", "ai_angle": "", "ai_titles": [], "ai_match_score": -1})
@@ -291,15 +352,17 @@ class RadarService:
                 if r["signal_score"] < MIN_SCORE_FOR_ENRICH:
                     continue
                 yield {"type": "analyzing", "title": r["title"], "label": watch["label"]}
-                angle = await scorer.generate_angle(
-                    r["title"], r["url"], r["source"], r["snippet"],
-                    watch["value"], watch["project"],
-                )
-                r.update({
-                    "ai_hook": angle["hook"], "ai_angle": angle["angle"],
-                    "ai_titles": angle["titles"], "ai_match_score": angle["match_score"],
-                })
-                r["signal_score"] = scorer.blend_scores(r["signal_score"], angle["match_score"])
+                match = await scorer.score_relevance(
+                    r["title"], r["snippet"], watch["project"])
+                r["ai_match_score"] = match
+                if match >= MIN_RELEVANCE_FOR_ANGLE:
+                    angle = await scorer.generate_angle(
+                        r["title"], r["url"], r["source"], r["snippet"],
+                        watch["value"], watch["project"],
+                    )
+                    r.update({"ai_hook": angle["hook"], "ai_angle": angle["angle"],
+                              "ai_titles": angle["titles"]})
+                r["signal_score"] = scorer.blend_scores(r["signal_score"], match)
                 enriched += 1
 
             # Bulk-opslag: één executemany per watch-item.
@@ -344,6 +407,16 @@ class RadarService:
 
         yield {"type": "scan_done", "total_saved": total_saved}
 
+        # Tavily-quota op? Dat mag niet stil in een logregel verdwijnen — de radar
+        # valt er (deels) door droog en dat vergt een menselijke actie (upgraden /
+        # wachten). Eén zichtbare kaart per dag, conform de regel "fouten die
+        # menselijke actie vergen → status='error'". RSS-feeds draaiden nog wel.
+        if self._tavily_quota_hit and not rss_only:
+            try:
+                self._log_tavily_quota_card(project)
+            except Exception:
+                log.exception("[radar] Kon Tavily-quota-kaart niet loggen")
+
         # Autonome vervolgstap: de agent start zelfstandig AEO-aanvallen op de
         # beste verse signalen (tot aan de Wachtrij-gate). De mens hoeft alleen
         # nog "publiceer" te klikken. Zacht — faalt nooit de hele scan.
@@ -355,6 +428,33 @@ class RadarService:
                            "signals": attacked}
             except Exception:
                 log.exception("[radar] Auto-AEO na scan mislukt (niet fataal)")
+
+    def _log_tavily_quota_card(self, project: Optional[str]) -> None:
+        """Schrijf één 'radar_scan'-error per dag als Tavily's quota op is.
+
+        Dedupe op datum via activity_log, zodat een scheduler-scan elke 4 uur de
+        kaart niet dupliceert. Zonder Tavily kan de radar geen nieuwe web-signalen
+        ophalen (alleen de RSS-feeds draaien nog), dus dit is bewust een
+        zichtbaar, actie-vergend event i.p.v. een stille logregel."""
+        from ...shared.outcomes import log_outcome
+        proj = project or "Mission Radar"
+        with get_conn() as conn:
+            dup = conn.execute(
+                "SELECT 1 FROM activity_log WHERE action='radar_scan' "
+                "AND status='error' AND detail LIKE 'Tavily-quota%' "
+                "AND date(created_at)=date('now') LIMIT 1"
+            ).fetchone()
+        if dup:
+            return
+        log_outcome(
+            proj, "radar_scan",
+            "Tavily-quota bereikt: de sky-scan kan geen nieuwe web-signalen "
+            "ophalen tot de quota reset (±6 uur). De RSS-feeds draaien nog wel.",
+            next_step="Upgrade het Tavily-plan (app.tavily.com) of wacht op de "
+                      "quota-reset; tot dan levert de scan geen nieuwe kansen.",
+            status="error",
+        )
+        log.info("[radar] Tavily-quota-kaart gelogd voor %s", proj)
 
     def _auto_aeo_top_signals(self) -> List[str]:
         """Na een scan: start zelfstandig AEO-aanvallen op de beste verse
@@ -369,10 +469,21 @@ class RadarService:
         topical authority komt van diepte, niet van volume."""
         if not AEO_AUTO_ATTACK:
             return []
-        top = [
-            s for s in self.list_signals(status="new", limit=50)
-            if (s.get("signal_score") or 0) >= AEO_AUTO_MIN_SCORE
-        ]
+        # De aanvalspoort — twee horden, béíde vereist:
+        #  1. signal_score boven de drempel (vers/opvallend genoeg).
+        #  2. een WERKENDE relevantiescore (ai_match_score) >= AEO_AUTO_MIN_MATCH.
+        # Bewust GEEN "sterke match overrulet de score"-uitzondering: het
+        # match-model stempelt momenteel bijna alles 85-95, dus een hoge match
+        # bewijst geen echte fit. Een off-topic 'Microsoft-deal $100m' scoort dan
+        # net zo hoog als een echte treffer. Zolang de match ongecalibreerd is,
+        # mag hij de heuristiek niet overrulen — anders keert de ruis terug. Een
+        # gefaald oordeel (-1) telt sowieso als niet-gehaald.
+        def _eligible(s) -> bool:
+            match = s.get("ai_match_score")
+            match = match if match is not None else -1
+            return (s.get("signal_score") or 0) >= AEO_AUTO_MIN_SCORE and match >= AEO_AUTO_MIN_MATCH
+
+        top = [s for s in self.list_signals(status="new", limit=50) if _eligible(s)]
         if not top:
             return []
 
@@ -924,18 +1035,23 @@ def get_service() -> RadarService:
     return _svc_singleton
 
 
-async def scan_the_skies() -> None:
-    """Entry point voor de scheduler — consumeert run_scan() over ALLE projecten."""
+async def scan_the_skies() -> int:
+    """Entry point voor de scheduler — consumeert run_scan() over ALLE projecten.
+
+    Geeft het aantal opgeslagen signalen terug (0 als de scan is overgeslagen
+    door de LLM-budget circuit-breaker).
+    """
     # Circuit-breaker: geen dure LLM-scans als de dagbudget op is.
     from ...shared.outcomes import require_llm_budget
     try:
         require_llm_budget("radar-sky")
+        rss_only = False
     except Exception as e:
-        log.warning("[radar] Sky-scan overgeslagen: %s", e)
-        return
+        log.warning("[radar] LLM-budget op — RSS-only fallback sky-scan: %s", e)
+        rss_only = True
     svc = get_service()
     saved = 0
-    async for ev in svc.run_scan():
+    async for ev in svc.run_scan(rss_only=rss_only):
         if ev.get("type") == "scan_done":
             saved = ev.get("total_saved", 0)
     log.info("[radar] Sky-scan klaar: %s nieuwe signalen", saved)
@@ -952,3 +1068,4 @@ async def scan_the_skies() -> None:
             sync_all_trend_opportunities()
         except Exception:
             log.exception("[radar] Trend-sync naar Demand Engine mislukt")
+    return saved

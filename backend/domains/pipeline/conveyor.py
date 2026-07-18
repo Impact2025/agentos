@@ -31,6 +31,7 @@ STATE_TRANSITIONS = [
     "running",
     "done",
     "awaiting_approval",
+    "needs_work",
 ]
 
 DEFAULT_SYSTEM_PROMPT = (

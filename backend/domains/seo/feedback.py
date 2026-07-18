@@ -43,25 +43,35 @@ def sync_page_performance(site: Dict) -> Dict:
         return {"ok": False, "reason": "geen GSC-property of niet geconfigureerd", "synced": 0}
 
     try:
+        # Paginatotalen uit de page-only dimensie: de page+query-dimensie
+        # verzwijgt geanonimiseerde (zeldzame) zoekwoorden, waardoor de som
+        # van de query-rijen structureel lager uitvalt dan wat de pagina echt
+        # scoort — clicks stonden daardoor bijna overal op 0.
+        totals = gsc.fetch_page_performance(prop, days=28, row_limit=2000)
         rows = gsc.fetch_page_query_performance(prop, days=28, row_limit=2000)
     except Exception as e:  # netwerk/API-fout mag de sync nooit laten crashen
         return {"ok": False, "reason": f"GSC-fout: {str(e)[:160]}", "synced": 0}
 
-    # Groepeer per pagina: kies het zoekwoord met de meeste impressies.
-    by_page: Dict[str, Dict] = {}
+    # Top-zoekwoord per pagina (meeste impressies) — alleen als label.
+    top_query: Dict[str, tuple] = {}
     for r in rows:
+        page = (r.get("page") or "").rstrip("/")
+        imps = r.get("impressions", 0) or 0
+        if page and (page not in top_query or imps > top_query[page][1]):
+            top_query[page] = (r.get("query", ""), imps)
+
+    by_page: Dict[str, Dict] = {}
+    for r in totals:
         page = (r.get("page") or "").rstrip("/")
         if not page:
             continue
-        cur = by_page.get(page)
-        if cur is None or r.get("impressions", 0) > cur["impressions"]:
-            by_page[page] = {
-                "query": r.get("query", ""),
-                "clicks": r.get("clicks", 0),
-                "impressions": r.get("impressions", 0),
-                "ctr": r.get("ctr", 0.0),
-                "position": r.get("position", 0.0),
-            }
+        by_page[page] = {
+            "query": top_query.get(page, ("", 0))[0],
+            "clicks": r.get("clicks", 0),
+            "impressions": r.get("impressions", 0),
+            "ctr": r.get("ctr", 0.0),
+            "position": r.get("position", 0.0),
+        }
 
     synced = 0
     now = _now()

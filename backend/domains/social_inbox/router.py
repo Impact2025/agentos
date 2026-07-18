@@ -156,40 +156,45 @@ def get_msg(msg_id: int):
 
 @router.post("/msg/{msg_id}/approve")
 async def approve_msg(msg_id: int):
+    # Lees eerst (korte transactie, connectie sluit), doe dan de trage netwerk-
+    # POST zónder open connectie, en schrijf pas daarna weg. Zo houdt deze route
+    # de DB-lock niet vast tijdens het versturen naar het social-kanaal.
     with get_conn() as conn:
         row = conn.execute(
             "SELECT m.*, i.creds_json, i.project FROM social_inbox_msg m "
             "JOIN social_inboxes i ON i.id=m.inbox_id WHERE m.id=?",
             (msg_id,),
         ).fetchone()
-        if not row:
-            raise HTTPException(404, "Bericht niet gevonden")
-        m = dict(row)
-        if m["status"] == "sent":
-            return {"success": True, "detail": "Al verzonden"}
-        text = m.get("edited_body") or m.get("draft_body") or ""
-        if not text.strip():
-            raise HTTPException(400, "Geen antwoordtekst om te plaatsen")
-        inbox = {"project": m["project"], "platform": m["platform"],
-                 "creds_json": m["creds_json"]}
-        result = await svc.post_reply(inbox, m, text)
-        if result.get("manual"):
-            # Kanaal staat geen API-antwoord toe (LinkedIn/TikTok): markeer als
-            # 'manual' zodat de UI een plak-knop toont i.p.v. een verzend-fout.
+    if not row:
+        raise HTTPException(404, "Bericht niet gevonden")
+    m = dict(row)
+    if m["status"] == "sent":
+        return {"success": True, "detail": "Al verzonden"}
+    text = m.get("edited_body") or m.get("draft_body") or ""
+    if not text.strip():
+        raise HTTPException(400, "Geen antwoordtekst om te plaatsen")
+    inbox = {"project": m["project"], "platform": m["platform"],
+             "creds_json": m["creds_json"]}
+    result = await svc.post_reply(inbox, m, text)
+    if result.get("manual"):
+        # Kanaal staat geen API-antwoord toe (LinkedIn/TikTok): markeer als
+        # 'manual' zodat de UI een plak-knop toont i.p.v. een verzend-fout.
+        with get_conn() as conn:
             conn.execute(
                 "UPDATE social_inbox_msg SET status='sent', manual=1, "
                 "sent_at=datetime('now') WHERE id=?", (msg_id,)
             )
-            return {"success": True, "manual": True,
-                    "detail": "Geen API-antwoord mogelijk op dit kanaal — "
-                              "kopieer het antwoord en plaats het handmatig."}
-        if result.get("success"):
+        return {"success": True, "manual": True,
+                "detail": "Geen API-antwoord mogelijk op dit kanaal — "
+                          "kopieer het antwoord en plaats het handmatig."}
+    if result.get("success"):
+        with get_conn() as conn:
             conn.execute(
                 "UPDATE social_inbox_msg SET status='sent', sent_at=datetime('now') WHERE id=?",
                 (msg_id,),
             )
-            return {"success": True, "url": result.get("url", "")}
-        raise HTTPException(400, result.get("error", "Onbekende fout"))
+        return {"success": True, "url": result.get("url", "")}
+    raise HTTPException(400, result.get("error", "Onbekende fout"))
 
 
 @router.post("/msg/{msg_id}/reject")

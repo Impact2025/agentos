@@ -861,3 +861,88 @@ async function radarToObsidian(id, btn) {
   finally { if (btn) btn.disabled = false; }
 }
 
+
+// ═══════════════════════════════════════════════════════════════════
+//  LINKS TAB — linkbuilding per project (funnel · concepten · live links)
+//  Data komt uit /api/linkbuilding/*, gescoped op de site van dit project.
+//  Versturen kan ALLEEN via de approve-endpoint (review-gate).
+// ═══════════════════════════════════════════════════════════════════
+async function renderLinksTab(el) {
+  el.innerHTML = '<div class="loading"><div class="spinner"></div><p>Linkbuilding laden...</p></div>';
+  var site;
+  try {
+    var sites = await (await fetch('/api/sites')).json();
+    var norm = function(n){ return (n||'').toLowerCase().replace(/ /g,'').replace(/-/g,''); };
+    site = sites.find(function(s){ return norm(s.name) === norm(currentProject); });
+  } catch(e) { el.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; return; }
+  if (!site) {
+    el.innerHTML = '<div class="empty-state"><p style="font-size:14px;font-weight:600;color:#475569;margin-bottom:4px">Geen site gekoppeld</p>' +
+      '<p style="color:#94a3b8">Linkbuilding werkt per site — koppel dit project aan een site (Instellingen &rarr; Sites).</p></div>';
+    return;
+  }
+  var q = '?site_id=' + encodeURIComponent(site.id);
+  try {
+    var res = await Promise.all([
+      fetch('/api/linkbuilding/funnel' + q).then(function(r){return r.json();}),
+      fetch('/api/linkbuilding/prospects' + q).then(function(r){return r.json();}),
+      fetch('/api/linkbuilding/placements' + q + '&status=live').then(function(r){return r.json();})
+    ]);
+  } catch(e) { el.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; return; }
+  var f = res[0] || {}, prospects = res[1] || [], live = res[2] || [];
+
+  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">' +
+    '<div><h3 style="font-size:15px;font-weight:700">\u{1F517} Linkbuilding &mdash; ' + escHtml(site.name) + '</h3>' +
+    '<p style="font-size:11px;color:#64748b;margin-top:2px">De agent zoekt en schrijft; versturen blijft jouw klik.</p></div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+    '<button onclick="runLinkbuildingProspecting(this, \'' + site.id + '\')" style="padding:5px 12px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Zoek kansen</button>' +
+    '<button onclick="runLinkbuildingBatch(this, \'' + site.id + '\')" style="padding:5px 12px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Maak concepten (review)</button>' +
+    '<button onclick="renderLinksTab(document.getElementById(\'tab-content\'))" style="padding:5px 12px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">Ververs</button>' +
+    '</div></div>';
+
+  // Concepten die op de verzendklik wachten — dezelfde gate als het Actiecentrum.
+  var review = prospects.filter(function(p){ return p.status === 'outreach_review'; });
+  if (review.length) {
+    html += '<div class="section-card" style="margin-bottom:14px;border:1px solid #fde68a;background:#fffbeb">' +
+      '<h4 style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:8px">\u{270B} Wacht op je verzendklik (' + review.length + ')</h4>';
+    review.forEach(function(p){
+      html += '<div style="border-top:1px solid #fef3c7;padding:8px 0;font-size:12px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">' +
+        '<div style="flex:1;min-width:220px"><span style="font-weight:600">' + escHtml(p.domain) + '</span>' +
+        ' <span style="color:#94a3b8">&rarr; ' + escHtml(p.contact_email||'') + '</span>' +
+        '<div style="color:#475569;margin-top:2px">\u{2018}' + escHtml(p.outreach_subject||'') + '\u{2019}</div></div>' +
+        '<div style="display:flex;gap:6px">' +
+        '<button onclick="lbApprove(this, \'' + p.id + '\')" style="padding:4px 12px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Verstuur</button>' +
+        '<button onclick="lbDismiss(this, \'' + p.id + '\')" style="padding:4px 12px;background:#fff;color:#b91c1c;border:1px solid #fecaca;border-radius:6px;font-size:11px;cursor:pointer">Wijs af</button>' +
+        '</div></div>' +
+        '<details style="margin-top:4px"><summary style="cursor:pointer;font-size:11px;color:#64748b">Lees het concept</summary>' +
+        '<pre style="white-space:pre-wrap;font-size:11px;background:#fff;border:1px solid #fef3c7;border-radius:6px;padding:8px;margin-top:4px">' + escHtml(p.outreach_draft||'') + '</pre></details>' +
+        '</div>';
+    });
+    html += '</div>';
+  }
+
+  html += buildLinkbuildingHtml(f, prospects, live);
+  el.innerHTML = html;
+}
+
+function lbApprove(btn, id) {
+  if (!confirm('Deze link-outreach-mail wordt ECHT verstuurd. Doorgaan?')) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Versturen...'; }
+  post('/api/linkbuilding/' + encodeURIComponent(id) + '/outreach-approve').then(function(){
+    renderLinksTab(document.getElementById('tab-content'));
+  }).catch(function(e){
+    if (btn) { btn.disabled = false; btn.textContent = 'Verstuur'; }
+    alert('Versturen mislukt: ' + e.message);
+  });
+}
+
+function lbDismiss(btn, id) {
+  if (!confirm('Concept afwijzen? De linkkans gaat naar verloren.')) return;
+  if (btn) btn.disabled = true;
+  post('/api/linkbuilding/' + encodeURIComponent(id) + '/outreach-dismiss').then(function(){
+    renderLinksTab(document.getElementById('tab-content'));
+  }).catch(function(e){
+    if (btn) btn.disabled = false;
+    alert('Afwijzen mislukt: ' + e.message);
+  });
+}

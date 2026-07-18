@@ -161,7 +161,10 @@ def target_email_for(lead: Dict[str, Any]) -> str:
     return ""
 
 
-def _draft_prompt(lead: Dict[str, Any]) -> str:
+def _draft_prompt(lead: Dict[str, Any], variant: Optional[Dict[str, str]] = None) -> str:
+    from ...shared.learning import lessons_block
+    from .learning import variant_instructions
+
     try:
         contacts = json.loads(lead.get("contacts") or "[]")
     except Exception:
@@ -172,6 +175,22 @@ def _draft_prompt(lead: Dict[str, Any]) -> str:
         naam, rol = c.get("naam", ""), c.get("rol", "")
         contact_line = f"Contactpersoon: {naam}{(' (' + rol + ')') if rol else ''}\n"
     pitch = _PITCH_BY_TYPE.get(lead.get("lead_type", ""), _DEFAULT_PITCH)
+    # Stijl-eisen: met variant (leerlus) vervangen de variant-instructies de
+    # vaste opening/lengte/toon-regels; zonder variant het oude basisconcept.
+    if variant:
+        style = variant_instructions(variant)
+    else:
+        style = [
+            "Maximaal 130 woorden, toon: direct, oprecht, geen jargon of superlatieven",
+            "Open met iets specifieks over HUN organisatie (uit 'wat we over hen weten')",
+        ]
+    eisen = style + [
+        "Eén laagdrempelige call-to-action (kort kennismakingsgesprek)",
+        "AVG-veilig: alleen zakelijke context, geen aannames over personen",
+        f"Onderteken met:\n{_SIGNATURE}",
+    ]
+    # Geleerde lessen (gemeten reply-rates) — leeg blok zolang er niets is.
+    geleerd = lessons_block("outreach")
     return (
         "Schrijf een korte, persoonlijke B2B-outreachmail in het Nederlands.\n\n"
         f"Aan: {lead.get('org_name', '')}"
@@ -179,18 +198,16 @@ def _draft_prompt(lead: Dict[str, Any]) -> str:
         f"{contact_line}"
         f"Wat we over hen weten: {(lead.get('summary') or '—')[:500]}\n\n"
         f"Ons aanbod: {pitch}\n\n"
-        "Eisen:\n"
-        "- Maximaal 130 woorden, toon: direct, oprecht, geen jargon of superlatieven\n"
-        "- Open met iets specifieks over HUN organisatie (uit 'wat we over hen weten')\n"
-        "- Eén laagdrempelige call-to-action (kort kennismakingsgesprek)\n"
-        "- AVG-veilig: alleen zakelijke context, geen aannames over personen\n"
-        f"- Onderteken met:\n{_SIGNATURE}\n\n"
+        + (geleerd + "\n\n" if geleerd else "")
+        + "Eisen:\n"
+        + "\n".join(f"- {e}" for e in eisen) + "\n\n"
         "Antwoord UITSLUITEND met JSON (geen markdown):\n"
         '{"subject": "onderwerpregel van max 60 tekens", "body": "de volledige mailtekst"}'
     )
 
 
-async def draft_outreach(lead: Dict[str, Any]) -> Optional[Dict[str, str]]:
+async def draft_outreach(lead: Dict[str, Any],
+                         variant: Optional[Dict[str, str]] = None) -> Optional[Dict[str, str]]:
     """Genereer één concept (subject + body) via Claude, Hermes als terugval."""
     from ..publish.content_pipeline import _llm, _extract_json
 
@@ -198,7 +215,7 @@ async def draft_outreach(lead: Dict[str, Any]) -> Optional[Dict[str, str]]:
         "Je bent een nuchtere Nederlandse B2B-copywriter. Je schrijft outreach die "
         "gelezen wordt omdat hij specifiek en kort is, niet omdat hij schreeuwt."
     )
-    raw = await _llm(system, _draft_prompt(lead), max_tokens=700, purpose="outreach")
+    raw = await _llm(system, _draft_prompt(lead, variant), max_tokens=700, purpose="outreach")
     if not raw:
         return None
     try:
@@ -247,15 +264,21 @@ async def prepare_outreach_batch(count: int = 0) -> Dict[str, Any]:
                 )
             skipped += 1
             continue
-        draft = await draft_outreach(lead)
+        # Leerlus: kies deterministisch een stijl-variant en label het concept
+        # ermee, zodat de wekelijkse evaluatie aanpak aan reply kan koppelen.
+        from .learning import choose_variant
+        variant = choose_variant(lead["id"])
+        draft = await draft_outreach(lead, variant)
         if not draft:
             skipped += 1
             continue
         with get_conn() as conn:
             conn.execute(
                 "UPDATE leads SET status = 'outreach_review', outreach_subject = ?, "
-                "outreach_draft = ?, outreach_drafted_at = ?, updated_at = ? WHERE id = ?",
-                (draft["subject"], draft["body"], now, now, lead["id"]),
+                "outreach_draft = ?, outreach_drafted_at = ?, outreach_variant = ?, "
+                "updated_at = ? WHERE id = ?",
+                (draft["subject"], draft["body"], now,
+                 json.dumps(variant, ensure_ascii=False), now, lead["id"]),
             )
         drafted += 1
         done.append({"id": lead["id"], "org_name": lead["org_name"], "subject": draft["subject"]})

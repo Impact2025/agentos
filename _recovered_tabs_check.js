@@ -325,8 +325,11 @@ async function renderWachtrijTab(el) {
       (job.image_path ? '<img src="data:image/png;base64,' + job.image_path + '" style="margin-top:8px;max-width:180px;border-radius:6px;border:1px solid #e2e8f0" />' : '') +
       (job.status==='pending_review' ? '<div class="opp-actions" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">' +
         '<button onclick="approveWachtrijJob(this,\'' + job.id + '\')" style="padding:6px 16px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">Goedkeuren &amp; publiceren</button>' +
+        '<button onclick="makeWachtrijVideo(this,\'' + job.id + '\')" style="padding:6px 12px;background:#7c3aed;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">🎬 Maak video</button>' +
         '<button onclick="regenerateWachtrijJob(this,\'' + job.id + '\')" style="padding:6px 12px;background:#fef3c7;color:#92400e;border:1px solid #fde68a;border-radius:6px;font-size:11px;cursor:pointer">Opnieuw genereren</button>' +
         '<button onclick="rejectWachtrijJob(this,\'' + job.id + '\')" style="padding:6px 12px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">Afwijzen</button></div>' : '') +
+      (job.video_path ? '<div style="margin-top:8px"><video src="/api/projects/' + encodeURIComponent(currentProject) + '/content-queue/' + job.id + '/video" controls style="max-width:240px;border-radius:8px;border:1px solid #e2e8f0"></video></div>' : '') +
+      '<div id="video-' + job.id + '" style="margin-top:8px"></div>' +
       (job.status==='published' && job.publish_result ? '<div style="margin-top:8px;font-size:11px;color:#64748b">' + renderPublishResult(job.publish_result) + '</div>' : '') +
       '</div>';
   });
@@ -366,6 +369,21 @@ async function approveWachtrijJob(btn, jobId) {
     if (!resp.ok) { alert('Mislukt: ' + (data.detail || 'onbekende fout')); if (btn) btn.disabled = false; return; }
     renderWachtrijTab(document.getElementById('tab-content'));
   } catch(e) { alert('Fout: ' + e.message); if (btn) btn.disabled = false; }
+}
+
+async function makeWachtrijVideo(btn, jobId) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Video maken... (30-60s)'; }
+  var box = document.getElementById('video-' + jobId);
+  try {
+    var resp = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/content-queue/' + jobId + '/make-video', { method: 'POST' });
+    var data = await resp.json();
+    if (!resp.ok) { alert('Mislukt: ' + (data.detail || data.error || 'onbekende fout')); if (btn) { btn.disabled = false; btn.textContent = '🎬 Maak video'; } return; }
+    var url = '/api/projects/' + encodeURIComponent(currentProject) + '/content-queue/' + jobId + '/video';
+    if (box) box.innerHTML = '<video src="' + url + '" controls style="max-width:240px;border-radius:8px;border:1px solid #e2e8f0"></video>' +
+      '<div style="font-size:10px;color:#64748b;margin-top:4px">' + (data.scenes||'?') + ' scènes · ' + Math.round(data.duration||0) + 's · ' + (data.attributions||[]).length + ' Pexels-attributies</div>';
+    // Ververs de kaart zodat het veld video_path persistent toont.
+    renderWachtrijTab(document.getElementById('tab-content'));
+  } catch(e) { alert('Fout: ' + e.message); if (btn) { btn.disabled = false; btn.textContent = '🎬 Maak video'; } }
 }
 
 async function rejectWachtrijJob(btn, jobId) {

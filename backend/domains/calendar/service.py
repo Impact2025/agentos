@@ -20,6 +20,7 @@ from typing import List, Optional
 import httpx
 
 from ...shared.config import (
+    CALENDAR_BUSY_CALENDAR_IDS,
     CALENDAR_CALENDAR_ID,
     CALENDAR_CLIENT_EMAIL,
     CALENDAR_PRIVATE_KEY,
@@ -103,16 +104,27 @@ def _client_email() -> str:
     return ""
 
 
-def explain_error(exc: Exception) -> str:
+def _http_status_error(code: int) -> httpx.HTTPStatusError:
+    """Synthetische HTTP-fout, zodat explain_error() ook bruikbaar is voor
+    fouten die Google in een 200-respons verstopt (freeBusy 'errors')."""
+    req = httpx.Request("POST", "https://www.googleapis.com/calendar/v3/freeBusy")
+    return httpx.HTTPStatusError(
+        str(code), request=req, response=httpx.Response(code, request=req))
+
+
+def explain_error(exc: Exception, cal_id: Optional[str] = None) -> str:
     """Vertaal een kale Google Calendar-API-fout naar een uitvoerbare melding.
 
     '404 Not Found' of 'invalid_grant' vertelt Vincent niet wat hij moet doen;
     deze vertaling wél. De scheduler-job gooit hem door, zodat hij leesbaar in
     scheduler_runs en dus het Actiecentrum belandt.
+
+    `cal_id` benoemt de agenda die het probleem geeft — bij conflict-detectie is
+    dat een lees-agenda, niet per se de schrijf-agenda.
     """
     text = str(exc)
     email = _client_email() or "het service-account"
-    cal = _cal_id()
+    cal = cal_id or _cal_id()
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
         if code == 404:
@@ -238,22 +250,73 @@ def _cache_events(events: List[dict]) -> None:
         log.warning(f"Calendar-cache bijwerken mislukt: {e}")
 
 
+def _busy_cal_ids() -> List[str]:
+    """Agenda's die meetellen voor conflict-detectie."""
+    return CALENDAR_BUSY_CALENDAR_IDS or [_cal_id()]
+
+
 async def get_busy_times(start: datetime, end: datetime) -> List[dict]:
-    """Free/busy-query — handig voor conflict-detectie met geplande jobs."""
+    """Free/busy over álle lees-agenda's samen (zie CALENDAR_BUSY_CALENDAR_IDS).
+
+    Eén onbereikbare agenda maakt het hele antwoord ongeldig: een half
+    gecontroleerd slot is geen vrij slot, en stilletjes minder controleren is
+    precies hoe een dubbele boeking ontstaat.
+    """
+    cids = _busy_cal_ids()
     data = await _api(
         "POST",
         "/freeBusy",
         json={
             "timeMin": start.isoformat(),
             "timeMax": end.isoformat(),
-            "items": [{"id": _cal_id()}],
+            "items": [{"id": c} for c in cids],
         },
     )
-    busy = data.get("calendars", {}).get(_cal_id(), {}).get("busy", [])
-    return [
-        {"start": b["start"], "end": b["end"]}
-        for b in busy
-    ]
+    cals = data.get("calendars", {})
+    busy: List[dict] = []
+    for cid in cids:
+        entry = cals.get(cid, {})
+        # Google meldt geen HTTP-fout als een agenda onbereikbaar is (notFound /
+        # geen toegang): je krijgt een lege 'busy' mét een 'errors'-veld. Dat mag
+        # nooit als "vrij" gelezen worden.
+        if entry.get("errors"):
+            reasons = {e.get("reason", "?") for e in entry["errors"]}
+            # notFound in een 200-respons betekent hetzelfde als een HTTP-404:
+            # het serviceaccount mag deze agenda niet zien. Leen die uitleg,
+            # anders staat er 'notFound' zonder dat iemand weet wat de fix is.
+            if "notFound" in reasons:
+                raise RuntimeError(explain_error(_http_status_error(404), cal_id=cid))
+            raise RuntimeError(
+                f"free/busy voor agenda '{cid}' mislukt: {', '.join(sorted(reasons))}")
+        if cid not in cals:
+            raise RuntimeError(
+                f"free/busy gaf geen antwoord voor agenda '{cid}'")
+        busy.extend({"start": b["start"], "end": b["end"]}
+                    for b in entry.get("busy", []))
+    return busy
+
+
+async def verify_access() -> dict:
+    """Kan het serviceaccount de agenda's écht lezen?
+
+    `is_configured()` zegt alleen dat er credentials zijn — niet dat een agenda
+    bereikbaar is. Zonder dit onderscheid meldt de agenda-agent elk slot als
+    vrij terwijl hij in werkelijkheid niets kan zien, en dat is precies hoe je
+    een dubbele boeking krijgt.
+    Returns {reachable, calendar_id, busy_calendar_ids, error}.
+    """
+    cid = _cal_id()
+    if not is_configured():
+        return {"reachable": False, "calendar_id": None,
+                "busy_calendar_ids": [], "error": "geen Google-credentials ingesteld"}
+    now = datetime.now(timezone.utc)
+    try:
+        await get_busy_times(now, now + timedelta(days=1))
+        return {"reachable": True, "calendar_id": cid,
+                "busy_calendar_ids": _busy_cal_ids(), "error": None}
+    except Exception as e:
+        return {"reachable": False, "calendar_id": cid,
+                "busy_calendar_ids": _busy_cal_ids(), "error": str(e)}
 
 
 # ── Schrijven ──────────────────────────────────────────────────────────────

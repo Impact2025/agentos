@@ -51,6 +51,35 @@ def build_inbox() -> Dict[str, Any]:
     with get_conn() as conn:
         skip = _dismissed(conn)
 
+        # ── 0. Agenda-voorstellen (bovenaan: tijdgevoelig) ───────────────
+        # Afspraak-voorstellen van de agenda-agent zijn tijdgevoelig en
+        # wachten op een menselijke boek-beslissing. Daarom bóven de mail-
+        # en fout-stromen: anders verdwijnen ze onder een volle inbox en
+        # mis je een afspraak die eigenlijk "Plan in agenda" vraagt.
+        try:
+            from ...domains.calendar import agent as agenda_agent
+            for p in agenda_agent.pending_proposals():
+                conflict = (p.get("conflict_note") or "").strip()
+                items.append({
+                    "kind": "calendar_proposal",
+                    "dismiss_kind": "calendar",
+                    "id": p["id"],
+                    "title": f"\U0001F4C5 Afspraak-voorstel: {p['subject'][:50] or p['from_addr']}",
+                    "project": "Agenda",
+                    "created_at": p.get("created_at"),
+                    "summary": (
+                        f"Voorgesteld: {p['proposed_start'][:16].replace('T', ' ')}\u2013"
+                        f"{p['proposed_end'][11:16]} \u00b7 {p['priority']}"
+                        + (f" \u00b7 \u26A0 {conflict[:120]}" if conflict else "")
+                    ),
+                    "actions": [
+                        {"label": "Plan in agenda", "type": "calendar_approve", "id": p["id"]},
+                        {"label": "Weiger", "type": "calendar_reject", "id": p["id"], "danger": True},
+                    ],
+                })
+        except Exception:
+            pass
+
         # ── 1. Doelen die op jou wachten ────────────────────────────────
         for g in conn.execute(
             "SELECT id, title, status, project, created_at FROM goals "
@@ -161,10 +190,15 @@ def build_inbox() -> Dict[str, Any]:
             })
 
         # ── 2b. Wachtrij-jobs waarvan publiceren misging: retry mogelijk ─
+        # 'publish_failed' is wat approve_and_publish schrijft; 'error' is de
+        # oudere naam en blijft meedoen voor bestaande rijen. Alleen op 'error'
+        # filteren liet deze sectie permanent leeg: drie Daar-artikelen faalden
+        # in juli 2026 (ontbrekende publish-credentials) en zijn nooit gemeld —
+        # ze stonden zelfs op 'published' terwijl er niets online stond.
         for j in conn.execute(
             "SELECT j.id, j.title, j.error, j.created_at, s.name AS site "
             "FROM content_jobs j LEFT JOIN sites s ON s.id = j.site_id "
-            "WHERE j.status='error' ORDER BY j.created_at DESC"
+            "WHERE j.status IN ('publish_failed','error') ORDER BY j.created_at DESC"
         ):
             if ("content", j["id"]) in skip:
                 continue
@@ -351,6 +385,8 @@ def build_inbox() -> Dict[str, Any]:
                     {"label": "Verstuur", "type": "mail_send", "id": r["id"]},
                     {"label": "Bewerk", "type": "mail_edit", "id": r["id"]},
                     {"label": "Afwijzen", "type": "mail_reject", "id": r["id"], "danger": True},
+                    {"label": "Niet meer reageren", "type": "mail_ignore_sender",
+                     "id": r["id"], "danger": True},
                 ],
             })
 

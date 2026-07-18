@@ -43,6 +43,8 @@ _MAX_NEW_GOALS_PER_RUN = 1
 _MAX_CONTENT_RUNS_PER_RUN = 2
 _MAX_OUTREACH_RUNS_PER_RUN = 1
 _MAX_SEO_REFRESH_PER_RUN = 1
+_MAX_LINKBUILD_RUNS_PER_RUN = 1
+_MAX_LEAD_SEARCH_PER_RUN = 1
 _MAX_ACTIVE_LESSONS_IN_PROMPT = 20
 
 # De analyse-JSON is fors (oordeel + advies + voorspellingen); een wispelturig
@@ -109,15 +111,78 @@ async def _llm(system: str, prompt: str, max_tokens: int = 3000) -> str:
         return ""
 
 
+def _repair_truncated_json(s: str) -> Optional[Dict[str, Any]]:
+    """Red een afgekapte JSON-respons (deepseek kapt geregeld midden in een
+    waarde af). Strategie: loop string-bewust door de tekst, knip terug tot het
+    einde van de laatste complete waarde en sluit de open structuren. Liever
+    een briefing zonder de laatste voorspelling dan een dag zonder manager."""
+    stack: List[str] = []
+    in_str = False
+    escape = False
+    # Knippunten: posities waar alles ervóór een complete JSON-prefix is
+    # (na een gesloten string, een gesloten {}/[], of vóór een komma), mét de
+    # dan nog openstaande sluittekens.
+    cuts: List[tuple] = []  # (index_na_element, sluitreeks op dat moment)
+    for i, ch in enumerate(s):
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+                cuts.append((i + 1, "".join(reversed(stack))))
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]":
+            if not stack or stack[-1] != ch:
+                return None  # structureel kapot, niet te redden
+            stack.pop()
+            cuts.append((i + 1, "".join(reversed(stack))))
+        elif ch == ",":
+            cuts.append((i, "".join(reversed(stack))))
+    if not stack:
+        return None  # gebalanceerd maar toch onparseerbaar — hier niet te redden
+    # Knip terug naar het laatste complete element; een bungelende sleutel
+    # zonder waarde ("key": <afgekapt>) valt weg door verder terug te knippen.
+    for cut, closing in reversed(cuts[-200:]):
+        head = s[:cut].rstrip().rstrip(",").rstrip()
+        if head.endswith(":"):
+            continue  # sleutel zonder waarde — probeer een eerder knippunt
+        try:
+            return json.loads(head + closing)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
 def _extract_json(raw: str) -> Optional[Dict[str, Any]]:
     s = raw.strip()
-    start, end = s.find("{"), s.rfind("}")
-    if start == -1 or end <= start:
+    # Codefences eraf (```json ... ```): deepseek verpakt JSON daar graag in.
+    fence = s.find("```")
+    if fence != -1:
+        inner = s[fence + 3:]
+        if inner.lower().startswith("json"):
+            inner = inner[4:]
+        close = inner.find("```")
+        if close != -1:
+            s = inner[:close].strip()
+        else:
+            s = inner.strip()  # fence nooit gesloten → waarschijnlijk afgekapt
+    start = s.find("{")
+    if start == -1:
         return None
-    try:
-        return json.loads(s[start:end + 1])
-    except json.JSONDecodeError:
-        return None
+    end = s.rfind("}")
+    if end > start:
+        try:
+            return json.loads(s[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+    # Geen sluitende brace of kapotte JSON: probeer de afgekapte variant te redden.
+    return _repair_truncated_json(s[start:])
 
 
 async def _ask_iris(prompt: str) -> Optional[Dict[str, Any]]:
@@ -290,8 +355,12 @@ def _apply_batch_size(site_id: str, value: Any, reason: str) -> Optional[str]:
     return detail
 
 
-async def _apply_draft_goal(project: str, title: str, objective: str, reason: str) -> Optional[str]:
-    """Concept-doel aanmaken — blijft 'draft', wacht in het Actiecentrum op akkoord."""
+async def _apply_draft_goal(project: str, title: str, objective: str, reason: str) -> Optional[Dict[str, Any]]:
+    """Concept-doel aanmaken — blijft 'draft', wacht in het Actiecentrum op akkoord.
+
+    Retourneert {'detail': ..., 'goal_id': ...} zodat de suggestie zich aan het
+    aangemaakte doel kan koppelen (één bron van waarheid op het dashboard).
+    """
     if not title or not objective:
         return None
     try:
@@ -306,7 +375,7 @@ async def _apply_draft_goal(project: str, title: str, objective: str, reason: st
         log_outcome(project or "Agent OS", "iris_bijsturing", detail,
                     artifact=f"/api/goals/{gid}",
                     next_step="Beoordeel Iris' concept-doel in het Actiecentrum")
-        return detail
+        return {"detail": detail, "goal_id": gid}
     except Exception as e:
         logger.warning("[iris] Concept-doel aanmaken mislukt: %s", e)
         return None
@@ -321,10 +390,12 @@ async def _apply_improvements(improvements: List[Dict[str, Any]]) -> List[str]:
     # actie een 'iris_actie'-foutkaart loggen (die de échte oorzaak — quota —
     # verhult) plus de gateway rammen terwijl er niets meer doorkomt. Sla die
     # acties dan over; batch_size (pure DB-write) en doel (draft) mogen wél door.
-    _LLM_HEAVY = {"content_run", "outreach_run", "seo_refresh"}
+    _LLM_HEAVY = {"content_run", "outreach_run", "seo_refresh", "linkbuilding_run",
+                  "lead_search_run"}
     budget_op = llm_budget_exceeded()
     applied: List[str] = []
-    goals_created = content_runs = outreach_runs = seo_refreshes = 0
+    goals_created = content_runs = outreach_runs = seo_refreshes = linkbuild_runs = 0
+    lead_searches = 0
     for imp in improvements[:8]:
         kind = (imp.get("type") or "").strip().lower()
         reason = (imp.get("reden") or imp.get("reason") or "").strip()[:300]
@@ -340,6 +411,10 @@ async def _apply_improvements(improvements: List[Dict[str, Any]]) -> List[str]:
                 (imp.get("doelstelling") or imp.get("objective") or "").strip(), reason,
             )
             goals_created += 1 if done else 0
+            # _apply_draft_goal levert nu een dict {'detail','goal_id'} — voor
+            # de rapportage-string gebruiken we alleen de detail-tekst.
+            if done:
+                done = done.get("detail", "")
         elif kind == "content_run" and content_runs < _MAX_CONTENT_RUNS_PER_RUN:
             done = await actions.content_run(
                 imp.get("site_id") or imp.get("project") or "",
@@ -357,11 +432,70 @@ async def _apply_improvements(improvements: List[Dict[str, Any]]) -> List[str]:
                 imp.get("aantal") or imp.get("waarde") or imp.get("count"), reason,
             )
             seo_refreshes += 1 if done else 0
+        elif kind == "linkbuilding_run" and linkbuild_runs < _MAX_LINKBUILD_RUNS_PER_RUN:
+            done = await actions.linkbuilding_run(
+                imp.get("aantal") or imp.get("waarde") or imp.get("count"), reason,
+            )
+            linkbuild_runs += 1 if done else 0
+        elif kind == "lead_search_run" and lead_searches < _MAX_LEAD_SEARCH_PER_RUN:
+            done = await actions.lead_search_run(
+                imp.get("zoekopdrachten") or imp.get("queries"), reason,
+                template=str(imp.get("template") or ""),
+                lead_type=str(imp.get("lead_type") or ""),
+            )
+            lead_searches += 1 if done else 0
         # 'aanbeveling' en onbekende types worden niet uitgevoerd — die blijven
         # advies aan Vincent, geen zelfstandige actie.
         if done:
             applied.append(done)
     return applied
+
+
+async def _apply_rule_based(snapshot: Dict[str, Any]) -> tuple:
+    """Regelgebaseerd minimum voor terugval-dagen: als Iris' analyse-brein
+    offline is, stopt haar manager-rol niet. De deterministische knelpunten
+    dragen kant-en-klare acties aan; de veilige agent-acties (alles landt
+    achter een review-gate en dedupet per dag) voert ze direct uit, en wat
+    een mens vergt — of wat door de quota-rem niet kan — biedt ze aan als
+    'Wil je dat ik dit fix?'-knop. Retourneert (uitgevoerd, aanbiedingen)."""
+    from . import actions
+    from ...shared.outcomes import llm_budget_exceeded
+    applied: List[str] = []
+    leftovers: List[Dict[str, Any]] = []
+    budget_op = llm_budget_exceeded()
+    for b in snapshot.get("bottlenecks") or []:
+        sug = b.get("suggestion")
+        if not sug:
+            continue
+        typ = sug.get("type")
+        payload = sug.get("payload") or {}
+        reason = f"regelgebaseerd (LLM-terugval): {b.get('waarom', '')}"
+        if typ == "gsc_connect" or budget_op:
+            # Menselijke stap, of de quota-rem staat erop: aanbieden i.p.v. draaien.
+            leftovers.append(sug)
+            continue
+        done: Optional[str] = None
+        try:
+            if typ == "outreach_run":
+                done = await actions.outreach_run(payload.get("aantal"), reason)
+            elif typ == "linkbuilding_run":
+                done = await actions.linkbuilding_run(payload.get("aantal"), reason)
+            elif typ == "content_run":
+                done = await actions.content_run(sug.get("target", ""), payload.get("aantal"), reason)
+            elif typ == "seo_refresh":
+                done = await actions.seo_refresh(sug.get("target", ""), payload.get("aantal"), reason)
+            elif typ == "lead_search_run":
+                done = await actions.lead_search_run(
+                    payload.get("zoekopdrachten") or payload.get("queries"), reason,
+                    template=str(payload.get("template") or ""))
+            else:
+                leftovers.append(sug)
+                continue
+        except Exception:
+            logger.exception("[iris] regelgebaseerde actie %s mislukt", typ)
+        if done:
+            applied.append(done)
+    return applied, leftovers
 
 
 # ── Context verzamelen en prompt bouwen ─────────────────────────────────────
@@ -394,6 +528,13 @@ async def gather_context(snapshot: Optional[Dict[str, Any]] = None,
     except Exception as e:
         logger.warning("[iris] agenda-context ophalen mislukt: %s",
                        calendar_service.explain_error(e))
+    # Agenda-voorstellen uit mail: aantal openstaande (menselijke goedkeuring).
+    agenda_proposals = 0
+    try:
+        from ...domains.calendar import agent as agenda_agent
+        agenda_proposals = len(agenda_agent.pending_proposals())
+    except Exception:
+        pass
     return {
         "snapshot": snapshot if snapshot is not None else metrics.snapshot(),
         "yesterday_activity": _yesterday_activity(),
@@ -401,6 +542,7 @@ async def gather_context(snapshot: Optional[Dict[str, Any]] = None,
         "knowledge": knowledge_service.knowledge_prompt_block(),
         "validation": validation,
         "agenda": agenda_summary,
+        "agenda_proposals": agenda_proposals,
         "track_record": predictions.track_record(),
         "previous": {
             "date": prev["report_date"],
@@ -425,6 +567,12 @@ def _build_prompt(ctx: Dict[str, Any]) -> str:
         "",
         "## Globale cijfers (funnel, fouten, scheduler)",
         json.dumps(snapshot["global"], ensure_ascii=False, default=str),
+        "",
+        "## Systeem-knelpunten (deterministisch voorgesorteerd op bedrijfsimpact)",
+        "Dit is de minimale prioriteitenlijst; jij mag hem aanscherpen of "
+        "overrulen, maar benoem dan waaróm de cijfers dat rechtvaardigen.",
+        json.dumps([{k: v for k, v in b.items() if k != "suggestion"}
+                    for b in (snapshot.get("bottlenecks") or [])], ensure_ascii=False),
         "",
         "## Activiteit laatste 24 uur",
         json.dumps(ctx["yesterday_activity"], ensure_ascii=False, default=str),
@@ -466,6 +614,12 @@ def _build_prompt(ctx: Dict[str, Any]) -> str:
                   "plan je geen zware autonome runs (content/SEO), op een lege dag juist wel. "
                   "Noem in je advies expliciet of de dag ruimte biedt voor dieptewerk of acquisitie.",
                   ctx["agenda"]]
+    if ctx.get("agenda_proposals"):
+        parts += ["", f"## Openstaande afspraak-voorstellen uit mail: {ctx['agenda_proposals']}",
+                  "Iris heeft uit binnenkomende mail afspraak-verzoeken gedetecteerd en "
+                  "voorstellen klaargezet (met reistijd + conflict-check). Die wachten in het "
+                  "Actiecentrum op Vincents goedkeuring voordat ze in Google Agenda landen. "
+                  "Noem ze kort in je briefing zodat hij ze niet vergeet goed te keuren."]
     parts += [
         "",
         "Geef je dagbriefing als JSON met exact deze sleutels:",
@@ -474,10 +628,11 @@ def _build_prompt(ctx: Dict[str, Any]) -> str:
             "evaluatie_gisteren": "wat je vorige advies/lessen waard bleken (of null als eerste run)",
             "geleerd": ["max 3 nieuwe inzichten uit de data van vandaag"],
             "verbeteringen": [{
-                "type": "batch_size | doel | content_run | outreach_run | seo_refresh | aanbeveling",
+                "type": "batch_size | doel | content_run | outreach_run | seo_refresh | linkbuilding_run | lead_search_run | aanbeveling",
                 "site_id": "(bij batch_size/content_run/seo_refresh) site-id uit de cijfers",
                 "waarde": "(bij batch_size) 1-5",
-                "aantal": "(bij content_run 1-3, outreach_run 1-15, seo_refresh 1-2)",
+                "aantal": "(bij content_run 1-3, outreach_run 1-15, seo_refresh 1-2, linkbuilding_run 1-10)",
+                "zoekopdrachten": ["(bij lead_search_run) 3-6 concrete NL-zoekopdrachten passend bij de doelgroep"],
                 "project": "(bij doel) projectnaam",
                 "titel": "(bij doel) korte titel",
                 "doelstelling": "(bij doel) concreet en meetbaar",
@@ -496,6 +651,15 @@ def _build_prompt(ctx: Dict[str, Any]) -> str:
                 "les": "(optioneel) exacte tekst van de les uit 'lessen' die deze voorspelling toetst",
                 "uitspraak": "de voorspelling in één zin, in mensentaal",
             }],
+            "actie_voorstellen": [{
+                "type": "content_run | seo_refresh | outreach_run | linkbuilding_run | lead_search_run | goal_draft | gsc_connect",
+                "scope": "(bij content_run/seo_refresh/gsc_connect) projectnaam, anders 'all'",
+                "title": "korte, menselijke actie-omschrijving (knop-tekst, <60 tekens)",
+                "detail": "waarom (cijfers) + concreet wat de agent doet — dit toont Iris onder de knop",
+                "target": "(bij content_run/seo_refresh) site-id | (bij goal_draft) project | (bij gsc_connect) GSC-property | anders 'all'",
+                "priority": 1,
+                "payload": {"aantal": "(bij content_run 1-3, outreach_run 1-15, seo_refresh 1-2, linkbuilding_run 1-10)", "zoekopdrachten": ["(bij lead_search_run) 3-6 concrete zoekopdrachten"], "doelstelling": "(bij goal_draft) concreet en meetbaar"}
+            }],
         }, ensure_ascii=False, indent=2),
         "",
         "Regels: maximaal 3 adviezen, gesorteerd op impact. Verbeteringen alleen als "
@@ -504,14 +668,31 @@ def _build_prompt(ctx: Dict[str, Any]) -> str:
         "als advies aan Vincent terug te geven — content_run start de contentmotor "
         "(artikelen komen ter review in de Wachtrij), outreach_run zet outreach-"
         "concepten klaar (verstuurt niets, review-gate), seo_refresh verrijkt de "
-        "sterkst wegzakkende pagina's (naar de Wachtrij). Maximaal 2 content_runs, "
-        "1 outreach_run en 1 seo_refresh per dag; per doelwit hooguit één keer. "
+        "sterkst wegzakkende pagina's (naar de Wachtrij), linkbuilding_run zet "
+        "link-outreach-concepten klaar voor gekwalificeerde linkkansen (verstuurt "
+        "niets, review-gate — backlinks zijn de hefboom voor positie-verbetering), "
+        "en lead_search_run vult de acquisitie-funnel: de agent zoekt, verrijkt en "
+        "bewaart nieuwe leads (er wordt niets gemaild). Een droge funnel-voorraad "
+        "los je dus ZELF op met lead_search_run mét 3-6 concrete zoekopdrachten — "
+        "vraag Vincent NOOIT om handmatig zoekopdrachten in te voeren. "
+        "Maximaal 2 content_runs, 1 outreach_run, 1 seo_refresh, 1 "
+        "linkbuilding_run en 1 lead_search_run per dag; per doelwit hooguit één keer. "
         "Advies aan Vincent is er alleen voor wat een mens moet doen: goedkeuren in "
-        "de Wachtrij/het Actiecentrum, GSC koppelen, strategische keuzes. Wees eerlijk hard: een "
+        "de Wachtrij/het Actiecentrum, GSC koppelen, strategische keuzes. Alles wat "
+        "een agent kan uitvoeren hoort in 'verbeteringen' (direct doen) of "
+        "'actie_voorstellen' (knop) — een advies zonder bijbehorende actie terwijl "
+        "er wél een hendel bestaat, is een gemiste dag. Wees eerlijk hard: een "
         "project zonder meetdata of zonder output benoem je als probleem nummer één. "
         "Voorspellingen (max 3) maken je aantoonbaar: koppel er waar mogelijk een les "
         "aan en kies alleen meetbare metrieken. Voorspel niets voor projecten met "
-        "trend=null — die zijn nog niet te toetsen.",
+        "trend=null — die zijn nog niet te toetsen. "
+        "actie_voorstellen (max 4): dit zijn de knoppen die Vincent in zijn briefing "
+        "ziet — elk is één concreet uitvoerbare stap met een agent erachter, "
+        "gekoppeld aan de cijfers hierboven. Zet hier de echte fixes neer, niet de "
+        "adviezen: bijv. content_run voor de zwakste site, seo_refresh voor een "
+        "wegzakkende pagina, gsc_connect voor een project zonder meetdata, of "
+        "goal_draft voor een strategische klus. 'gsc_connect' is GEEN agent-actie "
+        "maar een menselijke stap — Iris logt dan alleen wat Vincent moet koppelen.",
     ]
     return "\n".join(parts)
 
@@ -650,6 +831,22 @@ def _open_predictions_section() -> List[str]:
     return lines
 
 
+def _fix_offer_section(report_date: str) -> List[str]:
+    """De 'Wil je dat ik dit fix?'-aanbiedingen, ook zichtbaar in de gemailde
+    briefing — de knoppen zelf staan op de Control Room."""
+    from . import fix as fix_module
+    pending = [s for s in fix_module.list_pending(report_date)
+               if s.get("status") == "pending"]
+    if not pending:
+        return []
+    lines = ["## ⚡ Dit kan ik nu voor je fixen (één klik op het dashboard)"]
+    for s in pending[:6]:
+        detail = f" — {s['detail']}" if s.get("detail") else ""
+        lines.append(f"- **{s['title']}**{detail}")
+    lines.append("")
+    return lines
+
+
 def _build_markdown(report_date: str, snapshot: Dict[str, Any], parsed: Optional[Dict[str, Any]],
                     applied: List[str], llm_used: bool,
                     validation: Optional[Dict[str, Any]] = None,
@@ -709,20 +906,14 @@ def _build_markdown(report_date: str, snapshot: Dict[str, Any], parsed: Optional
         for a in sorted(advice, key=lambda x: x.get("prio", 9))[:3]:
             lines.append(f"{a.get('prio', '•')}. **{a.get('actie', '')}** — {a.get('waarom', '')}")
     else:
-        # Cijfermatige terugval: zwakste project + openstaand werk.
-        if projects:
-            weakest = projects[0]
-            lines.append(f"1. **Til {weakest['project']} omhoog (cijfer {weakest['grade']})** — "
-                         f"zwakste project van dit moment: {_fallback_judgment(weakest)}.")
-        if glob.get("pending_review_total"):
-            lines.append(f"2. **Keur de Wachtrij goed** — {glob['pending_review_total']} stuk(s) wachten; "
-                         "content die blijft liggen levert niets op.")
-        if glob.get("scheduler_failures"):
-            lines.append(f"3. **Fix de scheduler** — {len(glob['scheduler_failures'])} job(s) faalden: "
-                         + "; ".join(f["job"] for f in glob["scheduler_failures"][:3]))
+        # Cijfermatige terugval: de deterministische knelpunt-lijst, knelpunt
+        # eerst — het laagste rapportcijfer is zelden het echte probleem.
+        for b in (snapshot.get("bottlenecks") or [])[:3]:
+            lines.append(f"{b['prio']}. **{b['actie']}** — {b['waarom']}.")
     lines.append("")
 
     lines += _open_predictions_section()
+    lines += _fix_offer_section(report_date)
 
     funnel = glob.get("funnel") or {}
     if funnel.get("formula"):
@@ -825,11 +1016,23 @@ async def run_morning_briefing() -> Dict[str, Any]:
 
     applied: List[str] = []
     predicted = 0
+    saved_sugs = 0
+    from . import fix as fix_module
     if parsed:
         applied = await _apply_improvements(parsed.get("verbeteringen") or [])
         lesson_ids = _upsert_lessons(parsed.get("lessen") or [])
         predicted = _store_predictions(report_date, parsed.get("voorspellingen") or [],
                                        snapshot, lesson_ids)
+        # Actie-voorstellen ("Wil je dat ik dit fix?") — Iris' kant-en-klare
+        # fixes, klaargezet voor Vincents goedkeuring. Maximaal 4.
+        saved_sugs = fix_module.upsert_suggestions(
+            report_date, parsed.get("actie_voorstellen") or [])
+    else:
+        # Terugval zonder LLM: de manager stopt niet. Veilige knelpunt-acties
+        # draaien regelgebaseerd (review-gates + dag-dedupe blijven gelden);
+        # wat een mens vergt of niet kan, wordt een fix-aanbieding.
+        applied, leftovers = await _apply_rule_based(snapshot)
+        saved_sugs = fix_module.upsert_suggestions(report_date, leftovers)
 
     markdown = _build_markdown(report_date, snapshot, parsed, applied,
                                llm_used=parsed is not None, validation=validation,
@@ -871,7 +1074,8 @@ async def run_morning_briefing() -> Dict[str, Any]:
                 validation["correct"], validation["wrong"])
     return {"date": report_date, "markdown": markdown, "grades": grades,
             "applied": applied, "advice": advice, "predicted": predicted,
-            "validation": validation, "llm_used": parsed is not None}
+            "validation": validation, "llm_used": parsed is not None,
+            "saved_suggestions": saved_sugs}
 
 
 async def run_iris_prediction_eval() -> Dict[str, Any]:

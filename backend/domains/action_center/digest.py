@@ -81,6 +81,7 @@ def build_digest() -> Dict[str, Any]:
             "vacancies": "vacature-kansen met hoge fit",
             "leads": "nieuwe leads voor eerste contact",
             "outreach_review": "outreach-concept(en) wachten op je verzendklik",
+            "linkbuilding_review": "link-outreach-concept(en) wachten op je verzendklik",
         }
         for kind, n in sorted(by_kind.items(), key=lambda x: -x[1]):
             lines.append(f"- {n} {kind_labels.get(kind, kind)}")
@@ -129,9 +130,40 @@ def build_digest() -> Dict[str, Any]:
                 f"- ⚡ Onder target: keur wachtende concepten goed of draai een extra batch — "
                 "de output volgt de input."
             )
+        # Outreach-leerlus: toon de sterkste gemeten stijl-les zodra die er is.
+        from ...shared.learning import top_lesson
+        best = top_lesson("outreach")
+        if best:
+            lines.append(
+                f"- 🎓 Geleerd: {best['lesson']} "
+                f"(vertrouwen {round(best['confidence'] * 100)}%, "
+                f"{best['times_confirmed']}× bevestigd)"
+            )
         lines.append("")
     except Exception:
         logger.exception("Formule-sectie in ochtendrapport mislukt")
+
+    # ── 3b2. Linkbuilding-formule: mails → links live, geverifieerd ──
+    try:
+        from ...domains.linkbuilding import service as lb_service
+        lb = lb_service.funnel_stats()
+        r = lb["reached"]
+        review = (lb["by_status"] or {}).get("outreach_review") or 0
+        # Alleen tonen zodra de funnel leeft — een rapport vol nullen is ruis.
+        if lb["total_prospects"]:
+            lines.append("## 🔗 Linkbuilding")
+            lines.append(
+                f"- Funnel: {r['contacted']} benaderd → {r['replied']} gereageerd → "
+                f"{r['link_live']} link(s) live ({r['verified']} geverifieerd, "
+                f"{lb['dofollow_live']} dofollow)"
+            )
+            if review:
+                lines.append(f"- ✋ {review} concept(en) wachten op je verzendklik in het Actiecentrum")
+            if lb["formula"]:
+                lines.append(f"- **Formule: {lb['formula']}**")
+            lines.append("")
+    except Exception:
+        logger.exception("Linkbuilding-sectie in ochtendrapport mislukt")
 
     # ── 3c. Iris' advies van vandaag (de 06:45-manageranalyse) ──
     try:

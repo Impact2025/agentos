@@ -47,8 +47,10 @@ async def test_content_run_start_batch_en_logt_uitkomst(conn, actions_clean, mon
         ).fetchone()
     assert row and "content-queue" in row["artifact"] and "Wachtrij" in row["next_step"]
 
-    # Dedupe: dezelfde site nogmaals op dezelfde dag → overgeslagen.
-    assert await actions.content_run("testsite", 1, "nogmaals") is None
+    # Dedupe: dezelfde site nogmaals op dezelfde dag → overgeslagen. Geen tweede
+    # batch, maar wél een benigne uitkomst-string (geen None → geen valse HTTP 400).
+    again = await actions.content_run("testsite", 1, "nogmaals")
+    assert again and "draaide vandaag al" in again
     assert len(calls) == 1
 
 
@@ -72,8 +74,10 @@ async def test_outreach_run_zet_concepten_klaar_zonder_te_versturen(conn, action
     done = await actions.outreach_run(10, "62 enriched leads staan stil")
     assert done and "10 concept(en)" in done
     assert seen == [10]
-    # Dedupe binnen dezelfde dag.
-    assert await actions.outreach_run(5, "nogmaals") is None
+    # Dedupe binnen dezelfde dag: benigne uitkomst-string, geen None (geen valse HTTP 400).
+    again = await actions.outreach_run(5, "nogmaals")
+    assert again and "draaide vandaag al" in again
+    assert seen == [10]
 
 
 @pytest.mark.asyncio
@@ -105,7 +109,10 @@ async def test_seo_refresh_pakt_topsuggesties_naar_wachtrij(conn, actions_clean,
 async def test_seo_refresh_zonder_suggesties_doet_niets(conn, actions_clean):
     from backend.domains.iris import actions
     _seed_site(conn)
-    assert await actions.seo_refresh("Testsite", 1, "x") is None
+    # Geen open refresh-suggesties: benigne uitkomst-string, geen None
+    # (None → valse HTTP 400 in de fix-knop).
+    done = await actions.seo_refresh("Testsite", 1, "x")
+    assert done and "geen open refresh-kandidaten" in done
 
 
 @pytest.mark.asyncio

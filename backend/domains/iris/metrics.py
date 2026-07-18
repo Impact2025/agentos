@@ -25,9 +25,11 @@ def _clamp(v: float, lo: float = 0, hi: float = 100) -> float:
 
 
 def _site_projects(conn) -> List[Dict[str, Any]]:
+    # Testsites tellen niet mee: anders wordt "til TestSite omhoog" het
+    # topadvies terwijl het geen echt project is.
     return [dict(r) for r in conn.execute(
         "SELECT id, name, base_url, gsc_property, auto_content_enabled, "
-        "content_batch_size FROM sites"
+        "content_batch_size FROM sites WHERE COALESCE(is_test, 0) = 0"
     ).fetchall()]
 
 
@@ -64,13 +66,29 @@ def _content_pillar(conn, site_id: str, batch_size: int) -> Dict[str, Any]:
 
 
 def _seo_pillar(conn, site_id: str, gsc_configured: bool) -> Dict[str, Any]:
+    # Meetbron: de nieuwste per-pagina GSC-snapshot uit gsc_history. Sites die
+    # buiten Agent OS om gehost worden krijgen nooit rijen in published_pages
+    # (dat vullen alleen Netlify-publicaties), dus wie dáárop meet ziet overal
+    # "0 pagina's" terwijl GSC gewoon clicks rapporteert — en dan is 35 van de
+    # 100 punten dood gewicht. published_pages blijft de terugval voor sites
+    # zonder GSC-historie.
     row = conn.execute(
         "SELECT COUNT(*) AS pages, "
-        "SUM(gsc_clicks) AS clicks, SUM(gsc_impressions) AS impressions, "
-        "SUM(CASE WHEN gsc_clicks > 0 THEN 1 ELSE 0 END) AS pages_with_clicks, "
-        "AVG(CASE WHEN gsc_position > 0 THEN gsc_position END) AS avg_position "
-        "FROM published_pages WHERE site_id = ?", (site_id,)
+        "SUM(clicks) AS clicks, SUM(impressions) AS impressions, "
+        "SUM(CASE WHEN clicks > 0 THEN 1 ELSE 0 END) AS pages_with_clicks, "
+        "AVG(CASE WHEN position > 0 THEN position END) AS avg_position "
+        "FROM gsc_history WHERE site_id = ? AND scope = 'page' AND date = "
+        "(SELECT MAX(date) FROM gsc_history WHERE site_id = ? AND scope = 'page')",
+        (site_id, site_id)
     ).fetchone()
+    if not (row["pages"] or 0):
+        row = conn.execute(
+            "SELECT COUNT(*) AS pages, "
+            "SUM(gsc_clicks) AS clicks, SUM(gsc_impressions) AS impressions, "
+            "SUM(CASE WHEN gsc_clicks > 0 THEN 1 ELSE 0 END) AS pages_with_clicks, "
+            "AVG(CASE WHEN gsc_position > 0 THEN gsc_position END) AS avg_position "
+            "FROM published_pages WHERE site_id = ?", (site_id,)
+        ).fetchone()
     pages = row["pages"] or 0
     clicks = row["clicks"] or 0
     impressions = row["impressions"] or 0
@@ -99,6 +117,14 @@ def _seo_pillar(conn, site_id: str, gsc_configured: bool) -> Dict[str, Any]:
         "SELECT COUNT(*) FROM seo_suggestions WHERE site_id = ? AND status = 'new'",
         (site_id,)
     ).fetchone()[0]
+    # Backlinks als context (geen scorepunten: de pijler blijft puur GSC-meting;
+    # links zijn de hefboom, clicks/positie zijn het bewijs). live = door de
+    # link-monitor waargenomen, dofollow = zonder nofollow/sponsored-rel.
+    bl = conn.execute(
+        "SELECT COUNT(*) AS live, "
+        "SUM(CASE WHEN rel = '' THEN 1 ELSE 0 END) AS dofollow "
+        "FROM link_placements WHERE site_id = ? AND status = 'live'", (site_id,)
+    ).fetchone()
     return {
         "score": round(score, 1),
         "pages": pages,
@@ -108,6 +134,8 @@ def _seo_pillar(conn, site_id: str, gsc_configured: bool) -> Dict[str, Any]:
         "avg_position": avg_position,
         "ctr_pct": ctr,
         "open_suggestions": open_suggestions,
+        "backlinks_live": bl["live"] or 0,
+        "backlinks_dofollow": bl["dofollow"] or 0,
         "note": note,
     }
 
@@ -233,6 +261,12 @@ def global_metrics() -> Dict[str, Any]:
     except Exception:
         funnel, inputs = {}, {}
 
+    try:
+        from ..linkbuilding import service as lb_service
+        linkbuilding = lb_service.funnel_stats()
+    except Exception:
+        linkbuilding = {}
+
     return {
         "errors_24h": errors_24h,
         "delivered_24h": delivered_24h,
@@ -240,9 +274,159 @@ def global_metrics() -> Dict[str, Any]:
         "scheduler_failures": scheduler_failures,
         "funnel": funnel,
         "inputs_7d": inputs,
+        "linkbuilding": linkbuilding,
     }
+
+
+def bottlenecks(snap: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Deterministische knelpunt-detectie, gerangschikt op bedrijfsimpact.
+
+    Dit is de manager-logica die ook zonder LLM moet werken: het laagste
+    rapportcijfer is zelden het echte probleem — een droge funnel of een
+    onmeetbaar project wel. Elk knelpunt heeft een advies voor Vincent en,
+    waar een agent het kan oppakken, een kant-en-klaar actie-voorstel
+    (zelfde vorm als de LLM's `actie_voorstellen`, dus direct bruikbaar
+    voor de "Wil je dat ik dit fix?"-knoppen).
+    """
+    projects = snap.get("projects") or []
+    glob = snap.get("global") or {}
+    funnel = glob.get("funnel") or {}
+    inputs = glob.get("inputs_7d") or {}
+    out: List[Dict[str, Any]] = []
+    prio = 1
+
+    # 1. Acquisitie-funnel droog: input is de enige knop waar sales op draait.
+    target = inputs.get("outreach_target") or 0
+    sent = inputs.get("outreach_sent") or 0
+    ready = inputs.get("outreach_drafts_ready") or 0
+    by_status = funnel.get("by_status") or {}
+    stock = (by_status.get("new") or 0) + (by_status.get("enriched") or 0)
+    if target and (sent + ready) < target * 0.5:
+        item: Dict[str, Any] = {
+            "prio": prio,
+            "issue": "funnel_droog",
+            "actie": f"Vul de acquisitie-funnel — {sent} verstuurd + {ready} klaar "
+                     f"tegen een weekdoel van {target}",
+            "waarom": f"outreach 7d: {sent} verstuurd, {ready} concepten klaar, "
+                      f"{stock} bruikbare lead(s) op voorraad",
+        }
+        if stock:
+            item["suggestion"] = {
+                "type": "outreach_run", "scope": "all", "target": "all",
+                "title": f"Zet {min(stock, 10)} outreach-concepten klaar",
+                "detail": f"Weekdoel {target}, pas {sent} verstuurd; {stock} lead(s) "
+                          "op voorraad. Concepten landen als outreach_review — "
+                          "versturen blijft jouw klik.",
+                "priority": prio, "payload": {"aantal": min(stock, 10)},
+            }
+        else:
+            item["actie"] = ("Vul de funnel-voorraad — 0 bruikbare leads, outreach "
+                             "heeft niets om mee te werken")
+            item["suggestion"] = {
+                "type": "lead_search_run", "scope": "all", "target": "all",
+                "title": "Draai een lead-zoekactie (5 zoekopdrachten)",
+                "detail": f"Funnel-voorraad is 0 bij een weekdoel van {target}. De "
+                          "agent zoekt, verrijkt en bewaart nieuwe leads (status "
+                          "new) — mailen blijft achter de review-gate.",
+                "priority": prio, "payload": {"template": "weareimpact_ai"},
+            }
+        out.append(item)
+        prio += 1
+
+    # 1b. Linkkansen die blijven liggen: gekwalificeerde prospects zonder
+    # concept zijn onbenutte SEO-hefboom (backlinks → positie → clicks).
+    lb = glob.get("linkbuilding") or {}
+    lb_status = lb.get("by_status") or {}
+    lb_qualified = lb_status.get("qualified") or 0
+    lb_review = lb_status.get("outreach_review") or 0
+    if lb_qualified >= 3 and not lb_review:
+        out.append({
+            "prio": prio,
+            "issue": "linkkansen_liggen",
+            "actie": f"Zet link-outreach klaar — {lb_qualified} gekwalificeerde "
+                     "linkkans(en) wachten zonder concept",
+            "waarom": "backlinks zijn de goedkoopste positie-hefboom; kansen die "
+                      "liggen verjaren",
+            "suggestion": {
+                "type": "linkbuilding_run", "scope": "all", "target": "all",
+                "title": f"Zet {min(lb_qualified, 10)} link-outreach-concepten klaar",
+                "detail": f"{lb_qualified} gekwalificeerde linkkans(en) op voorraad. "
+                          "Concepten landen als outreach_review — versturen blijft "
+                          "jouw klik.",
+                "priority": prio, "payload": {"aantal": min(lb_qualified, 10)},
+            },
+        })
+        prio += 1
+
+    # 2. Wachtrij die ligt te wachten: gemaakte waarde die niet live gaat.
+    pending = glob.get("pending_review_total") or 0
+    if pending:
+        out.append({
+            "prio": prio, "issue": "wachtrij",
+            "actie": f"Keur de Wachtrij goed — {pending} stuk(s) wachten op jouw klik",
+            "waarom": "content die blijft liggen levert niets op",
+        })
+        prio += 1
+
+    # 3. Onmeetbare projecten: zonder GSC is elk SEO-oordeel giswerk.
+    unmeasurable = [p for p in projects
+                    if "GSC" in (p["pillars"]["seo"].get("note") or "")
+                    or (p["pillars"]["seo"]["pages"] == 0
+                        and not (p.get("trend") or {}).get("site"))]
+    if unmeasurable:
+        first = unmeasurable[0]
+        out.append({
+            "prio": prio, "issue": "onmeetbaar",
+            "actie": f"Koppel Search Console voor {', '.join(p['project'] for p in unmeasurable[:4])}",
+            "waarom": "zonder meetdata is hun SEO-cijfer een ondergrens en elk advies giswerk",
+            "suggestion": {
+                "type": "gsc_connect", "scope": first["project"],
+                "target": first["project"],
+                "title": f"Leg uit hoe je GSC koppelt voor {first['project']}",
+                "detail": "Geen bruikbare Search Console-data — Iris zet de "
+                          "koppel-instructie als kaart in het Actiecentrum.",
+                "priority": prio, "payload": {},
+            },
+        })
+        prio += 1
+
+    # 4. Scheduler-fouten: kapotte automatisering ondermijnt alles hierboven.
+    failures = glob.get("scheduler_failures") or []
+    if failures:
+        out.append({
+            "prio": prio, "issue": "scheduler",
+            "actie": f"Fix de scheduler — {len(failures)} job(s) faalden: "
+                     + "; ".join(f["job"] for f in failures[:3]),
+            "waarom": "een stille scheduler betekent dat agents ongemerkt stilstaan",
+        })
+        prio += 1
+
+    # 5. Zwakste échte project: pas als de systemische knelpunten benoemd zijn.
+    if projects:
+        weakest = projects[0]
+        c = weakest["pillars"]["content"]
+        item = {
+            "prio": prio, "issue": "zwakste_project",
+            "actie": f"Til {weakest['project']} omhoog (cijfer {weakest['grade']})",
+            "waarom": f"zwakste project van dit moment",
+        }
+        if c.get("live_30d", 0) < c.get("target_30d", 1) and not c.get("pending_review"):
+            item["suggestion"] = {
+                "type": "content_run", "scope": weakest["project"],
+                "target": weakest["site_id"],
+                "title": f"Schrijf 1 artikel voor {weakest['project']}",
+                "detail": f"Content {c.get('live_30d', 0)}/{c.get('target_30d', 0)} van het "
+                          "maanddoel. Het artikel landt in de Wachtrij — niets gaat "
+                          "live zonder jouw goedkeuring.",
+                "priority": prio, "payload": {"aantal": 1},
+            }
+        out.append(item)
+
+    return out
 
 
 def snapshot() -> Dict[str, Any]:
     """Het volledige cijferbeeld dat Iris elke ochtend analyseert."""
-    return {"projects": project_scores(), "global": global_metrics()}
+    snap = {"projects": project_scores(), "global": global_metrics()}
+    snap["bottlenecks"] = bottlenecks(snap)
+    return snap

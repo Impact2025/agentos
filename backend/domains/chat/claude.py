@@ -80,6 +80,14 @@ async def _get_via_openmodel(
         "system": system_prompt,
         "messages": messages,
         "max_tokens": max_tokens,
+        # deepseek-v4-flash op OpenModel is een reasoning-model: het zendt een
+        # `thinking`-block vóór de `text`-block. Die redeneer-tokens vreten het
+        # max_tokens-budget op — bij krappe callers (reviewer op 1600) verbruikt
+        # het denken álle tokens en komt er géén text-block meer → wij lezen een
+        # lege respons en vallen onterecht terug op Hermes (incident 2026-07-15).
+        # De denk-callers hier willen JSON/antwoorden, geen redeneerspoor: thinking
+        # uit maakt de structured output deterministisch en bespaart tokens.
+        "thinking": {"type": "disabled"},
     }
     headers = {
         "Content-Type": "application/json",
@@ -244,10 +252,12 @@ async def get_response(
         except anthropic.APIError as e:
             logger.warning(f"Anthropic direct faalde ({e.__class__.__name__}) — terugval op OpenModel/OpenRouter")
 
+    openmodel_error = ""
     if openmodel_claude_configured():
         try:
             return await _get_via_openmodel(messages, system_prompt, max_tokens, purpose)
         except Exception as e:
+            openmodel_error = str(e)[:200]
             logger.warning(f"Claude via OpenModel faalde ({e}) — terugval op OpenRouter")
 
     if OPENROUTER_API_KEY:
@@ -256,6 +266,10 @@ async def get_response(
             parts.append(text)
         return "".join(parts)
 
+    if openmodel_error:
+        # Er wás een geconfigureerde route; "geen key" zou de echte oorzaak
+        # (bv. quota of een gateway-storing) verhullen.
+        raise RuntimeError(f"OpenModel-route faalde en geen OpenRouter-terugval: {openmodel_error}")
     raise RuntimeError(
         "Geen werkende Claude-backend: geen ANTHROPIC_API_KEY, OPENMODEL_API_KEY of OPENROUTER_API_KEY."
     )

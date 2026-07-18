@@ -721,6 +721,16 @@ async function renderWachtrijTab(el) {
           '<div style="white-space:pre-wrap;font-size:11px;color:#334155;margin-top:6px">' + escHtml(copy) + '</div></details>';
       }).join('') + '</div>' +
       (job.image_path ? '<img src="data:image/png;base64,' + job.image_path + '" style="margin-top:8px;max-width:180px;border-radius:6px;border:1px solid #e2e8f0" />' : '') +
+      (function() {
+        if (job.status !== 'pending_review') return '';
+        var socPlatforms = Object.keys(wachtrijPlatformLabels).filter(function(p) { return (job.social_copy||{})[p]; });
+        if (!socPlatforms.length) return '';
+        return '<div style="margin-top:10px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:11px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px">' +
+          '<span style="font-weight:600">Bij goedkeuren posten naar:</span>' +
+          socPlatforms.map(function(p) {
+            return '<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" checked class="soc-toggle-' + job.id + '" value="' + p + '">' + wachtrijPlatformLabels[p] + '</label>';
+          }).join('') + '</div>';
+      })() +
       '<div class="opp-actions" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">' +
         '<button onclick="makeWachtrijVideo(this,\'' + job.id + '\')" style="padding:6px 12px;background:#7c3aed;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">🎬 Maak video</button>' +
         (job.status==='pending_review' ? '<button onclick="approveWachtrijJob(this,\'' + job.id + '\')" style="padding:6px 16px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">Goedkeuren &amp; publiceren</button>' +
@@ -741,7 +751,8 @@ function renderPublishResult(pr) {
   if (pr.gsc && pr.gsc.status) parts.push('GSC: ' + pr.gsc.status);
   if (pr.bing && pr.bing.status_code) parts.push('Bing: ' + pr.bing.status_code);
   if (pr.social) {
-    Object.keys(pr.social).forEach(function(p) {
+    if (pr.social.skipped) parts.push('Social: ' + escHtml(pr.social.skipped));
+    else Object.keys(pr.social).forEach(function(p) {
       var r = pr.social[p];
       parts.push((wachtrijPlatformLabels[p]||p) + ': ' + (r.success ? 'gepost' : 'mislukt (' + escHtml((r.error||'').slice(0,80)) + ')'));
     });
@@ -760,10 +771,18 @@ async function runWachtrijNow(btn) {
 }
 
 async function approveWachtrijJob(btn, jobId) {
-  if (!confirm('Publiceren + posten naar alle geconfigureerde platformen. Doorgaan?')) return;
+  var boxes = document.querySelectorAll('.soc-toggle-' + jobId);
+  var channels = [];
+  Array.prototype.forEach.call(boxes, function(b) { if (b.checked) channels.push(b.value); });
+  var socialMsg = !boxes.length ? '' :
+    (channels.length ? '\nSocial-posts: ' + channels.map(function(p){return wachtrijPlatformLabels[p]||p;}).join(', ') + '.'
+                     : '\nGeen social-posts (alles uitgevinkt) — alleen de website.');
+  if (!confirm('Artikel publiceren naar de website.' + socialMsg + '\nDoorgaan?')) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Publiceren...'; }
   try {
-    var resp = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/content-queue/' + jobId + '/approve', { method: 'POST' });
+    var opts = { method: 'POST' };
+    if (boxes.length) { opts.headers = {'Content-Type':'application/json'}; opts.body = JSON.stringify({ channels: channels }); }
+    var resp = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/content-queue/' + jobId + '/approve', opts);
     var data = await resp.json();
     if (!resp.ok) { alert('Mislukt: ' + (data.detail || 'onbekende fout')); if (btn) btn.disabled = false; return; }
     renderWachtrijTab(document.getElementById('tab-content'));

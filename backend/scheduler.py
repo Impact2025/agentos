@@ -46,15 +46,20 @@ from .domains.publish.content_pipeline import (
     run_biweekly_content_job,
     run_content_improver_job,
 )
+from .domains.publish.content_learning import run_content_learning_eval
 from .domains.vacancies.service import run_vacancy_scan_job
 from .domains.seo.optimizer import run_weekly_optimizer_job
 from .domains.seo.engine import run_weekly_demand_scan
 from .domains.radar.service import scan_the_skies
 from .domains.seo.feedback import run_daily_gsc_sync
+from .domains.researcher.service import get_service as researcher_svc
 from .domains.action_center.digest import run_daily_digest
 from .domains.iris.service import run_morning_briefing
 from .domains.iris.service import run_iris_prediction_eval
 from .domains.prospecting.outreach import run_daily_outreach_batch
+from .domains.prospecting.learning import run_outreach_learning_eval
+from .domains.linkbuilding.prospector import run_weekly_linkbuilding
+from .domains.linkbuilding.monitor import run_link_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +83,19 @@ _CATCHUP_TIMEOUT = timedelta(minutes=20)
 
 
 # ── Jobs die eigen orkestratie nodig hebben ────────────────────────────────
+
+from .shared.config import BRIDGE_SYNC_MINUTES as _BRIDGE_SYNC_MINUTES
+
+
+async def _bridge_sync_job() -> None:
+    """Cloud-companion-sync: push wat op een mens wacht, pull en pas onderweg
+    genomen besluiten toe. Slaat stil over zolang de bridge niet geconfigureerd
+    is — geen error-ruis op een verse installatie."""
+    from .domains.bridge import service as bridge
+    if not bridge.enabled():
+        return
+    await bridge.sync_once()
+
 
 async def _autoheal_job() -> None:
     """Periodieke zelf-reparatie: hervat doelen die zijn blijven hangen (bv. na
@@ -196,11 +214,60 @@ async def _iris_retry_job() -> None:
     await run_morning_briefing()
 
 
+# ── NotebookLM-onderzoek-agent ─────────────────────────────────────
+# Vaste "kennisronde" voor WeAreImpact: één diepte-vraag tegen
+# het standaard SEO-notebook. Het rapport landt in de vault
+# (10_Projects/WeAreImpact/onderzoek/), blogs pikken hem automatisch
+# op via _researcher_context(). Achtergrond + defensief: een mislukte
+# run logt naar het Actiecentrum, hij kraakt nooit de scheduler.
+async def _researcher_job() -> None:
+    from .shared.config import NOTEBOOKLM_ENABLED
+    if not NOTEBOOKLM_ENABLED:
+        logger.info("[researcher] uitgeschakeld (NOTEBOOKLM_ENABLED=0)")
+        return
+    QUESTION = (
+        "Welke content gaps ziet dit notebook voor WeAreImpact.nl op het "
+        "gebied van interim AI consultancy in het sociaal domein? Noem 3 "
+        "concrete blog-onderwerpen die onze concurrenten (nog) niet "
+        "dekken, met per onderwerp de kernvraag die de lezer beantwoord "
+        "wil zien."
+    )
+    logger.info("[researcher] kenisronde WeAreImpact start...")
+    try:
+        # Geen notebook_id → gebruikt NOTEBOOKLM_DEFAULT_NOTEBOOK (nu tijdelijk
+        # de podcast, want de SEO-notebooks in library.json geven "Request
+        # access" — zie NOTES in researcher/service.py). Zodra Vincent de
+        # juiste, gedeelde SEO-notebook-URL's levert, zet NOTEBOOKLM_DEFAULT_NOTEBOOK
+        # terug op weareimpact-seo-research en draait dit automatisch tegen SEO.
+        await researcher_svc().run_research(
+            "weareimpact", QUESTION, notebook_id=None,
+        )
+        logger.info("[researcher] kenisronde klaar — rapport in vault")
+    except Exception:
+        logger.exception("[researcher] kenisronde mislukt (niet fataal)")
+        try:
+            from .shared.outcomes import log_outcome
+            log_outcome(
+                project="WeAreImpact", action="notebooklm_research",
+                detail="Kennisronde mislukt (zie agentos.log).",
+                next_step="Controleer of notebooklm-mcp is ingelogd (re_auth).",
+                status="error",
+            )
+        except Exception:
+            pass
+
+
 # Volgorde = leesvolgorde van de dag. De inhaalslag sorteert zelf op tijdstip.
 _SPECS: list[JobSpec] = [
     JobSpec(
         "weekly_demand_scan", "Demand Engine-scan (kansen verversen, incl. cold-start voor verse sites)",
         run_weekly_demand_scan, _cron(day_of_week="mon", hour=6, minute=15), catch_up=True,
+    ),
+    # Bewust géén catch_up: een gemiste check heelt zichzelf morgen, en de
+    # monitor hoort niet in de gsc→iris→digest-inhaalketen thuis.
+    JobSpec(
+        "link_monitor", "Link-monitor (staat de afgesproken backlink er, en blijft hij?)",
+        run_link_monitor, _cron(hour=6, minute=20),
     ),
     JobSpec(
         "gsc_sync", "GSC-feedback-loop (performance → Radar growth-signalen)",
@@ -219,12 +286,24 @@ _SPECS: list[JobSpec] = [
         run_vacancy_scan_job, _cron(day_of_week="mon,thu", hour=7, minute=0), catch_up=True,
     ),
     JobSpec(
+        "outreach_learning_eval", "Outreach-leerlus (voorspellingen afrekenen + stijl-lessen, wekelijks)",
+        run_outreach_learning_eval, _cron(day_of_week="mon", hour=7, minute=10), catch_up=True,
+    ),
+    JobSpec(
         "daily_outreach_batch", "Outreach-batch (concepten klaarzetten ter review, ma-vr)",
         run_daily_outreach_batch, _cron(day_of_week="mon-fri", hour=7, minute=15), catch_up=True,
     ),
     JobSpec(
+        "linkbuilding_weekly", "Linkbuilding-weekrun (kansen zoeken + concepten ter review, wo)",
+        run_weekly_linkbuilding, _cron(day_of_week="wed", hour=7, minute=30), catch_up=True,
+    ),
+    JobSpec(
         "daily_finance_report", "Finance dagrapport",
         run_finance_daily, _cron(hour=7, minute=30), catch_up=True,
+    ),
+    JobSpec(
+        "content_learning_eval", "Content-leerlus (welke artikel-vorm haalt clicks — wekelijkse evaluatie)",
+        run_content_learning_eval, _cron(day_of_week="mon", hour=7, minute=40), catch_up=True,
     ),
     JobSpec(
         "seo_optimizer_scan", "SEO Optimizer-scan (interne links, CTR, refresh)",
@@ -265,12 +344,27 @@ _SPECS: list[JobSpec] = [
         _autoheal_job, IntervalTrigger(minutes=15), misfire_grace_time=300, coalesce=True,
     ),
     JobSpec(
+        "bridge_sync", "Bridge-sync (review-gates ↔ cloud-companion; besluiten onderweg toepassen)",
+        _bridge_sync_job, IntervalTrigger(minutes=_BRIDGE_SYNC_MINUTES),
+        misfire_grace_time=120, coalesce=True,
+    ),
+    JobSpec(
         "calendar_sync", "Google Agenda-sync (cache bijwerken, elke 15 min)",
         calendar_sync_job, IntervalTrigger(minutes=15), misfire_grace_time=300, coalesce=True,
     ),
     JobSpec(
         "iris_briefing_retry", "Iris-herkanselaar (terugval-briefing later alsnog volwaardig)",
         _iris_retry_job, IntervalTrigger(minutes=45), misfire_grace_time=600, coalesce=True,
+    ),
+    # ── NotebookLM-onderzoek-agent ─────────────────────────────────────
+    # Vaste "kennisronde": per project één diepte-vraag tegen het
+    # standaard SEO-notebook, rapport landt in de vault, blogs halen
+    # hem automatisch op als context. Achtergrond (NotebookLM kan traag
+    # zijn), nooit publiceren — alleen vault + (optie) review-gate.
+    JobSpec(
+        "researcher_daily", "NotebookLM-onderzoek (kennisronde WeAreImpact, di/do 10:00)",
+        _researcher_job, _cron(day_of_week="tue,thu", hour=10, minute=0),
+        catch_up=True,
     ),
 ]
 
@@ -581,7 +675,11 @@ def _check_local_backend() -> None:
     if not HERMES_LOCAL_URL:
         return  # geeen lokale backend geconfigureerd — niks te checken
     import httpx
-    url = HERMES_LOCAL_URL.rstrip("/") + "/v1/models"
+    # HERMES_LOCAL_URL eindigt vaak al op /v1 (OpenAI-stijl base-url, bv. Ollama
+    # op :11434/v1) — dan géén tweede /v1 aanplakken, anders 404't een backend
+    # die gewoon UP is en meldt de startup ten onrechte 'degraded'.
+    _base = HERMES_LOCAL_URL.rstrip("/")
+    url = _base + ("/models" if _base.endswith("/v1") else "/v1/models")
     try:
         with httpx.Client(timeout=5.0) as client:
             resp = client.get(

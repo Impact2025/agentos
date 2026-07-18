@@ -361,7 +361,7 @@ async def run_weekly_demand_scan() -> None:
     from ...shared.outcomes import log_outcome
     from . import sites as sites_service
 
-    scanned, new_total, cold_total, failed = 0, 0, 0, []
+    scanned, new_total, cold_total, grounded_total, failed = 0, 0, 0, 0, []
     for s in sites_service.list_sites():
         site = sites_service.get_site(s["id"]) or s
         if not (site.get("gsc_property") or "").strip():
@@ -374,10 +374,20 @@ async def run_weekly_demand_scan() -> None:
         except Exception as e:  # noqa: BLE001
             failed.append(site.get("name") or site["id"])
             print(f"[demand] Weekscan mislukt voor {site.get('name')}: {e}")
+            continue
+        # Demand→Researcher-brug: grond de verse top-kansen in NotebookLM zodat
+        # de di/vr-contentmotor op eigen onderzoek schrijft i.p.v. LLM-giswerk.
+        # Best-effort — een kapotte NotebookLM mag de weekscan nooit breken.
+        try:
+            from ..researcher.service import get_service as researcher_service
+            grounded_total += await researcher_service().ground_new_opportunities(site)
+        except Exception as e:  # noqa: BLE001
+            print(f"[demand] NotebookLM-grounding overgeslagen voor {site.get('name')}: {e}")
     log_outcome(
         "SEO", "demand_scan",
         f"Wekelijkse Demand-scan: {scanned} site(s), {new_total} nieuwe kans(en)"
         + (f" waarvan {cold_total} via cold-start" if cold_total else "")
+        + (f"; {grounded_total} kans(en) gegrond in NotebookLM" if grounded_total else "")
         + (f"; mislukt: {', '.join(failed[:5])}" if failed else ""),
         artifact="/api/seo/opportunities",
         next_step=("Controleer de GSC-koppeling van de mislukte site(s)." if failed

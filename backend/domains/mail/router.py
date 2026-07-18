@@ -38,6 +38,12 @@ class MailboxBody(BaseModel):
     enabled: int = 1
     from_display: str = ""
     signature: str = ""
+    # Microsoft Graph (OAuth2 client_credentials) — voor Office365/Exchange
+    auth_method: str = "pop"
+    graph_tenant_id: str = ""
+    graph_client_id: str = ""
+    graph_client_secret: str = ""
+    graph_user_upn: str = ""
 
 
 class EditBody(BaseModel):
@@ -53,6 +59,10 @@ class EditBody(BaseModel):
         if not self.text.strip():
             raise ValueError("Lege tekst — stuur 'text' of 'draft_body' mee.")
         return self
+
+
+class BulkRejectBody(BaseModel):
+    ids: list[int] = []
 
 
 class MailboxPatch(BaseModel):
@@ -73,6 +83,11 @@ class MailboxPatch(BaseModel):
     enabled: Optional[int] = None
     from_display: Optional[str] = None
     signature: Optional[str] = None
+    auth_method: Optional[str] = None
+    graph_tenant_id: Optional[str] = None
+    graph_client_id: Optional[str] = None
+    graph_client_secret: Optional[str] = None
+    graph_user_upn: Optional[str] = None
 
 
 class RunBody(BaseModel):
@@ -145,8 +160,44 @@ def reject_reply(reply_id: int):
     return {"ok": True}
 
 
+@router.post("/replies/reject-bulk")
+def reject_replies_bulk(body: BulkRejectBody):
+    n = service.reject_replies_bulk(body.ids)
+    return {"ok": True, "rejected": n}
+
+
+@router.post("/replies/delete-bulk")
+def delete_replies_bulk(body: BulkRejectBody):
+    n = service.delete_replies_bulk(body.ids)
+    return {"ok": True, "deleted": n}
+
+
 @router.post("/reply/{reply_id}/edit")
 @router.post("/replies/{reply_id}/edit")  # alias
 def edit_reply(reply_id: int, body: EditBody):
     service.edit_reply(reply_id, body.text)
+    return {"ok": True}
+
+
+@router.post("/reply/{reply_id}/ignore-sender")
+@router.post("/replies/{reply_id}/ignore-sender")  # alias
+def ignore_sender(reply_id: int):
+    """'Niet meer reageren': afzender op de negeerlijst + alle openstaande
+    concepten van deze afzender afwijzen. Toekomstige mails van dit adres
+    (bij zakelijke domeinen: het hele domein) krijgen nooit meer een concept."""
+    result = service.ignore_sender(reply_id)
+    if not result:
+        raise HTTPException(404, "Concept niet gevonden of afzender onbekend")
+    return {"ok": True, **result}
+
+
+@router.get("/ignored")
+def get_ignored():
+    return {"ignored": service.list_ignored_senders()}
+
+
+@router.delete("/ignored/{ignored_id}")
+def delete_ignored(ignored_id: int):
+    if not service.unignore_sender(ignored_id):
+        raise HTTPException(404, "Niet gevonden")
     return {"ok": True}

@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="nl"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Iris Remote - Systeemstatus</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass-card {
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .active-glow {
+            box-shadow: 0 0 15px rgba(142, 213, 255, 0.3);
+        }
+        body {
+            background-color: #101415;
+            color: #e0e3e5;
+            -webkit-font-smoothing: antialiased;
+        }
+        @keyframes pulse-soft {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(0.95); }
+        }
+        .status-pulse {
+            animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "surface-bright": "#363a3b",
+                      "error-container": "#93000a",
+                      "surface": "#101415",
+                      "surface-variant": "#323537",
+                      "tertiary": "#c5cce6",
+                      "surface-container-low": "#191c1e",
+                      "on-tertiary-container": "#3c4459",
+                      "on-primary-container": "#004965",
+                      "inverse-on-surface": "#2d3133",
+                      "on-error": "#690005",
+                      "on-tertiary": "#283044",
+                      "tertiary-container": "#a9b1ca",
+                      "on-secondary-container": "#a7b6cc",
+                      "on-tertiary-fixed-variant": "#3f465c",
+                      "primary": "#8ed5ff",
+                      "on-secondary-fixed": "#0d1c2d",
+                      "outline-variant": "#3e484f",
+                      "on-secondary-fixed-variant": "#39485a",
+                      "background": "#101415",
+                      "primary-fixed": "#c4e7ff",
+                      "on-surface": "#e0e3e5",
+                      "primary-container": "#38bdf8",
+                      "on-background": "#e0e3e5",
+                      "primary-fixed-dim": "#7bd0ff",
+                      "on-tertiary-fixed": "#131b2e",
+                      "secondary-fixed": "#d4e4fa",
+                      "secondary-fixed-dim": "#b9c8de",
+                      "error": "#ffb4ab",
+                      "tertiary-fixed": "#dae2fd",
+                      "on-secondary": "#233143",
+                      "surface-dim": "#101415",
+                      "secondary": "#b9c8de",
+                      "on-primary": "#00354a",
+                      "on-primary-fixed-variant": "#004c69",
+                      "inverse-primary": "#00668a",
+                      "surface-container-highest": "#323537",
+                      "surface-tint": "#7bd0ff",
+                      "tertiary-fixed-dim": "#bec6e0",
+                      "inverse-surface": "#e0e3e5",
+                      "on-surface-variant": "#bdc8d1",
+                      "surface-container": "#1d2022",
+                      "on-error-container": "#ffdad6",
+                      "surface-container-lowest": "#0b0f10",
+                      "secondary-container": "#39485a",
+                      "surface-container-high": "#272a2c",
+                      "on-primary-fixed": "#001e2c",
+                      "outline": "#87929a"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "unit": "4px",
+                      "container-padding": "20px",
+                      "gutter": "16px",
+                      "stack-sm": "8px",
+                      "stack-lg": "32px",
+                      "stack-md": "16px"
+              },
+              "fontFamily": {
+                      "headline-md": ["Inter"],
+                      "body-md": ["Inter"],
+                      "display-lg": ["Inter"],
+                      "body-lg": ["Inter"],
+                      "label-caps": ["JetBrains Mono"],
+                      "display-lg-mobile": ["Inter"],
+                      "headline-sm": ["Inter"]
+              },
+              "fontSize": {
+                      "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                      "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                      "display-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                      "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                      "label-caps": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500"}],
+                      "display-lg-mobile": ["28px", {"lineHeight": "36px", "fontWeight": "700"}],
+                      "headline-sm": ["20px", {"lineHeight": "28px", "fontWeight": "600"}]
+              }
+            },
+          },
+        }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="bg-background text-on-background min-h-screen pb-32">
+<!-- TopAppBar -->
+<header class="flex justify-between items-center w-full px-container-padding h-16 fixed top-0 z-50 bg-surface/80 dark:bg-surface/80 backdrop-blur-xl border-b border-white/10">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary text-2xl" data-icon="hub">hub</span>
+<h1 class="font-headline-md text-headline-md font-bold text-on-surface dark:text-on-surface">Iris Remote</h1>
+</div>
+<button class="flex items-center justify-center w-10 h-10 rounded-full hover:opacity-80 transition-transform active:scale-95">
+<span class="material-symbols-outlined text-primary animate-pulse" data-icon="sync">sync</span>
+</button>
+</header>
+<main class="mt-20 px-container-padding max-w-[768px] mx-auto space-y-stack-lg">
+<!-- Hero Visual Section -->
+<section class="relative h-48 w-full rounded-xl overflow-hidden glass-card">
+
+<div class="relative z-10 p-6 flex flex-col justify-end h-full">
+<span class="font-label-caps text-label-caps text-primary mb-2">NETWORK INFRASTRUCTURE</span>
+<h2 class="font-display-lg-mobile text-display-lg-mobile text-white">Systeemstatus</h2>
+</div>
+</section>
+<!-- Sync Status Card -->
+<section class="glass-card rounded-xl p-6 border-l-4 border-l-primary">
+<div class="flex items-start justify-between mb-4">
+<div>
+<h3 class="font-headline-sm text-headline-sm text-on-surface">Sync status</h3>
+<div class="flex items-center gap-2 mt-1">
+<span class="w-2 h-2 rounded-full bg-primary status-pulse"></span>
+<p class="font-body-md text-body-md text-on-surface-variant">Lokale AgentOS-bridge: <span class="text-primary font-medium">Online</span></p>
+</div>
+</div>
+<span class="font-label-caps text-label-caps text-on-surface-variant bg-surface-variant/50 px-3 py-1 rounded-full">Active</span>
+</div>
+<div class="flex items-center justify-between pt-4 border-t border-white/5">
+<p class="font-body-md text-body-md text-outline">Laatste sync: 45s geleden</p>
+<button class="text-primary font-label-caps text-label-caps hover:underline transition-all">REFRESH NOW</button>
+</div>
+</section>
+<!-- Decisions Outbox -->
+<section class="space-y-stack-md">
+<div class="flex items-center justify-between">
+<h3 class="font-label-caps text-label-caps text-outline">KLAARGEZETTE BESLUITEN (OUTBOX)</h3>
+<span class="font-label-caps text-label-caps text-primary px-2 py-0.5 border border-primary/30 rounded">2 PENDING</span>
+</div>
+<div class="space-y-unit">
+<div class="glass-card rounded-lg p-4 flex items-center justify-between hover:border-primary/50 transition-colors group">
+<div class="flex items-center gap-4">
+<div class="w-10 h-10 rounded-full bg-surface-variant flex items-center justify-center">
+<span class="material-symbols-outlined text-on-surface-variant" data-icon="mail">mail</span>
+</div>
+<div>
+<p class="font-body-lg text-body-lg text-on-surface">Email verzonden naar J. Doe</p>
+<p class="font-body-md text-body-md text-on-surface-variant">Status: Wacht op dispatch...</p>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+<div class="glass-card rounded-lg p-4 flex items-center justify-between hover:border-primary/50 transition-colors group">
+<div class="flex items-center gap-4">
+<div class="w-10 h-10 rounded-full bg-surface-variant flex items-center justify-center">
+<span class="material-symbols-outlined text-on-surface-variant" data-icon="event_repeat">event_repeat</span>
+</div>
+<div>
+<p class="font-body-lg text-body-lg text-on-surface">Meeting verplaatst</p>
+<p class="font-body-md text-body-md text-on-surface-variant">Status: Klaar voor verwerking</p>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+</div>
+</section>
+<!-- Decoupled Architecture Info -->
+<section class="glass-card rounded-xl p-6 overflow-hidden relative">
+<div class="absolute -right-4 -bottom-4 opacity-10">
+<span class="material-symbols-outlined text-[120px]" data-icon="database">database</span>
+</div>
+<div class="relative z-10">
+<div class="flex items-center gap-2 mb-3">
+<span class="material-symbols-outlined text-primary" data-icon="security">security</span>
+<h3 class="font-headline-sm text-headline-sm text-on-surface">Beveiliging &amp; Opslag</h3>
+</div>
+<p class="font-body-lg text-body-lg text-on-surface-variant mb-4 leading-relaxed">
+                    Gegevens zijn veilig opgeslagen in een <span class="text-white font-medium">Neon Postgres</span> gedistribueerde database, gebruikmakend van een moderne decoupled architectuur voor maximale betrouwbaarheid.
+                </p>
+<div class="flex gap-4">
+<div class="flex items-center gap-1.5 px-3 py-1 bg-primary/10 border border-primary/20 rounded-full">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+<span class="font-label-caps text-label-caps text-primary">ENCRYPTED</span>
+</div>
+<div class="flex items-center gap-1.5 px-3 py-1 bg-surface-variant/50 border border-white/5 rounded-full">
+<span class="w-1.5 h-1.5 rounded-full bg-outline"></span>
+<span class="font-label-caps text-label-caps text-on-surface-variant">DISTRIBUTED</span>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-2 bg-surface/80 dark:bg-surface/80 backdrop-blur-xl border-t border-white/10 shadow-[0_-4px_20px_rgba(0,0,0,0.3)] rounded-t-xl">
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-colors active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="center_focus_strong">center_focus_strong</span>
+<span class="font-label-caps text-label-caps mt-1">Actiecentrum</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-colors active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="assignment">assignment</span>
+<span class="font-label-caps text-label-caps mt-1">Briefings</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-colors active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="edit_note">edit_note</span>
+<span class="font-label-caps text-label-caps mt-1">Notities</span>
+</a>
+<a class="flex flex-col items-center justify-center text-primary bg-primary-container/20 rounded-xl px-4 py-1 shadow-[0_0_15px_rgba(142,213,255,0.3)] scale-90 transition-all duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="settings_input_component">settings_input_component</span>
+<span class="font-label-caps text-label-caps mt-1">Systeem</span>
+</a>
+</nav>
+<script>
+        // Micro-interaction for sync icon
+        const syncBtn = document.querySelector('header button');
+        const syncIcon = syncBtn.querySelector('.material-symbols-outlined');
+        
+        syncBtn.addEventListener('click', () => {
+            syncIcon.classList.add('animate-spin');
+            setTimeout(() => {
+                syncIcon.classList.remove('animate-spin');
+            }, 1000);
+        });
+
+        // Subtle parallax effect for glass cards on mouse move (Desktop)
+        document.addEventListener('mousemove', (e) => {
+            if (window.innerWidth < 768) return;
+            const cards = document.querySelectorAll('.glass-card');
+            const x = (e.clientX - window.innerWidth / 2) / 100;
+            const y = (e.clientY - window.innerHeight / 2) / 100;
+            
+            cards.forEach(card => {
+                card.style.transform = `translate(${x}px, ${y}px)`;
+            });
+        });
+    </script>
+</body></html>

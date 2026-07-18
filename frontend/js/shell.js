@@ -58,6 +58,7 @@ async function loadCurrentTab() {
     else if (currentTab === 'Doelen') await renderDoelenTab(el);
     else if (currentTab === 'Geheugen') await renderGeheugenTab(el);
     else if (currentTab === 'Leads') await renderLeadsTab(el);
+    else if (currentTab === 'Links') await renderLinksTab(el);
     else if (currentTab === 'Opdrachten') await renderOpdrachtenTab(el);
     else if (currentTab === 'Technisch') await renderTechTab(el);
     else if (currentTab === 'Activiteit') await renderActiviteitTab(el);
@@ -380,9 +381,25 @@ async function runArticlePipeline(payload, btn) {
     var start = await startResp.json();
     if (!start.job_id) return {success: false, detail: start.detail || 'Kon job niet starten'};
 
+    // Poll-lus met fouttolerantie: de job draait server-side als achtergrondtaak,
+    // dus een enkele mislukte poll (netwerk-blip, trage lokale-LLM die de server
+    // even bezet houdt, korte herstart) mag de job niet als 'mislukt' afserveren.
+    // Pas na meerdere opeenvolgende mislukkingen geven we op.
+    var pollFails = 0;
     while (true) {
       await new Promise(function(r){ setTimeout(r, 1500); });
-      var st = await (await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/write-and-publish/' + start.job_id)).json();
+      var st;
+      try {
+        var resp = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/write-and-publish/' + start.job_id);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        st = await resp.json();
+        pollFails = 0;
+      } catch (e) {
+        pollFails++;
+        if (pollFails >= 20) return {success: false, detail: 'Verbinding met de server verloren tijdens het schrijven (job draait mogelijk nog door). Ververs de pagina om de status te zien.'};
+        if (btn) btn.textContent = 'Verbinding kwijt, opnieuw proberen (' + pollFails + ')...';
+        continue;
+      }
       if (btn) btn.textContent = (st.percent || 0) + '% — ' + (st.phase || 'bezig...');
       if (st.status === 'done') return st.result;
       if (st.status === 'error') return {success: false, detail: st.error || 'onbekende fout'};

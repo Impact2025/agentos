@@ -191,6 +191,29 @@ def page_movers(site_id: str, limit: int = 5) -> Dict[str, List[Dict[str, Any]]]
     }
 
 
+def top_pages(site_id: str, limit: int = 8) -> List[Dict[str, Any]]:
+    """Onze best presterende pagina's uit de laatste dagsnapshot.
+
+    De paginalijst hoort hier en niet uit `published_pages` te komen: die tabel
+    bewaart alleen de laatste sync en is in de praktijk leeg. `top_query` gaat
+    mee — dat vertelt de aanroeper waar de pagina op rankt.
+    """
+    with get_conn() as conn:
+        latest = conn.execute(
+            "SELECT MAX(date) FROM gsc_history WHERE site_id = ? AND scope = 'page'",
+            (site_id,),
+        ).fetchone()[0]
+        if not latest:
+            return []
+        rows = conn.execute(
+            "SELECT page_url, clicks, impressions, position, top_query "
+            "FROM gsc_history WHERE site_id = ? AND scope = 'page' AND date = ? "
+            "ORDER BY clicks DESC, impressions DESC LIMIT ?",
+            (site_id, latest, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def site_series(site_id: str, days: int = 28) -> List[Dict[str, Any]]:
     """Dagreeks voor grafieken: oudste eerst."""
     with get_conn() as conn:

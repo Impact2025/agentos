@@ -75,6 +75,17 @@ def create_prediction(*, report_date: str, project: str, site_id: str, metric: s
     direction = (direction or "").strip().lower()
     if metric not in _VALID_METRICS or direction not in ("up", "down") or baseline is None:
         return None
+    # Dedupe: één open voorspelling per (site, metric, richting). De LLM
+    # herhaalt zichzelf graag over briefings heen ("WeAreImpact haalt 12
+    # clicks" twee keer open) — dat vertroebelt de trefkans en de briefing.
+    with get_conn() as conn:
+        dup = conn.execute(
+            "SELECT 1 FROM iris_predictions WHERE status = 'open' "
+            "AND site_id = ? AND metric = ? AND direction = ? LIMIT 1",
+            (site_id, metric, direction),
+        ).fetchone()
+    if dup:
+        return None
     horizon_days = max(1, min(30, int(horizon_days or 7)))
     due = (datetime.strptime(report_date, "%Y-%m-%d") + timedelta(days=horizon_days)).strftime("%Y-%m-%d")
     pid = str(uuid.uuid4())

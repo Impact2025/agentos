@@ -1,6 +1,7 @@
 from .obsidian_search import ObsidianSearchTool
 from .obsidian_write import ObsidianWriteTool
 from .web_search import WebSearchTool
+from .notebooklm import NotebookLMResearchTool
 from .task_manager import CreateTaskTool, ListTasksTool
 from .financial_news import FinancialNewsTool
 from .market_data import MarketDataTool
@@ -11,6 +12,7 @@ TOOLS = [
     ObsidianSearchTool(),
     ObsidianWriteTool(),
     WebSearchTool(),
+    NotebookLMResearchTool(),
     CreateTaskTool(),
     ListTasksTool(),
     FinancialNewsTool(),

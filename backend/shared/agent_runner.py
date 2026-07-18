@@ -27,6 +27,20 @@ class _BackendUnavailable(RuntimeError):
     """Backend is niet bereikbaar (connection error of timeout)."""
 
 
+def _cloud_backend_for_model(model_override: Optional[str]) -> Optional[str]:
+    """Bepaal welke cloud-backend bij een model_override hoort (als die cloud
+    beschikbaar is). Zo kan een 'pro'-profiel (claude-sonnet-4-6, deepseek-v4-flash
+    via OpenModel) worden uitgevoerd op de cloud zelfs als de standaard-backend
+    lokaal/Ollama is. Retourneert None als er geen cloud-model of geen sleutel is."""
+    if not model_override:
+        return None
+    model = model_override.strip()
+    if model.startswith("openrouter/"):
+        return "openrouter" if OPENROUTER_API_KEY else None
+    # Bare OpenModel-modelnaam (claude-*, deepseek-*, gpt-*) → OpenModel-gateway.
+    return "openmodel" if OPENMODEL_API_KEY else None
+
+
 def _fallback_chain(backend: str, model: str) -> List[str]:
     """Modelketen voor automatische 429-fallback.
 
@@ -98,7 +112,51 @@ async def run_agent(
     model_override: str = None,
     use_tools: bool = True,
     purpose: str = "",
+    backend_override: Optional[str] = None,
 ) -> AsyncGenerator[Dict, None]:
+    # Een expliciete backend_override (bv. "openmodel") forceert die cloud-route
+    # ook als de standaard-backend lokaal/Ollama is. Zo kan een agent-profiel met
+    # een premium cloud-model (claude-sonnet-4-6 via OpenModel) wél gehonoreerd
+    # worden terwijl de rest van de app op gratis lokale Ollama draait.
+    if backend_override == "openmodel":
+        async for event in _openmodel_loop(messages, system_prompt, max_tokens,
+                                           model_override, use_tools=use_tools,
+                                           purpose=purpose):
+            yield event
+        return
+    if backend_override == "openrouter":
+        try:
+            async for event in _openai_loop(messages, system_prompt, max_tokens,
+                                            "openrouter", model_override=model_override,
+                                            use_tools=use_tools):
+                yield event
+            return
+        except _BackendUnavailable as exc:
+            yield {"type": "error", "message": f"backend_override openrouter faalde: {exc}"}
+            return
+
+    # Auto-route: als een model_override een cloud-model noemt (en die sleutel
+    # is aanwezig), stuur die call naar de juiste cloud-backend — óók wanneer de
+    # app breed op lokale Ollama draait. Dit is wat 'pro'-agentprofielen doet
+    # werken zonder dat elke aanroeper zijn backend expliciet zet.
+    auto_backend = _cloud_backend_for_model(model_override)
+    if auto_backend == "openmodel":
+        async for event in _openmodel_loop(messages, system_prompt, max_tokens,
+                                           model_override, use_tools=use_tools,
+                                           purpose=purpose):
+            yield event
+        return
+    if auto_backend == "openrouter":
+        try:
+            async for event in _openai_loop(messages, system_prompt, max_tokens,
+                                            "openrouter", model_override=model_override,
+                                            use_tools=use_tools):
+                yield event
+            return
+        except _BackendUnavailable as exc:
+            yield {"type": "error", "message": f"auto-route openrouter faalde: {exc}"}
+            return
+
     backend = hermes_backend()
     if not backend:
         yield {"type": "error", "message": "Geen backend geconfigureerd. Controleer HERMES_LOCAL_URL of OPENROUTER_API_KEY in .env"}
@@ -307,9 +365,18 @@ def _openai_headers_and_url(backend: str):
             f"{HERMES_LOCAL_URL.rstrip('/')}/chat/completions",
             {
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {HERMES_LOCAL_KEY}",
+                # De local-tier is Ollama/LM Studio en heeft geen echte key.
+                # Zonder terugval bouwt een lege HERMES_LOCAL_KEY de header
+                # `Bearer ` (trailing space) — h11 weigert dat als "Illegal
+                # header value b'Bearer '" en de héle run crasht cryptisch
+                # (incident 2026-07-15, goal-taken faalden 4× op rij). Zelfde
+                # 'ollama'-terugval als chat/hermes.py houdt de header geldig.
+                "Authorization": f"Bearer {HERMES_LOCAL_KEY or 'ollama'}",
             },
-            "hermes-agent",
+            # De local-tier is in de praktijk Ollama/LM Studio: die 404't op een
+            # niet-bestaand model. Zelfde fix als chat/hermes.py — gebruik het
+            # geconfigureerde lokale model i.p.v. de hardcoded 'hermes-agent'.
+            OLLAMA_MODEL or "hermes-agent",
         )
     if backend == "ollama":
         return (

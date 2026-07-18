@@ -19,6 +19,7 @@ Kanalen:
 De drafter hergebruikt de mail-logica (drafter.py) met een korter, platform-
 passend system-prompt, gevoed door Schrijf-DNA + project-SKILL.md.
 """
+import asyncio
 import json
 import logging
 import os
@@ -301,31 +302,54 @@ async def ig_fetch(inbox: dict) -> List[dict]:
     if not ig_id or not token:
         return []
     out: List[dict] = []
-    async with httpx.AsyncClient(timeout=30) as client:
-        # Media van het account
-        m = await client.get(
-            f"{_FB_GRAPH}/{ig_id}/media",
-            params={"access_token": token, "fields": "id,permalink,caption", "limit": 30},
-        )
-        if m.status_code != 200:
+    # Transiente netwerk-blips (DNS-timeout, connect-reset, 5xx) mogen géén
+    # harde 'WACHT OP JOU'-fout opleveren — die horen te verdwijnen bij de
+    # volgende poll. We proberen het daarom een paar keer met korte backoff
+    # voordat we de fout doorsluizen naar run_inbox().
+    _last_err: Exception | None = None
+    for _attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                # Media van het account
+                m = await client.get(
+                    f"{_FB_GRAPH}/{ig_id}/media",
+                    params={"access_token": token, "fields": "id,permalink,caption", "limit": 30},
+                )
+                if m.status_code != 200:
+                    return out
+                for media in m.json().get("data", []):
+                    # Reacties op elk media-object
+                    rc = await client.get(
+                        f"{_FB_GRAPH}/{media['id']}/comments",
+                        params={"access_token": token, "fields": "id,text,username,timestamp,permalink", "limit": 50},
+                    )
+                    if rc.status_code != 200:
+                        continue
+                    for cm in rc.json().get("data", []):
+                        out.append({
+                            "external_id": cm.get("id", ""),
+                            "author_name": cm.get("username", ""),
+                            "author_handle": cm.get("username", ""),
+                            "text": cm.get("text", ""),
+                            "parent_url": media.get("permalink", ""),
+                            "thread": "",
+                        })
             return out
-        for media in m.json().get("data", []):
-            # Reacties op elk media-object
-            rc = await client.get(
-                f"{_FB_GRAPH}/{media['id']}/comments",
-                params={"access_token": token, "fields": "id,text,username,timestamp,permalink", "limit": 50},
+        except Exception as e:  # noqa: BLE001 — we loggen + retrien bewust
+            _last_err = e
+            _is_transient = isinstance(
+                e, (httpx.TransportError, httpx.TimeoutException)
+            ) or "[Errno" in str(e)
+            if not _is_transient or _attempt == 2:
+                break
+            logger.warning(
+                "IG fetch poging %d mislukt (transient), opnieuw: %s",
+                _attempt + 1, e,
             )
-            if rc.status_code != 200:
-                continue
-            for cm in rc.json().get("data", []):
-                out.append({
-                    "external_id": cm.get("id", ""),
-                    "author_name": cm.get("username", ""),
-                    "author_handle": cm.get("username", ""),
-                    "text": cm.get("text", ""),
-                    "parent_url": media.get("permalink", ""),
-                    "thread": "",
-                })
+            await asyncio.sleep(2 * (_attempt + 1))
+    if _last_err is not None:
+        logger.warning("IG fetch: %s", _last_err)
+        raise _last_err
     return out
 
 
@@ -420,7 +444,16 @@ async def post_reply(inbox: dict, msg: dict, text: str) -> dict:
 
 async def run_inbox(inbox_id: str) -> int:
     """Haal ongelezen berichten op, classificeer, en zet concepten klaar.
-    Retourneert aantal nieuwe concept-antwoorden."""
+    Retourneert aantal nieuwe concept-antwoorden.
+
+    Belangrijk: de DB-connectie wordt NOOIT opengehouden tijdens het trage
+    netwerk-ophalen (`fetch_new`) of de LLM-drafts (`draft_reply`). Deze poll
+    draait continu; hield hij de write-lock vast over die trage stappen, dan
+    verhongert elke andere schrijver (scheduler `_record_run`, goal-plan,
+    calendar-sync) tot "database is locked". Lezen → trage werk zonder lock →
+    één korte schrijf-transactie.
+    """
+    # 1. Config + reeds-geziene berichten in één korte lees-transactie.
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM social_inboxes WHERE id=?", (inbox_id,)).fetchone()
         if not row:
@@ -428,64 +461,79 @@ async def run_inbox(inbox_id: str) -> int:
         inbox = dict(row)
         if not inbox.get("enabled"):
             return 0
-        try:
-            raw = await fetch_new(inbox)
-        except Exception as e:
-            from .outcomes import log_outcome
-            log_outcome(
-                project=inbox.get("project", "Social"),
-                action="social_fetch",
-                detail=f"Ophalen van {inbox['platform']} mislukt: {e}",
-                next_step="Controleer de kanaal-tokens in de Social-tab.",
-                status="error",
-            )
-            return 0
-        if not raw:
-            return 0
         seen = {
             r["external_id"]
             for r in conn.execute(
                 "SELECT external_id FROM social_inbox_msg WHERE inbox_id=?", (inbox_id,)
             )
         }
-        created = 0
-        for m in raw:
-            ext = m.get("external_id")
-            if not ext or ext in seen:
-                continue
-            kind = classify(m.get("text", ""))
-            draft = ""
-            manual = 0
-            # Alleen echte vragen/klachten krijgen een concept; lof/spam/overig
-            # worden gelogd maar niet gedraft (geen token-verlies, geen ruis).
-            if kind in ("question", "complaint"):
-                draft = draft_reply(
-                    inbox["platform"], inbox.get("brand_context", ""),
-                    m.get("text", ""), m.get("author_name", ""), m.get("thread", ""),
-                )
+
+    # 2. Netwerk-ophalen — zonder open connectie.
+    try:
+        raw = await fetch_new(inbox)
+    except Exception as e:
+        from .outcomes import log_outcome
+        log_outcome(
+            project=inbox.get("project", "Social"),
+            action="social_fetch",
+            detail=f"Ophalen van {inbox['platform']} mislukt: {e}",
+            next_step="Controleer de kanaal-tokens in de Social-tab.",
+            status="error",
+        )
+        return 0
+    if not raw:
+        return 0
+
+    # 3. Classificeren + LLM-drafts — óók zonder open connectie. We verzamelen
+    #    de rijen en schrijven ze pas daarna in één keer weg.
+    pending: List[tuple] = []
+    for m in raw:
+        ext = m.get("external_id")
+        if not ext or ext in seen:
+            continue
+        kind = classify(m.get("text", ""))
+        draft = ""
+        manual = 0
+        # Alleen echte vragen/klachten krijgen een concept; lof/spam/overig
+        # worden gelogd maar niet gedraft (geen token-verlies, geen ruis).
+        if kind in ("question", "complaint"):
+            draft = draft_reply(
+                inbox["platform"], inbox.get("brand_context", ""),
+                m.get("text", ""), m.get("author_name", ""), m.get("thread", ""),
+            )
+        pending.append((
+            inbox_id, inbox["platform"], ext, m.get("author_name", ""),
+            m.get("author_handle", ""), m.get("text", ""), kind,
+            m.get("parent_url", ""), m.get("thread", "") or "[]", draft, manual,
+        ))
+        seen.add(ext)
+
+    if not pending:
+        return 0
+
+    # 4. Eén korte schrijf-transactie.
+    with get_conn() as conn:
+        for params in pending:
             conn.execute(
                 "INSERT OR IGNORE INTO social_inbox_msg("
                 "inbox_id,platform,external_id,author_name,author_handle,text,kind,"
                 "parent_url,thread_json,draft_body,manual) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (inbox_id, inbox["platform"], ext, m.get("author_name", ""),
-                 m.get("author_handle", ""), m.get("text", ""), kind,
-                 m.get("parent_url", ""), m.get("thread", "") or "[]",
-                 draft, manual),
+                params,
             )
-            created += 1
-            seen.add(ext)
-        if created:
-            from .outcomes import log_outcome
-            log_outcome(
-                project=inbox.get("project", "Social"),
-                action="social_ontvangen",
-                detail=f"{created} nieuwe bericht(en) op {inbox['platform']} — "
-                       f"concepten klaar in de Social-inbox.",
-                next_step="Open de Social-tab en keur de antwoorden goed.",
-                status="ok",
-            )
-        return created
+    created = len(pending)
+
+    if created:
+        from .outcomes import log_outcome
+        log_outcome(
+            project=inbox.get("project", "Social"),
+            action="social_ontvangen",
+            detail=f"{created} nieuwe bericht(en) op {inbox['platform']} — "
+                   f"concepten klaar in de Social-inbox.",
+            next_step="Open de Social-tab en keur de antwoorden goed.",
+            status="ok",
+        )
+    return created
 
 
 def run_all_inboxes(inbox_id: Optional[str] = None) -> Dict[str, int]:

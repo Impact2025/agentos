@@ -16,8 +16,11 @@ from ...shared.config import OPENROUTER_API_KEY, HERMES_MODEL
 from ...shared.database import get_conn
 from ...shared.agent_runner import run_agent
 
-# Toegestane statussen in de conveyor state-machine.
-TRIAGE_STATUSES = ("todo", "ready", "running", "done", "awaiting_approval")
+# Toegestane statussen in de conveyor state-machine. 'needs_work' = de
+# kwaliteits-voorfilter van de conveyor keurde de output af (te kort/geen
+# structuur); de taak parkeert daar tot een mens ingrijpt en de keten
+# promoveert bewust géén opvolger.
+TRIAGE_STATUSES = ("todo", "ready", "running", "done", "awaiting_approval", "needs_work")
 
 
 def _now() -> str:

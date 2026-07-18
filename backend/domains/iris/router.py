@@ -8,6 +8,7 @@
 """
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
+from typing import Optional
 
 from . import metrics, service
 
@@ -120,3 +121,39 @@ def knowledge_delete(kid: str):
 async def run_now():
     """Draai de dagbriefing direct (zelfde flow als de 06:45-job)."""
     return await service.run_morning_briefing()
+
+# ── Actie-voorstellen ("Wil je dat ik dit fix?") ───────────────────────
+# Iris legt kant-en-klare fixes klaar; Vincent keurt per stuk goed.
+@router.get("/suggestions")
+def suggestions_list(report_date: Optional[str] = Query(None)):
+    """Lijst actie-voorstellen (optioneel: alleen die van één briefing)."""
+    from . import fix as fix_service
+    return {"suggestions": fix_service.list_pending(report_date)}
+
+@router.post("/suggestions/{sid}/approve")
+async def suggestions_approve(sid: str):
+    """Keur een actie goed — nog NIET uitgevoerd (wacht op apply)."""
+    from . import fix as fix_service
+    if not fix_service.approve(sid):
+        raise HTTPException(status_code=404, detail="Actie niet gevonden")
+    return {"ok": True, "status": "approved"}
+
+@router.post("/suggestions/{sid}/reject")
+async def suggestions_reject(sid: str):
+    """Wijs een actie af (blijft gesloten, komt niet terug)."""
+    from . import fix as fix_service
+    if not fix_service.reject(sid):
+        raise HTTPException(status_code=404, detail="Actie niet gevonden")
+    return {"ok": True, "status": "rejected"}
+
+@router.post("/suggestions/{sid}/apply")
+async def suggestions_apply(sid: str):
+    """Voer een GOEDGEKEURDE actie uit via de agents (achter review-gate)."""
+    from . import fix as fix_service
+    result = await fix_service.apply(sid)
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("error", "Uitvoering mislukt"),
+        )
+    return {"ok": True, **result}

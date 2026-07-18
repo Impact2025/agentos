@@ -14,10 +14,7 @@ from backend.domains.radar.service import scan_the_skies
 
 
 async def main():
-    saved = 0
-    async for ev in scan_the_skies():
-        if ev.get("type") == "scan_done":
-            saved = ev.get("total_saved", 0)
+    saved = await scan_the_skies() or 0
     print(f"[radar] wekelijkse sky-scan klaar: {saved} nieuwe signalen (alle projecten)")
 
 

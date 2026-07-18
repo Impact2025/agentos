@@ -27,11 +27,61 @@ class BlockRequest(BaseModel):
     description: str = ""
 
 
+class ProposalAction(BaseModel):
+    proposal_id: int
+
+
+@router.get("/proposals")
+async def proposals():
+    """Lijst open afspraak-voorstellen (uit mail gedetecteerd)."""
+    from . import agent as agenda_agent
+    return {"proposals": agenda_agent.pending_proposals()}
+
+
+@router.post("/proposals/approve")
+async def approve(body: ProposalAction):
+    """Mens keurt goed → schrijf naar Google Agenda via block_time.
+
+    Let op het onderscheid in de teruggeef-waarde:
+      - ok=True            → 200, afspraak staat in de agenda.
+      - ok=False, blocked  → 200 met ok:false + `error` (de deel-instructie).
+                            Dit is GEEN serverfout: de agent weigert bewust te
+                            boeken omdat het slot niet tegen de agenda's kon
+                            worden getoetst (conflict_checked != 'ok'). We gooien
+                            hier géén 502 — anders leest de SPA dat als "de server
+                            is kapot" en verdwijnt de zorgvuldig geformuleerde
+                            instructie in de console i.p.v. bij de gebruiker.
+      - ok=False, booking_error → 502 (echt mislukt: Google-gave een fout).
+    """
+    from . import agent as agenda_agent
+    res = agenda_agent.approve_proposal(body.proposal_id)
+    if res.get("ok"):
+        return res
+    if res.get("code") == "booking_error":
+        raise HTTPException(502, res.get("error", "boeken mislukt"))
+    # Geblokkeerd / geweigerd: nette 200 zodat de client de instructie toont.
+    return res
+
+
+@router.post("/proposals/reject")
+async def reject(body: ProposalAction):
+    """Mens wijst af (blijft gesloten)."""
+    from . import agent as agenda_agent
+    agenda_agent.reject_proposal(body.proposal_id)
+    return {"ok": True}
+
+
 @router.get("/status")
 async def status():
+    # `configured` = credentials aanwezig; `reachable` = de agenda is ook echt
+    # te lezen. Alleen dat tweede zegt of conflict-detectie iets waard is.
+    access = await calendar_service.verify_access()
     return {
         "configured": calendar_service.is_configured(),
-        "calendar_id": calendar_service._cal_id() if calendar_service.is_configured() else None,
+        "calendar_id": access["calendar_id"],
+        "busy_calendar_ids": access["busy_calendar_ids"],
+        "reachable": access["reachable"],
+        "error": access["error"],
         "sub": bool(__import__("os").environ.get("CALENDAR_SUB")),
     }
 
