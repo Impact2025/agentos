@@ -198,6 +198,37 @@ function post(url, body) {
     });
   });
 }
+// ── Confirm-modal met keuze-opties (vervangt de kale browser-confirm) ──
+// opts: { title, body, buttons: [{label, value, primary, danger}] }
+// Resolves met de `value` van de gekozen knop, of null bij annuleren/sluiten.
+function showChoiceModal(opts) {
+  return new Promise(function (resolve) {
+    var overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;backdrop-filter:blur(2px)';
+    var box = document.createElement('div');
+    box.style.cssText = 'background:#fff;border-radius:14px;max-width:440px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,.25);overflow:hidden;font-family:inherit';
+    var html = '';
+    if (opts.title) html += '<div style="padding:18px 20px 0;font-size:15px;font-weight:700;color:#0f172a">' + escHtml(opts.title) + '</div>';
+    if (opts.body) html += '<div style="padding:10px 20px 4px;font-size:13px;line-height:1.55;color:#475569;white-space:pre-wrap">' + (opts.bodyHtml || escHtml(opts.body)) + '</div>';
+    html += '<div style="padding:18px 20px 20px;display:flex;flex-direction:column;gap:8px">';
+    (opts.buttons || []).forEach(function (b) {
+      var bg = b.primary ? '#2563eb' : (b.danger ? '#dc2626' : '#f1f5f9');
+      var fg = b.primary || b.danger ? '#fff' : '#475569';
+      var bd = b.primary || b.danger ? 'none' : '1px solid #e2e8f0';
+      html += '<button data-value="' + escHtml(String(b.value)) + '" style="padding:11px 16px;background:' + bg + ';color:' + fg + ';border:' + bd + ';border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;text-align:left">' + escHtml(b.label) + '</button>';
+    });
+    html += '</div>';
+    box.innerHTML = html;
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    function close(val) { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); resolve(val); }
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) close(null); });
+    Array.prototype.forEach.call(box.querySelectorAll('button[data-value]'), function (b) {
+      b.addEventListener('click', function () { close(b.getAttribute('data-value')); });
+    });
+  });
+}
+
 function kpiBox(label, val, change, sub) {
   var extra = '';
   if (change !== undefined && change !== '') { var cls = change >= 0 ? 'pos' : 'neg'; extra = '<p class="change ' + cls + '">' + (change >= 0 ? '+' : '') + change + '</p>'; }

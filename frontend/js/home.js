@@ -180,6 +180,16 @@ function loadActionCenter() {
         '<button onclick="acBulkDrafts(this, \'start\')" style="padding:4px 12px;background:#16a34a;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">▶ Start alles</button>' +
         '<button onclick="acBulkDrafts(this, \'delete\')" style="padding:4px 12px;background:#fff;color:#dc2626;border:1px solid #fecaca;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Verwijder alles</button></div>';
     }
+    // GSC-expert bulk: alle wachtende Search Console-meldingen in één keer
+    // door de agent laten analyseren (en veilig verzenden/oplossen).
+    var gscCount = items.filter(function(i){
+      return i.kind === 'mail_reply' && i.actions.some(function(a){ return a.type === 'mail_gsc_fix'; });
+    }).length;
+    if (gscCount >= 1) {
+      bulkBar += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;padding:8px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px">' +
+        '<span style="font-size:11px;color:#9a3412;flex:1"><b>' + gscCount + ' Search Console-melding(en)</b> — laat de GSC-expert ze analyseren &amp; afhandelen:</span>' +
+        '<button onclick="acGscFixAll(this)" style="padding:4px 12px;background:#ea580c;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">⚡ Verwerk alle GSC</button></div>';
+    }
     var html = '<div class="section-card" style="margin-bottom:16px;border:2px solid #6366f1;background:linear-gradient(135deg,#eef2ff,#fff)">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
       '<h3 style="font-size:15px;font-weight:800;color:#312e81">\u{1F4E5} Vandaag — wacht op jou (' + items.length + ')</h3>' +
@@ -199,7 +209,9 @@ function loadActionCenter() {
         it.actions.map(function(a){
           var style = a.danger
             ? 'background:#fff;color:#dc2626;border:1px solid #fecaca'
-            : (a.type === 'open_tab' || a.type === 'dismiss')
+            : (a.accent)
+              ? 'background:#ea580c;color:#fff;border:none'   // GSC-expert: opvallend oranje
+              : (a.type === 'open_tab' || a.type === 'dismiss')
               ? 'background:#f8fafc;color:#475569;border:1px solid #e2e8f0'
               : 'background:#4f46e5;color:#fff;border:none';
           return '<button onclick=\'acAction(this, ' + JSON.stringify(a).replace(/'/g, '&#39;') + ', ' + JSON.stringify(it.project || '') + ')\' ' +
@@ -680,7 +692,27 @@ function acBulkDrafts(btn, mode) {
   next(0);
 }
 
-// Toon een blokkerende deel-instructie (bijv. agenda-agent weigert te boeken
+// GSC-expert: alle wachtende Search Console-meldingen in één keer door de
+// agent laten analyseren én veilig afhandelen (verzenden naar echte mensen bij
+// hoge confidence; notificaties worden opgelost zonder naar Google te mailen).
+function acGscFixAll(btn) {
+  if (!confirm('De GSC-expert analyseert ALLE wachtende Search Console-meldingen en handelt ze veilig af. Doorgaan?')) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'GSC-agent bezig…'; }
+  post('/api/mail/gsc-fix-all', { auto: true })
+    .then(function(d){
+      // Vuur-en-vergeet: de agent loopt op de achtergrond. Direct terug met
+      // job_id; het Actiecentrum toont de resultaten zodra ze landen.
+      var msg = (d && d.message) ? d.message
+        : 'GSC-expert verwerkt de meldingen op de achtergrond.';
+      alert(msg);
+      loadActionCenter(); loadActivityLogs();
+    })
+    .catch(function(e){
+      if (btn) { btn.disabled = false; btn.textContent = '⚡ Verwerk alle GSC'; }
+      alert('GSC bulk mislukt: ' + e.message);
+    });
+}
+
 // omdat conflict_checked != 'ok') IN de Actiecentrum-kaart, zodat de gebruiker
 // leest wát er aan de hand is — niet alleen een 502 in de console.
 function showCalendarInstruction(btn, msg) {
@@ -741,8 +773,26 @@ function acAction(btn, action, project) {
     if (!confirm('Doel definitief verwijderen?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
     fetch('/api/goals/' + encodeURIComponent(action.id), { method:'DELETE' }).then(done).catch(fail);
   } else if (type === 'content_approve') {
-    if (!confirm('Publiceren naar website + social. Doorgaan?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
-    post('/api/content-queue/' + encodeURIComponent(action.id) + '/approve').then(done).catch(fail);
+    // Keuze: wel of niet social posten. Backend vertaalt {social:false} →
+    // alleen website (geen social-fan-out, geen Content Multiplier).
+    showChoiceModal({
+      title: 'Publiceren',
+      body: 'Hoe wil je dit artikel publiceren?',
+      buttons: [
+        { label: 'Publiceren naar website + social', value: 'with_social', primary: true },
+        { label: 'Alleen website publiceren (geen social)', value: 'website_only' },
+        { label: 'Annuleren', value: 'cancel' },
+      ],
+    }).then(function (choice) {
+      if (!choice || choice === 'cancel') {
+        if (btn) { btn.disabled = false; btn.textContent = action.label; }
+        return;
+      }
+      if (btn) { btn.disabled = true; btn.textContent = 'Bezig...'; }
+      var body = choice === 'website_only' ? { social: false } : null;
+      post('/api/content-queue/' + encodeURIComponent(action.id) + '/approve', body)
+        .then(done).catch(fail);
+    });
   } else if (type === 'content_reject') {
     post('/api/content-queue/' + encodeURIComponent(action.id) + '/reject').then(done).catch(fail);
   } else if (type === 'content_regenerate') {
@@ -774,6 +824,35 @@ function acAction(btn, action, project) {
   } else if (type === 'mail_ignore_sender') {
     if (!confirm('Niet meer reageren op deze afzender? Alle openstaande concepten van deze afzender worden afgewezen en toekomstige mails krijgen nooit meer een concept-antwoord.')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
     post('/api/mail/reply/' + encodeURIComponent(action.id) + '/ignore-sender').then(done).catch(fail);
+  } else if (type === 'mail_gsc_fix') {
+    if (btn) { btn.disabled = true; btn.textContent = 'GSC-agent analyseert…'; }
+    post('/api/mail/reply/' + encodeURIComponent(action.id) + '/gsc-fix', { auto: true })
+      .then(function(d){
+        if (d && d.analysis) {
+          var disp = d.disposition;
+          var dispLabel = disp === 'sent' ? '✅ Verzonden naar klant'
+                        : disp === 'resolved' ? '✅ Geanalyseerd (geen antwoord mogelijk — Google no-reply)'
+                        : '⚠️ Klaar ter review — check & verstuur zelf';
+          if (btn) {
+            var card = btn.closest('[id^="ac-item-"]');
+            if (card) {
+              var body = card.querySelector('div[style*="flex:1"]') || card;
+              var box = document.createElement('div');
+              box.className = 'ac-gsc-analysis';
+              box.style.cssText = 'margin-top:8px;padding:10px;background:#0f172a;border:1px solid #6366f1;border-radius:8px;font-size:12px;color:#e2e8f0;line-height:1.5;white-space:pre-wrap';
+              box.textContent =
+                (d.used_live_gsc ? '✅ Live GSC-data gebruikt' : '⚠️ Geen live GSC-data beschikbaar') +
+                ' · Vertrouwen: ' + (Math.round((d.confidence||0)*100)) + '%\n' +
+                dispLabel + '\n\n' + (d.analysis || '');
+              body.appendChild(box);
+              btn.textContent = 'Gereed';
+            }
+            loadActionCenter(); loadActivityLogs();
+          }
+        } else {
+          done();
+        }
+      }).catch(fail);
   } else if (type === 'calendar_approve') {
     if (!confirm('Afspraak in Google Agenda planen? (incl. reistijd/conflict-check)')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
     post('/api/calendar/proposals/approve', JSON.stringify({ proposal_id: action.id }), 'application/json')
