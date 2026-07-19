@@ -1,11 +1,19 @@
-/* Iris Remote — custom laag bovenop Tailwind (glass, glow, scrollbar). */
+/* Iris Remote — custom laag bovenop Tailwind (glass, glow, scrollbar, animaties). */
 :root {
   --iris-blue: #8ed5ff;
+  --iris-blue-deep: #38bdf8;
   --surface-bg: #101415;
+  --on-surface: #e0e3e5;
+  --on-surface-variant: #bdc8d1;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --err: #ffb4ab;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
+* { -webkit-tap-highlight-color: transparent; }
 body {
   background-color: var(--surface-bg);
-  color: #e0e3e5;
+  color: var(--on-surface);
   font-family: 'Inter', sans-serif;
   overflow-x: hidden;
   min-height: max(100dvh, 640px);
@@ -62,3 +70,121 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 0.75rem;
 }
 #detail-overlay:not([hidden]) { display: flex; }
+
+/* ── Animaties ─────────────────────────────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fadeUp 0.4s var(--ease) both; }
+/* Stagger: kinderen komen na elkaar binnen */
+.stagger > * { opacity: 0; animation: fadeUp 0.45s var(--ease) both; }
+.stagger > *:nth-child(1) { animation-delay: 0.03s; }
+.stagger > *:nth-child(2) { animation-delay: 0.08s; }
+.stagger > *:nth-child(3) { animation-delay: 0.13s; }
+.stagger > *:nth-child(4) { animation-delay: 0.18s; }
+.stagger > *:nth-child(5) { animation-delay: 0.23s; }
+.stagger > *:nth-child(n+6) { animation-delay: 0.28s; }
+
+/* Bottom-sheet slide-in */
+#detail-overlay {
+  transition: opacity 0.28s var(--ease);
+  opacity: 0;
+}
+#detail-overlay:not([hidden]) { opacity: 1; }
+#detail-card {
+  transform: translateY(20px);
+  transition: transform 0.32s var(--ease);
+}
+#detail-overlay:not([hidden]) #detail-card { transform: translateY(0); }
+
+/* Detail-actieknoppen: tik-feedback */
+[data-action] { transition: transform 0.12s var(--ease), background 0.2s; }
+[data-action]:active { transform: scale(0.97); }
+
+/* Sync-spin */
+@keyframes spin { to { transform: rotate(360deg); } }
+.animate-spin { animation: spin 0.8s linear infinite; }
+
+/* ── Skeleton-loaders ──────────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(100deg, rgba(255,255,255,0.04) 30%, rgba(255,255,255,0.09) 50%, rgba(255,255,255,0.04) 70%);
+  background-size: 200% 100%;
+  animation: shimmer 1.3s infinite linear;
+  border-radius: 0.5rem;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+.sk-card {
+  height: 132px;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(15,23,42,0.6);
+  border-radius: 0.75rem;
+}
+
+/* ── Toast notificaties ────────────────────────────────────────────────── */
+#toast-host {
+  position: fixed; top: calc(env(safe-area-inset-top, 0px) + 76px); left: 50%;
+  transform: translateX(-50%); z-index: 90;
+  display: flex; flex-direction: column; gap: 8px; width: calc(100% - 32px); max-width: 420px;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(29,32,34,0.92); backdrop-filter: blur(14px);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-left: 3px solid var(--iris-blue);
+  border-radius: 0.75rem; padding: 12px 14px;
+  font-size: 13px; color: var(--on-surface);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  animation: toastIn 0.32s var(--ease) both;
+}
+.toast.ok { border-left-color: var(--ok); }
+.toast.err { border-left-color: var(--err); }
+.toast.leaving { animation: toastOut 0.3s var(--ease) forwards; }
+@keyframes toastIn { from { opacity:0; transform: translateY(-12px) scale(0.98);} to {opacity:1; transform: none;} }
+@keyframes toastOut { to { opacity:0; transform: translateY(-12px) scale(0.98);} }
+.toast .material-symbols-outlined { font-size: 20px; }
+
+/* ── Sync-status pill (header-left) ────────────────────────────────────── */
+#sync-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  padding: 4px 10px; border-radius: 9999px;
+  border: 1px solid rgba(255,255,255,0.1);
+  transition: color 0.3s, border-color 0.3s, background 0.3s;
+}
+#sync-pill.fresh { color: var(--ok); border-color: rgba(74,222,128,0.35); background: rgba(74,222,128,0.08); }
+#sync-pill.recent { color: var(--iris-blue); border-color: rgba(142,213,255,0.35); background: rgba(142,213,255,0.08); }
+#sync-pill.stale { color: var(--warn); border-color: rgba(251,191,36,0.35); background: rgba(251,191,36,0.08); }
+#sync-pill.dead { color: var(--err); border-color: rgba(255,180,171,0.35); background: rgba(255,180,171,0.08); }
+#sync-pill .dot { width:7px; height:7px; border-radius:50%; background: currentColor; }
+#sync-pill.stale .dot, #sync-pill.dead .dot { animation: blink 1.4s infinite; }
+@keyframes blink { 50% { opacity: 0.25; } }
+
+/* ── Besluit-status badges (inline in cards) ───────────────────────────── */
+.bdg { display:inline-flex; align-items:center; gap:6px; font-size:13px; padding-top:2px; }
+.bdg.pending { color: var(--iris-blue); }
+.bdg.applied { color: var(--ok); }
+.bdg.failed  { color: var(--err); }
+
+/* ── Pull-to-refresh ───────────────────────────────────────────────────── */
+#ptr {
+  position: fixed; top: 0; left: 0; right: 0; height: 64px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--iris-blue); z-index: 40; pointer-events: none;
+  transform: translateY(-64px); transition: transform 0.2s var(--ease);
+}
+#ptr .material-symbols-outlined { font-size: 26px; }
+#ptr.spinning .material-symbols-outlined { animation: spin 0.8s linear infinite; }
+
+/* Card hover-lift op desktop */
+@media (hover:hover) {
+  .item:hover { transform: translateY(-2px); border-color: rgba(142,213,255,0.4); box-shadow: 0 8px 30px rgba(0,0,0,0.35); }
+}
+.item { transition: transform 0.18s var(--ease), border-color 0.2s, box-shadow 0.2s; }
+
+/* Focus-zichtbaarheid voor toetsenbord */
+button:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--iris-blue); outline-offset: 2px;
+}

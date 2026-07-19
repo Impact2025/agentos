@@ -59,11 +59,18 @@
   <div class="flex items-center gap-3">
     <span class="material-symbols-outlined text-primary">hub</span>
     <h1 class="font-headline-md text-headline-md font-bold text-on-surface">Iris Remote</h1>
+    <span id="sync-pill" class="recent"><span class="dot"></span><span id="sync-pill-txt">…</span></span>
   </div>
   <button class="text-primary hover:opacity-80 active:scale-95 transition-transform" id="syncTrigger" title="Verversen">
     <span class="material-symbols-outlined">sync</span>
   </button>
 </header>
+
+<!-- Pull-to-refresh indicator -->
+<div id="ptr"><span class="material-symbols-outlined">refresh</span></div>
+
+<!-- Toast host -->
+<div id="toast-host" aria-live="polite"></div>
 
 <main class="pt-24 px-container-padding max-w-[768px] mx-auto min-h-screen space-y-stack-lg">
 
