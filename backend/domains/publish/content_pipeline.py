@@ -28,7 +28,8 @@ import uuid
 
 import httpx
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from ...shared.database import get_conn
 from ..chat import hermes as hermes_service
@@ -360,11 +361,68 @@ async def _write_article(site: Dict, keyword: str, angle: str, rationale: str) -
     return html_body
 
 
+_BYLINE_RE = re.compile(
+    r"^\s*(auteur|door|publicatiedatum|gepubliceerd|laatst bijgewerkt|leestijd|samenvatting)\b"
+    r"|^\s*\w[\w\s]{0,40}\|\s*(publicatiedatum|gepubliceerd)",
+    re.IGNORECASE,
+)
+
+
+def _derive_meta_desc(html_body: str) -> str:
+    """Meta-description afgeleid uit de body, voor artikelen zonder expliciet
+    META-blok. Twee dingen die eerder misgingen en elke keer een reviewer-aftrek
+    opleverden: de <h1> telde mee, waardoor de description letterlijk met de
+    titel begon; en het afkappen op `[:155] + '…'` gaf 156 tekens én brak midden
+    in een woord. Strip dus de kop en kap op woordgrens binnen de 155."""
+    # Koppen eruit vóór het platslaan: `_strip_duplicate_header` haakt op een
+    # <h1> aan het begín van de body en mist hem zodra de generator het artikel
+    # in een wrapper-<div> zet — precies het geval hier. Een description hoort
+    # sowieso uit de lopende tekst te komen, dus wieden we álle koppen, waar ze
+    # ook staan.
+    body = re.sub(r"<h[1-6]\b[^>]*>[\s\S]*?</h[1-6]>", " ", html_body or "", flags=re.I)
+    paragraphs = re.findall(r"<p\b[^>]*>([\s\S]*?)</p>", body, flags=re.I)
+    chunks = []
+    for p in paragraphs:
+        t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", p)).strip()
+        # Byline-/metaregels ("Auteur: ... | Publicatiedatum: ...", "Samenvatting:")
+        # zijn geen lopende tekst en hoorden nooit in een meta-description.
+        if not t or _BYLINE_RE.match(t):
+            continue
+        chunks.append(t)
+        if len(" ".join(chunks)) >= 155:
+            break
+    text = " ".join(chunks).strip()
+    if not text:  # geen bruikbare alinea's — val terug op de hele body
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", body)).strip()
+    return _smart_truncate(text, 155)
+
+
+def _preview_meta(html_body: str) -> tuple:
+    """De meta-titel/description zoals die bij publicatie daadwerkelijk wordt
+    weggeschreven: uit expliciete META-blokken, anders afgeleid uit de body.
+    Spiegelt `_publish_to_site` — zie de meta-afleiding daar."""
+    cleaned, meta_title, meta_desc = _strip_meta_and_suggestions(html_body or "")
+    title = meta_title or _extract_title(cleaned, fallback="")
+    return title[:60], meta_desc or _derive_meta_desc(cleaned)
+
+
 async def _review_article(site: Dict, keyword: str, html_body: str) -> Dict:
     review_system = _profile_prompt("SEO Editor") or _FALLBACK_REVIEW_PROMPT
+    # De rubriek beoordeelt óók meta-titel/description, maar de schrijver levert
+    # per opdracht alleen de HTML-body zonder <head> — die velden ontstaan pas bij
+    # publicatie. Zonder ze mee te sturen trok de reviewer élke ronde punten af
+    # voor "meta ontbreekt", een aftrek die geen enkele herschrijfronde kan
+    # repareren: artikelen bleven daardoor structureel onder de gate hangen en
+    # liepen hun verbeter-pogingen op aan een niet-bestaand gebrek. Toon dus wat
+    # er echt gepubliceerd wordt.
+    meta_title, meta_desc = _preview_meta(html_body)
     review_prompt = (
         f"Beoordeel onderstaand blogartikel voor {site['name']}.\n\n"
         f"Kernzoekwoord: {keyword}\n\n"
+        "De meta-velden staan niet in de body; dit zijn de waarden die bij "
+        "publicatie worden weggeschreven — beoordeel déze:\n"
+        f"- Meta-titel ({len(meta_title)} tekens): {meta_title or '(leeg)'}\n"
+        f"- Meta-description ({len(meta_desc)} tekens): {meta_desc or '(leeg)'}\n\n"
         "Houd de feedback beknopt: maximaal 6 genummerde punten van elk 1-2 zinnen.\n\n"
         f"ARTIKEL:\n{html_body}"
     )
@@ -422,25 +480,133 @@ async def _review_article(site: Dict, keyword: str, html_body: str) -> Dict:
     return {"score": score, "feedback": feedback}
 
 
+def _internal_link_count(html_body: str, site: Dict) -> int:
+    """Aantal links naar de eigen site (absoluut of als pad)."""
+    host = urlparse((site.get("base_url") or "").strip()).netloc.lower().removeprefix("www.")
+    n = 0
+    for href in re.findall(r'<a\b[^>]*href="([^"]+)"', html_body or "", re.I):
+        h = href.strip().lower()
+        if h.startswith("/") or (host and host in h):
+            n += 1
+    return n
+
+
+# ── Uniciteitscheck ─────────────────────────────────────────────────────────
+# Vergelijkt een nieuw artikel met eerder gepubliceerde artikelen van dezelfde
+# site via Jaccard-overlap op 5-woord shingles (woordvolgorde-gevoelig, dus
+# een herschreven kopie met dezelfde zinnen scoort hoog ook al is geen zin
+# letterlijk gelijk). Los van de LLM-kwaliteitsgate: die beoordeelt of een
+# artikel goed geschreven is, niet of het onderwerp al eerder is behandeld.
+_SHINGLE_N = 5
+_UNIQUENESS_SIMILARITY_THRESHOLD = 0.30  # empirisch: ongerelateerde artikelen <0.05, een bijna-kopie >0.4
+
+
+def _shingles(text: str, n: int = _SHINGLE_N) -> set:
+    words = re.findall(r"[a-zà-ü0-9]+", (text or "").lower())
+    if len(words) < n:
+        return {" ".join(words)} if words else set()
+    return {" ".join(words[i:i + n]) for i in range(len(words) - n + 1)}
+
+
+def _jaccard(a: set, b: set) -> float:
+    if not a or not b:
+        return 0.0
+    union = len(a | b)
+    return (len(a & b) / union) if union else 0.0
+
+
+def _fetch_published_texts(site_id: str, exclude_job_id: Optional[str] = None,
+                            limit: int = 150) -> List[Tuple[str, str]]:
+    """(titel, platte tekst) van eerder gepubliceerde artikelen van deze site —
+    het vergelijkingscorpus voor de uniciteitscheck. Alleen 'published': een
+    'pending_review'/'needs_work' concept mag zichzelf niet als duplicaat zien."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, title, blog_html FROM content_jobs "
+            "WHERE site_id=? AND status='published' AND blog_html IS NOT NULL AND blog_html!='' "
+            "ORDER BY created_at DESC LIMIT ?",
+            (site_id, limit),
+        ).fetchall()
+    out: List[Tuple[str, str]] = []
+    for r in rows:
+        if exclude_job_id and r["id"] == exclude_job_id:
+            continue
+        text = article_writer._plain_text(r["blog_html"] or "")
+        if text.strip():
+            out.append((r["title"], text))
+    return out
+
+
+def check_uniqueness(html_body: str, corpus: List[Tuple[str, str]],
+                      threshold: float = _UNIQUENESS_SIMILARITY_THRESHOLD) -> Dict:
+    """Retourneert {'pass', 'best_match', 'similarity', 'checked_against'}."""
+    shingles = _shingles(article_writer._plain_text(html_body))
+    best_title, best_score = "", 0.0
+    for title, other_text in corpus:
+        score = _jaccard(shingles, _shingles(other_text))
+        if score > best_score:
+            best_title, best_score = title, score
+    return {
+        "pass": best_score < threshold,
+        "best_match": best_title if best_score > 0 else "",
+        "similarity": round(best_score, 3),
+        "checked_against": len(corpus),
+    }
+
+
 async def review_and_improve(site: Dict, keyword: str, html_body: str,
-                             max_rounds: int = 6) -> tuple:
+                             max_rounds: int = 6,
+                             target_score: Optional[int] = None,
+                             exclude_job_id: Optional[str] = None) -> tuple:
     """Review → verbeter → review, net zo lang tot de kwaliteitsgate
     (CONTENT_MIN_SCORE) is gehaald. Nooit eerder opgeven dan nodig: een artikel
     onder de grens mag het dashboard (en Vincents ogen) niet bereiken — de agent
     blijft zélf aanscherpen. `max_rounds` is alleen een harde veiligheidslimiet
     (tegen eindeloze LLM-loops); bij de biweekly/regenerate-routes wordt die
     ruim gezet (zie CONTENT_MAX_ROUNDS) zodat de grens in de praktijk wél gehaald
-    wordt. Retourneert (html_body, review)."""
+    wordt.
+
+    `target_score` tilt de lat alléén voor deze aanroep. Nodig omdat de loop
+    stopt zodra de gate gehaald is: wie bestaande artikelen naar een hógere lat
+    wil tillen (bv. de opschoonronde naar 85) kreeg met de gate op 80 een loop
+    die na de eerste 80 al tevreden was en niets deed. De globale gate blijft
+    ongemoeid — die verhogen zou élke run strenger maken.
+
+    `exclude_job_id` sluit een job uit het uniciteitscorpus: nodig zodra deze
+    functie een al-gepubliceerd artikel doorverbetert, anders vergelijkt de
+    check het artikel met zichzelf en faalt hij per definitie.
+
+    Retourneert (html_body, review)."""
     from ...shared.config import CONTENT_MIN_SCORE, CONTENT_MAX_ROUNDS
+    goal = int(target_score or CONTENT_MIN_SCORE)
     effective_max = max(max_rounds, CONTENT_MAX_ROUNDS)
-    review = await _review_article(site, keyword, html_body)
-    if not review:
-        # _review_article gaf None terug (model-fout) — val niet stil, geef een
-        # minimale review zodat het artikel alsnog de wachtrij in gaat.
-        review = {"score": 0, "feedback": "Review kon niet worden uitgevoerd."}
+    corpus = _fetch_published_texts(site["id"], exclude_job_id=exclude_job_id)
+
+    async def _reviewed(body: str) -> Dict:
+        r = await _review_article(site, keyword, body)
+        if not r:
+            # _review_article gaf None terug (model-fout) — val niet stil, geef
+            # een minimale review zodat het artikel alsnog de wachtrij in gaat.
+            r = {"score": 0, "feedback": "Review kon niet worden uitgevoerd."}
+        uniq = check_uniqueness(body, corpus)
+        r["uniqueness"] = uniq
+        if not uniq["pass"]:
+            # Geen aparte gate — leunt op dezelfde verbeter-loop als de reviewer:
+            # score onder de grens duwen dwingt een herschrijfronde af, met de
+            # overlap als expliciete instructie voor de optimizer.
+            r["score"] = min(r["score"], goal - 1)
+            r["feedback"] = (
+                (r.get("feedback") or "").strip()
+                + f"\n\nUNIEKHEID: dit artikel overlapt {uniq['similarity']:.0%} met een eerder "
+                f"gepubliceerd artikel op deze site ('{uniq['best_match']}'). Herschrijf de "
+                "invalshoek, voorbeelden en structuur zodat het inhoudelijk onderscheidend is."
+            ).strip()
+        return r
+
+    review = await _reviewed(html_body)
     best_html, best_review = html_body, review
     rounds = 0
-    while review["score"] < CONTENT_MIN_SCORE and rounds < effective_max and review["feedback"]:
+    while review["score"] < goal and rounds < effective_max and review["feedback"]:
         # Circuit-breaker midden in de verbeter-loop: als de provider-quota
         # (of het dagbudget) opraakt, stoppen we direct — anders blijft één
         # run de hele quota leegzuigen (incident 2026-07-10/11: 46 calls in
@@ -454,7 +620,7 @@ async def review_and_improve(site: Dict, keyword: str, html_body: str,
             break
         rounds += 1
         logger.info("[content-pipeline] Verbeterronde %s (score %s < %s) — %s",
-                    rounds, review["score"], CONTENT_MIN_SCORE, site["name"])
+                    rounds, review["score"], goal, site["name"])
         html_body = await _optimize_article(site, keyword, html_body, review["feedback"])
         # Een herschrijfronde kan gevalideerde interne links laten vallen of nieuwe
         # verzinnen — die zijn dan niet meer gevet, dus opnieuw wieden vóór de
@@ -463,7 +629,22 @@ async def review_and_improve(site: Dict, keyword: str, html_body: str,
         if n_stripped:
             logger.info("[content-pipeline] Optimalisatieronde %s: %d ongevette interne link(s) verwijderd",
                         rounds, n_stripped)
-        review = await _review_article(site, keyword, html_body)
+        # Interne links kunnen alleen hier terugkomen. De optimalisatieronde krijgt
+        # van de reviewer stelselmatig "voeg interne links toe" te horen, verzint er
+        # dan een paar, en die worden hierboven (terecht) gestript omdat ze niet
+        # gevet zijn — netto verdwijnen ze en blijft de aftrek elke ronde staan.
+        # De optimizer kent de kandidatenlijst namelijk niet; de linkstap wel.
+        # Alleen draaien als het artikel er te weinig heeft, want het kost een
+        # LLM-call per ronde.
+        if _internal_link_count(html_body, site) < 2:
+            try:
+                html_body, link_report = await article_writer._link_pass(
+                    site, keyword, html_body, ctas=knowledge_service.get_site_knowledge(site)["ctas"])
+                logger.info("[content-pipeline] Optimalisatieronde %s: linkstap voegde %s interne link(s) toe",
+                            rounds, link_report.get("internal_added"))
+            except Exception as e:
+                logger.warning("[content-pipeline] Linkstap in verbeter-loop mislukt: %s", str(e)[:120])
+        review = await _reviewed(html_body)
         # Houd de beste versie vast: een herschrijfronde kan ook verslechteren,
         # en dan willen we niet de mindere laatste versie opleveren.
         if review["score"] > best_review["score"]:
@@ -482,19 +663,78 @@ async def review_and_improve(site: Dict, keyword: str, html_body: str,
     return best_html, best_review
 
 
+def _looks_like_article(out: str, original: str) -> bool:
+    """Is dit een herschreven artikel, of het antwoord op een ándere opdracht?
+
+    De optimalisatiestap leverde regelmatig het review-JSON-object terug
+    ({"score": .., "feedback": [..]}) in plaats van HTML — dat werd dan als
+    artikeltekst opgeslagen en kostte in één ronde ~85% van de inhoud. De enige
+    controle was `len(out) > 50`, waar een JSON-blob probleemloos doorheen komt.
+    """
+    t = (out or "").strip()
+    if len(t) < 200 or t.startswith("{") or t.startswith("["):
+        return False
+    if not re.search(r"<(p|h[1-6]|ul|ol|section)\b", t, re.I):
+        return False
+    if re.search(r'"(score|verdict|feedback)"\s*:', t):
+        return False
+    # Een verbeterronde mag inkorten, maar niet halveren: dat is inhoudsverlies,
+    # geen redactie.
+    orig_words = len(re.sub(r"<[^>]+>", " ", original or "").split())
+    new_words = len(re.sub(r"<[^>]+>", " ", t).split())
+    if orig_words and new_words < orig_words * 0.6:
+        return False
+    # Andersom plakt het model soms een tweede exemplaar van de staart eronder
+    # (stappenplan + FAQ dubbel). De reviewer ziet dat niet betrouwbaar en gaf
+    # zo'n artikel gewoon een 82 — het zou dus dubbel op de site belanden.
+    if _duplicate_headings(t) > _duplicate_headings(original or ""):
+        return False
+    return True
+
+
+def _duplicate_headings(html: str) -> int:
+    """Aantal koppen dat meer dan één keer voorkomt (genormaliseerd)."""
+    heads = [
+        re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", h)).strip().lower()
+        for h in re.findall(r"<h[2-3][^>]*>([\s\S]*?)</h[2-3]>", html or "", re.I)
+    ]
+    heads = [h for h in heads if h]
+    return len(heads) - len(set(heads))
+
+
 async def _optimize_article(site: Dict, keyword: str, html_body: str, feedback: str) -> str:
-    optimize_system = (_profile_prompt("SEO Editor") or _FALLBACK_REVIEW_PROMPT) + (
-        "\n\nJe herschrijft nu zelf het artikel op basis van je eigen feedback — lever "
-        "de verbeterde HTML-body, geen JSON, geen beoordeling."
+    # Bewust NIET het volledige SEO-Editor-profiel: dat eindigt met "ANTWOORD
+    # UITSLUITEND met één JSON-object {score, verdict, feedback}". Die harde
+    # instructie won het van de toegevoegde "lever HTML"-zin, waardoor het model
+    # een beoordeling terugstuurde die als artikel werd weggeschreven. We nemen
+    # alleen de rubriek over, tot aan het antwoordformaat.
+    editor = _profile_prompt("SEO Editor") or _FALLBACK_REVIEW_PROMPT
+    rubric = re.split(r"\n\s*ANTWOORD UITSLUITEND", editor)[0].strip()
+    optimize_system = (
+        "Je bent een Nederlandse SEO-eindredacteur die artikelen herschrijft. Je "
+        "levert ALTIJD een volledige HTML-body en NOOIT een beoordeling of JSON.\n\n"
+        "Je hanteert deze kwaliteitsrubriek:\n" + rubric
     )
     prompt = (
         f"Herschrijf dit artikel voor {site['name']} zodat het de onderstaande feedback "
-        f"verwerkt. Behoud toon en stijl.\n\nFeedback:\n{feedback}\n\n"
+        f"verwerkt. Behoud toon, stijl, lengte en alle bestaande links.\n\n"
+        f"Feedback:\n{feedback}\n\n"
         f"Kernzoekwoord: {keyword}\n\nORIGINEEL:\n{html_body}\n\n"
-        "Lever ALLEEN de verbeterde HTML-body zonder <html>/<head>/<body>."
+        "Lever ALLEEN de verbeterde HTML-body zonder <html>/<head>/<body>. "
+        "Geen JSON, geen scores, geen toelichting."
     )
     out = await _llm(optimize_system, prompt, max_tokens=16000)
-    return out if len(out) > 50 else html_body
+    # Het model verpakt de body soms in een ```html-fence; dat is een prima
+    # herschrijving in een verkeerd jasje — uitpakken i.p.v. de ronde weggooien.
+    out = re.sub(r"^\s*```(?:html)?\s*|\s*```\s*$", "", out or "", flags=re.I)
+    if not _looks_like_article(out, html_body):
+        logger.warning(
+            "[content-pipeline] Optimalisatieronde leverde geen bruikbaar artikel "
+            "(%d tekens, begint met %r) — originele versie behouden.",
+            len(out or ""), (out or "")[:40],
+        )
+        return html_body
+    return out
 
 
 async def _write_article_best(site: Dict, keyword: str, angle: str,
@@ -546,11 +786,42 @@ async def _write_article_best(site: Dict, keyword: str, angle: str,
         return html_body, {"staged": False, "fallback_reason": str(e)[:200]}, ""
 
 
+#: Een titel is een kop, geen alinea. Boven deze lengte is het bijna altijd een
+#: fallback-tekst die per ongeluk als titel is doorgegeven.
+_TITLE_MAX_LEN = 90
+
+
+def _clean_title(raw: str) -> str:
+    """Maak van willekeurige tekst een bruikbare titel: HTML eruit, witruimte
+    genormaliseerd, en nooit langer dan één kop.
+
+    Waarom: de fallback van `_extract_title` was het `angle`-veld, en dat is bij
+    de Radar/trend-brug een hele alinea ("In tegenstelling tot het advies om
+    ..."). Die belandde ongefilterd als titel én als slug in de wachtrij, en
+    daarna in het Actiecentrum. Een alinea knippen we daarom terug tot de eerste
+    zin, en anders hard af op woordgrens.
+    """
+    text = re.sub(r"<[^>]+>", "", raw or "")
+    text = re.sub(r"\s+", " ", text).strip().strip('"“”')
+    if len(text) <= _TITLE_MAX_LEN:
+        return text
+    first = re.split(r"(?<=[.!?])\s", text)[0].strip()
+    if first and len(first) <= _TITLE_MAX_LEN:
+        return first
+    cut = text[:_TITLE_MAX_LEN].rsplit(" ", 1)[0].rstrip(" ,;:-")
+    return cut or text[:_TITLE_MAX_LEN]
+
+
 def _extract_title(html_body: str, fallback: str) -> str:
-    m = re.search(r"<h1[^>]*>(.*?)</h1>", html_body, re.IGNORECASE | re.DOTALL)
-    if m:
-        return re.sub(r"<[^>]+>", "", m.group(1)).strip()
-    return fallback
+    """Titel uit de kop van het artikel; pas daarna de fallback. Beide worden
+    door `_clean_title` gehaald — een alinea mag nooit als titel doorglippen."""
+    for tag in ("h1", "h2"):
+        m = re.search(rf"<{tag}[^>]*>(.*?)</{tag}>", html_body, re.IGNORECASE | re.DOTALL)
+        if m:
+            title = _clean_title(m.group(1))
+            if title:
+                return title
+    return _clean_title(fallback)
 
 
 # ── Social copy + afbeelding ─────────────────────────────────────────────────
@@ -994,12 +1265,12 @@ _META_BLOCK_RE = re.compile(
 )
 # HTML-commentaar attribuutvorm: <!--META title="..." description="..."-->
 _META_COMMENT_ATTR_RE = re.compile(
-    r"<!\\s*--\\s*META\s+title=\"([^\"]*)\"\s+description=\"([^\"]*)\"\\s*--\\s*>",
+    r"<!\s*--\s*META\s+title=\"([^\"]*)\"\s+description=\"([^\"]*)\"\s*--\s*>",
     re.IGNORECASE | re.DOTALL,
 )
 # HTML-commentaar dubbele-puntvorm: <!-- Meta-titel: tekst --> / <!-- Meta-description: tekst -->
 _META_COMMENT_COLON_RE = re.compile(
-    r"<!\\s*--\\s*meta[- ]?(titel|title|beschrijving|description)\s*:\\s*(.*?)\\s*--\\s*>",
+    r"<!\s*--\s*meta[- ]?(titel|title|beschrijving|description)\s*:\s*(.*?)\s*--\s*>",
     re.IGNORECASE | re.DOTALL,
 )
 # Zichtbare paragraaf: <p><strong>Meta-titel:</strong> tekst</p>
@@ -1442,6 +1713,11 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
                 "error": f"Geen {env_prefix}_PUBLISH_URL/_PUBLISH_KEY — site-publicatie overgeslagen"}
 
     base_url = (site.get("base_url") or "").rstrip("/")
+    # Code-fences eraf vóórdat we verder reinigen — anders belandt een
+    # letterlijke ```html-fence (en de erdoor verschoven/dubbele koppen)
+    # zichtbaar op de live pagina.
+    html_body = _CODE_FENCE_RE.sub(r"\1", (html_body or "").strip())
+    html_body = _unwrap_code_fence(html_body)
     # Haal de zichtbare Meta-/Suggestie-blokken uit de body vóórdat we
     # publiceren — die horen niet in de leesbare tekst. Als de AI bruikbare
     # meta-waarden meeleverde, gebruiken we die liever dan ze uit de body te
@@ -1454,16 +1730,22 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
     # DB, dus anders verschijnt alles dubbel. Strip ze hier (deploy-onafhankelijk).
     html_body = _strip_duplicate_header(html_body)
     # meta-description + excerpt uit de (gezuiverde) HTML halen
-    text = re.sub(r"<[^>]+>", " ", html_body or "")
-    text = re.sub(r"\s+", " ", text).strip()
-    meta_desc = parsed_desc or ((text[:155].rstrip() + "…") if len(text) > 155 else text)
+    meta_desc = parsed_desc or _derive_meta_desc(html_body)
     first_p = re.search(r"<p>(.*?)</p>", html_body or "", re.S)
     raw_excerpt = re.sub(r"<[^>]+>", "", first_p.group(1)).strip() if first_p else ""
     # Woordgrens-afkap zodat een excerpt nooit midden in een woord afbreekt
     # (voorkomt "... toepassen. E").
     excerpt = _smart_truncate(raw_excerpt, 200)
 
-    if env_prefix == "BIJEEN":
+    # TeambuildingMetImpact draait op dezelfde /api/blog-route als Bijeen
+    # (bewust "Bijeen-compatibel" gebouwd, zie scripts/import_teambuilding_blogs.py)
+    # en verwacht dus hetzelfde schema: metaTitle/metaDescription/status i.p.v.
+    # seoTitle/source. Zonder deze branch stuurde de content-wachtrij het
+    # /api/blog/agent-os-schema (seoTitle) naar een /api/blog-endpoint dat
+    # metaTitle als verplicht string-veld valideert — Zod zag het veld nooit
+    # en wees élke publicatie af met "Invalid input: expected string,
+    # received undefined" (21 jul 2026).
+    if env_prefix in ("BIJEEN", "TEAMBUILDINGMETIMPACT"):
         payload = {
             "title": title,
             "content": (html_body or "").strip(),
@@ -1531,6 +1813,34 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
 
 # ── Goedkeuren → publiceren + posten ────────────────────────────────────────
 
+def publish_failure_reason(result: Optional[Dict]) -> str:
+    """Leesbare oorzaak uit een publish_result. Wordt zowel bij het mislukken
+    weggeschreven (`content_jobs.error`) als door het Actiecentrum gebruikt om
+    oudere rijen alsnog te duiden — die hebben een lege `error`-kolom.
+
+    Een kale "HTTP 404" zegt niets tegen een mens: bij het publish-endpoint
+    betekent 404 vrijwel altijd dat dát endpoint niet (meer) bestaat, niet dat
+    het artikel weg is. Die vertaling zit hier.
+    """
+    if not result:
+        return ""
+    raw = (result.get("live_check")
+           or (result.get("site") or {}).get("error")
+           or (result.get("netlify") or {}).get("error")
+           or "")
+    raw = re.sub(r"\s+", " ", str(raw)).strip()
+    if not raw:
+        return ""
+    if raw.startswith("HTTP 404"):
+        return ("Publicatie-endpoint van de site bestaat niet (HTTP 404) — "
+                "controleer de publish-URL van dit project. " + raw)[:400]
+    if raw.startswith("HTTP 5"):
+        return ("De website gaf een serverfout bij publiceren — probeer opnieuw "
+                "of controleer de site. " + raw)[:400]
+    return raw[:400]
+
+
+
 async def approve_and_publish(job_id: str,
                               social_channels: Optional[List[str]] = None) -> Dict:
     """Publiceer naar de website van de site (Netlify óf de per-project
@@ -1538,10 +1848,11 @@ async def approve_and_publish(job_id: str,
     naar elk platform waarvoor de site credentials heeft. Wordt uitsluitend
     getriggerd door een menselijke goedkeuring (nooit automatisch).
 
-    `social_channels` is de per-artikel-keuze van de reviewer: None = alle
-    geconfigureerde platformen (het oude gedrag), een lege lijst = alleen de
-    website (geen social, ook geen Content Multiplier), een deellijst
-    (bv. ["linkedin"]) = alleen die platformen.
+    `social_channels` is de per-artikel-keuze van de reviewer en is bewust
+    opt-in: None of een lege lijst = alleen de website (geen social, ook geen
+    Content Multiplier). Social gebeurt dus nooit vanzelf — voor géén enkel
+    project. Alleen een expliciete lijst (bv. ["linkedin"]) post naar die
+    platformen.
 
     Een falend social-platform (bv. LinkedIn in 'Review in progress') blokkeert
     de website-publicatie nooit — het wordt als mislukt genoteerd en overgeslagen.
@@ -1673,17 +1984,17 @@ async def approve_and_publish(job_id: str,
             logger.warning("Social-post %s overgeslagen (mislukt): %s", platform, e)
             return {"success": False, "error": str(e)[:200]}
 
-    chosen = ({c.strip().lower() for c in social_channels}
-              if social_channels is not None else None)
+    # Opt-in: alleen wat de reviewer expliciet aanvinkte gaat naar social.
+    chosen = {c.strip().lower() for c in (social_channels or [])}
 
     def _wants(platform: str) -> bool:
-        return chosen is None or platform in chosen
+        return platform in chosen
 
     if website_only:
         # Bewust geen social voor deze site — alleen de website + zoekmachines.
         result["social"] = {"skipped": "website_only — social uitgeschakeld voor deze site"}
-    elif chosen is not None and not chosen:
-        result["social"] = {"skipped": "social uitgeschakeld bij goedkeuren (keuze reviewer)"}
+    elif not chosen:
+        result["social"] = {"skipped": "geen social aangevinkt bij goedkeuren"}
     else:
         if social_copy.get("linkedin") and _wants("linkedin") and linkedin_service.is_configured(site_name):
             result["social"]["linkedin"] = await _post(
@@ -1732,16 +2043,17 @@ async def approve_and_publish(job_id: str,
             result["live_check"] = reden
             logger.warning("[content-pipeline] %s", reden)
 
+    # De reden hoort óók op de job zelf: het Actiecentrum leest `error` en toonde
+    # anders "Onbekende fout" terwijl de echte oorzaak (HTTP 404/500 van het
+    # publish-endpoint) alleen in publish_result verstopt zat.
+    reden = "" if site_ok else publish_failure_reason(result)
     job_status = "published" if site_ok else "publish_failed"
-    _update_job(job_id, status=job_status, publish_result=json.dumps(result), reviewed_at=_now())
+    _update_job(job_id, status=job_status, publish_result=json.dumps(result),
+                error=reden, reviewed_at=_now())
     if site_ok:
         _log_activity(site_name, "publicatie", f"'{job['title']}' goedgekeurd en gepubliceerd",
                       artifact=article_url or "")
     else:
-        reden = (result.get("live_check")
-                 or (result.get("site") or {}).get("error")
-                 or (result.get("netlify") or {}).get("error")
-                 or "onbekende fout")
         _log_activity(site_name, "publicatie_mislukt",
                       f"'{job['title']}' goedgekeurd maar NIET gepubliceerd: {reden}",
                       artifact="")
@@ -1757,10 +2069,10 @@ async def approve_and_publish(job_id: str,
     if website_only:
         # Multiplier maakt social-pack + video — niet gewenst voor alleen-website-sites.
         result["multiplier"] = "overgeslagen (website_only)"
-    elif chosen is not None and not chosen:
-        # De reviewer zette social voor dít artikel uit — dan is een social-pack
-        # + video genereren zinloos werk (en LLM-quota).
-        result["multiplier"] = "overgeslagen (social uitgeschakeld bij goedkeuren)"
+    elif not chosen:
+        # De reviewer vinkte geen social aan — dan is een social-pack + video
+        # genereren zinloos werk (en LLM-quota).
+        result["multiplier"] = "overgeslagen (geen social aangevinkt)"
     elif CONTENT_MULTIPLIER_ENABLED and site_ok:
         try:
             from . import multiplier
@@ -1831,9 +2143,11 @@ async def regenerate_job(job_id: str) -> str:
         # blanco herschrijven is dobbelen (kan lager uitkomen). De verbeter-loop
         # start hier met de huidige tekst + verse reviewer-feedback.
         html_body = job["blog_html"]
+        continued_from_existing = True
     else:
         html_body, qc_report, case_study_id = await _write_article_best(
             site, job["keyword"], "", job["rationale"])
+        continued_from_existing = False
     html_body, review = await review_and_improve(site, job["keyword"], html_body)
 
     from ...shared.config import CONTENT_MIN_SCORE
@@ -1849,8 +2163,20 @@ async def regenerate_job(job_id: str) -> str:
     # Teller pas optellen als we écht een verbeter-cyclus hebben gedraaid; een
     # no-op (bestaande versie behouden) telt niet als nieuwe poging.
     new_attempts = attempts + (1 if review["score"] != old_score or review["score"] < CONTENT_MIN_SCORE else 0)
-    if review["score"] < old_score:
-        # Nooit een slechtere versie terugschrijven dan er al stond.
+    if review["score"] < old_score and not continued_from_existing:
+        # Nooit een slechtere versie terugschrijven dan er al stond. Deze
+        # vergelijking geldt alleen voor een blanco herschrijving: die kan écht
+        # slechter uitvallen dan wat er lag.
+        #
+        # Bij doorverbeteren mág hij niet gelden. `review_and_improve` beoordeelt
+        # de bestaande tekst als eerste en geeft de béste versie terug, dus die
+        # is per constructie al minstens zo goed als wat er stond. De opgeslagen
+        # `old_score` komt bovendien uit een eerdere — soms andere — meting; de
+        # reviewer varieert flink en scoorde tot juli 2026 stelselmatig lager
+        # door een meta-aftrek die niet in het artikel zat. Vergelijken met dat
+        # verouderde cijfer betekende dat het werk van elke ronde werd weggegooid
+        # en alleen de pogingenteller opliep: het artikel bevroor op zijn oude
+        # score tot het 'stuck' raakte, zonder dat er ooit iets werd opgeslagen.
         logger.info("[content-pipeline] Regenerate leverde %s (< bestaande %s) — bestaande versie behouden",
                     review["score"], old_score)
         _update_job(job_id, improve_attempts=new_attempts)

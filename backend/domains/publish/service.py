@@ -38,6 +38,22 @@ logger = logging.getLogger(__name__)
 NETLIFY_API = "https://api.netlify.com/api/v1"
 
 
+def _strip_code_fence(html_body: str) -> str:
+    """Haalt een eventuele ```html ... ``` code-fence van de body af.
+
+    Alleen een écht sluitende fence aan het eind telt als sluiting — een
+    ``` die toevallig binnen de content voorkomt (bv. in een code-voorbeeld)
+    mag de rest van het artikel niet afkappen."""
+    s = (html_body or "").strip()
+    m = re.match(r"^```[a-z]*\s*", s, re.IGNORECASE)
+    if not m:
+        return s
+    body = s[m.end():]
+    if body.endswith("```"):
+        body = body[:-3].rstrip()
+    return body.strip()
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -295,6 +311,10 @@ async def publish_article(
         raise ValueError("Een titel is verplicht.")
     if not (html_body or "").strip():
         raise ValueError("Lege artikelinhoud.")
+
+    # De schrijver verpakt de body soms in een ```html-fence; onbehandeld komt
+    # die letterlijk (incl. dubbele kop erna) op de live pagina te staan.
+    html_body = _strip_code_fence(html_body)
 
     slug = slugify(slug or title)
     if infographic_bytes:

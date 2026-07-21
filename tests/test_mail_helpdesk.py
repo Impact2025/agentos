@@ -134,6 +134,54 @@ def test_run_mailbox_creates_pending_reply(mailbox_row, monkeypatch):
     assert rows[0]["to_addr"] == "jan@x.nl"
 
 
+def test_appointment_mail_is_processed_outside_the_poll_transaction(mailbox_row, monkeypatch):
+    """Afspraak-mail: het voorstel wordt opgeslagen, niet gesmoord door een lock.
+
+    `create_proposal` opent zijn eigen verbinding. Werd hij aangeroepen binnen de
+    open write-transactie van de mail-poll, dan wachtte die op een lock die de
+    aanroeper zelf vasthield — self-deadlock, en elk afspraak-voorstel sneuvelde
+    op "database is locked" (20 jul 2026). De nep-agent hieronder schrijft écht,
+    dus hij faalt zodra de poll-transactie weer om hem heen komt te liggen.
+    """
+    monkeypatch.setattr(poplib, "POP3", FakePop)
+    monkeypatch.setattr(classify, "classify", lambda s, b, f: "appointment")
+
+    from backend.domains.calendar import agent as agenda_agent
+
+    calls = []
+
+    def fake_create_proposal(mid, inbox_id, subject, from_addr, body):
+        calls.append((mid, inbox_id))
+        with db.get_conn() as conn:  # eigen verbinding — dít is de scherpe rand
+            conn.execute(
+                "INSERT INTO calendar_proposals(mailbox_id,inbox_id,from_addr,subject,"
+                "title,proposed_start,proposed_end,conflict_checked,status) "
+                "VALUES(?,?,?,?,?,?,?,?,'pending_review')",
+                (mid, inbox_id, from_addr, subject, "Afspraak",
+                 "2026-07-21T10:00:00", "2026-07-21T10:30:00", "ok"),
+            )
+        return {"id": 1}
+
+    monkeypatch.setattr(agenda_agent, "create_proposal", fake_create_proposal)
+
+    n = service.run_mailbox({
+        "id": "mb_test", "pop_host": "h", "pop_port": 110, "pop_user": "u",
+        "pop_password": "p", "brand_context": "Skillkaart", "knowledge_scope": "all",
+    })
+    assert n == 1
+    # Filter op deze specifieke aanroep i.p.v. de hele tabel: calendar_proposals
+    # wordt door geen enkele fixture opgeruimd, dus rijen van eerdere agenda-tests
+    # in dezelfde testsessie stapelen zich op in die tabel.
+    assert len(calls) == 1
+    mid, inbox_id = calls[0]
+    with db.get_conn() as conn:
+        rows = list(conn.execute(
+            "SELECT status FROM calendar_proposals WHERE mailbox_id=? AND inbox_id=?",
+            (mid, inbox_id),
+        ))
+    assert len(rows) == 1 and rows[0]["status"] == "pending_review"
+
+
 def test_detect_language():
     assert drafter.detect_language("Hoe reset ik mijn wachtwoord, help alstublieft") == "nl"
     assert drafter.detect_language("How do I reset my password please") == "en"
