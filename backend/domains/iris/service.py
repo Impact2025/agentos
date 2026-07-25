@@ -507,7 +507,17 @@ def _yesterday_activity(limit: int = 40) -> List[Dict[str, Any]]:
             "WHERE created_at > datetime('now', '-1 day') ORDER BY created_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
-    return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            d = dict(r)
+            # Opgeloste fouten niet aan Iris voeren: anders adviseert ze
+            # zombie-fixes voor dingen die allang klaar zijn. De ok-regels
+            # (bv. 'LIVE op ...') blijven staan, dus zij ziet wél de uitkomst.
+            if d.get("status") == "error" and metrics._error_resolved(conn, d):
+                d["status"] = "ok"
+                d["detail"] = f"[OPGELOST] {d.get('detail') or ''}"
+            out.append(d)
+    return out
 
 
 async def gather_context(snapshot: Optional[Dict[str, Any]] = None,
@@ -607,7 +617,12 @@ def _build_prompt(ctx: Dict[str, Any]) -> str:
         parts += ["", f"## Jouw vorige briefing ({ctx['previous']['date']}) — cijfers en advies van toen",
                   json.dumps({"grades": ctx["previous"]["grades"],
                               "advice": ctx["previous"]["advice"]}, ensure_ascii=False),
-                  "", "Vergelijk: is je advies opgevolgd, en wat deed dat met de cijfers?"]
+                  "", "Vergelijk: is je advies opgevolgd, en wat deed dat met de cijfers?",
+                  "", "BELANGRIJK: adviseer ALLEEN acties die nu nog echt nodig zijn. "
+                      "Check de actuele stand (activiteit van gisteren, cijfers) vóór je een "
+                      "eerder advies herhaalt: regels gemarkeerd met [OPGELOST] of gevolgd door "
+                      "een succesvolle publicatie/'LIVE'-melding zijn KLAAR — noem die niet als "
+                      "openstaand advies en zeg niet dat het 'nog niet opgevolgd' is."]
     if ctx.get("agenda"):
         parts += ["", "## Je agenda van vandaag (Google Calendar)",
                   "Houd bij je advies rekening met je beschikbaarheid: op een drukke dag "

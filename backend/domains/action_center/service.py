@@ -8,15 +8,23 @@ Antwoordt op de drie vragen die het dashboard eerder niet beantwoordde:
 Elk item heeft `actions`: knoppen die de frontend 1-op-1 vertaalt naar
 bestaande endpoints. Het Actiecentrum voert zelf niets uit — het verzamelt.
 """
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from ...shared.database import get_conn
+from ..mail.gsc_expert import is_gsc_mail as _is_gsc_mail
+from ..publish import content_pipeline
+
+
+def _short_title(title: str) -> str:
+    """Kaarttitel: een kop, geen alinea. Sommige oudere jobs kregen een hele
+    alinea als titel (zie `content_pipeline._clean_title`); die mag de kaart
+    niet overspoelen."""
+    return content_pipeline._clean_title(title or "") or "(zonder titel)"
 
 logger = logging.getLogger(__name__)
-
-# Vacatures met fit_score (0-100) vanaf deze drempel zijn een inbox-item waard.
 VACANCY_FIT_THRESHOLD = 60
 
 # Fouten ouder dan dit aantal dagen vervallen vanzelf uit de inbox.
@@ -196,22 +204,33 @@ def build_inbox() -> Dict[str, Any]:
         # in juli 2026 (ontbrekende publish-credentials) en zijn nooit gemeld —
         # ze stonden zelfs op 'published' terwijl er niets online stond.
         for j in conn.execute(
-            "SELECT j.id, j.title, j.error, j.created_at, s.name AS site "
+            "SELECT j.id, j.title, j.error, j.publish_result, j.created_at, s.name AS site "
             "FROM content_jobs j LEFT JOIN sites s ON s.id = j.site_id "
             "WHERE j.status IN ('publish_failed','error') ORDER BY j.created_at DESC"
         ):
             if ("content", j["id"]) in skip:
                 continue
+            # Rijen van vóór de fix hebben een lege error-kolom: leid de oorzaak
+            # dan alsnog af uit publish_result i.p.v. "Onbekende fout" te tonen.
+            reden = j["error"] or ""
+            if not reden:
+                try:
+                    reden = content_pipeline.publish_failure_reason(
+                        json.loads(j["publish_result"] or "{}"))
+                except (ValueError, TypeError):
+                    reden = ""
             items.append({
                 "kind": "error",
                 "dismiss_kind": "content",
                 "id": j["id"],
-                "title": f"Publiceren mislukt: {j['title']}",
+                "title": f"Publiceren mislukt: {_short_title(j['title'])}",
                 "project": j["site"] or "?",
                 "created_at": j["created_at"],
-                "summary": (j["error"] or "Onbekende fout")[:220],
+                "summary": (reden or "Onbekende fout — zie publicatie-details")[:220],
                 "actions": [
                     {"label": "Opnieuw publiceren", "type": "content_approve", "id": j["id"]},
+                    {"label": "Analyseer & fix", "type": "error_triage", "id": j["id"],
+                     "error_kind": "content_job", "accent": True},
                     {"label": "Gezien, verberg", "type": "dismiss", "dismiss_kind": "content", "id": j["id"]},
                 ],
             })
@@ -258,7 +277,17 @@ def build_inbox() -> Dict[str, Any]:
                 ).fetchone()
                 if fixed:
                     continue
+            # Generieke resolver (zelfde logica als Iris-metrics): fout waarvan
+            # de job inmiddels published is, of waar een latere ok-regel met
+            # dezelfde titel bestaat, is klaar — niet meer tonen.
+            try:
+                from ..iris import metrics as _iris_metrics
+                if _iris_metrics._error_resolved(conn, dict(e)):
+                    continue
+            except Exception:
+                pass
             actions: List[Dict[str, Any]] = [
+                {"label": "Analyseer & fix", "type": "error_triage", "id": e["id"], "accent": True},
                 {"label": "Gezien, verberg", "type": "dismiss", "dismiss_kind": "error", "id": e["id"]},
             ]
             items.append({
@@ -381,7 +410,15 @@ def build_inbox() -> Dict[str, Any]:
                 "project": r["project"] or "Helpdesk",
                 "created_at": r["created_at"],
                 "summary": (r["draft_body"][:240] + ("…" if len(r["draft_body"]) > 240 else "")),
-                "actions": [
+                # GSC-expert-knop alleen bij échte Search Console-mails
+                # (afzender sc-noreply@google.com of kenmerkende onderwerp/body).
+                "actions": (
+                    [
+                        {"label": "Analyseer & fix (GSC)", "type": "mail_gsc_fix", "id": r["id"], "accent": True},
+                    ]
+                    if _is_gsc_mail(r["to_addr"], r["subject"], r["draft_body"])
+                    else []
+                ) + [
                     {"label": "Verstuur", "type": "mail_send", "id": r["id"]},
                     {"label": "Bewerk", "type": "mail_edit", "id": r["id"]},
                     {"label": "Afwijzen", "type": "mail_reject", "id": r["id"], "danger": True},

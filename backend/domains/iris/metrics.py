@@ -167,13 +167,75 @@ def _execution_pillar(conn, project_names: List[str]) -> Dict[str, Any]:
     }
 
 
+import re as _re
+
+
+def _error_resolved(conn, row: Dict[str, Any]) -> bool:
+    """Bepaal of een fout uit activity_log inmiddels is opgelost.
+
+    Regels (bewust conservatief — bij twijfel telt de fout gewoon mee):
+    1. 'iris_actie'-fouten zijn diagnoses/meta over een onderliggende fout,
+       geen nieuwe fout: nooit meetellen (de onderliggende fout telt al).
+    2. Fouten die een artikeltitel citeren ('...' in detail) zijn opgelost
+       zodra diezelfde job in content_jobs op status 'published' staat.
+    3. Fouten zijn opgelost als er in hetzelfde project een LATERE ok-regel
+       staat met dezelfde geciteerde titel (bv. publicatie_mislukt om 04:30,
+       'LIVE op ...' om 05:09).
+    4. 'llm-budget-op' van vóór vandaag: budget reset om middernacht.
+    """
+    action = (row.get("action") or "")
+    detail = row.get("detail") or ""
+    created = row.get("created_at") or ""
+    if action == "iris_actie":
+        return True
+    if action == "llm-budget-op":
+        today = conn.execute("SELECT date('now')").fetchone()[0]
+        return created[:10] < today
+    m = _re.search(r"'([^']{8,})'", detail)
+    if not m:
+        return False
+    title = m.group(1)
+    # 2) job inmiddels gepubliceerd?
+    hit = conn.execute(
+        "SELECT 1 FROM content_jobs WHERE status = 'published' AND title = ? LIMIT 1",
+        (title,),
+    ).fetchone()
+    if hit:
+        return True
+    # 3) latere ok-activiteit met dezelfde titel in hetzelfde project?
+    hit = conn.execute(
+        "SELECT 1 FROM activity_log WHERE status = 'ok' AND lower(project) = lower(?) "
+        "AND created_at > ? AND detail LIKE ? LIMIT 1",
+        (row.get("project") or "", created, f"%'{title}'%"),
+    ).fetchone()
+    return bool(hit)
+
+
+def unresolved_errors(conn, project_names: Optional[List[str]] = None,
+                      days: int = 7) -> List[Dict[str, Any]]:
+    """Fouten uit activity_log (laatste `days` dagen) die nog NIET zijn
+    opgelost. Dit is de enige fouten-lijst die scores en briefings mogen
+    gebruiken: alleen meldingen waar nog echt iets voor moet gebeuren."""
+    if project_names is not None:
+        ph = ",".join("?" for _ in project_names) or "''"
+        rows = conn.execute(
+            f"SELECT project, action, detail, status, created_at FROM activity_log "
+            f"WHERE status = 'error' AND lower(project) IN ({ph}) "
+            f"AND created_at > datetime('now', ?) ORDER BY created_at DESC",
+            [p.lower() for p in project_names] + [f"-{days} days"],
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT project, action, detail, status, created_at FROM activity_log "
+            "WHERE status = 'error' AND created_at > datetime('now', ?) "
+            "ORDER BY created_at DESC",
+            (f"-{days} days",),
+        ).fetchall()
+    return [dict(r) for r in rows if not _error_resolved(conn, dict(r))]
+
+
 def _hygiene_pillar(conn, project_names: List[str], needs_work: int) -> Dict[str, Any]:
-    ph = ",".join("?" for _ in project_names) or "''"
-    errors_7d = conn.execute(
-        f"SELECT COUNT(*) FROM activity_log WHERE status = 'error' "
-        f"AND lower(project) IN ({ph}) AND created_at > datetime('now', '-7 days')",
-        [p.lower() for p in project_names],
-    ).fetchone()[0]
+    errors_7d = len(unresolved_errors(conn, project_names))
     score = _clamp(20 - errors_7d * 3 - needs_work * 2, 0, 20)
     return {"score": round(score, 1), "errors_7d": errors_7d, "needs_work": needs_work}
 
