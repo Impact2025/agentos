@@ -163,18 +163,27 @@ class RadarService:
             log.error("[radar] Tavily fout: %s", msg)
 
     def _brave_fallback(self, query: str, max_results: int) -> List[Dict]:
-        """Brave Search als vangnet wanneer Tavily plat ligt (quota/fout).
-        Generieke webresultaten zonder news-freshness — beter een iets ruwere
-        scan dan een sky-scan die volledig stilvalt (incident 18 jul 2026)."""
+        """Vangnet wanneer Tavily plat ligt (quota/fout): Brave, en als die niet
+        geconfigureerd is of ook faalt de keyless DuckDuckGo. Generieke
+        webresultaten zonder news-freshness — beter een iets ruwere scan dan een
+        sky-scan die volledig stilvalt (incident 18 jul 2026). Zonder de keyless
+        laag viel de scan op 20 jul alsnog om, simpelweg omdat er geen
+        BRAVE_SEARCH_API_KEY stond."""
         from ...shared import websearch
         from ...shared.config import BRAVE_SEARCH_API_KEY
-        if not BRAVE_SEARCH_API_KEY:
-            return []
-        try:
-            hits = websearch.brave_search(query, max_results=max_results)
-        except Exception as e:  # noqa: BLE001
-            log.error("[radar] Brave-fallback faalde ook: %s", str(e)[:200])
-            return []
+        hits: List[Dict] = []
+        if BRAVE_SEARCH_API_KEY:
+            try:
+                hits = websearch.brave_search(query, max_results=max_results)
+            except Exception as e:  # noqa: BLE001
+                log.warning("[radar] Brave-fallback faalde: %s — probeer DuckDuckGo",
+                            str(e)[:200])
+        if not hits:
+            try:
+                hits = websearch.keyless_search(query, max_results=max_results)
+            except Exception as e:  # noqa: BLE001
+                log.error("[radar] Ook de keyless terugval faalde: %s", str(e)[:200])
+                return []
         return [
             {"title": h["title"], "url": h["url"], "snippet": h["snippet"],
              "tavily_score": 0.5, "published_days_ago": None}
@@ -366,13 +375,27 @@ class RadarService:
                 enriched += 1
 
             # Bulk-opslag: één executemany per watch-item.
+            # Defensieve int()-conversie: search-sources (RSS/Tavily) garanderen
+            # niet dat published_days_ago / ai_match_score altijd een getal zijn;
+            # een None of lege string crashte de hele sky-scan (incident
+            # 2026-07-24: "int() argument must be ... not 'NoneType'").
+            def _safe_int(v, default: int = -1) -> int:
+                if v is None or v == "":
+                    return default
+                try:
+                    return int(v)
+                except (TypeError, ValueError):
+                    return default
+
             rows = [
                 (
                     str(uuid.uuid4()), watch["id"], watch["project"], watch["value"],
                     r["title"][:300], r["url"], r["source"], (r["snippet"] or "")[:2000],
-                    int(r.get("published_days_ago", -1)), r["signal_score"],
-                    r["ai_hook"], r["ai_angle"], json.dumps(r["ai_titles"], ensure_ascii=False),
-                    int(r["ai_match_score"]), "new", "", now, now, now,
+                    _safe_int(r.get("published_days_ago"), -1),
+                    _safe_int(r.get("signal_score"), 0),
+                    r.get("ai_hook", ""), r.get("ai_angle", ""),
+                    json.dumps(r.get("ai_titles", []), ensure_ascii=False),
+                    _safe_int(r.get("ai_match_score"), -1), "new", "", now, now, now,
                 )
                 for r in fresh
             ]

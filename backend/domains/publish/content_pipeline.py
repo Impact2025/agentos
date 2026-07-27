@@ -140,8 +140,14 @@ def slugify_title(title: str) -> str:
         .replace(",", "").replace(".", "") \
         .replace(":", "").replace(";", "") \
         .replace("--", "-") \
-        .strip("-")[:60]
-    return re.sub(r"-+", "-", slug)
+        .strip("-")
+    slug = re.sub(r"-+", "-", slug)
+    # Kap af op een woordgrens. Een harde [:60] sneed midden in een woord
+    # ("…-bouw-wat-woor") en leverde een URL op die nergens naar verwijst —
+    # zo raakten de artikelen van 24 jul 2026 uit de sitemap (25 jul 2026).
+    if len(slug) > 60:
+        slug = slug[:60].rsplit("-", 1)[0] if "-" in slug[:60] else slug[:60]
+    return slug.strip("-")
 
 
 def _extract_json(raw: str) -> str:
@@ -1629,6 +1635,29 @@ _INTERNAL_TITLE_PREFIXES = (
     "briefing:", "memo:", "verslag:", "logboek:", "backlog",
 )
 
+# Een agent-taaktitel is een opdracht ("Schrijf …", "Publiceer …"), geen
+# artikeltitel. Een enkel werkwoord aan het begin is te zwak als bewijs — een
+# blog mág "Schrijf je eigen liefdesbrief" heten. Blokkeren doen we pas bij een
+# tweede signaal: een placeholder-verwijzing of vakjargon uit het eigen
+# werkproces. Aanleiding: 'Schrijf meta-titel en -description voor pagina C'
+# haalde 82/100, passeerde alle gates en stond op 23-07-2026 als blogartikel op
+# steentjebijsteentje.nl (ontdekt 25-07-2026).
+_TASK_TITLE_VERBS = (
+    "schrijf", "publiceer", "optimaliseer", "selecteer", "monitor", "voeg",
+    "voer", "exporteer", "controleer", "analyseer", "verzamel", "bepaal",
+    "implementeer", "redigeer", "review", "update", "werk ", "stel ", "maak ",
+)
+
+# Placeholders uit een taakomschrijving: "pagina A", "artikel 2", "pagina X".
+_PLACEHOLDER_REF = re.compile(r"\b(pagina|artikel|url|blog)\s+[a-z0-9]\b", re.IGNORECASE)
+
+# Vakjargon dat in een taaktitel thuishoort, niet in een artikeltitel.
+_TASK_TITLE_JARGON = (
+    "meta-titel", "meta titel", "meta-description", "meta description",
+    "interne links", "interne linkstructuur", "zoekposities", "sitemap",
+    "gsc", "search console", "seo-score", "striking distance", "canonical",
+)
+
 # Zinsneden die verraden dat de tekst over het eigen werkproces gaat in plaats
 # van over het onderwerp van de site.
 _INTERNAL_BODY_MARKERS = (
@@ -1652,6 +1681,16 @@ def is_internal_document(title: str, html_body: str = "") -> Optional[str]:
     for prefix in _INTERNAL_TITLE_PREFIXES:
         if t.startswith(prefix):
             return f"titel begint met '{prefix.strip()}' — dit is een intern werkstuk, geen artikel"
+
+    # Agent-taaktitel: opdracht-werkwoord vooraan + een tweede signaal.
+    if t.startswith(_TASK_TITLE_VERBS):
+        if _PLACEHOLDER_REF.search(t):
+            return ("titel is een agent-taak met een placeholder-verwijzing "
+                    f"('{_PLACEHOLDER_REF.search(t).group(0)}') — geen artikel")
+        jargon = next((j for j in _TASK_TITLE_JARGON if j in t), None)
+        if jargon:
+            return (f"titel is een agent-taak over '{jargon}' — een opdracht, "
+                    "geen artikel voor bezoekers")
 
     text = re.sub(r"<[^>]+>", " ", html_body or "")
     text = re.sub(r"\s+", " ", text).lower()
@@ -1678,9 +1717,30 @@ async def _verify_live(url: str) -> Optional[str]:
         return None
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-            resp = await client.get(url, headers={"User-Agent": "AgentOS-publish-check"})
-        if resp.status_code != 200:
-            return f"live-controle: {url} gaf HTTP {resp.status_code}"
+            headers = {"User-Agent": "AgentOS-publish-check"}
+            resp = await client.get(url, headers=headers)
+            if resp.status_code != 200:
+                return f"live-controle: {url} gaf HTTP {resp.status_code}"
+
+            # HTTP 200 is niet genoeg. Een single-page app serveert voor élke
+            # onbekende route dezelfde schil met status 200 — een zachte 404.
+            # Zo stond 'schrijf-meta-titel-en-description-voor-pagina-c' als
+            # gepubliceerd én 'LIVE' in het logboek terwijl de URL alleen de
+            # homepage-schil teruggaf (ontdekt 25-07-2026). Vergelijk daarom met
+            # een URL die gegarandeerd niet bestaat: lijken de antwoorden op
+            # elkaar, dan rendert het artikel niet.
+            base, _, _ = url.rpartition("/")
+            probe_url = f"{base}/agentos-bestaat-niet-{uuid.uuid4().hex[:12]}"
+            try:
+                probe = await client.get(probe_url, headers=headers)
+            except Exception:
+                return None  # Geen vergelijking mogelijk — geen verdachtmaking.
+        if probe.status_code != 200:
+            return None  # De site geeft nette 404's; de 200 is dus echt.
+        a, b = len(resp.text), len(probe.text)
+        if a and abs(a - b) <= max(200, a * 0.02):
+            return (f"live-controle: {url} geeft dezelfde pagina als een "
+                    "niet-bestaande URL — het artikel rendert niet")
         return None
     except Exception as e:
         # Een mislukte controle is geen bewijs van een mislukte publicatie —
@@ -1811,6 +1871,56 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
         return {"success": False, "error": str(e)[:200]}
 
 
+def _export_for_manual_publish(site: Dict, title: str, html_body: str,
+                                keyword: str, slug: str, seo_score: int) -> Dict:
+    """Voor sites zónder publish-API (`sites.manual_publish`, bv. LiefdeVoorIedereen —
+    content daar gaat via een Prisma-admin-sessie op datingsite2026, niet een
+    publieke endpoint): schrijf het klaar-artikel als Markdown naar de vault
+    i.p.v. te proberen op een {PREFIX}_PUBLISH_URL die nooit gaat bestaan.
+    Vincent plakt het zelf over in de site-admin. Nooit een exception — net als
+    `_publish_to_project_site` mag een mislukte export de rest van
+    approve_and_publish niet blokkeren."""
+    from ...shared.config import OBSIDIAN_VAULT_PATH
+    from ..chat.obsidian import ObsidianService
+
+    name = site.get("name", "")
+    obs = ObsidianService(OBSIDIAN_VAULT_PATH)
+    if not obs.is_configured:
+        return {"success": False, "error": "Obsidian-vault niet geconfigureerd — export overgeslagen"}
+
+    html_body = _CODE_FENCE_RE.sub(r"\1", (html_body or "").strip())
+    html_body = _unwrap_code_fence(html_body)
+    html_body, parsed_title, parsed_desc = _strip_meta_and_suggestions(html_body)
+    html_body = _strip_duplicate_header(html_body)
+    meta_desc = parsed_desc or _derive_meta_desc(html_body)
+
+    front_matter = (
+        "---\n"
+        f"title: \"{(parsed_title or title).replace(chr(34), chr(39))}\"\n"
+        f"slug: \"{slug}\"\n"
+        f"meta_title: \"{(parsed_title or title)[:60].replace(chr(34), chr(39))}\"\n"
+        f"meta_description: \"{meta_desc.replace(chr(34), chr(39))}\"\n"
+        f"keyword: \"{keyword}\"\n"
+        f"seo_score: {seo_score}\n"
+        f"status: \"klaar voor handmatig publiceren\"\n"
+        "---\n\n"
+    )
+    filename = f"{name}/Te-pushen/{slug}.md"
+    try:
+        path = obs.vault_path / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(front_matter + html_body, encoding="utf-8")
+    except OSError as e:
+        return {"success": False, "error": f"Vault-schrijffout: {e}"[:200]}
+
+    vault_path = str(path)
+    _log_activity(name, "klaar_voor_handmatig_publiceren",
+                  f"'{title}' klaar voor handmatig publiceren — {filename}",
+                  artifact=vault_path,
+                  next_step=f"Kopieer '{filename}' naar de {name}-admin en publiceer daar zelf.")
+    return {"success": True, "path": vault_path}
+
+
 # ── Goedkeuren → publiceren + posten ────────────────────────────────────────
 
 def publish_failure_reason(result: Optional[Dict]) -> str:
@@ -1892,8 +2002,10 @@ async def approve_and_publish(job_id: str,
         raise ValueError("Site niet gevonden.")
 
     # Alleen-website-sites (bv. Daar): wél publiceren + zoekmachine-indiening,
-    # géén social-fan-out en géén Content Multiplier.
-    website_only = bool(site.get("website_only"))
+    # géén social-fan-out en géén Content Multiplier. Handmatige sites (export
+    # naar de vault, geen live URL) horen hier hetzelfde te doen — een social-
+    # post of multiplier-video die naar een vault-pad linkt is zinloos.
+    website_only = bool(site.get("website_only")) or bool(site.get("manual_publish"))
 
     social_copy = json.loads(job["social_copy"] or "{}")
     import base64
@@ -1912,9 +2024,15 @@ async def approve_and_publish(job_id: str,
     base_url = (site.get("base_url") or "").rstrip("/")
 
     # ── Website-publicatie ───────────────────────────────────────────────────
-    # Twee routes: Netlify-sites (publish_api_url gevuld) en project-sites die
-    # een eigen {PROJECT}_PUBLISH_URL/_PUBLISH_KEY hebben (bv. bijeen.app).
-    if site.get("publish_api_url"):
+    # Drie routes: Netlify-sites (publish_api_url gevuld MAAR zónder http-prefix
+    # — het is een Netlify site-ID), project-sites met een eigen
+    # {PROJECT}_PUBLISH_URL/_PUBLISH_KEY (bv. bijeen.app, ictusgo.nl — hun
+    # publish_api_url is wél een volledige https-URL), en handmatige sites
+    # (sites.manual_publish, bv. LiefdeVoorIedereen — content gaat via een
+    # Prisma-admin-sessie, geen publieke publish-endpoint).
+    pub_url = (site.get("publish_api_url") or "").strip()
+    if pub_url and not pub_url.lower().startswith("http"):
+        # Netlify site-ID → zip-deploy naar Netlify.
         try:
             netlify_result = await publish_service.publish_article(
                 site_id=site["id"], title=job["title"], html_body=job["blog_html"],
@@ -1927,6 +2045,26 @@ async def approve_and_publish(job_id: str,
             image_url = netlify_result.get("image_url")
         except Exception as e:
             result["netlify"] = {"error": str(e)[:300]}
+    elif pub_url:
+        # Echte publish-URL (https://...) → project-site endpoint.
+        try:
+            site_result = await _publish_to_project_site(
+                site, job["title"], job["blog_html"], job["keyword"],
+                job["slug"], int(job.get("seo_score") or 0))
+            result["site"] = site_result
+            if site_result.get("url"):
+                article_url = site_result["url"]
+                published_url = article_url
+                image_url = site_result.get("image_url")
+        except Exception as e:
+            result["site"] = {"success": False, "error": str(e)[:300]}
+    elif site.get("manual_publish"):
+        site_result = _export_for_manual_publish(
+            site, job["title"], job["blog_html"], job["keyword"],
+            job["slug"], int(job.get("seo_score") or 0))
+        result["site"] = site_result
+        if site_result.get("path"):
+            article_url = site_result["path"]
     else:
         # Project-site via de per-project publish-endpoint (nooit een crash).
         try:

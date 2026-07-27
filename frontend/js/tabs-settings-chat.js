@@ -18,6 +18,8 @@ async function renderInstellingenTab(el) {
 
   var html = '<h3 style="font-size:15px;font-weight:700;margin-bottom:16px">Instellingen &amp; Beheer</h3>';
 
+  html += renderOutlookSection();
+
   html += await renderSitePublishSettings();
   html += await renderKennisbankSettings();
 
@@ -71,9 +73,107 @@ async function renderInstellingenTab(el) {
     '</tbody></table></div>';
 
   el.innerHTML = html;
+  outlookRefreshStatus();
 }
 
-// ── Publicatie- & social-instellingen voor de site achter dit project ──
+// ── Outlook / Microsoft Graph koppel-sectie (device-code flow) ──
+function renderOutlookSection() {
+  return '<div class="section-card" style="margin-bottom:16px" id="outlook-card">' +
+    '<h4 style="font-size:13px;font-weight:600;margin-bottom:8px">Outlook / Microsoft Graph &mdash; e-mailverzending</h4>' +
+    '<div id="outlook-status" style="font-size:12px;color:#475569;margin-bottom:8px">Status wordt geladen…</div>' +
+    '<div id="outlook-flow" style="display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:10px">' +
+      '<p style="font-size:12px;margin:0 0 6px">Log in met deze code bij Microsoft:</p>' +
+      '<div id="outlook-code" style="font-size:22px;font-weight:800;letter-spacing:2px;color:#0ea5e9;margin-bottom:6px">••••••••</div>' +
+      '<a id="outlook-link" href="#" target="_blank" style="font-size:12px;color:#4f46e5">Open Microsoft login</a>' +
+      '<div id="outlook-flow-msg" style="font-size:12px;color:#64748b;margin-top:6px"></div>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px">' +
+      '<button id="outlook-connect-btn" onclick="outlookConnect()" style="padding:6px 16px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">Koppel Outlook-account</button>' +
+      '<button id="outlook-logout-btn" onclick="outlookLogout()" style="padding:6px 16px;background:#f1f5f9;color:#b91c1c;border:1px solid #fecaca;border-radius:6px;font-size:12px;cursor:pointer;display:none">Ontkoppelen</button>' +
+    '</div>' +
+  '</div>';
+}
+
+var outlookPollTimer = null;
+
+function outlookRefreshStatus() {
+  fetch('/api/outlook/status').then(function(r){ return r.json(); }).then(function(s){
+    var el = document.getElementById('outlook-status');
+    if (!el) return;
+    var connectBtn = document.getElementById('outlook-connect-btn');
+    var logoutBtn = document.getElementById('outlook-logout-btn');
+    if (!s.configured) {
+      el.innerHTML = '⚠️ Outlook niet geconfigureerd (OUTLOOK_CLIENT_ID ontbreekt in .env).';
+      if (connectBtn) connectBtn.style.display = 'none';
+      if (logoutBtn) logoutBtn.style.display = 'none';
+      return;
+    }
+    if (s.token_valid) {
+      el.innerHTML = '✅ Ingelogd als <b>' + escHtml((s.account && s.account.email) || '') + '</b> — e-mailverzending actief.';
+      if (connectBtn) connectBtn.style.display = 'none';
+      if (logoutBtn) logoutBtn.style.display = 'inline-block';
+    } else if (s.authenticated) {
+      el.innerHTML = '⚠️ Sessie verlopen (token ongeldig). Koppel opnieuw om mail te kunnen versturen.';
+      if (connectBtn) connectBtn.style.display = 'inline-block';
+      if (logoutBtn) logoutBtn.style.display = 'inline-block';
+    } else {
+      el.innerHTML = 'ℹ️ Niet gekoppeld. Koppel je Outlook-account om outreach-mail te versturen.';
+      if (connectBtn) connectBtn.style.display = 'inline-block';
+      if (logoutBtn) logoutBtn.style.display = 'none';
+    }
+  }).catch(function(e){
+    var el = document.getElementById('outlook-status');
+    if (el) el.textContent = 'Status ophalen mislukt: ' + e.message;
+  });
+}
+
+function outlookConnect() {
+  var flowEl = document.getElementById('outlook-flow');
+  var codeEl = document.getElementById('outlook-code');
+  var linkEl = document.getElementById('outlook-link');
+  var msgEl = document.getElementById('outlook-flow-msg');
+  fetch('/api/outlook/auth/start', {method:'POST'}).then(function(r){
+    if (!r.ok) return r.json().then(function(j){ throw new Error(j.detail || ('HTTP '+r.status)); });
+    return r.json();
+  }).then(function(flow){
+    if (flowEl) flowEl.style.display = 'block';
+    if (codeEl) codeEl.textContent = flow.user_code || '—';
+    if (linkEl) linkEl.href = flow.verification_uri || 'https://login.microsoft.com/device';
+    if (msgEl) msgEl.textContent = 'Wacht op autorisatie… (deze pagina ververst automatisch)';
+    if (outlookPollTimer) clearInterval(outlookPollTimer);
+    outlookPollTimer = setInterval(outlookPollStatus, 2000);
+  }).catch(function(e){
+    if (msgEl) msgEl.textContent = 'Kon device-flow niet starten: ' + e.message;
+  });
+}
+
+function outlookPollStatus() {
+  fetch('/api/outlook/auth/status').then(function(r){ return r.json(); }).then(function(st){
+    var msgEl = document.getElementById('outlook-flow-msg');
+    if (st.status === 'done') {
+      if (outlookPollTimer) { clearInterval(outlookPollTimer); outlookPollTimer = null; }
+      if (msgEl) msgEl.textContent = '✅ Ingelogd als ' + (st.email || '') + '!';
+      var flowEl = document.getElementById('outlook-flow');
+      if (flowEl) setTimeout(function(){ flowEl.style.display = 'none'; }, 1200);
+      outlookRefreshStatus();
+    } else if (st.status === 'error') {
+      if (outlookPollTimer) { clearInterval(outlookPollTimer); outlookPollTimer = null; }
+      if (msgEl) msgEl.textContent = '❌ Fout: ' + (st.error || 'onbekend');
+    } else {
+      if (msgEl) msgEl.textContent = 'Wacht op autorisatie bij Microsoft…';
+    }
+  }).catch(function(e){
+    if (outlookPollTimer) { clearInterval(outlookPollTimer); outlookPollTimer = null; }
+  });
+}
+
+function outlookLogout() {
+  fetch('/api/outlook/auth', {method:'DELETE'}).then(function(){
+    var flowEl = document.getElementById('outlook-flow');
+    if (flowEl) flowEl.style.display = 'none';
+    outlookRefreshStatus();
+  });
+}
 function _siteField(label, name, value, opts) {
   opts = opts || {};
   var isSecret = !!opts.secret;

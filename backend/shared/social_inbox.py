@@ -29,6 +29,7 @@ import httpx
 
 from .config import OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL
 from .database import get_conn
+from .failures import describe_exception as _describe
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,32 @@ _FB_GRAPH = "https://graph.facebook.com/v19.0"
 _FB_TOKEN_WARN_TS = 0.0
 
 
+class SocialAuthError(RuntimeError):
+    """Het kanaal wees ons af: token verlopen, ingetrokken of te weinig rechten.
+
+    Bewust een eigen type. Een verlopen token is het tegenovergestelde van een
+    netwerk-blip: opnieuw proberen lost niets op, alleen een mens die het token
+    vernieuwt doet dat. Vóór 25 jul 2026 gaf de fetch bij zo'n 400 stil `[]`
+    terug — het IG-token van BewaardVoorJou was toen al twaalf dagen dood zonder
+    dat iemand het zag, terwijl een onschuldige nachtelijke TLS-blip wél een
+    rode kaart opleverde.
+    """
+
+
+def _graph_auth_error(resp: "httpx.Response") -> Optional[SocialAuthError]:
+    """Vertaal een Graph-foutantwoord naar een SocialAuthError, of None als dit
+    geen authenticatieprobleem is (dan hoort het niet bij de mens thuis)."""
+    try:
+        err = (resp.json() or {}).get("error") or {}
+    except Exception:  # noqa: BLE001 — een niet-JSON body is zelf al het signaal
+        err = {}
+    code = err.get("code")
+    msg = (err.get("message") or resp.text[:200] or "").strip()
+    if resp.status_code in (401, 403) or code in (190, 102, 10, 200) or "OAuth" in str(err.get("type", "")):
+        return SocialAuthError(msg or f"HTTP {resp.status_code} van het kanaal")
+    return None
+
+
 async def fb_fetch(inbox: dict) -> List[dict]:
     c = _creds(inbox)
     page_id = c.get("page_id")
@@ -228,19 +255,23 @@ async def fb_fetch(inbox: dict) -> List[dict]:
                 # lossen.
                 import time as _time
                 _body = r.text[:200]
-                if r.status_code == 400 and '"code":190' in r.text:
+                auth_err = _graph_auth_error(r)
+                if auth_err is not None:
                     global _FB_TOKEN_WARN_TS
                     _now = _time.time()
                     if _now - _FB_TOKEN_WARN_TS > 3600:
                         _FB_TOKEN_WARN_TS = _now
                         logger.warning(
-                            "FB posts fetch: access token verlopen/ongeldig "
-                            "(code 190) — vernieuw het Page-token. Verdere "
-                            "meldingen onderdrukt voor 1 uur.")
-                else:
-                    logger.warning("FB posts fetch HTTP %s: %s", r.status_code, _body)
+                            "FB posts fetch: access token verlopen/ongeldig — "
+                            "vernieuw het Page-token (%s)", auth_err)
+                    # Doorgooien, niet stil inslikken: alleen een mens kan dit
+                    # oplossen, dus hoort het in het Actiecentrum te staan.
+                    raise auth_err
+                logger.warning("FB posts fetch HTTP %s: %s", r.status_code, _body)
+        except SocialAuthError:
+            raise
         except Exception as e:
-            logger.warning("FB comments fetch: %s", e)
+            logger.warning("FB comments fetch: %s", _describe(e))
         # DM's (conversations) — vereist pages_messaging scope
         try:
             r = await client.get(
@@ -316,6 +347,13 @@ async def ig_fetch(inbox: dict) -> List[dict]:
                     params={"access_token": token, "fields": "id,permalink,caption", "limit": 30},
                 )
                 if m.status_code != 200:
+                    auth_err = _graph_auth_error(m)
+                    if auth_err is not None:
+                        # Verlopen IG-token: geen retry (helpt niet), wél zicht-
+                        # baar maken. Stil `[]` teruggeven hield dit twaalf dagen
+                        # verborgen.
+                        raise auth_err
+                    logger.warning("IG media fetch HTTP %s: %s", m.status_code, m.text[:200])
                     return out
                 for media in m.json().get("data", []):
                     # Reacties op elk media-object
@@ -335,20 +373,21 @@ async def ig_fetch(inbox: dict) -> List[dict]:
                             "thread": "",
                         })
             return out
+        except SocialAuthError:
+            # Een afgewezen token wordt niet beter van nog twee pogingen.
+            raise
         except Exception as e:  # noqa: BLE001 — we loggen + retrien bewust
             _last_err = e
-            _is_transient = isinstance(
-                e, (httpx.TransportError, httpx.TimeoutException)
-            ) or "[Errno" in str(e)
-            if not _is_transient or _attempt == 2:
+            from .failures import is_transient as _is_transient_err
+            if not _is_transient_err(e) or _attempt == 2:
                 break
             logger.warning(
                 "IG fetch poging %d mislukt (transient), opnieuw: %s",
-                _attempt + 1, e,
+                _attempt + 1, _describe(e),
             )
             await asyncio.sleep(2 * (_attempt + 1))
     if _last_err is not None:
-        logger.warning("IG fetch: %s", _last_err)
+        logger.warning("IG fetch: %s", _describe(_last_err))
         raise _last_err
     return out
 
@@ -428,7 +467,7 @@ async def fetch_new(inbox: dict) -> List[dict]:
         return []
     try:
         return await fn(inbox)
-    except Exception as e:
+    except Exception:
         logger.exception("Social fetch mislukt voor %s/%s", inbox.get("project"), inbox.get("platform"))
         raise
 
@@ -469,18 +508,67 @@ async def run_inbox(inbox_id: str) -> int:
         }
 
     # 2. Netwerk-ophalen — zonder open connectie.
+    #
+    # Niet elke mislukking is een taak voor een mens. Een TLS-blip om 02:00 is
+    # weg bij de volgende poll; een verlopen token is dat nooit. `failures`
+    # kent het verschil, de faal-reeks bepaalt wanneer "het lukt echt niet meer"
+    # begint, en pas dán komt er een kaart in het Actiecentrum.
+    from . import failures as _fail
+    streak_key = f"social_fetch:{inbox_id}"
     try:
         raw = await fetch_new(inbox)
     except Exception as e:
         from .outcomes import log_outcome
+        desc = _fail.describe_exception(e)
+        klass = _fail.classify(e)
+        count = _fail.note_failure(streak_key, desc, klass)
+        if not _fail.should_escalate(streak_key, e):
+            logger.warning(
+                "[social] %s/%s ophalen mislukt (%s, poging %d) — Iris probeert "
+                "het bij de volgende poll opnieuw: %s",
+                inbox.get("project"), inbox["platform"], klass, count, desc,
+            )
+            return 0
+        if klass == _fail.CLASS_AUTH:
+            detail = (
+                f"Het {inbox['platform']}-kanaal van {inbox.get('project', '')} wijst ons af: "
+                f"{desc}. Dit kan geen agent oplossen — alleen een nieuw token helpt."
+            )
+            next_step = (
+                f"Vernieuw het {inbox['platform']}-token in de Social-tab "
+                "(Meta Business → Toegangstokens → nieuw token genereren en plakken)."
+            )
+        else:
+            detail = (
+                f"Ophalen van {inbox['platform']} lukt al {count} pogingen op rij niet: {desc}. "
+                "Iris heeft het zelf opnieuw geprobeerd; het probleem houdt aan."
+            )
+            next_step = (
+                "Controleer de internetverbinding en daarna de kanaal-tokens in de Social-tab."
+            )
         log_outcome(
             project=inbox.get("project", "Social"),
             action="social_fetch",
-            detail=f"Ophalen van {inbox['platform']} mislukt: {e}",
-            next_step="Controleer de kanaal-tokens in de Social-tab.",
+            detail=detail,
+            next_step=next_step,
             status="error",
         )
+        _fail.mark_escalated(streak_key)
         return 0
+    # Geslaagd na een storing: meld het herstel één keer, zodat een openstaande
+    # foutkaart uit het Actiecentrum een zichtbaar einde krijgt.
+    healed = _fail.note_success(streak_key)
+    if healed:
+        from .outcomes import log_outcome
+        log_outcome(
+            project=inbox.get("project", "Social"),
+            action="social_fetch",
+            detail=(
+                f"Ophalen van {inbox['platform']} werkt weer na {healed} mislukte "
+                "poging(en) — vanzelf hersteld, geen actie nodig."
+            ),
+            status="ok",
+        )
     if not raw:
         return 0
 

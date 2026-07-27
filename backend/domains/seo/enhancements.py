@@ -219,7 +219,11 @@ def ee_at_guard(html_body: str, keyword: str, site: Optional[Dict] = None) -> Li
 
     # Keyword moet zinnig gedekt zijn (geen topical-thin content).
     if keyword:
-        kw = keyword.strip().lower()
+        # Accenten vouwen: 'jubileum cadeau ideeen' (GSC-spelling) moet matchen
+        # op 'jubileum cadeau ideeën' (correct Nederlands). Zie fold_diacritics.
+        from ..publish.article_writer import fold_diacritics
+        kw = fold_diacritics(keyword.strip().lower())
+        low = fold_diacritics(low)
         if kw and kw not in low:
             issues.append(f"zoekwoord '{keyword}' komt niet voor in de body")
     return issues

@@ -191,6 +191,19 @@ def _error_resolved(conn, row: Dict[str, Any]) -> bool:
     if action == "llm-budget-op":
         today = conn.execute("SELECT date('now')").fetchone()[0]
         return created[:10] < today
+    # Linkbuilding: een storing in de zoeklaag (Tavily-quota + DDG-rate-limit)
+    # gooide per-site 'search failed'-kaarten op. Zodra er ná zo'n fout een
+    # geslaagde prospectie of weekrun is gelogd, is de oorzaak weg en mogen de
+    # oude kaarten verdwijnen — anders blijven ze eeuwig in het Actiecentrum
+    # staan terwijl de zoekmachine allang weer werkt.
+    if action in ("linkbuilding_prospectie", "linkbuilding_weekrun"):
+        hit = conn.execute(
+            "SELECT 1 FROM activity_log WHERE status='ok' AND action IN "
+            "('linkbuilding_prospectie','linkbuilding_weekrun') AND created_at > ? "
+            "LIMIT 1",
+            (created,),
+        ).fetchone()
+        return bool(hit)
     m = _re.search(r"'([^']{8,})'", detail)
     if not m:
         return False

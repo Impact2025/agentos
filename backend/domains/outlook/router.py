@@ -65,6 +65,10 @@ def outlook_status():
     return {
         "configured": configured,
         "authenticated": authenticated,
+        # token_valid = er is daadwerkelijk een bruikbaar (verversbaar) token.
+        # 'authenticated' kan True zijn op een verlopen cache-account, dus de UI
+        # moet op token_valid vertrouwen om te weten of versturen gaat lukken.
+        "token_valid": bool(outlook_service.get_valid_token()),
         "account": account,
         "stats": stats,
     }

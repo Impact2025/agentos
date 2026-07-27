@@ -67,9 +67,10 @@ def test_fallback_social_copy_is_complete():
 
 # ── Kanaalkeuze uit de request-body ─────────────────────────────────────────
 
-def test_channels_none_without_body():
-    assert _channels_from_body(None) is None
-    assert _channels_from_body({}) is None
+def test_channels_empty_without_body():
+    # Social is opt-in: zonder expliciete keuze gaat er niets naar social.
+    assert _channels_from_body(None) == []
+    assert _channels_from_body({}) == []
 
 
 def test_channels_social_false_means_empty():
@@ -86,40 +87,104 @@ def test_channels_empty_list_means_none_posted():
 
 # ── Zoeklaag: fallback-volgorde en luid falen ───────────────────────────────
 
+HITS = [{"title": "t", "url": "https://x.nl", "snippet": "s"}]
+
+
+@pytest.fixture(autouse=True)
+def _clean_quota_blocks():
+    from backend.shared import websearch
+    websearch.reset_quota_blocks()
+    yield
+    websearch.reset_quota_blocks()
+
+
+def _boom(msg):
+    def f(*a, **kw):
+        raise RuntimeError(msg)
+    return f
+
+
 def test_websearch_falls_back_to_brave(monkeypatch):
     from backend.shared import websearch
     monkeypatch.setattr(websearch, "TAVILY_API_KEY", "key")
     monkeypatch.setattr(websearch, "BRAVE_SEARCH_API_KEY", "key")
+    monkeypatch.setattr(websearch, "_tavily_search", _boom("usage limit exceeded"))
+    monkeypatch.setattr(websearch, "_brave_search", lambda *a, **kw: HITS)
+    assert websearch.search("q") == HITS
 
-    def boom(*a, **kw):
-        raise RuntimeError("usage limit exceeded")
 
-    hits = [{"title": "t", "url": "https://x.nl", "snippet": "s"}]
-    monkeypatch.setattr(websearch, "_tavily_search", boom)
-    monkeypatch.setattr(websearch, "_brave_search", lambda *a, **kw: hits)
-    assert websearch.search("q") == hits
+def test_websearch_falls_back_to_keyless_without_brave_key(monkeypatch):
+    """De kern van het incident van 20 jul: Tavily-quota op én geen Brave-key.
+    De keyless laag moet de keten dan alsnog dragen."""
+    from backend.shared import websearch
+    monkeypatch.setattr(websearch, "TAVILY_API_KEY", "key")
+    monkeypatch.setattr(websearch, "BRAVE_SEARCH_API_KEY", "")
+    monkeypatch.setattr(websearch, "_tavily_search", _boom("upgrade your plan"))
+    monkeypatch.setattr(websearch, "_ddg_search", lambda *a, **kw: HITS)
+    assert websearch.search("q") == HITS
+
+
+def test_quota_error_puts_provider_in_backoff(monkeypatch):
+    """Een uitgeputte quota is een toestand: de tweede query mag Tavily niet
+    opnieuw aanroepen, maar meteen doorschuiven naar de terugval."""
+    from backend.shared import websearch
+    calls = []
+    monkeypatch.setattr(websearch, "TAVILY_API_KEY", "key")
+    monkeypatch.setattr(websearch, "BRAVE_SEARCH_API_KEY", "")
+
+    def tavily(*a, **kw):
+        calls.append(1)
+        raise RuntimeError("This request exceeds your plan's set usage limit")
+
+    monkeypatch.setattr(websearch, "_tavily_search", tavily)
+    monkeypatch.setattr(websearch, "_ddg_search", lambda *a, **kw: HITS)
+    assert websearch.search("q1") == HITS
+    assert websearch.search("q2") == HITS
+    assert len(calls) == 1
+
+
+def test_non_quota_error_does_not_block_provider(monkeypatch):
+    """Een timeout mag een werkende provider niet 6 uur uitschakelen."""
+    from backend.shared import websearch
+    calls = []
+    monkeypatch.setattr(websearch, "TAVILY_API_KEY", "key")
+    monkeypatch.setattr(websearch, "BRAVE_SEARCH_API_KEY", "")
+
+    def tavily(*a, **kw):
+        calls.append(1)
+        raise RuntimeError("timed out")
+
+    monkeypatch.setattr(websearch, "_tavily_search", tavily)
+    monkeypatch.setattr(websearch, "_ddg_search", lambda *a, **kw: HITS)
+    websearch.search("q1")
+    websearch.search("q2")
+    assert len(calls) == 2
 
 
 def test_websearch_raises_when_all_fail(monkeypatch):
+    """Falen álle providers, dan luid — nooit stil een lege lijst.
+
+    Patch de keten via `_PROVIDERS`, niet via een handmatige opsomming: die
+    liep achter toen de keyless `ddg_html`-achtervang erbij kwam, waardoor de
+    test een échte zoekopdracht deed en niet meer testte wat hij beweert.
+    """
     from backend.shared import websearch
     monkeypatch.setattr(websearch, "TAVILY_API_KEY", "key")
     monkeypatch.setattr(websearch, "BRAVE_SEARCH_API_KEY", "key")
-
-    def boom(*a, **kw):
-        raise RuntimeError("kapot")
-
-    monkeypatch.setattr(websearch, "_tavily_search", boom)
-    monkeypatch.setattr(websearch, "_brave_search", boom)
+    for func_name in websearch._PROVIDERS.values():
+        monkeypatch.setattr(websearch, func_name, _boom("kapot"))
+    assert set(websearch.providers_configured()) <= set(websearch._PROVIDERS)
     with pytest.raises(websearch.WebSearchError):
         websearch.search("q")
 
 
-def test_websearch_raises_without_providers(monkeypatch):
+def test_websearch_keyless_chain_without_any_key(monkeypatch):
+    """Zonder enige API-key is de keten niet leeg meer: DDG heeft er geen nodig."""
     from backend.shared import websearch
     monkeypatch.setattr(websearch, "TAVILY_API_KEY", "")
     monkeypatch.setattr(websearch, "BRAVE_SEARCH_API_KEY", "")
-    with pytest.raises(websearch.WebSearchError):
-        websearch.search("q")
+    monkeypatch.setattr(websearch, "_ddg_search", lambda *a, **kw: HITS)
+    assert websearch.search("q") == HITS
 
 
 # ── Iris' lead_search_run (zonder netwerk) ──────────────────────────────────

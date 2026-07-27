@@ -988,6 +988,20 @@ async def run_morning_briefing() -> Dict[str, Any]:
     except Exception:
         logger.exception("[iris] kennis-sync mislukt")
 
+    # 0b. Ruim eerst op wat ze zelf kan oplossen. Dit moet vóór `snapshot()`:
+    #     de hygiëne-pijler telt openstaande fouten mee, en een fout die Iris
+    #     vijf seconden later zelf verhelpt hoort haar eigen rapportcijfer niet
+    #     omlaag te trekken — noch als "wacht op jou" in het ochtendrapport van
+    #     07:00 te belanden.
+    try:
+        from . import selfheal
+        heal = await selfheal.run_selfheal(source="briefing")
+        if heal.get("healed"):
+            logger.info("[iris] briefing-zelfherstel: %d fout(en) zelf opgelost",
+                        heal["healed"])
+    except Exception:
+        logger.exception("[iris] zelfherstel-ronde mislukt")
+
     snapshot = metrics.snapshot()
 
     # 1. Reken eerst de openstaande voorspellingen af tegen de echte cijfers.

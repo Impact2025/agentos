@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -62,6 +63,22 @@ def _extract_json(raw: str) -> str:
 def _plain_text(html: str) -> str:
     text = re.sub(r"<[^>]+>", " ", html or "")
     return re.sub(r"\s+", " ", text).strip()
+
+
+def fold_diacritics(text: str) -> str:
+    """Ontdoet tekst van accenttekens ('ideeën' → 'ideeen', 'café' → 'cafe').
+
+    Nodig omdat zoekwoorden uit GSC de spelling van de *zoeker* dragen — die
+    typt 'jubileum cadeau ideeen' — terwijl correct Nederlands 'ideeën' schrijft.
+    Zonder vouwen ziet elke keyword-check een artikel dat het zoekwoord in élke
+    kop en alinea gebruikt aan voor thin content ("komt 0× voor"), en dat kost
+    punten die geen enkele herschrijfronde kan terugverdienen: de enige 'fix'
+    zou zijn de tekst verkeerd te spellen. Zelfde valkuil als de meta-velden die
+    de reviewer niet te zien kreeg (zie content_pipeline._review_article)."""
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", text or "")
+        if not unicodedata.combining(c)
+    )
 
 
 def _case_study_block(case_study: Optional[Dict]) -> str:
@@ -526,10 +543,27 @@ def check_cta(html_body: str, ctas: List[str]) -> bool:
     herkenbaar in het artikel staat. Zonder geconfigureerde CTA's: True."""
     if not ctas:
         return True
-    text = _plain_text(html_body).lower()
+    text = fold_diacritics(_plain_text(html_body).lower())
+    html_low = (html_body or "").lower()
     for cta in ctas:
         label = re.split(r"→|https?://", cta)[0].strip().lower()
-        if len(label) >= 8 and label in text:
+        # CTA's staan in de kennisbank als "«actie» op «domein/pad»"
+        # ("Ontdek de Ritual Box op steentjebijsteentje.nl/de-ritual-box").
+        # Het domeindeel is de bestemming, geen zinsdeel dat een schrijver in de
+        # lopende tekst zet: die maakt er een link van. Zonder dat deel af te
+        # kappen matcht de CTA nooit en verliest élk artikel 6 punten voor een
+        # CTA die er gewoon staat.
+        target = ""
+        m = re.search(r"\s+(?:op|via|naar)\s+(\S*\.\w{2,}\S*)\s*$", label)
+        if m:
+            target = m.group(1)
+            label = label[:m.start()].strip()
+        if len(label) >= 8 and fold_diacritics(label) in text:
+            return True
+        # …of de bestemming staat als link in het artikel (href), wat een
+        # sterker CTA-signaal is dan de letterlijke zin.
+        path = re.split(r"→|https?://", cta)[-1].strip().lower() if "http" in cta.lower() else target
+        if path and f'href="' in html_low and path.rstrip("/") in html_low:
             return True
     return False
 
@@ -538,13 +572,15 @@ def check_keyword(html_body: str, keyword: str) -> List[str]:
     """Zoekwoord-checks: in H1, in de eerste 100 woorden, dichtheid ≤ 2,5% en
     minimaal 2× aanwezig. Retourneert de lijst gefaalde checks (leeg = pass)."""
     issues: List[str] = []
-    kw = keyword.strip().lower()
+    # Accenten wegvouwen aan béide kanten: het zoekwoord komt uit GSC ('ideeen'),
+    # de tekst is correct Nederlands ('ideeën'). Zie `fold_diacritics`.
+    kw = fold_diacritics(keyword.strip().lower())
     if not kw:
         return issues
-    text = _plain_text(html_body).lower()
+    text = fold_diacritics(_plain_text(html_body).lower())
     words = text.split()
     m = re.search(r"<h1[^>]*>(.*?)</h1>", html_body, re.IGNORECASE | re.DOTALL)
-    h1 = _plain_text(m.group(1)).lower() if m else ""
+    h1 = fold_diacritics(_plain_text(m.group(1)).lower()) if m else ""
     kw_tokens = [t for t in re.findall(r"[a-zà-ü0-9]+", kw) if len(t) > 2]
     if h1 and kw_tokens and not all(t in h1 for t in kw_tokens):
         issues.append(f"zoekwoord '{keyword}' ontbreekt (deels) in de H1")
@@ -577,6 +613,49 @@ async def _qc_fix(site: Dict, keyword: str, html_body: str, issues: List[str],
 
 
 # ── Orchestratie ─────────────────────────────────────────────────────────────
+
+async def _meta_pass(site: Dict, keyword: str, html_body: str) -> Tuple[str, Dict]:
+    """Schrijf een échte meta-titel/-description en hang die als META-commentaar
+    onder de body; `content_pipeline._strip_meta_and_suggestions` leest het eruit
+    en `_publish_to_site` schrijft het naar de head/DB-velden.
+
+    Waarom een eigen stap: zonder META-blok viel de publisher terug op het
+    mechanisch afkappen van de eerste alinea. Zo'n description eindigt altijd
+    midden in een zin, en de SEO-reviewer trok daar élke ronde punten voor af —
+    een aftrek die geen enkele herschrijfronde van het ártikel kan repareren,
+    waardoor artikelen hun verbeter-pogingen opmaakten aan een gebrek dat niet
+    in het artikel zat. De rubriek beoordeelt meta, dus moeten we meta leveren.
+    Faalt de stap, dan blijft de body intact en valt de publisher terug op het
+    oude (afgekapte) gedrag — geen artikel loopt hierop vast."""
+    text = _plain_text(html_body)[:3000]
+    raw = await _llm(
+        "Je bent een SEO-eindredacteur. Je schrijft meta-teksten die kloppen met "
+        "het artikel en aanzetten tot klikken. Nooit clickbait, nooit verzinnen.",
+        f"Kernzoekwoord: {keyword}\nSite: {site.get('name', '')}\n\n"
+        f"ARTIKEL (platte tekst):\n{text}\n\n"
+        "Schrijf een meta-titel van MAXIMAAL 60 tekens (kernzoekwoord erin) en een "
+        "meta-description van MAXIMAAL 155 tekens: één of twee complete zinnen die "
+        "aflopen op een punt — nooit een afgekapte zin — met een concrete reden om "
+        "te klikken. De description mag de titel niet herhalen.\n"
+        'Antwoord UITSLUITEND met JSON: {"meta_title": "...", "meta_description": "..."}',
+        max_tokens=400,
+    )
+    obj = json.loads(_extract_json(raw))
+    title = " ".join(str(obj.get("meta_title") or "").split())
+    desc = " ".join(str(obj.get("meta_description") or "").split())
+    if not title or not desc:
+        return html_body, {"ok": False, "reason": "lege meta-respons"}
+    # Harde grenzen: het model gaat er soms een paar tekens overheen. Liever een
+    # nette hercontrole dan een description die Google zelf afkapt.
+    over = {"title": len(title) > 60, "description": len(desc) > 155}
+    title, desc = title[:60].rstrip(), desc[:155].rstrip()
+    block = (f'\n\n<!-- Meta-titel: {title} -->'
+             f'\n<!-- Meta-description: {desc} -->')
+    return html_body.rstrip() + block, {
+        "ok": True, "title_len": len(title), "description_len": len(desc),
+        "truncated": over,
+    }
+
 
 async def write_article_staged(site: Dict, keyword: str, angle: str, rationale: str,
                                case_study: Optional[Dict], profile: str, ctas: List[str],
@@ -660,5 +739,12 @@ async def write_article_staged(site: Dict, keyword: str, angle: str, rationale: 
                  "configured": bool(ctas)}
     kw_after = check_keyword(html_body, keyword)
     qc["keyword"] = {"pass": not kw_after, "issues": kw_after, "fixed": fixed and bool(kw_issues)}
+
+    try:
+        html_body, meta_report = await _meta_pass(site, keyword, html_body)
+        qc["meta"] = meta_report
+    except Exception as e:
+        logger.warning("[article-writer] Meta-stap mislukt: %s", e)
+        qc["meta"] = {"ok": False, "error": str(e)[:150]}
 
     return html_body, qc

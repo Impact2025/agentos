@@ -11,6 +11,8 @@ from pathlib import Path
 import re, os
 from typing import List, Dict, Optional
 
+from ...shared.database import get_conn
+
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 # Primary: lees uit Obsidian vault /10_Projects/
@@ -61,6 +63,76 @@ def _find_project_dir(name: str) -> Optional[Path]:
         if norm(entry.name) == target:
             return entry
     return None
+
+
+#: content_jobs-statussen die "hier wordt al aan gewerkt" betekenen. Een job die
+#: is afgewezen telt niet mee — dan mag het zoekwoord opnieuw voorgesteld worden.
+_ACTIVE_JOB_STATUSES = ("pending_review", "needs_work", "stuck",
+                        "publish_failed", "published")
+
+
+def _pipeline_keywords(site_id: str) -> set:
+    """Zoekwoorden die al in de contentmotor zitten (content_jobs).
+
+    `_written_keywords` kijkt alleen in de vault naar wat áf en gepubliceerd is.
+    Alles wat nog in de Wachtrij hangt of onder de kwaliteitsgate is blijven
+    steken, is daar onzichtbaar — waardoor het dashboard hetzelfde zoekwoord
+    bleef voorstellen terwijl er een artikel voor vaststond op `needs_work`
+    (25 jul 2026). Deze bron dekt dat gat.
+    """
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT keyword, title FROM content_jobs WHERE site_id = ? "
+                f"AND status IN ({','.join('?' * len(_ACTIVE_JOB_STATUSES))})",
+                (site_id, *_ACTIVE_JOB_STATUSES),
+            ).fetchall()
+    except Exception:
+        return set()
+    out = set()
+    for r in rows:
+        kw = (r["keyword"] or "").strip().lower()
+        if kw:
+            out.add(kw)
+        # Ook de titel meenemen: goal-gestagede jobs hebben een leeg keyword-veld,
+        # maar hun titel bevat het zoekwoord wel ("Jubileum cadeau ideeën die …").
+        title = (r["title"] or "").strip().lower()
+        if title:
+            out.add(title)
+    return out
+
+
+#: Stopwoorden tellen niet mee bij het vergelijken van zoekwoorden.
+_KEYWORD_STOPWORDS = {
+    "de", "het", "een", "en", "of", "in", "op", "voor", "van", "met", "bij",
+    "je", "jouw", "wat", "hoe", "waarom", "is", "zijn", "die", "dat",
+}
+
+
+def _keyword_already_covered(keyword: str, covered: set) -> bool:
+    """True als dit zoekwoord al gedekt wordt door iets in de contentmotor.
+
+    Exacte match, of voldoende overlap in kernwoorden: minstens twee gedeelde
+    kernwoorden én minstens twee derde van de kernwoorden van het zoekwoord.
+    Zonder die soepelheid werd 'origineel jubileum cadeau' opnieuw voorgesteld
+    terwijl er al een job 'Jubileum cadeau ideeën die écht verbinden' liep; mét
+    een losser criterium zou één gedeeld woord ('cadeau') hele onderwerpen
+    onterecht wegdrukken.
+    """
+    kw = (keyword or "").strip().lower()
+    if not kw:
+        return False
+    if kw in covered:
+        return True
+    kern = {w for w in re.findall(r"[a-z0-9]+", kw) if w not in _KEYWORD_STOPWORDS}
+    if len(kern) < 2:
+        return False
+    for item in covered:
+        woorden = set(re.findall(r"[a-z0-9]+", item))
+        overlap = kern & woorden
+        if len(overlap) >= 2 and len(overlap) * 3 >= len(kern) * 2:
+            return True
+    return False
 
 
 def _written_keywords(name: str) -> set:
@@ -250,14 +322,24 @@ def project_dashboard(name: str, days: int = Query(28, ge=7, le=365)):
 # ── Project Advice (AI-vrij — op basis van data) ────────────────────
 
 
+#: Doelstatussen die een alert NIET mogen dempen. 'partial' hoort er sinds
+#: 25 jul 2026 bij: een doel waarvan de publisher-taak de échte actie niet kon
+#: uitvoeren eindigt als 'partial'. Zo'n doel heeft rapporten opgeleverd maar
+#: niets aan de site veranderd — dempen zou de alert 14 dagen wegdrukken op
+#: bewijs van activiteit in plaats van bewijs van effect. Precies zo verdween
+#: "gemiddelde positie 45.6" van het dashboard terwijl er niets was gebeurd.
+_NON_DAMPENING_STATUSES = ("failed", "cancelled", "partial")
+
+
 def _goal_addresses(goals: List[Dict], *phrases: str, days: int = 14) -> bool:
-    """True als er de afgelopen `days` dagen al een niet-mislukt doel is aangemaakt
+    """True als er de afgelopen `days` dagen al een doel is aangemaakt dat het
+    onderwerp aantoonbaar heeft opgepakt (draait of volledig is afgerond) en
     waarvan objective/titel één van de zinsdelen bevat. Dempt cijfer-alerts:
     GSC-data loopt dagen achter, dus direct na 'Oplossen' zou dezelfde alert
     anders blijven terugkomen alsof er niets gebeurd is."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     for g in goals:
-        if g.get("status") in ("failed", "cancelled"):
+        if g.get("status") in _NON_DAMPENING_STATUSES:
             continue
         haystack = ((g.get("objective") or "") + " " + (g.get("title") or "")).lower()
         if not any(p.lower() in haystack for p in phrases):
@@ -357,15 +439,26 @@ def project_advice(name: str, days: int = Query(28)):
                     "action_label": "Oplossen",
                 })
 
-            # CTR alert — zelfde demping als de positie-alert
+            # CTR-alert — zelfde demping als de positie-alert, én positie-bewust.
+            # Een vaste ondergrens van 3% is zinloos: op positie 45 ís 0% CTR de
+            # verwachte waarde, en meta descriptions herschrijven verandert daar
+            # niets aan (25 jul 2026 — deze alert stond bovenaan bij pos 45.6).
+            # We gebruiken daarom dezelfde benchmark als de SEO-Optimizer, en
+            # zwijgen zodra de gemiddelde positie buiten klikbereik ligt: dan is
+            # het een ranking-probleem en dekt de positie-alert het al.
+            from ..seo.optimizer import _expected_ctr
             ctr_addressed = _goal_addresses(project_goals, f"Verbeter de CTR van {name}")
-            if not ctr_addressed and cur_ctr < 3.0 and cur_imps > 100:
+            expected_ctr = _expected_ctr(cur_pos)
+            if (not ctr_addressed and cur_imps > 100 and cur_pos <= 20
+                    and cur_ctr < expected_ctr * 0.7):
                 advice["alerts"].append({
                     "type": "warning",
                     "icon": "🎯",
-                    "text": f"CTR {cur_ctr}% is laag — verbeter meta descriptions en titels.",
+                    "text": f"CTR {cur_ctr}% op positie {cur_pos} — benchmark is ~{expected_ctr}%. "
+                            f"Verbeter meta descriptions en titels.",
                     "action": f"fix_alert:Verbeter de CTR van {name} door meta descriptions en titels te herschrijven "
-                               f"voor de best presterende pagina's. Huidige CTR: {cur_ctr}%.",
+                               f"voor de best presterende pagina's. Huidige CTR: {cur_ctr}% op positie {cur_pos} "
+                               f"(benchmark ~{expected_ctr}%).",
                     "action_label": "Oplossen",
                 })
 
@@ -387,14 +480,26 @@ def project_advice(name: str, days: int = Query(28)):
             # blijft dezelfde suggestie terugkomen ondanks dat het werk al gedaan is.
             zero_click = [q for q in queries if q["clicks"]
                           == 0 and q["impressions"] >= 20]
-            written = _written_keywords(name)
-            zero_click = [q for q in zero_click if q["query"].strip().lower() not in written]
+            covered = _written_keywords(name) | _pipeline_keywords(site["id"])
+            zero_click = [q for q in zero_click
+                          if not _keyword_already_covered(q["query"], covered)]
             if zero_click:
                 top = zero_click[0]
+                # De diagnose hangt aan de positie. Binnen klikbereik (≤20) is
+                # 0 klikken een snippet-probleem; op positie 45 is het geen
+                # optimalisatie- maar een ranking-probleem, en "optimaliseer
+                # deze pagina" stuurt dan de verkeerde kant op.
+                if top["position"] <= 20:
+                    tekst = (f"'{top['query']}' heeft {top['impressions']} impressies maar 0 klikken "
+                             f"(pos {top['position']}). Optimaliseer titel en meta description.")
+                else:
+                    tekst = (f"'{top['query']}' heeft {top['impressions']} impressies op positie "
+                             f"{top['position']} — te ver weg om klikken te krijgen. Er is nog geen "
+                             f"pagina die hierop mikt: schrijf er een.")
                 advice["alerts"].append({
                     "type": "opportunity",
                     "icon": "💡",
-                    "text": f"'{top['query']}' heeft {top['impressions']} impressies maar 0 klikken (pos {top['position']}). Optimaliseer deze pagina.",
+                    "text": tekst,
                     "action": f"write_article:{top['query']}",
                     "action_label": "Artikel schrijven",
                 })

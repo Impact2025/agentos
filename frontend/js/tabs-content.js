@@ -480,7 +480,7 @@ function copySocialText(btn, platform) {
 }
 function renderSuggestions() {
   if (!weSuggestions.length) return '<p style="color:#94a3b8;font-size:12px;text-align:center;padding:12px">Geen suggesties</p>';
-  return weSuggestions.map(function(sug,i){return '<div style="border:1px solid #e2e8f0;border-radius:6px;padding:10px;margin-bottom:6px"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><p style="font-weight:600;font-size:13px">' + escHtml(sug.title) + '</p><p style="font-size:11px;color:#64748b;margin-top:2px">' + escHtml(sug.rationale) + '</p><div style="display:flex;gap:6px;margin-top:4px"><span style="font-size:10px;padding:1px 6px;background:#f1f5f9;border-radius:4px;color:#475569">' + escHtml(sug.keyword) + '</span><span style="font-size:10px;padding:1px 6px;background:#f1f5f9;border-radius:4px;color:#475569">' + escHtml(sug.estimated_hours||'?') + '</span></div></div><button onclick="publishSuggestion(this,' + i + ')" style="padding:4px 12px;background:#4f46e5;color:#fff;border:none;border-radius:4px;font-size:11px;cursor:pointer">Schrijf &amp; publiceer</button></div></div>';}).join('');
+  return weSuggestions.map(function(sug,i){return '<div style="border:1px solid #e2e8f0;border-radius:6px;padding:10px;margin-bottom:6px"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><p style="font-weight:600;font-size:13px">' + escHtml(sug.title) + '</p><p style="font-size:11px;color:#64748b;margin-top:2px">' + escHtml(sug.rationale) + '</p><div style="display:flex;gap:6px;margin-top:4px"><span style="font-size:10px;padding:1px 6px;background:#f1f5f9;border-radius:4px;color:#475569">' + escHtml(sug.keyword) + '</span><span style="font-size:10px;padding:1px 6px;background:#f1f5f9;border-radius:4px;color:#475569">' + escHtml(sug.estimated_hours||'?') + '</span></div></div><button onclick="publishSuggestion(this,' + i + ')" style="padding:4px 12px;background:#4f46e5;color:#fff;border:none;border-radius:4px;font-size:11px;cursor:pointer">Schrijf &amp; zet in Wachtrij</button></div></div>';}).join('');
 }
 async function generateSuggestions() {
   var btn = document.getElementById('sug-btn'); if (!btn) return;
@@ -587,7 +587,7 @@ async function renderKansenTab(el) {
     '<div class="opp-actions" style="display:flex;gap:6px;flex-wrap:wrap">' +
     ((opp.status==='new'||opp.status==='in_progress')&&!opp.live_url?'<button onclick="writeArticleFromOpp(this,'+idx+')" style="padding:5px 14px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">Schrijf artikel</button>':'') +
     (opp.status==='new'?'<button onclick="updateOppStatus(\''+opp.id+'\',\'in_progress\')" style="padding:5px 12px;background:#fff;color:#92400e;border:1.5px solid #f59e0b;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">→ Pak aan</button>':'') +
-    ((opp.status==='in_progress'&&!opp.live_url)?'<button onclick="publishOpportunity(this,'+idx+')" style="padding:5px 12px;background:#16a34a;color:#fff;border:none;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">🚀 Publiceren</button>':'') +
+    ((opp.status==='in_progress'&&!opp.live_url)?'<button onclick="publishOpportunity(this,'+idx+')" style="padding:5px 12px;background:#16a34a;color:#fff;border:none;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">📝 Schrijf & zet in Wachtrij</button>':'') +
     (opp.live_url?'<a href="'+escHtml(opp.live_url)+'" target="_blank" style="padding:5px 12px;background:#fff;color:#166534;border:1.5px solid #16a34a;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600;text-decoration:none">🔗 Bekijk live</a>':'') +
     (opp.status!=='dismissed'&&!opp.live_url?'<button onclick="updateOppStatus(\''+opp.id+'\',\'dismissed\')" style="padding:5px 12px;background:#fff;color:#475569;border:1.5px solid #cbd5e1;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">✕ Negeren</button>':'') +
     (opp.status==='dismissed'?'<button onclick="updateOppStatus(\''+opp.id+'\',\'new\')" style="padding:5px 12px;background:#fff;color:#1e40af;border:1.5px solid #3b82f6;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">↺ Heropen</button>':'') +
@@ -611,16 +611,14 @@ async function writeArticleFromOpp(btn, idx) {
 }
 async function publishOpportunity(btn, idx) {
   var opp = window._kansenData && window._kansenData[idx]; if (!opp) { alert('Kans niet gevonden'); return; }
-  if (!confirm('Artikel schrijven én live publiceren voor kans: "'+opp.query+'"?\n\nDit start de volledige SEO-pipeline (schrijven → review → optimaliseren → publiceren).')) return;
+  if (!confirm('Artikel schrijven voor kans: "'+opp.query+'"?\n\nDit start de SEO-pipeline (schrijven → review → optimaliseren) en zet het resultaat klaar in de Wachtrij. Publiceren (incl. optioneel social) doe je daarna zelf met "Goedkeuren & publiceren".')) return;
   try {
     var result = await runArticlePipeline({title: opp.angle||opp.query, rationale: opp.rationale||'SEO-kans', keyword: opp.query}, btn);
     if (result && result.success) {
-      if (result.live_url) {
-        alert('✅ Live gepubliceerd: ' + result.live_url + '\n' + formatSeoResultMsg(result));
-      } else if (result.passed_gate === false) {
-        alert('Artikel geschreven maar NIET gepubliceerd — SEO-score ' + result.seo_score + '/10 onder de drempel.\nAls concept opgeslagen in: ' + result.local_path);
+      if (result.passed_gate === false) {
+        alert('Artikel geschreven maar onder de SEO-drempel (score ' + result.seo_score + '/10) — staat als "Verbeteren" klaar in de Wachtrij.\nConcept: ' + result.local_path);
       } else {
-        alert('Artikel geschreven (concept): ' + result.local_path + '\n' + formatSeoResultMsg(result));
+        alert('✅ Artikel klaar in de Wachtrij — keur daar goed om te publiceren (website altijd, social alleen als je dat aanvinkt).\nConcept: ' + result.local_path + '\n' + formatSeoResultMsg(result));
       }
       renderKansenTab(document.getElementById('tab-content'));
     } else if (result) alert('Mislukt: '+(result.detail||'onbekend'));
@@ -726,9 +724,10 @@ async function renderWachtrijTab(el) {
         var socPlatforms = Object.keys(wachtrijPlatformLabels).filter(function(p) { return (job.social_copy||{})[p]; });
         if (!socPlatforms.length) return '';
         return '<div style="margin-top:10px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:11px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px">' +
-          '<span style="font-weight:600">Bij goedkeuren posten naar:</span>' +
+          '<span style="font-weight:600">Ook posten naar (optioneel, standaard uit):</span>' +
           socPlatforms.map(function(p) {
-            return '<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" checked class="soc-toggle-' + job.id + '" value="' + p + '">' + wachtrijPlatformLabels[p] + '</label>';
+            // Bewust NIET default-checked: social is opt-in, nooit automatisch.
+            return '<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="soc-toggle-' + job.id + '" value="' + p + '">' + wachtrijPlatformLabels[p] + '</label>';
           }).join('') + '</div>';
       })() +
       '<div class="opp-actions" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">' +
@@ -774,14 +773,15 @@ async function approveWachtrijJob(btn, jobId) {
   var boxes = document.querySelectorAll('.soc-toggle-' + jobId);
   var channels = [];
   Array.prototype.forEach.call(boxes, function(b) { if (b.checked) channels.push(b.value); });
-  var socialMsg = !boxes.length ? '' :
-    (channels.length ? '\nSocial-posts: ' + channels.map(function(p){return wachtrijPlatformLabels[p]||p;}).join(', ') + '.'
-                     : '\nGeen social-posts (alles uitgevinkt) — alleen de website.');
+  var socialMsg = channels.length
+    ? '\nSocial-posts: ' + channels.map(function(p){return wachtrijPlatformLabels[p]||p;}).join(', ') + '.'
+    : '\nGeen social-posts — alleen de website.';
   if (!confirm('Artikel publiceren naar de website.' + socialMsg + '\nDoorgaan?')) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Publiceren...'; }
   try {
-    var opts = { method: 'POST' };
-    if (boxes.length) { opts.headers = {'Content-Type':'application/json'}; opts.body = JSON.stringify({ channels: channels }); }
+    // Altijd expliciet: het backend post alleen wat hier is aangevinkt.
+    var opts = { method: 'POST', headers: {'Content-Type':'application/json'},
+                 body: JSON.stringify({ channels: channels }) };
     var resp = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/content-queue/' + jobId + '/approve', opts);
     var data = await resp.json();
     if (!resp.ok) { alert('Mislukt: ' + (data.detail || 'onbekende fout')); if (btn) btn.disabled = false; return; }

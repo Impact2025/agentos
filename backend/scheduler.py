@@ -89,10 +89,18 @@ from .shared.config import BRIDGE_SYNC_MINUTES as _BRIDGE_SYNC_MINUTES
 
 async def _bridge_sync_job() -> None:
     """Cloud-companion-sync: push wat op een mens wacht, pull en pas onderweg
-    genomen besluiten toe. Slaat stil over zolang de bridge niet geconfigureerd
-    is — geen error-ruis op een verse installatie."""
+    genomen besluiten toe.
+
+    Drie standen, want ze vragen om verschillend gedrag: helemaal niet ingevuld
+    is een verse installatie (stil overslaan, geen error-ruis), half ingevuld is
+    een configuratiefout die je alleen op je telefoon zou merken als een
+    bevroren lijst (meteen melden), en ingevuld draait gewoon."""
     from .domains.bridge import service as bridge
-    if not bridge.enabled():
+    state = bridge.config_state()
+    if state == "partial":
+        bridge.report_misconfiguration()
+        return
+    if state == "off":
         return
     await bridge.sync_once()
 
@@ -114,6 +122,24 @@ async def _autoheal_job() -> None:
         logger.info(
             "Autoheal: %d verwijderd, %d hervat, %d overgeslagen",
             len(report["deleted"]), len(report["resumed"]), len(report["skipped"]),
+        )
+
+
+async def _iris_selfheal_job() -> None:
+    """Iris' zelfherstel-ronde: openstaande fouten eerst zélf proberen op te
+    lossen (probe = het werk echt opnieuw doen), en alleen melden wat ze niet
+    voor elkaar krijgt.
+
+    Deze job mag zelf nooit falen: een foutkaart over het opruimen van
+    foutkaarten is precies de ruis die hij bestrijdt. `run_selfheal` vangt
+    daarom alles af en rapporteert via zijn returnwaarde.
+    """
+    from .domains.iris.selfheal import run_selfheal
+    report = await run_selfheal(source="scheduler")
+    if report.get("healed") or report.get("escalated"):
+        logger.info(
+            "Iris-zelfherstel: %d bekeken, %d zelf opgelost, %d gemeld",
+            report.get("checked", 0), report.get("healed", 0), report.get("escalated", 0),
         )
 
 
@@ -353,6 +379,10 @@ _SPECS: list[JobSpec] = [
         calendar_sync_job, IntervalTrigger(minutes=15), misfire_grace_time=300, coalesce=True,
     ),
     JobSpec(
+        "iris_selfheal", "Iris' zelfherstel (fouten eerst zelf oplossen, pas melden als het niet lukt)",
+        _iris_selfheal_job, IntervalTrigger(minutes=10), misfire_grace_time=300, coalesce=True,
+    ),
+    JobSpec(
         "iris_briefing_retry", "Iris-herkanselaar (terugval-briefing later alsnog volwaardig)",
         _iris_retry_job, IntervalTrigger(minutes=45), misfire_grace_time=600, coalesce=True,
     ),
@@ -513,11 +543,17 @@ def _on_job_event(event) -> None:
         logger.error("Scheduler-job '%s' faalde: %s", event.job_id, event.exception,
                      exc_info=event.exception)
     elif event.code == EVENT_JOB_MISSED:
-        # Gemist ≠ mislukt: gebeurt bv. rond een serverherstart. De job draait
-        # gewoon weer op het volgende geplande moment.
+        # Gemist ≠ mislukt: gebeurt rond een serverherstart en elke keer dat de
+        # machine slaapt of hibernate't — dan lopen alle vuurmomenten in één klap
+        # voorbij de grace time. Noem dus niet "de server was niet beschikbaar"
+        # als oorzaak (dat is vaak simpelweg onwaar en stuurt het zoeken de
+        # verkeerde kant op); noem het geplande moment, dat is het enige feit
+        # dat we hier hebben.
+        when = getattr(event, "scheduled_run_time", None)
+        when_txt = f" van {when.strftime('%d-%m %H:%M')}" if when else ""
         _record_run(event.job_id, "missed",
-                    "run gemist (server was tijdelijk niet beschikbaar) — draait bij de "
-                    "volgende geplande run vanzelf")
+                    f"geplande run{when_txt} overgeslagen (machine sliep of server lag "
+                    "even stil) — draait bij de volgende geplande run vanzelf")
         logger.warning("Scheduler-job '%s' gemist (misfire)", event.job_id)
     else:  # EVENT_JOB_EXECUTED
         _record_run(event.job_id, "ok", None)

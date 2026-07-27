@@ -51,6 +51,43 @@ def test_keyword_check_flags_missing_h1_and_intro():
     assert any("minimaal 2" in i for i in issues)
 
 
+def test_keyword_check_folds_diacritics():
+    """Regressie 25 jul 2026: het zoekwoord komt uit GSC in de spelling van de
+    zoeker ('jubileum cadeau ideeen'), het artikel schrijft correct Nederlands
+    ('ideeën'). Zonder accent-vouwen zag de check een artikel dat het zoekwoord
+    in élke kop gebruikt aan voor thin content ('komt 0× voor') — goed voor drie
+    keyword-issues plús een E-E-A-T-aftrek van 5 punten, en de enige manier om
+    die te 'repareren' was de tekst verkeerd spellen. Een artikel bleef zo op 78
+    hangen terwijl het niets mankeerde."""
+    from backend.domains.publish.article_writer import check_keyword
+    html = ("<h1>Jubileum cadeau ideeën die verbinden</h1>"
+            "<p>Je zoekt jubileum cadeau ideeën die passen bij jullie verhaal. "
+            + "Meer context over de keuze en de aanleiding. " * 60
+            + "De mooiste jubileum cadeau ideeën zijn gedeelde ervaringen.</p>")
+    assert check_keyword(html, "jubileum cadeau ideeen") == []
+    # …en andersom: accent in het zoekwoord, geen accent in de tekst.
+    assert check_keyword(html.replace("ideeën", "ideeen"),
+                         "jubileum cadeau ideeën") == []
+
+
+def test_cta_check_accepts_destination_suffix_and_href():
+    """Regressie 25 jul 2026: CTA's staan in de kennisbank als
+    '«actie» op «domein/pad»'. Het domeindeel is de bestemming, geen zinsdeel —
+    een schrijver maakt er een link van. De check eiste de hele string letterlijk
+    in de lopende tekst, dus élk artikel verloor 6 punten voor een CTA die er
+    gewoon stond."""
+    from backend.domains.publish.article_writer import check_cta
+    ctas = ["Ontdek de Ritual Box op steentjebijsteentje.nl/de-ritual-box"]
+    # Als link in de tekst (zoals een schrijver het doet).
+    assert check_cta('<p>Meer weten? <a href="https://steentjebijsteentje.nl/'
+                     'de-ritual-box">Ontdek de Ritual Box</a>.</p>', ctas) is True
+    # Alleen de href, zonder de letterlijke CTA-zin.
+    assert check_cta('<p>Zie <a href="https://steentjebijsteentje.nl/'
+                     'de-ritual-box">deze doos</a>.</p>', ctas) is True
+    # Geen CTA, geen link → nog steeds netjes False.
+    assert check_cta("<p>Niks te zien hier.</p>", ctas) is False
+
+
 def test_keyword_check_flags_stuffing():
     from backend.domains.publish.article_writer import check_keyword
     html = "<h1>kaas</h1><p>" + "kaas " * 50 + "</p>"

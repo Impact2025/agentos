@@ -416,16 +416,30 @@ async def mark_as_read(email_id: str) -> None:
 
 
 async def send_new_email(to: str, subject: str, body_html: str) -> dict:
-    """Send a new email via Graph."""
+    """Send a new email via Graph.
+
+    Returns {"success": True} on send, or {"success": False, "error": ...}
+    when the mail cannot be dispatched (no valid token, dead session, Graph
+    error). Callers MUST check `success` — this NEVER raises a raw exception,
+    so a stale/expired Outlook session degrades to a clean 422/502 instead of
+    crashing the endpoint with an uncaught 500.
+    """
     token = get_valid_token()
     if not token:
-        raise RuntimeError("Niet geauthenticeerd")
+        return {
+            "success": False,
+            "error": "Geen geldig Outlook-token (sessie verlopen of netwerkfout). "
+                     "Log opnieuw in via Instellingen -> Outlook en probeer het daarna opnieuw.",
+        }
 
     recipients = [
         {"emailAddress": {"address": addr.strip()}}
         for addr in to.split(",")
         if addr.strip()
     ]
+    if not recipients:
+        return {"success": False, "error": "Geen geldige ontvanger (leeg adres)."}
+
     payload = {
         "message": {
             "subject": subject,
@@ -433,7 +447,10 @@ async def send_new_email(to: str, subject: str, body_html: str) -> dict:
             "toRecipients": recipients,
         }
     }
-    await _graph("POST", "/me/sendMail", token, json=payload)
+    try:
+        await _graph("POST", "/me/sendMail", token, json=payload)
+    except Exception as e:
+        return {"success": False, "error": f"Versturen via Graph mislukt: {e}"}
     return {"success": True}
 
 

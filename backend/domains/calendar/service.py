@@ -212,6 +212,70 @@ async def get_week_events(week_start: Optional[str] = None) -> List[dict]:
     return events
 
 
+async def get_events_range(start: datetime, end: datetime) -> dict:
+    """Events mét titel over álle lees-agenda's (agent-agenda + de agenda's uit
+    CALENDAR_BUSY_CALENDAR_IDS), voor een dagoverzicht onderweg.
+
+    Bewust ánders dan `get_busy_times`: dáár maakt één onbereikbare agenda het
+    hele antwoord ongeldig, want half controleren is precies hoe je dubbel
+    boekt. Hier lezen we alleen om te tónen — een agenda die niet meewerkt
+    mag de andere niet wegvagen. De onbereikbare agenda's komen daarom apart
+    terug in `unreachable`, zodat de telefoon "dit is niet je volledige dag"
+    kan zeggen in plaats van een lege dag te suggereren.
+
+    Returns {events: [...], calendars: [...], unreachable: [{id, error}]}.
+    """
+    if not is_configured():
+        return {"events": [], "calendars": [], "unreachable": [],
+                "error": "geen Google-credentials ingesteld"}
+    cids: List[str] = []
+    for cid in [_cal_id()] + _busy_cal_ids():
+        if cid and cid not in cids:
+            cids.append(cid)
+
+    events: List[dict] = []
+    unreachable: List[dict] = []
+    for cid in cids:
+        try:
+            data = await _api(
+                "GET",
+                f"/calendars/{cid}/events",
+                params={
+                    "timeMin": start.isoformat(),
+                    "timeMax": end.isoformat(),
+                    "singleEvents": "true",
+                    "orderBy": "startTime",
+                    "maxResults": 100,
+                },
+            )
+        except Exception as e:  # noqa: BLE001
+            unreachable.append({"id": cid, "error": explain_error(e, cal_id=cid)[:300]})
+            continue
+        for ev in data.get("items", []):
+            s, en = ev.get("start", {}), ev.get("end", {})
+            if ev.get("status") == "cancelled":
+                continue
+            events.append({
+                "id": ev.get("id"),
+                "calendar_id": cid,
+                "summary": ev.get("summary") or "(geen titel)",
+                "start": s.get("dateTime") or s.get("date"),
+                "end": en.get("dateTime") or en.get("date"),
+                "all_day": "date" in s and "dateTime" not in s,
+                "location": ev.get("location") or "",
+                "hangout_link": ev.get("hangoutLink") or "",
+                "html_link": ev.get("htmlLink") or "",
+                "attendees": len(ev.get("attendees") or []),
+                # 'Ik heb afgezegd' is geen afspraak meer, maar Google levert
+                # hem wél mee — de telefoon moet dat kunnen zien.
+                "declined": any(
+                    a.get("self") and a.get("responseStatus") == "declined"
+                    for a in (ev.get("attendees") or [])),
+            })
+    events.sort(key=lambda e: str(e.get("start") or ""))
+    return {"events": events, "calendars": cids, "unreachable": unreachable}
+
+
 def _cache_events(events: List[dict]) -> None:
     """Schrijf de vers gehaalde events naar de lokale cache (idempotent)."""
     try:

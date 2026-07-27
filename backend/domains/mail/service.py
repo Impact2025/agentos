@@ -133,6 +133,7 @@ def _run_mailbox_graph(mailbox: Dict) -> int:
             f"controleer de Entra-app-machtigingen (Mail.ReadWrite + beheerdersinstemming)."
         )
 
+    pending: List[tuple] = []  # verwerkt ná de transactie, zie _process_classified
     with get_conn() as conn:
         seen = {r["uidl"] for r in conn.execute(
             "SELECT uidl FROM mail_inbox WHERE mailbox_id=?", (mid,))}
@@ -172,25 +173,35 @@ def _run_mailbox_graph(mailbox: Dict) -> int:
                     continue
                 kind = classify.classify(m["subject"], m["body_text"], from_addr)
                 conn.execute("UPDATE mail_inbox SET classified=? WHERE id=?", (kind, cur.lastrowid))
-                if kind == "appointment":
-                    # Agenda-voorstel i.p.v. mailconcept (zie _process_classified).
-                    if _process_classified(conn, mailbox, cur.lastrowid, from_addr,
-                                           m["subject"], m["body_text"], kind):
-                        created += 1
-                    continue
-                if kind != "question":
-                    continue
-                created += _process_classified(conn, mailbox, cur.lastrowid, from_addr,
-                                               m["subject"], m["body_text"], kind)
+                # Agenda-voorstel of mailconcept: pas ná de transactie.
+                if kind in ("appointment", "question"):
+                    pending.append((cur.lastrowid, from_addr, m["subject"],
+                                    m["body_text"], kind))
+
+    for inbox_id, from_addr, subject, body, kind in pending:
+        try:
+            created += _process_classified(mailbox, inbox_id, from_addr,
+                                           subject, body, kind)
+        except Exception:
+            logger.exception("Mail %s (%s) verwerken mislukt", inbox_id, kind)
     return created
 
 
-def _process_classified(conn, mailbox: Dict, inbox_id: int, from_addr: str,
+def _process_classified(mailbox: Dict, inbox_id: int, from_addr: str,
                         subject: str, body: str, kind: str) -> int:
     """Gedeelde verwerking voor 'question' (mailconcept) en 'appointment'
     (agenda-voorstel). Retourneert 1 als er iets klaargezet is, anders 0.
 
     Centraal zodat de POP3- en Graph-flow identiek gedrag tonen.
+
+    Opent zijn eigen verbindingen en MOET dus buiten de poll-transactie
+    draaien. Dat is geen stijlkeuze: `create_proposal` opent zelf een
+    verbinding, dus aangeroepen binnen de open write-transactie van de
+    poll wacht die op een lock die de aanroeper zelf vasthoudt — een
+    self-deadlock die `busy_timeout` niet kán oplossen, alleen vertragen
+    (20 jul 2026: elk afspraak-voorstel sneuvelde zo op "database is
+    locked"). Om dezelfde reden staat de trage `draft_reply`-LLM-call
+    hier tússen twee korte transacties in plaats van erbinnen.
     """
     mid = mailbox["id"]
     from_name = (from_addr.split("<")[0].strip().strip('"') if "<" in from_addr
@@ -200,8 +211,9 @@ def _process_classified(conn, mailbox: Dict, inbox_id: int, from_addr: str,
         prop = agenda_agent.create_proposal(mid, inbox_id, subject, from_addr, body)
         return 1 if prop else 0
     # question → concept-antwoord
-    knowledge = knowledge_mod.build_knowledge(conn, mailbox.get("project", ""), mailbox)
-    history = knowledge_mod.thread_history(conn, mid, from_addr, inbox_id)
+    with get_conn() as conn:  # korte leesfase
+        knowledge = knowledge_mod.build_knowledge(conn, mailbox.get("project", ""), mailbox)
+        history = knowledge_mod.thread_history(conn, mid, from_addr, inbox_id)
     signature = (mailbox.get("signature") or "").strip()
     draft = drafter.draft_reply(
         from_name=from_name or from_addr,
@@ -216,12 +228,13 @@ def _process_classified(conn, mailbox: Dict, inbox_id: int, from_addr: str,
         draft = draft.rstrip() + "\n\n" + signature
     refs = ""
     irt = ""
-    conn.execute(
-        "INSERT INTO mail_reply(mailbox_id,inbox_id,to_addr,subject,draft_body,"
-        "in_reply_to,\"references\") "
-        "VALUES(?,?,?,?,?,?,?)",
-        (mid, inbox_id, from_addr, "Re: " + subject, draft, irt, refs),
-    )
+    with get_conn() as conn:  # korte schrijffase, ná de LLM-call
+        conn.execute(
+            "INSERT INTO mail_reply(mailbox_id,inbox_id,to_addr,subject,draft_body,"
+            "in_reply_to,\"references\") "
+            "VALUES(?,?,?,?,?,?,?)",
+            (mid, inbox_id, from_addr, "Re: " + subject, draft, irt, refs),
+        )
     return 1
 
 
@@ -231,6 +244,8 @@ def run_mailbox(mailbox: Dict) -> int:
     # Office365/Exchange-mailboxen: Graph-API in plaats van basic-auth POP3.
     if mailbox.get("auth_method") == "graph":
         return _run_mailbox_graph(mailbox)
+    pending: List[tuple] = []  # verwerkt ná de transactie, zie _process_classified
+    created = 0
     try:
         with get_conn() as conn:
             fetched = inbox.fetch_new(
@@ -244,10 +259,6 @@ def run_mailbox(mailbox: Dict) -> int:
             )
             if not fetched:
                 return 0
-            knowledge = knowledge_mod.build_knowledge(
-                conn, mailbox.get("project", ""), mailbox
-            )
-            created = 0
             for m in fetched:
                 if is_ignored_sender(conn, m["from_addr"]):
                     conn.execute(
@@ -260,18 +271,21 @@ def run_mailbox(mailbox: Dict) -> int:
                     "UPDATE mail_inbox SET classified=? WHERE id=?",
                     (kind, m["id"]),
                 )
-                if kind == "appointment":
-                    created += _process_classified(
-                        conn, mailbox, m["id"], m["from_addr"], m["subject"], m["body_text"], kind)
-                    continue
-                if kind != "question":
-                    continue
-                created += _process_classified(
-                    conn, mailbox, m["id"], m["from_addr"], m["subject"], m["body_text"], kind)
-            return created
+                # Zie _process_classified: pas ná de transactie.
+                if kind in ("appointment", "question"):
+                    pending.append((m["id"], m["from_addr"], m["subject"],
+                                    m["body_text"], kind))
     except Exception:
         logger.exception("Mailbox %s (%s) verwerking mislukt", mid, mailbox.get("address"))
         raise
+
+    for inbox_id, from_addr, subject, body, kind in pending:
+        try:
+            created += _process_classified(mailbox, inbox_id, from_addr,
+                                           subject, body, kind)
+        except Exception:
+            logger.exception("Mail %s (%s) verwerken mislukt", inbox_id, kind)
+    return created
 
 
 def run_all_mailboxes(mailbox_id: Optional[str] = None) -> Dict[str, int]:
@@ -483,6 +497,65 @@ def edit_reply(reply_id: int, text: str) -> None:
             "UPDATE mail_reply SET draft_body=?, edited_body=?, status='edited' WHERE id=?",
             (text, text, reply_id),
         )
+
+
+def gsc_fix_reply(reply_id: int, auto: bool = True) -> Optional[Dict]:
+    """GSC-expert-agent: analyseer een Search Console-notificatiemail en schrijf
+    een concrete fix-gids terug in het concept. Bij auto=True handelt de agent
+    veilig af: verzenden (alleen naar een écht mens, bij hoge confidence) of
+    oplossen (GSC-notificaties zonder mens worden niet naar Google gemaild).
+
+    Zie backend/domains/mail/gsc_expert.py — haalt live Search Console-data op
+    (mits de site een gsc_property heeft) en laat een LLM een uitvoerbare
+    stappenlijst in de merkstem schrijven. Leert per domein/reden uit feedback.
+    """
+    from . import gsc_expert
+    return gsc_expert.analyze_and_fix(reply_id, auto=auto, send_fn=send_reply)
+
+
+def gsc_fix_all_pending(auto: bool = True) -> Dict:
+    """Verwerk alle wachtende GSC-concepten in één keer via de expert-agent.
+
+    VUUR-EN-VERGEET: de request komt meteen terug (met een job-id) en de
+    daadwerkelijke verwerking loopt op de achtergrond. Reden: per mail doet de
+    agent een live GSC-fetch + LLM-call (~7-8s bij een lokale LLM), dus 8 mails
+    = >60s — te traag voor een blokkerende HTTP-call. De UI ververst het
+    Actiecentrum; de resultaten landen in gsc_analyses en op de reply-rijen.
+
+    Veilig: auto-verzenden alleen naar echte mensen bij hoge confidence;
+    notificaties worden opgelost.
+    """
+    import threading, uuid as _uuid
+    job_id = "gscjob_" + _uuid.uuid4().hex[:10]
+
+    def _run():
+        from . import gsc_expert
+        from ...shared.database import get_conn
+        with get_conn() as conn:
+            ids = [row["id"] for row in conn.execute(
+                "SELECT r.id FROM mail_reply r JOIN mail_inbox i ON i.id=r.inbox_id "
+                "WHERE r.status='pending_review' AND lower(i.from_addr) LIKE '%google%' "
+                "ORDER BY r.id"
+            ).fetchall()]
+        for rid in ids:
+            try:
+                gsc_expert.analyze_and_fix(rid, auto=auto, send_fn=send_reply)
+            except Exception as e:
+                logger.exception("GSC fix-all mislukt voor reply %s", rid)
+
+    t = threading.Thread(target=_run, name=job_id, daemon=True)
+    t.start()
+    return {"ok": True, "background": True, "job_id": job_id,
+            "message": "GSC-expert verwerkt alle wachtende meldingen op de achtergrond — ververs het Actiecentrum over enkele seconden."}
+
+
+def gsc_record_feedback(analysis_id: str, domain: str, reason: str,
+                        score: int = 0, corrected_text: str = "", note: str = "") -> Dict:
+    """Sla Vincents feedback op een GSC-analyse op (1-5 sterren + evt. de
+    definitieve verbeterde versie). Voedt de leer-laag."""
+    from . import gsc_expert
+    return gsc_expert.record_feedback(analysis_id, domain, reason,
+                                      score=score, corrected_text=corrected_text, note=note)
 
 
 # ── Mailbox-beheer (API) ────────────────────────────────────────────────────

@@ -71,17 +71,15 @@ def get_content_job(job_id: str):
     return _with_parsed_social_copy(job)
 
 
-def _channels_from_body(body: Optional[Dict]) -> Optional[list]:
-    """Per-artikel social-keuze uit de request-body: geen body of geen sleutel =
-    None (alle geconfigureerde platformen, het oude gedrag); `social: false` of
-    een expliciete `channels`-lijst beperkt de fan-out."""
-    if not body:
-        return None
-    if body.get("social") is False:
+def _channels_from_body(body: Optional[Dict]) -> list:
+    """Per-artikel social-keuze uit de request-body — opt-in: geen body, geen
+    sleutel of `social: false` = lege lijst (alleen de website). Social gaat dus
+    nooit vanzelf mee; alleen een expliciete `channels`-lijst post."""
+    if not body or body.get("social") is False:
         return []
     if "channels" in body:
         return [str(c).strip().lower() for c in (body.get("channels") or [])]
-    return None
+    return []
 
 
 @router.post("/{job_id}/approve")

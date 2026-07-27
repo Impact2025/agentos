@@ -466,6 +466,15 @@ CREATE TABLE IF NOT EXISTS case_studies (
 );
 CREATE INDEX IF NOT EXISTS idx_case_studies_site ON case_studies(site_id, status);
 
+-- Cache voor de rijke bridge-context. De bridge-sync draait elke 3 minuten;
+-- Google Analytics, Graph en Agenda elke ronde bevragen zou quota verbranden
+-- en de sync traag maken. Per sectie een eigen TTL (zie bridge/context.py).
+CREATE TABLE IF NOT EXISTS bridge_context_cache (
+    key        TEXT PRIMARY KEY,
+    payload    TEXT NOT NULL,              -- JSON
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS scheduler_runs (
     job_id      TEXT PRIMARY KEY,
     status      TEXT NOT NULL,              -- ok | error | missed
@@ -617,6 +626,14 @@ def _migrate(conn) -> None:
         # Alleen-website-publicatie: geen social-fan-out en geen Content Multiplier
         # (social-pack + video). Voor sites die bewust niet op social willen (Daar).
         ("website_only",       "ALTER TABLE sites ADD COLUMN website_only INTEGER DEFAULT 0"),
+        # Sites zonder publish-API (bv. LiefdeVoorIedereen/datingsite2026: content
+        # gaat via een Prisma-admin-sessie, niet een publieke endpoint) — Vincent
+        # pusht die zelf. Zonder deze vlag probeert approve_and_publish eeuwig een
+        # PUBLISH_URL/_KEY die nooit gaat bestaan, en verschijnt elke goedkeuring
+        # als 'Publiceren mislukt' in het Actiecentrum terwijl er niets mis is.
+        # Met de vlag exporteert de pipeline het klaar-artikel naar de vault i.p.v.
+        # een HTTP-publish te proberen, en telt dat als afgeronde levering.
+        ("manual_publish",     "ALTER TABLE sites ADD COLUMN manual_publish INTEGER DEFAULT 0"),
     ):
         if col not in site_cols:
             conn.execute(ddl)
@@ -877,6 +894,82 @@ def _migrate(conn) -> None:
     sug_cols = {r["name"] for r in conn.execute("PRAGMA table_info(iris_suggestions)").fetchall()}
     if "goal_id" not in sug_cols:
         conn.execute("ALTER TABLE iris_suggestions ADD COLUMN goal_id TEXT DEFAULT ''")
+
+    # ── Iris' storings-repertoire: wat werkte er bij wélke fout? ────────────
+    # Elke "analyseer & fix" op een foutkaart legt hier een rij vast, gesleuteld
+    # op een genormaliseerde fout-handtekening (nummers/UUID's/titels eruit).
+    # Zo hoeft dezelfde storing maar één keer door de LLM: bij herhaling pakt
+    # Iris de remedie die eerder wérkte, en zakt een remedie die blijft falen
+    # vanzelf weg (successes vs. failures). Dit is het leer-deel van de lus —
+    # het uitvoer-deel blijft in triage.py achter dezelfde review-gates.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS iris_error_fixes (
+            id            TEXT PRIMARY KEY,
+            signature     TEXT NOT NULL,        -- genormaliseerde fout-vingerafdruk
+            project       TEXT DEFAULT '',
+            sample_action TEXT DEFAULT '',      -- hoe de fout zich noemt
+            sample_detail TEXT DEFAULT '',      -- één voorbeeld, voor de UI
+            diagnosis     TEXT DEFAULT '',      -- Iris' oorzaak-analyse
+            remedy_type   TEXT DEFAULT '',      -- whitelist-actie uit triage.py
+            remedy_payload TEXT DEFAULT '{}',
+            human_step    TEXT DEFAULT '',      -- wat een mens moet doen (als agents niet kunnen)
+            attempts      INTEGER DEFAULT 0,
+            successes     INTEGER DEFAULT 0,
+            failures      INTEGER DEFAULT 0,
+            occurrences   INTEGER DEFAULT 1,    -- hoe vaak deze fout langskwam
+            last_result   TEXT DEFAULT '',
+            active        INTEGER DEFAULT 1,    -- 0 = remedie bewezen nutteloos
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_iris_error_fixes_sig "
+        "ON iris_error_fixes(signature)"
+    )
+
+    # ── Faal-reeksen: "probeer het zelf" vs. "maak een mens wakker" ─────────
+    # Eén mislukte poll is geen storing (het netwerk hikt, de laptop sliep);
+    # drie op rij wél. Die telling staat in SQLite en niet in het procesgeheugen,
+    # anders is na een herstart "nooit gefaald" niet te onderscheiden van "faalt
+    # al uren" — en juist dat verschil bepaalt of Vincent een kaart moet zien.
+    # Zie backend/shared/failures.py.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS agent_failure_streaks (
+            key             TEXT PRIMARY KEY,   -- bv. 'social_fetch:si_1003…'
+            fail_count      INTEGER DEFAULT 0,
+            first_failed_at TEXT,
+            last_failed_at  TEXT,
+            last_detail     TEXT DEFAULT '',
+            failure_class   TEXT DEFAULT '',    -- transient/auth/quota/config/unknown
+            escalated       INTEGER DEFAULT 0   -- 1 = al gemeld, niet nóg een kaart
+        )"""
+    )
+
+    # ── Iris' zelfherstel-logboek ──────────────────────────────────────────
+    # Elke poging van Iris om een foutkaart zélf op te lossen (probe, remedie,
+    # uitkomst). Bestaat los van activity_log omdat een mislukte poging géén
+    # inbox-item mag worden — anders vervang je één rode kaart door drie. Het is
+    # tegelijk het bewijsmateriaal onder "Iris loste dit zelf op".
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS iris_heal_log (
+            id          TEXT PRIMARY KEY,
+            signature   TEXT NOT NULL,          -- zelfde vingerafdruk als iris_error_fixes
+            source_kind TEXT DEFAULT '',        -- activity_log | scheduler
+            source_id   TEXT DEFAULT '',
+            project     TEXT DEFAULT '',
+            action      TEXT DEFAULT '',
+            failure_class TEXT DEFAULT '',
+            remedy      TEXT DEFAULT '',        -- welke probe/remedie is geprobeerd
+            result      TEXT DEFAULT '',        -- healed | failed | escalated | waiting
+            note        TEXT DEFAULT '',
+            created_at  TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_iris_heal_log_sig "
+        "ON iris_heal_log(signature, created_at)"
+    )
 
     # ── Mail helpdesk (review-gate): per project een eigen mailbox ──────────
     # Een mailbox koppelt een project aan zijn POP3-inbox + SMTP-verzender.
@@ -1242,6 +1335,66 @@ def _migrate(conn) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_agent_predictions_due "
         "ON agent_predictions(agent, status, due_date)"
+    )
+
+    # ── GSC-expert agent (Search Console fix-gids) ─────────────────────────
+    # De agent analyseert GSC-notificatiemails, haalt live Search Console-data
+    # op en schrijft een fix-gids. Hij leert per domein/reden uit Vincents
+    # feedback (ratings) zodat latere antwoorden beter worden. Alle data hier
+    # is de leer-laag; de agent leest gsc_analyses + gsc_feedback bij elke
+    # nieuwe analyse.
+    mr_cols = {r["name"] for r in conn.execute("PRAGMA table_info(mail_reply)").fetchall()}
+    if "gsc_status" not in mr_cols:
+        # 'pending' = wacht op actie, 'resolved' = agent heeft geanalyseerd
+        # (en evt. verzonden), 'failed' = analyse mislukt.
+        conn.execute("ALTER TABLE mail_reply ADD COLUMN gsc_status TEXT DEFAULT ''")
+    if "gsc_confidence" not in mr_cols:
+        # 0..1 — de agent's zekerheid dat de fix-gids volledig en correct is.
+        conn.execute("ALTER TABLE mail_reply ADD COLUMN gsc_confidence REAL DEFAULT 0")
+    if "gsc_fixed_by" not in mr_cols:
+        # 'agent' = automatisch verzonden/opgelost, 'vincent' = handmatig,
+        # '' = nog niet (alleen geanalyseerd).
+        conn.execute("ALTER TABLE mail_reply ADD COLUMN gsc_fixed_by TEXT DEFAULT ''")
+    if "gsc_analysis_id" not in mr_cols:
+        conn.execute("ALTER TABLE mail_reply ADD COLUMN gsc_analysis_id TEXT DEFAULT ''")
+
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS gsc_analyses (
+            id              TEXT PRIMARY KEY,
+            domain          TEXT NOT NULL,
+            site_name       TEXT DEFAULT '',
+            reason          TEXT DEFAULT '',
+            used_live_gsc   INTEGER DEFAULT 0,
+            analysis        TEXT DEFAULT '',     -- de gegenereerde fix-gids
+            confidence      REAL DEFAULT 0,
+            disposition     TEXT DEFAULT '',     -- 'sent' | 'resolved' | 'review'
+            auto_sent       INTEGER DEFAULT 0,
+            created_at      TEXT DEFAULT (datetime('now'))
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_gsc_analyses_domain "
+        "ON gsc_analyses(domain, created_at)"
+    )
+
+    # Vincents feedback per analyse — de brandstof voor het leren.
+    # score: 1 (nutteloos) .. 5 (perfect). corrected_text: als Vincent de gids
+    # verbeterde vóór verzenden, staat hier de definitieve versie (goudstandaard).
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS gsc_feedback (
+            id              TEXT PRIMARY KEY,
+            analysis_id     TEXT NOT NULL,
+            domain          TEXT DEFAULT '',
+            reason          TEXT DEFAULT '',
+            score           INTEGER DEFAULT 0,
+            corrected_text  TEXT DEFAULT '',
+            note            TEXT DEFAULT '',
+            created_at      TEXT DEFAULT (datetime('now'))
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_gsc_feedback_analysis "
+        "ON gsc_feedback(analysis_id)"
     )
 
 

@@ -481,6 +481,27 @@ function loadIrisBriefing() {
       })
       .catch(function(){ var h=document.getElementById('iris-suggestions'); if(h) h.innerHTML=''; });
     html += '<div id="iris-suggestions"></div>';
+    // ── Zelfherstel: wat heeft Iris zélf opgelost (en wat lukte niet)? ──
+    // Zonder dit blijft haar nuttigste werk onzichtbaar: fouten die nooit in
+    // het Actiecentrum belandden omdat ze al opgelost waren.
+    html += '<div id="iris-selfheal"></div>';
+    fetch('/api/iris/selfheal?limit=50')
+      .then(function(r){ return r.ok ? r.json() : {items:[]}; })
+      .then(function(hd){
+        var items = hd.items || [];
+        var holder = document.getElementById('iris-selfheal');
+        if (!holder || !items.length) return;
+        var healed = items.filter(function(i){ return i.result === 'healed'; });
+        var open = items.filter(function(i){ return i.result === 'escalated'; });
+        var last = healed[0];
+        holder.innerHTML = '<div style="margin:6px 0 8px;font-size:11px;color:#475569">' +
+          '🔧 Zelf opgelost: <strong style="color:#166534">' + healed.length + '</strong>' +
+          (open.length ? ' · <span style="color:#b45309">' + open.length + ' moest ik melden</span>' : '') +
+          (last ? '<div style="color:#94a3b8;font-size:10px;margin-top:2px">laatst: ' +
+            escHtml(last.action || '') + ' — ' + escHtml((last.note || '').slice(0, 90)) + '</div>' : '') +
+          '</div>';
+      })
+      .catch(function(){});
     var advice = d.advice || [];
     if (advice.length) {
       html += '<div style="margin-bottom:8px">' + advice.slice(0,3).map(function(a){
@@ -773,14 +794,14 @@ function acAction(btn, action, project) {
     if (!confirm('Doel definitief verwijderen?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
     fetch('/api/goals/' + encodeURIComponent(action.id), { method:'DELETE' }).then(done).catch(fail);
   } else if (type === 'content_approve') {
-    // Keuze: wel of niet social posten. Backend vertaalt {social:false} →
-    // alleen website (geen social-fan-out, geen Content Multiplier).
+    // Social is opt-in: alleen-website is de standaardkeuze. Social gebeurt
+    // nooit vanzelf — voor géén enkel project.
     showChoiceModal({
       title: 'Publiceren',
-      body: 'Hoe wil je dit artikel publiceren?',
+      body: 'Standaard gaat alleen de website live. Social alleen als je dat hier kiest.',
       buttons: [
-        { label: 'Publiceren naar website + social', value: 'with_social', primary: true },
-        { label: 'Alleen website publiceren (geen social)', value: 'website_only' },
+        { label: 'Alleen website publiceren', value: 'website_only', primary: true },
+        { label: 'Ook naar social posten', value: 'with_social' },
         { label: 'Annuleren', value: 'cancel' },
       ],
     }).then(function (choice) {
@@ -789,7 +810,8 @@ function acAction(btn, action, project) {
         return;
       }
       if (btn) { btn.disabled = true; btn.textContent = 'Bezig...'; }
-      var body = choice === 'website_only' ? { social: false } : null;
+      // Zonder expliciete keuze post het backend niets naar social.
+      var body = choice === 'with_social' ? { channels: ALL_SOCIAL_CHANNELS } : { social: false };
       post('/api/content-queue/' + encodeURIComponent(action.id) + '/approve', body)
         .then(done).catch(fail);
     });
@@ -847,11 +869,42 @@ function acAction(btn, action, project) {
               body.appendChild(box);
               btn.textContent = 'Gereed';
             }
-            loadActionCenter(); loadActivityLogs();
+            setTimeout(function(){ loadActionCenter(); loadActivityLogs(); }, 6000);
           }
         } else {
           done();
         }
+      }).catch(fail);
+  } else if (type === 'error_triage') {
+    if (btn) { btn.disabled = true; btn.textContent = 'Iris analyseert...'; }
+    var qs = action.error_kind ? ('?kind=' + encodeURIComponent(action.error_kind)) : '';
+    post('/api/iris/errors/' + encodeURIComponent(action.id) + '/triage' + qs, {})
+      .then(function(d){
+        if (btn) {
+          var card = btn.closest('[id^="ac-item-"]');
+          if (card) {
+            var body = card.querySelector('div[style*="flex:1"]') || card;
+            var box = document.createElement('div');
+            box.className = 'ac-triage-result';
+            var okFix = d && d.ok && d.remedy_type && d.remedy_type !== 'human_step';
+            box.style.cssText = 'margin-top:8px;padding:10px;border-radius:8px;font-size:12px;line-height:1.5;' +
+              (okFix ? 'background:#f0fdf4;border:1px solid #86efac;color:#166534'
+                     : (d && d.remedy_type === 'human_step' ? 'background:#fff7ed;border:1px solid #fdba74;color:#9a3412'
+                                                            : 'background:#fef2f2;border:1px solid #fecaca;color:#991b1b'));
+            var lines = [];
+            if (d && d.diagnosis) lines.push('<strong>Diagnose:</strong> ' + escHtml(d.diagnosis));
+            if (okFix) lines.push('✅ ' + escHtml(d.result || 'Fix uitgevoerd.'));
+            else if (d && d.remedy_type === 'human_step') lines.push('👤 Vereist een menselijke stap: ' + escHtml(d.human_step || ''));
+            else lines.push('❌ ' + escHtml((d && (d.error || d.result)) || 'Fix mislukt.'));
+            box.innerHTML = lines.join('<br>');
+            body.appendChild(box);
+          }
+          btn.textContent = 'Geanalyseerd';
+        }
+        // Niet meteen herladen: dat vervangt de kaart (met het net getoonde
+        // resultaat) vrijwel synchroon weer door de ongewijzigde lijst — de
+        // analyse lijkt dan niets te doen. Geef Vincent de tijd om te lezen.
+        setTimeout(function(){ loadActionCenter(); loadActivityLogs(); }, 6000);
       }).catch(fail);
   } else if (type === 'calendar_approve') {
     if (!confirm('Afspraak in Google Agenda planen? (incl. reistijd/conflict-check)')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }

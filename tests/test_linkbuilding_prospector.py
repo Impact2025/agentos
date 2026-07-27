@@ -41,57 +41,101 @@ def _make_page_snapshot(site_id, page_url, clicks=5, top_query="testterm"):
         )
 
 
-def test_search_web_falls_back_to_ddg_on_quota(clean_tables, monkeypatch):
-    """Quota op = terugval op DuckDuckGo, niet meteen SearchUnavailable."""
+def test_search_web_delegates_to_shared_layer(clean_tables, monkeypatch):
+    """De prospector zoekt via `shared.websearch` — daar zit de volledige
+    providerketen (Tavily → Brave → DuckDuckGo → Bing). Geen tweede,
+    domein-eigen fallback die uit de pas kan gaan lopen."""
     from backend.domains.linkbuilding import prospector
+    from backend.shared import websearch
 
-    class _Client:
-        def __init__(self, **_):
-            pass
-
-        def search(self, **_):
-            raise RuntimeError("This request exceeds your plan's set usage limit.")
-
-    import tavily  # _search_web importeert 'm lazy; hier alvast voor de patch
-
-    monkeypatch.setattr(prospector, "TAVILY_API_KEY", "fake-key")
-    monkeypatch.setattr(tavily, "TavilyClient", _Client)
-    monkeypatch.setattr(prospector, "_search_ddg",
-                        lambda q, m=8: [{"title": "t", "url": "https://x.nl", "snippet": "s"}])
+    monkeypatch.setattr(websearch, "search",
+                        lambda q, max_results=8: [
+                            {"title": "t", "url": "https://x.nl", "snippet": "s"}])
 
     hits = prospector._search_web("wat dan ook")
     assert hits and hits[0]["url"] == "https://x.nl"
 
 
-def test_search_web_uses_ddg_without_api_key(clean_tables, monkeypatch):
-    """Geen Tavily-key = direct via DuckDuckGo, geen harde fout."""
+def test_search_web_passes_max_results_through(clean_tables, monkeypatch):
+    """Het aantal gevraagde resultaten mag niet stilletjes wegvallen."""
     from backend.domains.linkbuilding import prospector
-    monkeypatch.setattr(prospector, "TAVILY_API_KEY", "")
-    monkeypatch.setattr(prospector, "_search_ddg",
-                        lambda q, m=8: [{"title": "t", "url": "https://y.nl", "snippet": "s"}])
-    hits = prospector._search_web("wat dan ook")
-    assert hits and hits[0]["url"] == "https://y.nl"
+    from backend.shared import websearch
+
+    seen = {}
+
+    def _fake(q, max_results=8):
+        seen["q"], seen["max"] = q, max_results
+        return []
+
+    monkeypatch.setattr(websearch, "search", _fake)
+    assert prospector._search_web("linkkansen relatiecoaching", max_results=3) == []
+    assert seen == {"q": "linkkansen relatiecoaching", "max": 3}
 
 
-def test_search_web_raises_when_both_search_paths_fail(clean_tables, monkeypatch):
-    """Faalt óók de terugval, dan pas SearchUnavailable — niet stil op 0."""
+def test_operator_query_valt_terug_op_gewone_trefwoorden(clean_tables, monkeypatch):
+    """De zoekrecepten zijn Tavily-syntax. Neemt DuckDuckGo het over (Tavily-quota
+    op), dan geeft die op zo'n opdracht nul resultaten — wat als 'geen linkkansen'
+    leest terwijl de vraag alleen verkeerd gesteld was."""
     from backend.domains.linkbuilding import prospector
+    from backend.shared import websearch
 
-    class _Client:
-        def __init__(self, **_):
-            pass
+    gevraagd = []
 
-        def search(self, **_):
-            raise RuntimeError("This request exceeds your plan's set usage limit.")
+    def _fake(q, max_results=8):
+        gevraagd.append(q)
+        if '"' in q or " OR " in q:
+            return []
+        return [{"title": "t", "url": "https://gevonden.nl", "snippet": "s"}]
 
-    import tavily
+    monkeypatch.setattr(websearch, "search", _fake)
 
-    def _ddg_down(_q, _m=8):
-        raise prospector.SearchUnavailable("DuckDuckGo-terugval faalde: rate limit")
+    hits = prospector._search_web(
+        'mentale last verdelen "handige links" OR "bronnen"')
+    assert hits and hits[0]["url"] == "https://gevonden.nl"
+    assert gevraagd[-1] == "mentale last verdelen handige links"
 
-    monkeypatch.setattr(prospector, "TAVILY_API_KEY", "fake-key")
-    monkeypatch.setattr(tavily, "TavilyClient", _Client)
-    monkeypatch.setattr(prospector, "_search_ddg", _ddg_down)
+
+def test_terugval_ook_na_een_harde_zoekfout(clean_tables, monkeypatch):
+    from backend.domains.linkbuilding import prospector
+    from backend.shared import websearch
+
+    def _fake(q, max_results=8):
+        if '"' in q:
+            raise websearch.WebSearchError("alle providers faalden")
+        return [{"title": "t", "url": "https://gevonden.nl", "snippet": "s"}]
+
+    monkeypatch.setattr(websearch, "search", _fake)
+    hits = prospector._search_web('relatie "gastblog" OR "schrijf voor ons"')
+    assert hits and hits[0]["url"] == "https://gevonden.nl"
+
+
+def test_simplify_query_ontdoet_de_tavily_syntax():
+    from backend.domains.linkbuilding.prospector import simplify_query
+    assert simplify_query('term "handige links" OR "bronnen"') == "term handige links"
+    assert simplify_query('"Mijn Site" -site:mijnsite.nl') == "Mijn Site"
+    assert simplify_query("gewone query") == "gewone query"
+
+
+def test_lege_uitslag_blijft_leeg_zonder_operatoren(clean_tables, monkeypatch):
+    """Een gewone query die niets vindt is écht 'niets gevonden' — geen fout."""
+    from backend.domains.linkbuilding import prospector
+    from backend.shared import websearch
+
+    monkeypatch.setattr(websearch, "search", lambda q, max_results=8: [])
+    assert prospector._search_web("gewone query") == []
+
+
+def test_search_web_raises_when_all_providers_fail(clean_tables, monkeypatch):
+    """Falen álle providers, dan luid SearchUnavailable — niet stil op 0.
+    Dit is de kern: 0 kandidaten leest in de UI als 'geen linkkansen gevonden',
+    terwijl er in werkelijkheid niets is gezocht."""
+    from backend.domains.linkbuilding import prospector
+    from backend.shared import websearch
+
+    def _down(_q, max_results=8):
+        raise websearch.WebSearchError("alle providers faalden")
+
+    monkeypatch.setattr(websearch, "search", _down)
 
     with pytest.raises(prospector.SearchUnavailable):
         prospector._search_web("wat dan ook")

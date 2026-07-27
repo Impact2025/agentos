@@ -48,62 +48,60 @@ class SearchUnavailable(RuntimeError):
     """
 
 
-def _search_ddg(query: str, max_results: int = 8) -> List[Dict[str, str]]:
-    """Keyless terugval-zoekmachine (DuckDuckGo) als Tavily onbruikbaar is.
+def simplify_query(query: str) -> str:
+    """Zet een operator-rijke zoekopdracht om in gewone trefwoorden.
 
-    Geen API-key, geen quota — precies wat je nodig hebt als het betaalde
-    Tavily-abonnement op is. Raises SearchUnavailable alleen als óók DDG faalt,
-    zodat een lege lijst nog steeds écht 'niets gevonden' betekent.
+    De zoekrecepten hieronder zijn geschreven voor Tavily, dat aanhalingstekens,
+    `OR`-ketens en `-site:` begrijpt. DuckDuckGo — de keyless achtervang die het
+    overneemt zodra het Tavily-abonnement op is — geeft op zo'n opdracht nul
+    resultaten terug. Dat leest als "geen linkkansen gevonden" terwijl de vraag
+    alleen verkeerd gesteld was (25 jul 2026: de weekrun was nog nooit gelukt).
     """
-    try:
-        from ddgs import DDGS
-        hits = DDGS().text(query, max_results=max_results, region="nl-nl")
-        return [
-            {"title": h.get("title") or "", "url": h.get("href") or "",
-             "snippet": (h.get("body") or "")[:300]}
-            for h in hits
-        ]
-    except Exception as e:
-        raise SearchUnavailable(f"DuckDuckGo-terugval faalde: {e}") from e
+    q = re.sub(r"-\w+:\S+", " ", query or "")   # -site:example.nl
+    q = q.split(" OR ")[0]                       # alleen de eerste variant
+    q = q.replace('"', " ")
+    return re.sub(r"\s+", " ", q).strip()
 
 
 def _search_web(query: str, max_results: int = 8) -> List[Dict[str, str]]:
-    """Zoekopdracht via Tavily, met DuckDuckGo als terugval; via asyncio.to_thread.
+    """Zoekopdracht via de gedeelde websearch-laag in `backend/shared/websearch.py`
+    (Tavily → Brave → DuckDuckGo → DDG-HTML). Eén zoek-flow voor het hele
+    systeem — geen tweede, domein-eigen fallback die uit de pas gaat lopen.
 
-    Als het Tavily-abonnement op is (of de key ontbreekt) wordt niet meer hard
-    gefaald: de keyless DuckDuckGo-terugval neemt het over zodat de funnel
-    blijft draaien. Raises SearchUnavailable pas als óók de terugval onbruikbaar
-    is; een lege lijst betekent dus altijd écht 'deze zoekopdracht leverde niets op'.
+    Levert de operator-rijke opdracht niets op, dan volgt één poging met de
+    vereenvoudigde variant: een provider die de syntax niet snapt mag geen
+    'geen kansen' opleveren. Raises SearchUnavailable pas als álle providers
+    op béíde vormen falen; een lege lijst betekent dan écht 'niets gevonden'.
     """
-    if not TAVILY_API_KEY:
-        logger.info("[linkbuilding] Geen TAVILY_API_KEY — direct via DuckDuckGo")
-        return _search_ddg(query, max_results)
-    try:
-        from tavily import TavilyClient
-        client = TavilyClient(api_key=TAVILY_API_KEY)
-        resp = client.search(query=query, max_results=max_results,
-                             search_depth="advanced")
+    from ...shared.websearch import search as web_search, WebSearchError
+
+    def _run(q: str) -> List[Dict[str, str]]:
+        hits = web_search(q, max_results=max_results)
         return [
-            {"title": r.get("title") or "", "url": r.get("url") or "",
-             "snippet": (r.get("content") or "")[:300]}
-            for r in resp.get("results", [])
+            {"title": h.get("title") or "", "url": h.get("url") or "",
+             "snippet": (h.get("snippet") or "")[:300]}
+            for h in hits
         ]
-    except Exception as e:
-        from tavily import errors as tavily_errors
-        fatal = (tavily_errors.UsageLimitExceededError,
-                 tavily_errors.InvalidAPIKeyError,
-                 tavily_errors.MissingAPIKeyError,
-                 tavily_errors.ForbiddenError,
-                 tavily_errors.TavilyKeylessLimitError)
-        # De SDK gooit niet elke plan-/quotafout als een eigen klasse; de tekst
-        # is dan het enige signaal.
-        text = str(e).lower()
-        if isinstance(e, fatal) or "usage limit" in text or "upgrade your plan" in text:
-            logger.warning("[linkbuilding] Tavily onbruikbaar (%s) — terugval op "
-                           "DuckDuckGo voor '%s'", e.__class__.__name__, query)
-            return _search_ddg(query, max_results)
-        logger.warning("[linkbuilding] Tavily-zoekfout op '%s': %s", query, e)
-        return []
+
+    plain = simplify_query(query)
+    try:
+        results = _run(query)
+    except WebSearchError as e:
+        if plain == query:
+            raise SearchUnavailable(f"Alle zoekproviders faalden voor '{query}': {e}") from e
+        logger.info("[linkbuilding] '%s' leverde niets op — opnieuw als '%s'", query, plain)
+        try:
+            return _run(plain)
+        except WebSearchError as e2:
+            raise SearchUnavailable(
+                f"Alle zoekproviders faalden voor '{query}' en '{plain}': {e2}") from e2
+    if not results and plain != query:
+        logger.info("[linkbuilding] '%s' gaf 0 resultaten — opnieuw als '%s'", query, plain)
+        try:
+            return _run(plain)
+        except WebSearchError:
+            return []
+    return results
 
 
 def _url_key(url: str) -> str:
@@ -322,6 +320,17 @@ async def run_prospecting_for_site(site: Dict[str, Any], max_new: int = 10) -> D
         })
         if row:
             qualified += 1
+    # Bewijs dat de zoeklaag voor dit project wél werkt — een geslaagde run
+    # (candidates gevonden) is precies wat de resolver nodig heeft om de
+    # 'search failed'-kaarten van de Tavily/DDG-uitval van 24-25 jul alsnog
+    # te laten verdwijnen. Zonder deze ok-rij blijven die kaarten eeuwig
+    # staan terwijl zoeken allang weer draait.
+    log_outcome(
+        "Linkbuilding", "linkbuilding_prospectie",
+        f"Prospectie voor {site.get('name')}: {len(candidates)} kandidaat(en), "
+        f"{qualified} gekwalificeerd.",
+        status="ok",
+    )
     return {"site": site["id"], "found": len(candidates), "qualified": qualified}
 
 

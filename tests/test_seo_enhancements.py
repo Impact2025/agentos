@@ -115,3 +115,16 @@ def test_assess_seo_worldclass_penalizes_thin_content():
     a = assess_seo_worldclass("<h1>x</h1><p>kort.</p>", "x", {"ctas": []})
     assert a["score"] < 60
     assert not a["worldclass"]
+
+
+def test_ee_at_guard_folds_diacritics_in_keyword():
+    """Regressie 25 jul 2026: een GSC-zoekwoord zonder accenten
+    ('jubileum cadeau ideeen') matchte niet op de correct gespelde tekst
+    ('ideeën'), waarna de guard 'zoekwoord komt niet voor in de body' meldde.
+    Die melding kost in de kwaliteitsgate 5 punten — precies het verschil
+    tussen 78 en 83 voor een artikel dat het zoekwoord overal gebruikt."""
+    from backend.domains.seo.enhancements import ee_at_guard
+    html = ("<h1>Jubileum cadeau ideeën</h1><p>De mooiste jubileum cadeau "
+            "ideeën zijn ervaringen. " + "woord " * 300 + "</p>")
+    issues = ee_at_guard(html, "jubileum cadeau ideeen", {"ctas": []})
+    assert not any("komt niet voor" in i for i in issues), issues

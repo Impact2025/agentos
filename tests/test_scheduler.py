@@ -338,3 +338,39 @@ def test_iedere_job_heeft_een_label_en_unieke_id():
     ids = [s.id for s in S._SPECS]
     assert len(ids) == len(set(ids))
     assert all(s.label and s.label != s.id for s in S._SPECS)
+
+
+# ── Gemiste runs zijn pas een aandachtspunt als ze niet vanzelf herstellen ──
+
+def _job(status, next_run_over: dt.timedelta | None):
+    now = dt.datetime.now(S._TZ)
+    return {
+        "id": "x", "label": "X",
+        "next_run": (now + next_run_over).isoformat() if next_run_over else None,
+        "last_run": {"status": status, "time": now.isoformat(), "error": None},
+    }
+
+
+def test_gemiste_poll_job_die_zo_weer_draait_is_geen_aandachtspunt():
+    from backend.domains.strategist.service import _job_needs_attention
+    assert not _job_needs_attention(_job("missed", dt.timedelta(minutes=12)))
+
+
+def test_gemiste_cron_job_die_pas_morgen_draait_blijft_zichtbaar():
+    from backend.domains.strategist.service import _job_needs_attention
+    assert _job_needs_attention(_job("missed", dt.timedelta(hours=20)))
+
+
+def test_gemiste_job_zonder_volgende_run_blijft_zichtbaar():
+    from backend.domains.strategist.service import _job_needs_attention
+    assert _job_needs_attention(_job("missed", None))
+
+
+def test_echte_fout_blijft_altijd_een_aandachtspunt():
+    from backend.domains.strategist.service import _job_needs_attention
+    assert _job_needs_attention(_job("error", dt.timedelta(minutes=1)))
+
+
+def test_geslaagde_job_is_geen_aandachtspunt():
+    from backend.domains.strategist.service import _job_needs_attention
+    assert not _job_needs_attention(_job("ok", dt.timedelta(minutes=1)))

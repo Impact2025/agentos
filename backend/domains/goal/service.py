@@ -173,15 +173,19 @@ async def _is_topic_relevant(site: dict, title: str, html_body: str) -> tuple:
         return (True, "relevantie-check overgeslagen (fout)")
 
 
-async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str) -> Optional[Tuple[str, str, int]]:
+async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str
+                             ) -> Tuple[Optional[Tuple[str, str, int]], str]:
     """ECHTE actie voor publisher-taken: pak het artikel uit eerdere
     content-taken van deze goal en zet het als review-job in de Wachtrij
     (content_jobs, status pending_review). Goedkeuren in de Wachtrij-tab
     publiceert het daarna écht (Netlify + social) — de menselijke
     review-gate blijft dus van kracht.
 
-    Retourneert (job_id, artikel_titel, seo_score) of None als er geen site
-    of geen geschikte content is (dan valt de taak terug op een concept)."""
+    Retourneert ((job_id, artikel_titel, seo_score), "") bij succes, of
+    (None, reden) als er niets te stagen viel. Die reden is geen detail: de
+    publisher-taak faalt erop (zie `_route_by_skill`), want een taak die de
+    échte actie niet uitvoert mag niet als 'voltooid' tellen — anders dempt
+    een doel vol concepten de dashboard-alerts alsof het werk gedaan is."""
     try:
         from ..publish import content_pipeline
         from ..seo import sites as sites_service
@@ -192,7 +196,8 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str) -> Opt
             None,
         )
         if not site:
-            return None
+            return None, (f"geen site gekoppeld aan project '{project}' — "
+                          "publiceren kan alleen naar een geregistreerde site")
 
         with get_conn() as conn:
             row = conn.execute(
@@ -203,7 +208,8 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str) -> Opt
                 (goal_id,),
             ).fetchone()
         if not row:
-            return None
+            return None, ("geen publiceerbaar artikel in dit doel — eerdere "
+                          "content-taken leverden niets van voldoende lengte op")
 
         import markdown as md_lib
         html_body = md_lib.markdown(row["result"], extensions=["tables"])
@@ -225,7 +231,7 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str) -> Opt
                 goal_id, "wachtrij_geweigerd",
                 f"'{title}' niet gestaged — {intern}; resultaat blijft een concept",
             )
-            return None
+            return None, f"'{title}' is geen artikel maar een intern document ({intern})"
 
         # Kwaliteitsgate: review → verbeter → review (max 3 rondes). Haalt het
         # resultaat de grens niet, dan wordt er NIETS gestaged — de taak valt
@@ -244,7 +250,8 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str) -> Opt
                 f"'{title}' haalde {seo_score}/100 (grens {CONTENT_MIN_SCORE}) — "
                 "niet gestaged; resultaat blijft een concept",
             )
-            return None
+            return None, (f"'{title}' haalde de kwaliteitsgate niet "
+                          f"({seo_score}/100, grens {CONTENT_MIN_SCORE})")
 
         # Relevantie-gate: hoort dit artikel inhoudelijk bij deze site? Blokkeert
         # off-topic content (uit een andere goal/project) en agent-tussenstappen
@@ -255,7 +262,7 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str) -> Opt
                 goal_id, "wachtrij_geweigerd",
                 f"'{title}' niet gestaged — {reden}",
             )
-            return None
+            return None, f"'{title}' hoort inhoudelijk niet bij deze site ({reden})"
 
         social: Dict[str, str] = {}
         try:
@@ -274,10 +281,10 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str) -> Opt
             image_bytes=None,
             slug=content_pipeline.slugify_title(title),
         )
-        return (job_id, title, seo_score)
+        return (job_id, title, seo_score), ""
     except Exception as e:
         logger.warning(f"Wachtrij-staging mislukt voor goal {goal_id}: {e}")
-        return None
+        return None, f"staging naar de Wachtrij mislukte: {str(e)[:200]}"
 
 
 async def _web_research_context(title: str, description: str) -> str:
@@ -1376,6 +1383,23 @@ async def _execute_task(goal_id: str, task: Dict[str, Any]) -> str:
                       artifact=artifact, next_step=next_step)
         return result
 
+    except _NotExecuted as e:
+        # Echte actie niet uitgevoerd → direct failed, zonder retry en zonder
+        # alternatief. Retries lossen niets op (er is geen artikel) en het
+        # alternatief zou de taak alsnog met LLM-tekst op 'completed' zetten.
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        error_str = str(e)[:500]
+        _update_task(task_id, status="failed", error=error_str,
+                     duration_ms=duration_ms, finished_at=_now())
+        event_bus.publish({
+            "type": "goal_task_failed", "goal_id": goal_id, "task_id": task_id,
+            "title": title, "error": error_str,
+        })
+        _log_activity(goal_id, "task_not_executed", f"'{title}': {error_str}",
+                      status="error",
+                      next_step="Lever eerst publiceerbare content aan, of laat deze taak vervallen")
+        return ""
+
     except Exception as e:
         duration_ms = int((time.perf_counter() - started) * 1000)
         error_str = str(e)[:500]
@@ -1428,6 +1452,15 @@ async def _execute_task(goal_id: str, task: Dict[str, Any]) -> str:
 
 class _RetryLater(Exception):
     """Interne exception: taak moet opnieuw worden geprobeerd."""
+    pass
+
+
+class _NotExecuted(Exception):
+    """De taak kón zijn échte actie niet uitvoeren (bv. publiceren zonder
+    publiceerbaar artikel). Geen technische fout, dus opnieuw proberen of een
+    'alternatieve aanpak' bedenken helpt niet — dat zou alleen een LLM-concept
+    opleveren dat als voltooid werk wordt geteld. De taak faalt direct, het doel
+    wordt daardoor 'partial', en dat is precies wat het Actiecentrum moet zien."""
     pass
 
 
@@ -1500,7 +1533,16 @@ async def _route_by_skill(
     # In plaats van een LLM-concept dat nergens landt, gaat het artikel uit
     # eerdere content-taken als pending_review-job naar de Wachtrij-tab.
     if skill == "publisher":
-        staged = await _stage_to_wachtrij(goal_id, title, project)
+        staged, blocked_reason = await _stage_to_wachtrij(goal_id, title, project)
+        if not staged:
+            # Geen echte actie = geen voltooide taak. Vroeger viel deze taak
+            # terug op een LLM-concept met CONCEPT-banner en werd hij tóch
+            # 'completed'; het doel heette dan afgerond terwijl er niets was
+            # gepubliceerd — en dempte in die hoedanigheid de dashboard-alerts
+            # (25 jul 2026). Falen is hier de eerlijke uitkomst.
+            raise _NotExecuted(
+                f"publiceren niet uitgevoerd — {blocked_reason or 'onbekende reden'}"
+            )
         if staged:
             job_id, art_title, seo_score = staged
             result = (

@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -260,6 +260,35 @@ def autoheal_goals() -> Dict[str, Any]:
 
 # ── SYSTEEMGEZONDHEID ────────────────────────────────────────────────
 
+# Een gemiste run is geen fout: hij gebeurt bij elke herstart en elke keer dat
+# de laptop een paar uur slaapt, en een poll-job herstelt zichzelf bij de
+# volgende tick. Zulke meldingen als rood aandachtspunt tonen leert Vincent de
+# banner te negeren — precies wat je niet wilt als er ooit écht iets stuk is.
+# Daarom telt 'missed' alleen mee zolang het zelfherstel nog ver weg ligt.
+_MISSED_SELF_HEAL_WINDOW = timedelta(hours=1)
+
+
+def _job_needs_attention(job: Dict[str, Any]) -> bool:
+    last = job.get("last_run") or {}
+    status = last.get("status")
+    if status == "error":
+        return True
+    if status != "missed":
+        return False
+    next_run = job.get("next_run")
+    if not next_run:
+        return True  # niets meer ingepland — dit heelt zichzelf níét
+    try:
+        due = datetime.fromisoformat(next_run)
+    except (TypeError, ValueError):
+        return True
+    now = datetime.now(due.tzinfo)
+    # Draait hij binnen het uur weer? Dan is de melding al achterhaald voordat
+    # iemand er iets mee kan. Een cron-job die pas morgen weer vuurt (het
+    # ochtendrapport) blijft wél staan — dáár gaat een dag verloren.
+    return due - now > _MISSED_SELF_HEAL_WINDOW
+
+
 def system_health(project: Optional[str] = None) -> Dict[str, Any]:
     """Geeft een compact overzicht van wat er mis kan zijn, zodat het
     dashboard problemen kan tonen zonder dat iemand handmatig moet zoeken.
@@ -277,10 +306,7 @@ def system_health(project: Optional[str] = None) -> Dict[str, Any]:
     ]
 
     sched = get_scheduler_status()
-    failed_jobs = [
-        j for j in sched.get("jobs", [])
-        if (j.get("last_run") or {}).get("status") in ("error", "missed")
-    ]
+    failed_jobs = [j for j in sched.get("jobs", []) if _job_needs_attention(j)]
 
     # ── Live-publicatie-status (laatste 2 dagen) ──────────────────────────
     # We onderscheiden twee zaken die de oude code op één hoop gooide:
@@ -340,7 +366,7 @@ def system_health(project: Optional[str] = None) -> Dict[str, Any]:
     if failed_goals:
         issues.append(f"{len(failed_goals)} doel(en) zijn mislukt en wachten op een retry")
     if failed_jobs:
-        issues.append(f"{len(failed_jobs)} scheduler-taak(en) zijn recent mislukt of overgeslagen")
+        issues.append(f"{len(failed_jobs)} scheduler-taak(en) zijn mislukt of herstellen niet vanzelf")
     if publish_failures:
         issues.append(f"{len(publish_failures)} artikel(en) konden niet live gezet worden (echte publish-fout)")
     if publish_unconfigured:

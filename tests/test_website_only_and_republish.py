@@ -102,7 +102,8 @@ async def test_website_only_skips_social_and_multiplier(daar_env):
 
 
 async def test_normal_site_still_posts_social(daar_env):
-    """Contra-test: zonder website_only loopt de social-fan-out gewoon."""
+    """Contra-test: zonder website_only loopt de social-fan-out voor de kanalen
+    die de reviewer expliciet aanvinkte."""
     _insert_site("site-daar2", "Daar", website_only=0)
     _insert_job("job-daar2", "site-daar2", status="pending_review")
 
@@ -112,11 +113,30 @@ async def test_normal_site_still_posts_social(daar_env):
     with mock.patch("httpx.post", side_effect=fake_post), \
          mock.patch.object(cp.linkedin_service, "post_update",
                            return_value={"success": True}) as li_post:
-        result = await cp.approve_and_publish("job-daar2")
+        result = await cp.approve_and_publish("job-daar2", social_channels=["linkedin"])
 
     assert result["site"]["success"] is True
     assert "skipped" not in result["social"]
     li_post.assert_called_once()
+
+
+async def test_social_is_opt_in_by_default(daar_env):
+    """Zonder expliciete kanaalkeuze gaat er niets naar social — voor géén
+    enkel project, ook niet als de site social-credentials heeft."""
+    _insert_site("site-daar4", "Daar", website_only=0)
+    _insert_job("job-daar4", "site-daar4", status="pending_review")
+
+    def fake_post(url, **kwargs):
+        return _FakeResp(201, {"url": "https://daar.nl/blog/impact-meten-voor-subsidie"})
+
+    with mock.patch("httpx.post", side_effect=fake_post), \
+         mock.patch.object(cp.linkedin_service, "post_update",
+                           return_value={"success": True}) as li_post:
+        result = await cp.approve_and_publish("job-daar4")
+
+    assert result["site"]["success"] is True
+    assert "skipped" in result["social"]
+    li_post.assert_not_called()
 
 
 async def test_approve_accepts_publish_failed(daar_env):

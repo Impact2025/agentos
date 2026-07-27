@@ -126,17 +126,24 @@ async def approve_outreach(prospect_id: str,
             detail=f"Contactadres ({target or 'leeg'}) niet bruikbaar ({why}) — "
                    "versturen geweigerd. Vul een adres in via PATCH of wijs de kans af.",
         )
-    if not outlook.is_authenticated():
+    # Echte token-check (geen alleen de gecachte account): een verlopen
+    # refresh-token laat is_authenticated() op True staan maar geeft géén
+    # token -> dat zou anders een ongevangen RuntimeError (HTTP 500) geven.
+    if not outlook.get_valid_token():
         raise HTTPException(
             status_code=422,
-            detail="Outlook/Graph niet geauthenticeerd — log in via Instellingen → Outlook.",
+            detail="Outlook-sessie ongeldig of verlopen — log opnieuw in via "
+                   "Instellingen → Outlook en probeer het daarna opnieuw.",
         )
 
     result = await outlook.send_new_email(
         to=target, subject=subject, body_html=mail_body.replace("\n", "<br>"),
     )
     if not result.get("success"):
-        raise HTTPException(status_code=502, detail=f"Versturen mislukt: {result}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Versturen mislukt: {result.get('error', result)}",
+        )
 
     # Bewaar wat er echt verstuurd is (evt. door Vincent aangepast) als record.
     with get_conn() as conn:

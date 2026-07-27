@@ -157,3 +157,32 @@ async def suggestions_apply(sid: str):
             detail=result.get("error", "Uitvoering mislukt"),
         )
     return {"ok": True, **result}
+
+
+# ── Zelfherstel: Iris lost fouten zelf op, ongevraagd ───────────────────────
+@router.get("/selfheal")
+def selfheal_log(limit: int = Query(20, ge=1, le=100)):
+    """Logboek: wat probeerde Iris, wat lukte, en wat moest ze melden."""
+    from . import selfheal
+    return {"items": selfheal.recent_heals(limit)}
+
+
+@router.post("/selfheal/run")
+async def selfheal_run():
+    """Draai de zelfherstel-ronde nu (draait ook elke 10 min automatisch)."""
+    from . import selfheal
+    return await selfheal.run_selfheal(source="handmatig")
+
+
+# ── "Analyseer & fix" — vanuit een bestaande foutkaart in het Actiecentrum ──
+@router.post("/errors/{error_id}/triage")
+async def errors_triage(error_id: str, kind: str = Query("activity_log")):
+    """Diagnosticeer een foutmelding en voer de remedie meteen uit (of leg de
+    mens-stap vast). Eén klik = goedkeuring; de remedie zelf blijft achter de
+    bestaande review-gates. kind='content_job' voor mislukte publicaties
+    (andere id-namespace dan activity_log)."""
+    from . import triage
+    result = await triage.analyze_and_fix(error_id, kind=kind)
+    if not result.get("ok") and "diagnosis" not in result:
+        raise HTTPException(status_code=400, detail=result.get("error", "Analyseren mislukt"))
+    return result

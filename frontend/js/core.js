@@ -198,6 +198,10 @@ function post(url, body) {
     });
   });
 }
+// Alle social-platformen die de pipeline kent. Wordt alléén meegestuurd als de
+// mens social expliciet aanvinkt — social is nooit de standaard.
+var ALL_SOCIAL_CHANNELS = ['linkedin', 'facebook', 'instagram', 'twitter'];
+
 // ── Confirm-modal met keuze-opties (vervangt de kale browser-confirm) ──
 // opts: { title, body, buttons: [{label, value, primary, danger}] }
 // Resolves met de `value` van de gekozen knop, of null bij annuleren/sluiten.

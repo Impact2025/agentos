@@ -10,7 +10,7 @@
   POST   /api/mail/reply/{id}/edit      → bewerken + markeren als edited
   POST   /api/mail/run                  → poll alle mailboxen (of body {mailbox_id} voor één)
 """
-from typing import Optional
+from typing import Optional, Dict
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, model_validator
@@ -177,6 +177,57 @@ def delete_replies_bulk(body: BulkRejectBody):
 def edit_reply(reply_id: int, body: EditBody):
     service.edit_reply(reply_id, body.text)
     return {"ok": True}
+
+
+@router.post("/reply/{reply_id}/gsc-fix")
+@router.post("/replies/{reply_id}/gsc-fix")  # alias
+def gsc_fix_reply(reply_id: int, body: Optional[Dict] = None):
+    """GSC-expert-agent: analyseer een Search Console-notificatiemail en schrijf
+    een concrete fix-gids terug in het concept.
+
+    body.auto (default true): de agent handelt veilig af — verzenden alleen
+    naar een écht mens bij hoge confidence, anders oplossen/ter review.
+    body.auto=false: alleen analyseren + ter review zetten (handmatige knop).
+
+    Retourneert {'ok', 'reply_id', 'domain', 'reason', 'used_live_gsc',
+    'confidence', 'disposition', 'auto_sent', 'analysis'} of 404.
+    """
+    auto = True
+    if isinstance(body, dict):
+        auto = bool(body.get("auto", True))
+    result = service.gsc_fix_reply(reply_id, auto=auto)
+    if not result:
+        raise HTTPException(404, "Concept niet gevonden of geen Search Console-mail")
+    return {"ok": True, **result}
+
+
+@router.post("/gsc-fix-all")
+def gsc_fix_all(body: Optional[Dict] = None):
+    """Verwerk alle wachtende GSC-concepten in één keer via de expert-agent.
+    VUUR-EN-VERGEET: komt meteen terug met een job_id; de verwerking loopt
+    op de achtergrond. body.auto (default true) regelt autonoom verzenden/
+    oplossen. Ververs het Actiecentrum na enkele seconden voor de resultaten."""
+    auto = True
+    if isinstance(body, dict):
+        auto = bool(body.get("auto", True))
+    return service.gsc_fix_all_pending(auto=auto)
+
+
+@router.post("/gsc-feedback")
+def gsc_feedback(body: Dict):
+    """Sla Vincents feedback op een GSC-analyse op (leer-laag).
+    body: {analysis_id, domain, reason, score (1-5), corrected_text?, note?}"""
+    try:
+        return service.gsc_record_feedback(
+            analysis_id=body.get("analysis_id", ""),
+            domain=body.get("domain", ""),
+            reason=body.get("reason", ""),
+            score=int(body.get("score", 0) or 0),
+            corrected_text=body.get("corrected_text", "") or "",
+            note=body.get("note", "") or "",
+        )
+    except Exception as e:
+        raise HTTPException(400, f"Feedback mislukt: {e}")
 
 
 @router.post("/reply/{reply_id}/ignore-sender")

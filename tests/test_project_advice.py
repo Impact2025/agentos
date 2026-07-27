@@ -51,6 +51,16 @@ def test_kapotte_created_at_valt_stil_weg():
     assert not _goal_addresses(goals, "Verbeter de CTR van WeAreImpact")
 
 
+def test_partial_doel_dempt_niet():
+    """Een doel waarvan de publisher-taak de échte actie niet kon uitvoeren
+    eindigt als 'partial': rapporten opgeleverd, niets aan de site veranderd.
+    Dempen zou de alert 14 dagen wegdrukken op bewijs van activiteit i.p.v.
+    bewijs van effect — precies hoe 'positie 45.6' van het dashboard verdween."""
+    goals = [_goal("Optimaliseer de bestaande content van WeAreImpact voor betere zoekposities",
+                   status="partial")]
+    assert not _goal_addresses(goals, "Optimaliseer de bestaande content van WeAreImpact")
+
+
 def test_meerdere_zinsdelen_een_match_volstaat():
     goals = [_goal("Werk de striking-distance zoekwoorden van WeAreImpact bij (posities 10-20)")]
     assert _goal_addresses(

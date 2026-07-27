@@ -17,7 +17,6 @@ from ..chat import hermes as hermes_service
 from ..publish import service as publish_service
 from ..publish import content_pipeline
 from ..seo import sites as sites_service
-from ..seo import gsc as gsc_service
 
 logger = logging.getLogger(__name__)
 
@@ -412,29 +411,6 @@ class WritePublishRequest(BaseModel):
 # projectonafhankelijk) i.p.v. hier hardcoded WeAreImpact-only prompts te dupliceren.
 _slugify = content_pipeline.slugify_title
 
-def _unwrap_code_fence(html: str) -> str:
-    """Haal een eventuele ```html ... ``` (of ``` ... ```) code-fence eraf.
-
-    De schrijf-pipeline levert soms de echte HTML gewikkeld in een
-    markdown code-block (een sjabloon/voorbeeld i.p.v. echte content).
-    Op de live site zou dat als zichtbaar code-block tonen — dus strippen
-    we de fence en houden de echte HTML over. Als er géén fence staat,
-    blijft de input ongewijzigd.
-    """
-    s = (html or "").strip()
-    # Begin: optioneel '```' + taal (html/markdown/...) op een eigene lijn
-    m = re.match(r"^```[a-z]*\s*\n", s, re.IGNORECASE)
-    if m:
-        s = s[m.end():]
-    # Eind: '```' op een eigene lijn (eventueel met witruimte)
-    end = s.rfind("\n```")
-    if end != -1:
-        s = s[:end].rstrip()
-    elif s.endswith("```"):
-        s = s[:-3].rstrip()
-    return s.strip()
-
-
 # ── Voortgang van artikel-schrijf-jobs (in-memory, gepolld door frontend) ──
 _ARTICLE_JOBS: Dict[str, dict] = {}
 _ARTICLE_BG_TASKS: "set[asyncio.Task]" = set()
@@ -706,234 +682,56 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
         logger.warning(f"[SEO-pipeline] Obsidian opslag mislukt (niet kritisch): {e}")
 
     # ── Publicatie-gate: onder de drempel blijft het een concept ────
-    # De score was voorheen alleen een logregel; nu blokkeert hij écht de
-    # live-publicatie en de zoekmachine-indiening.
+    # De score was voorheen alleen een logregel; nu blokkeert hij écht dat een
+    # artikel de Wachtrij als 'klaar voor review' binnenkomt.
     passed_gate = seo_score >= PUBLISH_MIN_SCORE
 
-    # ── FASE 4b: Live publiceren op de eigen site van het project ────
-    # Publish-config komt per project uit de env: {PROJECT}_PUBLISH_URL/_PUBLISH_KEY
-    # (bv. WEAREIMPACT_PUBLISH_URL, BIJEEN_PUBLISH_URL). Zonder config wordt er
-    # bewust NIET gepubliceerd — voorheen ging alles hardcoded naar weareimpact.nl,
-    # waardoor Bijeen-content op de verkeerde site terecht kon komen.
-    live_result = None
-    if passed_gate:
-        env_prefix = re.sub(r"[^A-Z0-9]", "", name.upper())
-        publish_url = os.getenv(f"{env_prefix}_PUBLISH_URL", "").strip()
-        publish_key = os.getenv(f"{env_prefix}_PUBLISH_KEY", "").strip()
-        if not publish_url or not publish_key:
-            _log_activity(name, "live-overgeslagen",
-                          f"'{body.title}': geen {env_prefix}_PUBLISH_URL/_PUBLISH_KEY geconfigureerd — alleen lokaal opgeslagen")
-        else:
-            base_url = site.get("base_url", "").rstrip("/")
-            _set_job(job_id, phase=f"Live zetten op {base_url or publish_url}...", percent=97)
-            # Verwijder zichtbare Meta-/Suggestie-blokken uit de body vóórdat
-            # we publiceren (de AI levert die soms als H2's onderaan de tekst).
-            optimized_html, parsed_title, parsed_desc = \
-                content_pipeline._strip_meta_and_suggestions(optimized_html)
-            # De blog-API's verschillen per site: weareimpact.nl heeft een
-            # dedicated /api/publish (incl. socials + indexing), bijeen.app een
-            # generieke /api/blog met status-veld.
-            if env_prefix == "BIJEEN":
-                # Ook hier eerst de ruwe content schoonmaken vóórdat hij naar
-                # bijeen.app gaat. De AI wikkelt de echte content soms in een
-                # ```html <article>...</article> ``` code-fence (een sjabloon/
-                # voorbeeld i.p.v. echte HTML) en verzint interne links naar
-                # pagina's die niet bestaan. Dat levert op de live site een
-                # artikel dat als code-block toont + "rare links" naar 404's.
-                bijeen_html = optimized_html.strip()
-                # 1) Haal de ```html ... ``` code-fence eraf zodat de echte
-                #    HTML-content overblijft (als die erin zit).
-                bijeen_html = _unwrap_code_fence(bijeen_html)
-                # 2) Meta-/suggestie-blokken strippen (zichtbare H2's).
-                bijeen_html, bijeen_meta_title, bijeen_meta_desc = \
-                    content_pipeline._strip_meta_and_suggestions(bijeen_html)
-                # 3) Verzonnen interne links naar niet-bestaande pagina's
-                #    unwrappen (houdt alleen echte <a href> naar bestaande
-                #    kandidaten / CTA's over).
-                bijeen_html, _n_stripped = \
-                    content_pipeline.article_writer.strip_unvetted_internal_links(
-                        bijeen_html, site)
-                first_p = re.search(r"<p>(.*?)</p>", bijeen_html, re.S)
-                bijeen_first_para = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", first_p.group(1))).strip() if first_p else ""
-                bijeen_sentences = re.split(r"(?<=[.!?])\s+", bijeen_first_para) if bijeen_first_para else []
-                excerpt = ""
-                for s in bijeen_sentences:
-                    cand = (excerpt + " " + s).strip() if excerpt else s
-                    if len(cand) > 200 and excerpt:
-                        break
-                    excerpt = cand
-                if not excerpt:
-                    excerpt = bijeen_first_para[:200].rsplit(" ", 1)[0] if bijeen_first_para else ""
-                # Meta-titel nooit halverwege afbreken op een '&' (escaped &amp;)
-                _bt = (bijeen_meta_title or final_title or "").replace("&amp;", "&")
-                payload = {
-                    "title": final_title,
-                    "content": bijeen_html.strip(),
-                    "excerpt": excerpt,
-                    "metaTitle": _bt[:60],
-                    "metaDescription": (bijeen_meta_desc or meta_desc or "").replace("&amp;", "&"),
-                    "tags": [keyword] if keyword else [],
-                    "status": "published",
-                }
-            else:
-                payload = {
-                    "title": final_title,
-                    "content": optimized_html.strip(),
-                    "slug": slug,
-                    "excerpt": excerpt,
-                    "seoTitle": (parsed_title or final_title)[:60],
-                    "seoDescription": meta_desc,
-                    "tags": [keyword] if keyword else [],
-                    "source": "agent-os",
-                }
-            try:
-                import httpx
-                # We volgen redirects HANDMATIG en sturen de Authorization-header
-                # op ELKE hop opnieuw mee. Reden: httpx/requests strippen bij
-                # follow_redirects=True de Authorization-header op een cross-host
-                # redirect (apex→www of www→apex). Vercel-sites verschillen: TBI
-                # redirect apex→www (307), Bijeen redirect www→apex (301). Door de
-                # header per hop mee te sturen werkt beide zonder een host-aanname.
-                def _post_follow(url, payload, key):
-                    hdrs = {"Authorization": f"Bearer {key}",
-                            "Content-Type": "application/json"}
-                    cur = url
-                    for _ in range(5):
-                        r = httpx.post(cur, json=payload, headers=hdrs,
-                                       timeout=90, follow_redirects=False)
-                        if r.status_code in (301, 302, 303, 307, 308):
-                            loc = r.headers.get("location")
-                            if not loc:
-                                return r
-                            cur = httpx.URL(cur).join(loc)
-                            continue
-                        return r
-                    return r
-                resp = await asyncio.to_thread(
-                    _post_follow, publish_url, payload, publish_key,
-                )
-                if resp.status_code == 201:
-                    live_result = resp.json()
-                    if "post" in live_result:  # generieke blog-API (bijeen.app)
-                        post = live_result["post"]
-                        live_result.setdefault("url", f"{base_url}/blog/{post.get('slug', slug)}")
-                    socials = live_result.get("socials", [])
-                    per_status = {
-                        label: "/".join(s["platform"] for s in socials if s.get("status") == status_key)
-                        for label, status_key in (("geplaatst", "posted"), ("concept", "draft"), ("mislukt", "failed"))
-                    }
-                    social_note = ", ".join(f"{k}: {v}" for k, v in per_status.items() if v) or "geen"
-                    indexing = live_result.get("indexing", {})
-                    _log_activity(
-                        name, "live",
-                        f"'{body.title}' LIVE op {live_result.get('url', '?')} — "
-                        f"IndexNow: {indexing.get('indexnow', '?')}, Google: {indexing.get('google', '?')}, "
-                        f"socials → {social_note}",
-                        artifact=live_result.get("url", ""),
-                    )
-                else:
-                    _log_activity(name, "live-fout",
-                                  f"'{body.title}': publish-API gaf {resp.status_code} — {resp.text[:200]}")
-            except Exception as e:
-                logger.warning(f"Live-publicatie op {publish_url} mislukt: {e}")
-                _log_activity(name, "live-fout", f"'{body.title}': {str(e)[:200]}")
+    # ── Wachtrij-gate: deze pipeline publiceert NOOIT rechtstreeks ──────
+    # Vroeger ging dit artikel hier meteen live via het externe /api/publish
+    # van het project — inclusief een 'socials'-afhandeling die dat externe
+    # endpoint zelf deed, buiten agentos' opt-in-controle om (zie de regel
+    # "social is altijd opt-in, nooit automatisch" in CLAUDE.md). Dat gaf twee
+    # problemen: geen menselijke goedkeuring vóórdat iets live ging, en geen
+    # garantie dat social-posten optioneel bleef. Nu staagt deze pipeline het
+    # artikel in dezelfde content_jobs-wachtrij als de reguliere 2x/week-run;
+    # publiceren (incl. optioneel social, per checkbox) gebeurt pas via de
+    # bestaande "Goedkeuren & publiceren"-knop in de Wachtrij-tab.
+    _set_job(job_id, phase="Klaarzetten in Wachtrij...", percent=97)
+    social_copy = await content_pipeline._generate_social_copy(site, final_title, keyword, optimized_html)
+    image_bytes = content_pipeline.generate_quote_card(final_title, site["name"])
+    infographic_bytes = (
+        await content_pipeline._generate_article_infographic(site, final_title, keyword, optimized_html)
+        if passed_gate else None
+    )
+    content_job_id = content_pipeline.create_job(
+        site_id, final_title, keyword, body.rationale, optimized_html,
+        review["score"], social_copy, image_bytes, slug,
+        status="pending_review" if passed_gate else "needs_work",
+        qc_report=qc_report, case_study_id=_case_study_id or "",
+        infographic_bytes=infographic_bytes,
+    )
+    _log_activity(
+        name, "content-in-wachtrij",
+        f"'{final_title}' (SEO-score: {seo_score:.1f}/10, {word_count}w) staat klaar in de Wachtrij"
+        + ("" if passed_gate else f" — onder drempel {PUBLISH_MIN_SCORE}, eerst verbeteren"),
+    )
 
-    # ── FASE 5: Google Search Console-indiening + Bing-ping (alleen als artikel live staat) ──
-    # Google's oude google.com/ping-endpoint is sinds juni 2023 uitgefaseerd en werkt niet meer —
-    # dit gebruikt in plaats daarvan de échte Search Console sitemaps.submit-API (gsc.py).
-    ping_results = {}
-    if not passed_gate:
-        ping_results = {
-            "status": "geblokkeerd_door_gate",
-            "note": f"SEO-score {seo_score:.1f}/10 onder drempel {PUBLISH_MIN_SCORE} — niet ingediend bij zoekmachines",
-        }
-    else:
-        try:
-            import httpx
-            base_url = site.get("base_url", "").rstrip("/")
-            page_url = f"{base_url}/blog/{slug}"
-
-            # Check of de pagina al live is (anders heeft indienen geen zin)
-            try:
-                check = httpx.get(page_url, timeout=5)
-                page_is_live = check.status_code < 400
-            except Exception:
-                page_is_live = False
-
-            if page_is_live:
-                gsc_property = (site.get("gsc_property") or "").strip()
-                if gsc_property and gsc_service.is_configured():
-                    ok, detail = gsc_service.submit_sitemap(gsc_property, f"{base_url}/sitemap.xml")
-                    ping_results["google_search_console"] = "ingediend" if ok else f"fout: {detail[:100]}"
-                else:
-                    ping_results["google_search_console"] = "overgeslagen (geen gsc_property/service-account)"
-
-                try:
-                    resp = httpx.get(f"https://www.bing.com/ping?sitemap={base_url}/sitemap.xml", timeout=10)
-                    ping_results["bing"] = resp.status_code
-                except Exception as e:
-                    ping_results["bing"] = str(e)[:50]
-            else:
-                ping_results = {"status": "pagina_nog_niet_live", "note": "Indienen overgeslagen — artikel eerst handmatig publiceren op Vercel/Next.js"}
-
-        except Exception as e:
-            logger.warning(f"Indienen bij zoekmachines mislukt: {e}")
-            ping_results = {"error": str(e)[:100]}
-
-    # ── Log activiteit ─────────────────────────────────────────────
-    if passed_gate:
-        act_detail = f"'{body.title}' (SEO-score: {seo_score:.1f}/10, {word_count}w, opgeslagen in content/{slug}.html)"
-    else:
-        act_detail = (
-            f"'{body.title}' (SEO-score: {seo_score:.1f}/10 — onder drempel {PUBLISH_MIN_SCORE}, "
-            f"{word_count}w, als CONCEPT opgeslagen in content/{slug}.html — NIET gepubliceerd)"
-        )
-    _log_activity(name, "publicatie", act_detail)
-
-    # Probeer Netlify publicatie als credentials aanwezig zijn — alleen boven de gate
-    netlify_result = None
-    if not passed_gate:
-        logger.info(
-            f"Netlify publish geblokkeerd voor '{body.title}': score {seo_score:.1f} < {PUBLISH_MIN_SCORE}"
-        )
-    elif site.get("publish_api_url") and site.get("publish_api_key_set"):
-        try:
-            netlify_result = await publish_service.publish_article(
-                site_id=site_id, title=final_title,
-                html_body=optimized_html.strip(), slug=slug,
-            )
-        except Exception as e:
-            logger.info(f"Netlify publish skipped (niet geconfigureerd voor {name}): {e}")
-            netlify_result = None
-
-    # ── Kans terugkoppelen met de echte live-URL ─────────────────────
-    # Zodra het artikel daadwerkelijk live staat, koppelen we de URL terug aan de
-    # bijbehorende Demand-Engine-kans (via site_id + query) en zetten die op
-    # 'published' — mét published_at. Zo toont de Kansen-card in de UI een
-    # klikbare live-link ipv alleen de handmatige 'Gepubliceerd'-vink.
-    live_url_final = live_result.get("url") if live_result else None
-    if live_url_final and passed_gate:
-        try:
-            from ..seo import engine as demand_engine
-            with demand_engine.get_conn() as conn:
-                row = conn.execute(
-                    "SELECT id FROM opportunities "
-                    "WHERE site_id = ? AND (query = ? OR query LIKE ?) "
-                    "ORDER BY scanned_at DESC LIMIT 1",
-                    (site_id, keyword, f"{keyword}%"),
-                ).fetchone()
-            if row:
-                demand_engine.update_opportunity(
-                    row["id"],
-                    status="published",
-                    live_url=live_url_final,
-                    published_at=demand_engine._now(),
-                )
-                _log_activity(name, "kans-gelinkt",
-                              f"'{body.title}' gekoppeld aan kans (live: {live_url_final})",
-                              artifact=live_url_final)
-        except Exception as e:
-            logger.warning(f"[SEO-pipeline] Kans-terugkoppeling mislukt (niet kritisch): {e}")
+    # Kans koppelen aan de wachtrij-job — nog niet 'published' met live_url:
+    # dat gebeurt pas ná goedkeuring in de Wachtrij, net als bij elk ander
+    # artikel (zie action_center/opportunities-koppeling in content_pipeline).
+    try:
+        from ..seo import engine as demand_engine
+        with demand_engine.get_conn() as conn:
+            row = conn.execute(
+                "SELECT id FROM opportunities "
+                "WHERE site_id = ? AND (query = ? OR query LIKE ?) "
+                "ORDER BY scanned_at DESC LIMIT 1",
+                (site_id, keyword, f"{keyword}%"),
+            ).fetchone()
+        if row:
+            demand_engine.update_opportunity(row["id"], status="in_progress")
+    except Exception as e:
+        logger.warning(f"[SEO-pipeline] Kans-koppeling mislukt (niet kritisch): {e}")
 
     return {
         "success": True,
@@ -950,12 +748,10 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
         "passed_gate": passed_gate,
         "gate_note": None if passed_gate else (
             f"SEO-score {seo_score:.1f}/10 onder drempel {PUBLISH_MIN_SCORE} — "
-            "als concept opgeslagen, niet gepubliceerd of ingediend"
+            "als concept opgeslagen, eerst verbeteren in de Wachtrij"
         ),
-        "netlify_url": netlify_result.get("url") if netlify_result else None,
-        "live_url": live_result.get("url") if live_result else None,
-        "socials": live_result.get("socials", []) if live_result else [],
-        "ping_results": ping_results,
+        "content_job_id": content_job_id,
+        "staged_to_wachtrij": True,
     }
 
 

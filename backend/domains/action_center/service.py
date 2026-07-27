@@ -290,6 +290,20 @@ def build_inbox() -> Dict[str, Any]:
                 {"label": "Analyseer & fix", "type": "error_triage", "id": e["id"], "accent": True},
                 {"label": "Gezien, verberg", "type": "dismiss", "dismiss_kind": "error", "id": e["id"]},
             ]
+            summary = (e["detail"] or "")[:220]
+            # Werkt Iris hier al aan? Dan hoort de kaart dát te zeggen. Anders
+            # kijkt Vincent naar een rood item terwijl er al iemand op zit — en
+            # dat is precies hoe je leert dat rood niets betekent.
+            try:
+                from ..iris.selfheal import heal_status
+                st = heal_status(e["action"] or "", e["detail"] or "", conn=conn)
+            except Exception:
+                st = None
+            if st and st.get("last_result") in ("failed", "waiting"):
+                summary = (
+                    f"[Iris probeert dit zelf — poging {st['attempts']} van "
+                    f"{st['max_attempts']}] {summary}"
+                )
             items.append({
                 "kind": "error",
                 "dismiss_kind": "error",
@@ -297,7 +311,8 @@ def build_inbox() -> Dict[str, Any]:
                 "title": f"{e['action']} — {e['project']}",
                 "project": e["project"],
                 "created_at": e["created_at"],
-                "summary": (e["detail"] or "")[:220],
+                "summary": summary,
+                "self_heal": st,
                 "actions": actions,
             })
 

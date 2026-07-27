@@ -29,7 +29,7 @@ SPAM_SENDER_DOMAINS = (
     "beursgenoten.nl", "bewaardvoorjou", "pootgelukkig", "vrijwilligersassistent",
     "samsung.com", "email.samsung.com", "m1.email.samsung", "samsungmobile",
     "dhgate.com", "e3.dhgate.com", "ali", "wish.com", "shein", "temu",
-    "marketing", "newsletter", "noreply", "no-reply", "notify", "do-not-reply",
+    "marketing", "newsletter", "nieuwsbrief", "noreply", "no-reply", "notify", "do-not-reply",
 )
 SPAM_SUBJECT_HINTS = (
     "win up to", "win up", "usdt", "btc", "crypto", "invitation to win",
@@ -60,6 +60,7 @@ SYSTEM_SENDER_DOMAINS = (
     "notify.railway.app", "vercel.com", "github.com", "notifications@github",
     "noreply", "no-reply", "do-not-reply", "no_reply", "mailer-daemon",
     "postmaster", "bounce", "automated", "system", "alerts@",
+    "jobalert", "indeed.com",
 )
 SYSTEM_SUBJECT_HINTS = (
     "build failed", "build succeeded", "deployment", "ci ", "pipeline",
@@ -116,15 +117,17 @@ def classify(subject: str, body: str, from_addr: str = "") -> str:
     frm = (from_addr or "").lower()
     dom = _sender_domain(from_addr)
 
-    # 1) Harde spam: verdachte domeinen of crypto/promo-patronen.
+    # 1) Harde spam: verdachte domeinen of crypto/promo-patronen. Getoetst op
+    #    het VOLLEDIGE afzenderadres (niet alleen het domein) — anders glipt
+    #    een lokaal deel als "nieuwsbrief@merk.nl" door de domein-check heen.
     #    Deze winnen altijd van vraag-signalen (geen "?"-exceptie).
-    if any(d in dom for d in SPAM_SENDER_DOMAINS if d) and not _is_trusted(dom):
+    if any(d in frm for d in SPAM_SENDER_DOMAINS if d) and not _is_trusted(dom):
         return "spam"
     if _count_hits(s, SPAM_SUBJECT_HINTS) >= 1 or _count_hits(b, SPAM_BODY_HINTS) >= 2:
         return "spam"
 
-    # 2) Automatische system/meldingen (CI, reminders, OT-grubby). Geen antwoord.
-    if any(d in dom for d in SYSTEM_SENDER_DOMAINS if d) or _count_hits(s, SYSTEM_SUBJECT_HINTS) >= 1:
+    # 2) Automatische system/meldingen (CI, reminders, jobalerts). Geen antwoord.
+    if any(d in frm for d in SYSTEM_SENDER_DOMAINS if d) or _count_hits(s, SYSTEM_SUBJECT_HINTS) >= 1:
         return "other"  # blijft zichtbaar als 'other', niet als concept
 
     # 3) Newsletters / promo-updates.

@@ -88,7 +88,7 @@ async def test_website_publishes_even_when_linkedin_fails(bijeen_job, monkeypatc
     with mock.patch("httpx.post", side_effect=fake_post), \
          mock.patch.object(cp.linkedin_service, "get_member_id",
                            side_effect=ValueError("Kan LinkedIn member ID niet ophalen via API")):
-        result = await cp.approve_and_publish(bijeen_job)
+        result = await cp.approve_and_publish(bijeen_job, social_channels=["linkedin"])
 
     # 1) Website published via the Bijeen project endpoint.
     assert result.get("site", {}).get("success") is True, result
