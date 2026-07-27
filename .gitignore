@@ -16,9 +16,11 @@ node_modules/
 data/*.db
 data/*.db.bak*
 database.db
+agentos.db
 *.pid
 
 # Logs & procesuitvoer
+logs/
 *.log
 *.out
 *.err
@@ -41,6 +43,12 @@ backend/data/
 .env.bak*
 _cookies.txt
 publish_env_additions.txt
+
+# Wegwerp-scripts van handmatig uitzoekwerk (poll_*, run_*, upgrade_*, …).
+# Ze horen niet in de historie: ze hebben eenmalig gedraaid en verwijzen naar
+# id's die niet meer bestaan. Weggooien mag, maar ze staan hier zodat een
+# half-afgemaakte reparatie niet stilletjes verdwijnt.
+_scratch/
 
 # Door agents geproduceerde project-output & goal-werkmappen (media, zwaar)
 projects/
