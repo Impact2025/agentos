@@ -6,51 +6,14 @@
 <meta name="theme-color" content="#101415"/>
 <title>Iris Remote</title>
 <link rel="manifest" href="/manifest.json"/>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Alles lokaal: geen CDN-script dat Tailwind in de browser compileert en geen
+     fonts van derden op de pagina waar publicaties worden goedgekeurd.
+     Regenereren: `npm run assets` (zie tailwind.config.js + build-fonts.mjs).
+     De uitkomst staat in git, zodat een deploy niet van een live font-download
+     afhangt — hetzelfde patroon als frontend/tailwind.css. -->
+<link href="/fonts.css" rel="stylesheet"/>
+<link href="/tailwind.css" rel="stylesheet"/>
 <link href="/style.css" rel="stylesheet"/>
-<script id="tailwind-config">
-  tailwind.config = {
-    darkMode: "class",
-    theme: {
-      extend: {
-        colors: {
-          "surface": "#101415", "background": "#101415",
-          "surface-variant": "#323537", "surface-container": "#1d2022",
-          "surface-container-low": "#191c1e", "surface-container-lowest": "#0b0f10",
-          "surface-container-high": "#272a2c", "surface-container-highest": "#323537",
-          "primary": "#8ed5ff", "on-primary": "#00354a",
-          "primary-container": "#38bdf8", "on-primary-container": "#004965",
-          "secondary": "#b9c8de", "on-secondary": "#233143",
-          "secondary-container": "#39485a", "tertiary": "#c5cce6",
-          "error": "#ffb4ab", "error-container": "#93000a",
-          "on-surface": "#e0e3e5", "on-surface-variant": "#bdc8d1",
-          "on-background": "#e0e3e5", "outline": "#87929a", "outline-variant": "#3e484f"
-        },
-        borderRadius: { DEFAULT: "0.25rem", lg: "0.5rem", xl: "0.75rem", full: "9999px" },
-        spacing: {
-          "unit": "4px", "container-padding": "20px", "gutter": "16px",
-          "stack-sm": "8px", "stack-md": "16px", "stack-lg": "32px"
-        },
-        fontFamily: {
-          "headline-md": ["Inter"], "headline-sm": ["Inter"], "body-md": ["Inter"],
-          "body-lg": ["Inter"], "display-lg": ["Inter"], "display-lg-mobile": ["Inter"],
-          "label-caps": ["JetBrains Mono"]
-        },
-        fontSize: {
-          "headline-md": ["24px", {lineHeight: "32px", letterSpacing: "-0.01em", fontWeight: "600"}],
-          "headline-sm": ["20px", {lineHeight: "28px", fontWeight: "600"}],
-          "body-md": ["14px", {lineHeight: "20px", fontWeight: "400"}],
-          "body-lg": ["16px", {lineHeight: "24px", fontWeight: "400"}],
-          "display-lg": ["32px", {lineHeight: "40px", letterSpacing: "-0.02em", fontWeight: "700"}],
-          "display-lg-mobile": ["28px", {lineHeight: "36px", fontWeight: "700"}],
-          "label-caps": ["12px", {lineHeight: "16px", letterSpacing: "0.05em", fontWeight: "500"}]
-        }
-      }
-    }
-  }
-</script>
 </head>
 <body class="bg-surface text-on-surface antialiased overflow-x-hidden pb-32">
 
@@ -94,6 +57,19 @@
     </div>
   </section>
 
+  <!-- Vandaag — de assistent-view: dag, mailbox, stand van zaken, snelle acties -->
+  <section id="view-today" hidden class="space-y-stack-lg">
+    <div class="space-y-stack-sm">
+      <div class="flex items-center gap-2">
+        <span class="status-dot pulse"></span>
+        <span class="font-label-caps text-label-caps text-primary uppercase" id="today-sub">Je dag</span>
+      </div>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile" id="today-greeting">Vandaag</h2>
+      <p class="font-body-md text-body-md text-on-surface-variant" id="today-stamp"></p>
+    </div>
+    <div id="today-body" class="space-y-stack-md"></div>
+  </section>
+
   <!-- Actiecentrum -->
   <section id="view-inbox" hidden class="space-y-stack-lg">
     <div class="space-y-stack-sm">
@@ -104,7 +80,8 @@
       <h2 class="font-display-lg-mobile text-display-lg-mobile">Actiecentrum</h2>
       <p class="font-body-md text-body-md text-on-surface-variant" id="sync-info"></p>
     </div>
-    <div id="items" class="space-y-stack-md"></div>
+    <div id="inbox-filters" class="flex gap-2 overflow-x-auto no-scrollbar -mx-container-padding px-container-padding"></div>
+    <div id="items" class="space-y-stack-sm"></div>
   </section>
 
   <!-- Briefings -->
@@ -136,7 +113,7 @@
           <span class="material-symbols-outlined">send</span>
         </button>
       </form>
-      <p class="font-label-caps text-[10px] text-on-surface-variant/60">Iris voert hier niets uit — besluiten lopen via het Actiecentrum.</p>
+      <p class="font-label-caps text-[10px] text-on-surface-variant/60">Iris mag werk starten — dat landt achter de review-gate. Publiceren, mailen en boeken blijft jouw tik.</p>
     </div>
   </section>
 
@@ -192,6 +169,19 @@
       </div>
       <div id="outbox-list" class="space-y-unit"></div>
     </div>
+    <div class="glass-panel rounded-xl p-6">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="material-symbols-outlined text-primary">devices</span>
+        <h3 class="font-headline-sm text-headline-sm">Ingelogde apparaten</h3>
+      </div>
+      <div id="sessions-list" class="space-y-unit mb-4"></div>
+      <button id="logoutAllBtn"
+        class="w-full bg-transparent border border-error/40 text-error px-6 py-3 rounded-lg font-headline-sm flex items-center justify-center gap-2 hover:bg-error/10 active:scale-95 transition-all">
+        <span class="material-symbols-outlined">logout</span> Overal uitloggen
+      </button>
+      <p class="font-body-md text-body-md text-on-surface-variant mt-3">Trekt élke sessie in, ook op apparaten die je kwijt bent.</p>
+    </div>
+
     <div class="glass-panel rounded-xl p-6" id="notif-card">
       <div class="flex items-center gap-2 mb-3">
         <span class="material-symbols-outlined text-primary">notifications_active</span>
@@ -228,9 +218,13 @@
 
 <!-- BottomNavBar -->
 <nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-2 bg-surface/80 backdrop-blur-xl border-t border-white/10 shadow-[0_-4px_20px_rgba(0,0,0,0.3)] rounded-t-xl">
+  <button class="nav-btn flex flex-col items-center justify-center transition-all active:scale-90 duration-200" data-view="today">
+    <span class="material-symbols-outlined">wb_twilight</span>
+    <span class="font-label-caps text-[10px] mt-1">Vandaag</span>
+  </button>
   <button class="nav-btn flex flex-col items-center justify-center transition-all active:scale-90 duration-200" data-view="inbox">
     <span class="material-symbols-outlined">center_focus_strong</span>
-    <span class="font-label-caps text-[10px] mt-1">Actiecentrum</span>
+    <span class="font-label-caps text-[10px] mt-1">Besluiten</span>
   </button>
   <button class="nav-btn flex flex-col items-center justify-center transition-all active:scale-90 duration-200" data-view="briefing">
     <span class="material-symbols-outlined">assignment</span>

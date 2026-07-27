@@ -36,6 +36,13 @@ body {
   background-color: var(--iris-blue); display: inline-block;
 }
 .pulse { animation: pulse-glow 2s infinite; }
+.status-dot.offline { background-color: #ffb4ab; }
+/* Waarschuwing bij een bevroren lijst: valt op zonder de kaarten te verdringen. */
+.stale-note {
+  color: var(--warn);
+  border-left: 2px solid rgba(251, 191, 36, 0.45);
+  padding-left: 10px;
+}
 @keyframes pulse-glow {
   0% { box-shadow: 0 0 0 0 rgba(142, 213, 255, 0.4); }
   70% { box-shadow: 0 0 0 10px rgba(142, 213, 255, 0); }
@@ -183,6 +190,67 @@ body {
   .item:hover { transform: translateY(-2px); border-color: rgba(142,213,255,0.4); box-shadow: 0 8px 30px rgba(0,0,0,0.35); }
 }
 .item { transition: transform 0.18s var(--ease), border-color 0.2s, box-shadow 0.2s; }
+
+/* ── Filter-chips (Actiecentrum) ───────────────────────────────────────── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(15, 23, 42, 0.6);
+  color: var(--on-surface-variant);
+  font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+.chip:hover { color: var(--iris-blue); border-color: rgba(142, 213, 255, 0.3); }
+.chip-on {
+  color: var(--iris-blue);
+  border-color: rgba(142, 213, 255, 0.45);
+  background: rgba(56, 189, 248, 0.12);
+}
+.chip-count {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  background: rgba(255, 255, 255, 0.08); border-radius: 9999px;
+  padding: 0 6px; min-width: 20px; text-align: center;
+}
+.chip-on .chip-count { background: rgba(142, 213, 255, 0.18); }
+
+/* ── Markdown-blokken (Iris' analyse) ──────────────────────────────────── */
+.markdown { font-size: 14px; line-height: 1.6; color: var(--on-surface-variant); }
+.markdown .md-p { margin: 0 0 10px; }
+.markdown .md-p:last-child { margin-bottom: 0; }
+.markdown .md-list { margin: 0 0 10px; padding-left: 20px; }
+.markdown ul.md-list { list-style: disc; }
+.markdown ol.md-list { list-style: decimal; }
+.markdown .md-list li { margin-bottom: 4px; }
+.markdown .md-list li::marker { color: rgba(142, 213, 255, 0.6); }
+.markdown .md-hr { border: 0; border-top: 1px solid rgba(255, 255, 255, 0.08); margin: 14px 0; }
+/* Tabellen mogen breed zijn — ze scrollen in hun eigen container, de pagina niet. */
+.md-table-wrap {
+  overflow-x: auto; margin: 0 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 0.5rem;
+  -webkit-overflow-scrolling: touch;
+}
+.md-table { border-collapse: collapse; width: 100%; font-size: 12.5px; white-space: nowrap; }
+.md-table th, .md-table td {
+  padding: 8px 12px; text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.md-table th {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--iris-blue); background: rgba(255, 255, 255, 0.03);
+  position: sticky; top: 0;
+}
+.md-table td { color: var(--on-surface-variant); }
+.md-table td:first-child { color: var(--on-surface); font-weight: 500; }
+.md-table tbody tr:last-child td { border-bottom: 0; }
+.md-table tbody tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+/* Details-pijl: de eigen marker weg, wij tekenen er zelf een */
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
 
 /* Focus-zichtbaarheid voor toetsenbord */
 button:focus-visible, input:focus-visible, textarea:focus-visible {

@@ -13,7 +13,13 @@ router = APIRouter(prefix="/api/bridge", tags=["bridge"])
 
 @router.get("/status")
 def bridge_status():
-    return {"enabled": service.enabled(), "last_sync": service.last_sync()}
+    return {
+        "enabled": service.enabled(),
+        "config_state": service.config_state(),
+        "remote_url": service.remote_url(),
+        "last_sync": service.last_sync(),
+        "failure_streak": service.failure_streak(),
+    }
 
 
 @router.post("/sync-now")

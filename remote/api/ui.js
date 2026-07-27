@@ -1,12 +1,16 @@
-// UI-endpoint — voor de telefoon/browser (wachtwoord → HMAC-sessiecookie).
-//   POST /api/ui?op=login     {password}
+// UI-endpoint — voor de telefoon/browser (wachtwoord → intrekbare sessiecookie).
+//   POST /api/ui?op=login       {password}   (met brute-force-rem per IP)
 //   POST /api/ui?op=logout
+//   POST /api/ui?op=logout-all  → trekt élk apparaat in
+//   GET  /api/ui?op=sessions    → actieve apparaten
 //   GET  /api/ui?op=items     → actieve items + besluit-status per item
 //   GET  /api/ui?op=briefing  → laatste briefing (Iris + funnel)
 //   POST /api/ui?op=decide    {item_key, action, payload}
 //   POST /api/ui?op=note      {text}
 import {
-  sql, json, checkPassword, sessionCookie, clearCookie, requireSession,
+  sql, json, checkPassword, passwordConfigError, startSession, clearCookie,
+  requireSession, endSession, endAllSessions, listSessions,
+  loginLockSeconds, noteLoginFailure, clearLoginFailures,
 } from './_lib.js';
 
 // Welke acties de telefoon per item-type mag aanvragen. Moet een subset zijn
@@ -19,28 +23,75 @@ const ALLOWED = {
   calendar: ['approve', 'reject', 'dismiss'],
   goal: ['dismiss'], task: ['dismiss'], error: ['dismiss'],
   vacancies: ['dismiss'], leads: ['dismiss'], linkbuilding: ['dismiss'],
+  scheduler: ['dismiss'],
+};
+
+// Commando's die de telefoon mag aanzwengelen. Spiegel van `_COMMANDS` in
+// backend/domains/bridge/actions.py — de bridge weigert de rest toch, maar zo
+// blijft de fout bij de gebruiker in plaats van drie minuten later in een
+// foutkaart. `fields` bepaalt welke payload-velden overleven; `label` is wat
+// de UI en de chat terugmelden.
+const COMMANDS = {
+  content_run: { label: 'Artikelen schrijven → Wachtrij', fields: ['site', 'count'] },
+  seo_refresh: { label: 'Wegzakkende pagina’s verrijken → Wachtrij', fields: ['site', 'count'] },
+  outreach_run: { label: 'Outreach-concepten klaarzetten', fields: ['count'] },
+  lead_search: { label: 'Nieuwe leads zoeken', fields: ['queries', 'template'] },
+  linkbuilding_run: { label: 'Linkbuilding-concepten klaarzetten', fields: ['count'] },
+  mail_sync: { label: 'Mail ophalen en triëren', fields: ['triage'] },
+  helpdesk_run: { label: 'Helpdesk-concepten schrijven', fields: [] },
+  iris_briefing: { label: 'Iris opnieuw laten analyseren', fields: [] },
+  context_refresh: { label: 'Cijfers verversen', fields: ['sections'] },
+  digest: { label: 'Ochtendrapport draaien', fields: [] },
 };
 
 export default async function handler(req, res) {
   const op = (req.query && req.query.op) || '';
   try {
     if (op === 'login' && req.method === 'POST') {
-      if (!checkPassword((req.body || {}).password)) {
-        return json(res, 401, { error: 'Onjuist wachtwoord' });
+      // Een verkeerd geconfigureerd wachtwoord is een serverfout, geen
+      // inlogpoging — anders staat de deur open zonder dat iemand het ziet.
+      const configError = passwordConfigError();
+      if (configError) return json(res, 503, { error: configError });
+
+      const wait = await loginLockSeconds(req);
+      if (wait > 0) {
+        res.setHeader('Retry-After', String(wait));
+        return json(res, 429, { error: 'Te veel pogingen', retry_after: wait });
       }
-      res.setHeader('Set-Cookie', sessionCookie());
+      if (!checkPassword((req.body || {}).password)) {
+        const { wait: lock } = await noteLoginFailure(req);
+        return json(res, 401, {
+          error: lock > 0 ? `Onjuist wachtwoord — ${Math.ceil(lock / 60)} min geblokkeerd`
+            : 'Onjuist wachtwoord',
+          retry_after: lock,
+        });
+      }
+      await clearLoginFailures(req);
+      res.setHeader('Set-Cookie', await startSession(req));
       return json(res, 200, { ok: true });
     }
     if (op === 'logout' && req.method === 'POST') {
+      await endSession(req);
       res.setHeader('Set-Cookie', clearCookie());
       return json(res, 200, { ok: true });
     }
 
-    if (!requireSession(req, res)) return;
+    if (!(await requireSession(req, res))) return;
+
+    if (op === 'sessions' && req.method === 'GET') {
+      return json(res, 200, { sessions: await listSessions(req) });
+    }
+    if (op === 'logout-all' && req.method === 'POST') {
+      await endAllSessions();
+      res.setHeader('Set-Cookie', clearCookie());
+      return json(res, 200, { ok: true });
+    }
 
     if (op === 'items' && req.method === 'GET') return await items(res);
     if (op === 'briefing' && req.method === 'GET') return await briefing(res);
+    if (op === 'context' && req.method === 'GET') return await context(res);
     if (op === 'decide' && req.method === 'POST') return await decide(req, res);
+    if (op === 'command' && req.method === 'POST') return await command(req, res);
     if (op === 'note' && req.method === 'POST') return await note(req, res);
     if (op === 'notes' && req.method === 'GET') return await notesList(res);
     if (op === 'outbox' && req.method === 'GET') return await outbox(res);
@@ -97,6 +148,35 @@ async function decide(req, res) {
     ON CONFLICT (item_key) WHERE status = 'pending' DO NOTHING
     RETURNING id`;
   return json(res, 200, { ok: true, queued: rows.length > 0 });
+}
+
+async function context(res) {
+  const rows = await sql`
+    SELECT payload, generated_at FROM context_snapshot WHERE id = 1`;
+  return json(res, 200, rows[0] || { payload: null, generated_at: null });
+}
+
+async function command(req, res) {
+  const { action, payload } = req.body || {};
+  const spec = COMMANDS[action];
+  if (!spec) return json(res, 400, { error: `Onbekend commando '${action}'` });
+
+  // Alleen de velden die het commando kent gaan mee. Een payload die de
+  // telefoon vrij mag vullen is een tweede API-oppervlak, en dat willen we
+  // niet — de lokale kant klemt de waarden nóg een keer.
+  const clean = {};
+  for (const field of spec.fields) {
+    if (payload && payload[field] !== undefined) clean[field] = payload[field];
+  }
+  // Eén pending commando van dezelfde soort tegelijk (partial unique index op
+  // item_key): twee keer tikken op "Schrijf artikelen" moet één run geven.
+  const key = `cmd:${action}`;
+  const rows = await sql`
+    INSERT INTO decisions (item_key, item_kind, item_id, action, payload)
+    VALUES (${key}, 'command', ${action}, ${action}, ${JSON.stringify(clean)}::jsonb)
+    ON CONFLICT (item_key) WHERE status = 'pending' DO NOTHING
+    RETURNING id`;
+  return json(res, 200, { ok: true, queued: rows.length > 0, label: spec.label });
 }
 
 async function notesList(res) {

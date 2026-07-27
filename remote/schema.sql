@@ -1,6 +1,9 @@
 -- Agent OS Remote — Neon-schema (eenmalig draaien in de Neon SQL-editor).
--- Vier tabellen, meer niet: gespiegelde wacht-op-mens-items, de besluiten-
--- outbox vanaf je telefoon, briefings als leesvoer en losse notities.
+-- Gespiegelde wacht-op-mens-items, de besluiten-outbox vanaf je telefoon,
+-- briefings als leesvoer, losse notities, plus twee tabellen die de publieke
+-- voordeur bewaken: intrekbare sessies en een brute-force-rem.
+-- Bijwerken van een bestaande installatie kan door dit bestand opnieuw te
+-- draaien: alles is IF NOT EXISTS.
 
 CREATE TABLE IF NOT EXISTS sync_items (
   key          TEXT PRIMARY KEY,          -- "<dismiss_kind>:<item_id>" (stabiel)
@@ -40,6 +43,16 @@ CREATE TABLE IF NOT EXISTS briefings (
   generated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- De rijke context (mail/agenda/analytics/seo/pulse) krijgt een eigen tabel met
+-- precies één rij, en zit niet in `briefings`: hij ververst elke sync terwijl
+-- een briefing er één per dag is. Zou hij in briefings staan, dan groeide die
+-- tabel met 480 rijen per dag en werd "de laatste briefing" onvindbaar.
+CREATE TABLE IF NOT EXISTS context_snapshot (
+  id           INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  payload      JSONB NOT NULL,
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Web-push-abonnementen (fase 2): één rij per browser/telefoon.
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   id         SERIAL PRIMARY KEY,
@@ -54,4 +67,29 @@ CREATE TABLE IF NOT EXISTS notes (
   text       TEXT NOT NULL,
   status     TEXT NOT NULL DEFAULT 'pending',   -- pending | synced
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ── Voordeur ───────────────────────────────────────────────────────────────
+-- Sessies staan in de database en niet in een afgeleide HMAC, want een sessie
+-- die je niet kunt intrekken is geen sessie maar een tweede wachtwoord: hij
+-- blijft geldig tot je APP_PASSWORD wijzigt. Opgeslagen wordt de SHA-256 van
+-- het cookie-token, zodat een database-lek geen sessies uitdeelt.
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  label      TEXT,                          -- grove apparaat-hint uit de UA
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions (expires_at);
+
+-- Brute-force-rem. Serverless heeft geen procesgeheugen, dus de teller moet in
+-- de database staan. Het IP wordt gepepperd gehasht: genoeg om te tellen,
+-- niets om te lekken.
+CREATE TABLE IF NOT EXISTS login_attempts (
+  ip_hash      TEXT PRIMARY KEY,
+  fails        INT NOT NULL DEFAULT 0,
+  first_fail   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_fail    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  locked_until TIMESTAMPTZ
 );

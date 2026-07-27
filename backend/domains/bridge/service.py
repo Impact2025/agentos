@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from ...shared import failures
 from ...shared.config import BRIDGE_REMOTE_URL, BRIDGE_TOKEN
 from ...shared.database import get_conn
 
@@ -36,9 +37,33 @@ _TIMEOUT = 30.0
 # Uitslag van de laatste sync, voor GET /api/bridge/status.
 _last_sync: Dict[str, Any] = {}
 
+# Faal-reeks-sleutel: één storing = één kaart, ook over herstarts heen.
+_FAIL_KEY = "bridge:sync"
+
 
 def enabled() -> bool:
     return bool(BRIDGE_REMOTE_URL and BRIDGE_TOKEN)
+
+
+def config_state() -> str:
+    """`off` | `partial` | `on`.
+
+    Het onderscheid tussen 'bewust uit' en 'half ingevuld' is niet cosmetisch:
+    beide leeg is een verse installatie (stil overslaan is dan juist), maar één
+    van de twee ingevuld betekent dat iemand de bridge wilde en halverwege bleef
+    steken. Dat leest op de telefoon als "171u offline" en lokaal als niets —
+    precies de stilte die dit systeem nergens mag hebben.
+    """
+    url, token = bool(BRIDGE_REMOTE_URL), bool(BRIDGE_TOKEN)
+    if url and token:
+        return "on"
+    return "partial" if (url or token) else "off"
+
+
+def _missing_setting() -> str:
+    if not BRIDGE_REMOTE_URL:
+        return "BRIDGE_REMOTE_URL"
+    return "BRIDGE_TOKEN" if not BRIDGE_TOKEN else ""
 
 
 # ── Verzamelen: items + previews ────────────────────────────────────────────
@@ -141,23 +166,56 @@ def collect_items() -> List[Dict[str, Any]]:
 
 
 def collect_briefing() -> Dict[str, Any]:
-    """Laatste Iris-briefing + funnel-cijfers als leesvoer voor onderweg."""
+    """Laatste Iris-briefing + funnel-cijfers als leesvoer voor onderweg.
+
+    Naast de markdown gaat ook de gestructureerde snapshot mee (scores,
+    pijlers, trend-delta's en een GSC-dagreeks per site) zodat de telefoon
+    een dashboard kan tekenen in plaats van een lap tekst."""
     briefing: Dict[str, Any] = {}
     try:
         with get_conn() as conn:
             r = conn.execute(
-                "SELECT report_date, markdown, grades, llm_ok FROM iris_reports "
-                "ORDER BY report_date DESC LIMIT 1"
+                "SELECT report_date, markdown, grades, llm_ok, advice, metrics "
+                "FROM iris_reports ORDER BY report_date DESC LIMIT 1"
             ).fetchone()
         if r:
+            grades = json.loads(r["grades"] or "{}")
             briefing["iris"] = {
                 "date": r["report_date"],
                 "markdown": r["markdown"],
-                "grades": json.loads(r["grades"] or "{}"),
+                "grades": grades,
                 "llm_ok": bool(r["llm_ok"]),
+                "advice": json.loads(r["advice"] or "[]"),
             }
+            snapshot = json.loads(r["metrics"] or "{}")
+            briefing["projects"] = [_compact_project(p, grades)
+                                    for p in snapshot.get("projects") or []]
+            # Knelpunten zijn Iris' belangrijkste regel: het laagste cijfer is
+            # zelden het echte probleem. Zonder deze meegestuurde lijst moet de
+            # telefoon dat uit de markdown-lap zien te vissen.
+            briefing["bottlenecks"] = [
+                {k: b.get(k) for k in ("prio", "issue", "actie", "waarom")}
+                for b in (snapshot.get("bottlenecks") or [])[:5]
+            ]
     except Exception:
         logger.exception("Bridge: Iris-briefing ophalen mislukt")
+    try:
+        from ..seo import history as seo_history
+        series: Dict[str, List] = {}
+        for p in briefing.get("projects") or []:
+            if p.get("site_id"):
+                series[p["site_id"]] = [
+                    [d["date"], d["clicks"], d["position"]]
+                    for d in seo_history.site_series(p["site_id"], days=28)
+                ]
+        briefing["series"] = series
+    except Exception:
+        logger.exception("Bridge: GSC-dagreeksen ophalen mislukt")
+    try:
+        from ..iris import predictions
+        briefing["track_record"] = predictions.track_record()
+    except Exception:
+        logger.exception("Bridge: trefkans ophalen mislukt")
     try:
         from ..prospecting import funnel
         briefing["funnel"] = funnel.funnel_stats()
@@ -166,11 +224,41 @@ def collect_briefing() -> Dict[str, Any]:
     return briefing
 
 
-def build_push_payload() -> Dict[str, Any]:
+def _compact_project(p: Dict[str, Any], grades: Dict[str, Any]) -> Dict[str, Any]:
+    """Alleen wat de telefoon tekent — de volle snapshot is te zwaar voor Neon."""
+    pillars = p.get("pillars") or {}
+    seo = pillars.get("seo") or {}
+    trend = (p.get("trend") or {}).get("site")
+    return {
+        "project": p.get("project"),
+        "site_id": p.get("site_id"),
+        "grade": p.get("grade"),
+        "score": p.get("score"),
+        "oordeel": (grades.get(p.get("project")) or {}).get("oordeel") or "",
+        "pillars": {name: (pil or {}).get("score") for name, pil in pillars.items()},
+        "seo": {k: seo.get(k) for k in
+                ("clicks", "impressions", "avg_position", "ctr_pct", "pages")},
+        "trend": trend,
+    }
+
+
+async def build_push_payload() -> Dict[str, Any]:
+    """Items + briefing + de rijke context (mail/agenda/analytics/seo/pulse).
+
+    De context zit bewust in dezelfde push: één ronde, één momentopname. Twee
+    losse pushes zouden een telefoon kunnen laten zien die half oud en half
+    nieuw is, en dat is erger dan consequent drie minuten achterlopen."""
+    from . import context as ctx
+    try:
+        rich = await ctx.build_context()
+    except Exception:  # noqa: BLE001
+        logger.exception("Bridge: contextopbouw mislukt — push gaat door zonder")
+        rich = {}
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "items": collect_items(),
         "briefing": collect_briefing(),
+        "context": rich,
     }
 
 
@@ -193,7 +281,7 @@ async def sync_once() -> Dict[str, Any]:
     summary: Dict[str, Any] = {"ok": True, "pushed": 0, "applied": 0, "failed": 0,
                                "at": datetime.now(timezone.utc).isoformat()}
     try:
-        payload = build_push_payload()
+        payload = await build_push_payload()
         async with httpx.AsyncClient(timeout=_TIMEOUT, headers=_headers()) as client:
             r = await client.post(f"{_base()}/api/bridge?op=push", json=payload)
             r.raise_for_status()
@@ -224,16 +312,86 @@ async def sync_once() -> Dict[str, Any]:
                                       json={"ids": synced_ids})
                 r.raise_for_status()
                 summary["notes"] = len(synced_ids)
-    except httpx.HTTPError as e:
-        logger.warning("Bridge-sync mislukt (netwerk/remote): %s", e)
-        summary = {"ok": False, "detail": str(e)[:300],
-                   "at": datetime.now(timezone.utc).isoformat()}
+        _note_sync_ok()
     except Exception as e:
-        logger.exception("Bridge-sync mislukt")
-        summary = {"ok": False, "detail": str(e)[:300],
+        logger.warning("Bridge-sync mislukt: %s", failures.describe_exception(e))
+        summary = {"ok": False, "detail": failures.describe_exception(e)[:300],
+                   "failure_class": failures.classify(e),
                    "at": datetime.now(timezone.utc).isoformat()}
+        _note_sync_failed(e)
     _last_sync = summary
     return summary
+
+
+# ── Falen: nooit stil ───────────────────────────────────────────────────────
+
+def _note_sync_ok() -> None:
+    """Geslaagde cyclus. Liep er een storing, meld dan dat hij voorbij is —
+    anders blijft er een rode kaart staan voor iets dat allang werkt."""
+    had = failures.note_success(_FAIL_KEY)
+    if had:
+        from ...shared.outcomes import log_outcome
+        log_outcome(
+            "Bridge", "sync_hersteld",
+            f"Bridge-sync werkt weer na {had} mislukte pogingen op rij.",
+            artifact=BRIDGE_REMOTE_URL,
+            next_step="Niets — Iris Remote toont weer de actuele stand.",
+        )
+
+
+def _note_sync_failed(exc: BaseException) -> None:
+    """Eén mislukte cyclus. Een blip (wifi weg, Vercel koud) is geen inbox-item;
+    een verkeerd token of een dode URL wél, en meteen — daar helpt wachten niet.
+
+    Waarom dit hier moet: bij een mislukte push blijft de telefoon vrolijk de
+    láátst gepushte stand tonen. Zonder deze kaart is een kapotte bridge lokaal
+    onzichtbaar en onderweg alleen te zien als een grijs 'Nu offline'-pilletje
+    op een week oude lijst — de faalmodus waarvoor `shared/failures.py` bestaat.
+    """
+    detail = failures.describe_exception(exc)
+    klass = failures.classify(exc)
+    failures.note_failure(_FAIL_KEY, detail, klass)
+    if not failures.should_escalate(_FAIL_KEY, exc):
+        return
+    steps = {
+        failures.CLASS_AUTH: "Controleer of BRIDGE_TOKEN in .env exact gelijk is aan "
+                             "de BRIDGE_TOKEN-env-var in Vercel.",
+        failures.CLASS_CONFIG: f"Controleer BRIDGE_REMOTE_URL ({BRIDGE_REMOTE_URL or 'leeg'}) "
+                               "en of de Vercel-deploy nog leeft.",
+    }
+    from ...shared.outcomes import log_outcome
+    log_outcome(
+        "Bridge", "sync_failed",
+        f"Bridge-sync naar Iris Remote mislukt ({klass}): {detail}",
+        artifact=BRIDGE_REMOTE_URL,
+        next_step=steps.get(klass, "Test met POST /api/bridge/sync-now en controleer "
+                                   "de Vercel-logs; tot die tijd toont Iris Remote een "
+                                   "verouderde stand."),
+        status="error",
+    )
+    failures.mark_escalated(_FAIL_KEY)
+
+
+def report_misconfiguration() -> None:
+    """Half ingevulde bridge: iemand wilde dit aanzetten en bleef steken. Dat is
+    een mens-alleen fout, dus meteen melden in plaats van elke 3 minuten stil
+    overslaan."""
+    missing = _missing_setting()
+    if not missing:
+        return
+    key = f"bridge:config:{missing}"
+    failures.note_failure(key, f"{missing} ontbreekt", failures.CLASS_CONFIG)
+    if failures.streak(key).get("escalated"):
+        return
+    from ...shared.outcomes import log_outcome
+    log_outcome(
+        "Bridge", "niet_geconfigureerd",
+        f"Iris Remote staat half ingesteld: {missing} ontbreekt in .env, dus de "
+        "sync slaat elke ronde over en de telefoon toont een bevroren stand.",
+        next_step=f"Zet {missing} in .env en herstart AgentOS (agentos_service.cmd).",
+        status="error",
+    )
+    failures.mark_escalated(key)
 
 
 def _store_note(note: Dict[str, Any]) -> bool:
@@ -288,3 +446,14 @@ async def _apply(decision: Dict[str, Any]) -> tuple:
 
 def last_sync() -> Dict[str, Any]:
     return dict(_last_sync)
+
+
+def remote_url() -> str:
+    return BRIDGE_REMOTE_URL
+
+
+def failure_streak() -> Dict[str, Any]:
+    """De lopende storing (leeg = het draait). Staat in SQLite, dus na een
+    herstart blijft "faalt al uren" leesbaar als storing en niet als 'nooit
+    gedraaid'."""
+    return failures.streak(_FAIL_KEY)

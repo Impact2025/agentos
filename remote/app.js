@@ -13,9 +13,16 @@
       headers: body ? { 'Content-Type': 'application/json' } : {},
       body: body ? JSON.stringify(body) : null,
     });
-    if (r.status === 401) { show('login'); throw new Error('login'); }
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    // Een 401 op 'login' is een fout wachtwoord en moet zijn eigen melding
+    // houden; een 401 elders betekent dat de sessie verlopen of ingetrokken is.
+    if (r.status === 401 && op !== 'login') { show('login'); throw new Error('login'); }
+    if (!r.ok) {
+      const err = new Error(data.error || `HTTP ${r.status}`);
+      err.status = r.status;
+      err.retryAfter = data.retry_after || 0;
+      throw err;
+    }
     return data;
   }
 
@@ -60,6 +67,26 @@
     else if (age < 60) { pill.className = 'recent'; txt.textContent = `${age}m geleden`; }
     else if (age < 180) { pill.className = 'stale'; txt.textContent = `${age}m — machine uit?`; }
     else { pill.className = 'dead'; txt.textContent = `${Math.round(age / 60)}u offline`; }
+    setStaleness(lastPush, age);
+  }
+
+  // Een pilletje in de kopregel is te weinig waarschuwing: 32 kaarten van een
+  // week oud zien er exact zo uit als 32 verse. Bij een oude push zeggen we in
+  // de lijst zélf hoe oud de stand is en dat besluiten pas landen zodra AgentOS
+  // weer draait — die blijven namelijk gewoon werken, ze wachten alleen.
+  function setStaleness(lastPush, age) {
+    const dot = document.querySelector('#view-inbox .status-dot');
+    const info = $('sync-info');
+    const old = !lastPush || age >= 60;
+    if (dot) dot.classList.toggle('offline', old);
+    if (dot) dot.classList.toggle('pulse', !old);
+    if (!info) return;
+    if (!old) { info.textContent = ''; info.hidden = true; return; }
+    info.hidden = false;
+    info.className = 'font-body-md text-body-md stale-note';
+    info.textContent = lastPush
+      ? `Bevroren stand van ${fmtDate(lastPush)} — AgentOS synct niet. Je besluiten blijven in de wachtrij staan en worden uitgevoerd zodra de verbinding terug is.`
+      : 'Nog nooit gesynchroniseerd — AgentOS heeft deze cloud nog niet bereikt.';
   }
 
   function spinSync(on) {
@@ -68,38 +95,73 @@
   }
 
   // ── Views + nav ──────────────────────────────────────────────────────────
-  const views = ['login', 'inbox', 'briefing', 'note', 'system'];
+  const views = ['login', 'today', 'inbox', 'briefing', 'note', 'system'];
   function show(view) {
     const myToken = ++loadToken;
     views.forEach((v) => { $(`view-${v}`).hidden = v !== view; });
     document.querySelectorAll('.nav-btn').forEach((b) =>
       b.classList.toggle('nav-active', b.dataset.view === view));
+    // Vandaag leunt op de itemtelling ('3 besluiten wachten op je'), dus die
+    // halen we mee op — anders staat er bij een koude start altijd 0.
+    if (view === 'today') { refresh(myToken).then(() => loadToday(myToken)); }
     if (view === 'inbox') refresh(myToken);
     if (view === 'briefing') loadBriefing(myToken);
     if (view === 'note') loadNotes();
     if (view === 'system') loadSystem(myToken);
   }
 
+  // Herlaad het actieve scherm — gebruikt door de sync-knop en pull-to-refresh.
+  async function reloadActive() {
+    const active = views.find((v) => !$(`view-${v}`).hidden) || 'today';
+    await refreshRaw();
+    if (active === 'today') { await refresh(); loadToday(); }
+    else if (active === 'inbox') refresh();
+    else if (active === 'briefing') loadBriefing();
+    else if (active === 'system') loadSystem();
+  }
+
   document.querySelectorAll('.nav-btn').forEach((b) => { b.onclick = () => show(b.dataset.view); });
 
   $('syncTrigger').onclick = async () => {
     spinSync(true);
-    const active = views.find((v) => !$(`view-${v}`).hidden) || 'inbox';
-    await refreshRaw();
-    if (active === 'inbox') refresh();
-    else if (active === 'briefing') loadBriefing();
-    else if (active === 'system') loadSystem();
+    await reloadActive();
     spinSync(false);
   };
+
+  let lockTimer = null;
+  function lockLogin(seconds) {
+    clearInterval(lockTimer);
+    const btn = $('login-form').querySelector('button[type=submit]');
+    const tick = () => {
+      if (seconds <= 0) {
+        clearInterval(lockTimer);
+        btn.disabled = false;
+        $('login-error').textContent = 'Je kunt het opnieuw proberen.';
+        return;
+      }
+      btn.disabled = true;
+      const m = Math.floor(seconds / 60);
+      const s = seconds % 60;
+      $('login-error').textContent = `Te veel pogingen — wacht nog ${m ? `${m}m ` : ''}${s}s.`;
+      seconds -= 1;
+    };
+    tick();
+    lockTimer = setInterval(tick, 1000);
+  }
 
   $('login-form').onsubmit = async (e) => {
     e.preventDefault();
     try {
       await api('login', 'POST', { password: $('login-pw').value });
+      clearInterval(lockTimer);
+      $('login-pw').value = '';
       $('login-error').textContent = '';
       toast('Welkom terug', 'ok', 'lock_open');
-      show('inbox');
-    } catch (err) { $('login-error').textContent = err.message; }
+      show('today');
+    } catch (err) {
+      if (err.retryAfter > 0) lockLogin(err.retryAfter);
+      else $('login-error').textContent = err.message;
+    }
   };
 
   $('logoutBtn').onclick = async () => { await api('logout', 'POST', {}); toast('Uitgelogd'); show('login'); };
@@ -113,6 +175,10 @@
   }
 
   async function refresh(token = loadToken) {
+    // Skeleton hoort vóór de fetch, niet erna: hem tonen mét de data al in de
+    // hand liet de kop "32 besluiten in de wachtrij" boven drie grijze blokken
+    // staan, tot de volgende poll-tick 20s later alsnog rendeerde.
+    if (!items.length && !$('items').firstElementChild) $('items').innerHTML = skeletons(3);
     const data = await refreshRaw();
     if (!data || token !== loadToken) return;
     items = data.items || [];
@@ -161,39 +227,135 @@
     ).join('');
   }
 
-  let firstLoad = true;
+  // Groep + prioriteit. Mislukte besluiten en fouten horen bovenaan, niet op
+  // datum tussen 14 identieke wachtrij-kaarten.
+  const GROUP_OF = {
+    content: 'actie', mail: 'actie', outreach: 'actie', calendar: 'actie',
+    error: 'fout',
+  };
+  const GROUPS = [
+    ['all', 'Alles', 'inbox'],
+    ['fout', 'Fouten', 'error'],
+    ['actie', 'Wachtrij', 'pending_actions'],
+    ['info', 'Info', 'info'],
+  ];
+  const groupOf = (it) => GROUP_OF[it.dismiss_kind] || 'info';
+  function rankOf(it) {
+    if (it.decision_status === 'failed') return 0;
+    if (it.dismiss_kind === 'error') return 1;
+    if (groupOf(it) === 'actie') return it.decision_status === 'pending' ? 3 : 2;
+    return 4;
+  }
+  let inboxFilter = 'all';
+
+  function renderFilters() {
+    const host = $('inbox-filters');
+    if (!host) return;
+    const counts = { all: items.length, fout: 0, actie: 0, info: 0 };
+    items.forEach((it) => { counts[groupOf(it)] += 1; });
+    host.innerHTML = GROUPS.filter(([k]) => k === 'all' || counts[k]).map(([k, label, icon]) => {
+      const on = inboxFilter === k;
+      return `<button class="chip ${on ? 'chip-on' : ''} shrink-0" data-filter="${k}">
+        <span class="material-symbols-outlined text-[16px]">${icon}</span>
+        <span>${label}</span><span class="chip-count">${counts[k]}</span></button>`;
+    }).join('');
+    host.querySelectorAll('[data-filter]').forEach((b) => {
+      b.onclick = () => { inboxFilter = b.dataset.filter; renderFilters(); renderItems(); };
+    });
+  }
+
+  // "Artikel klaar (SEO 82.0/100) — goedkeuren publiceert echt." staat bij elk
+  // artikel identiek in de samenvatting; de score wordt een chip, de rest weg.
+  function summaryBits(it) {
+    const s = it.summary || '';
+    const m = s.match(/SEO\s+([\d.]+)\s*\/\s*100/i);
+    if (!m) return { chip: '', text: s };
+    const score = parseFloat(m[1]);
+    const cls = score >= 85 ? 'text-green-400 border-green-400/30' : 'text-primary border-primary/30';
+    return {
+      chip: `<span class="font-label-caps text-[10px] ${cls} border rounded px-1.5 py-0.5 shrink-0">SEO ${score}</span>`,
+      text: s.replace(/^[^—]*—\s*/, '').trim(),
+    };
+  }
+
   function renderItems() {
     const el = $('items');
-    if (firstLoad) { el.innerHTML = skeletons(3); firstLoad = false; return; }
+    renderFilters();
     if (!items.length) {
       el.innerHTML = `<div class="glass-panel rounded-xl p-10 text-center fade-up">
         <span class="material-symbols-outlined text-primary text-4xl mb-2">task_alt</span>
         <p class="font-body-lg text-body-lg text-on-surface-variant">Niets wacht op je. <span class="text-on-surface">Alles afgehandeld.</span></p></div>`;
       return;
     }
-    el.innerHTML = `<div class="stagger">${items.map((it, idx) => {
+    const view = items
+      .map((it, idx) => ({ it, idx }))
+      .filter(({ it }) => inboxFilter === 'all' || groupOf(it) === inboxFilter)
+      .sort((a, b) => rankOf(a.it) - rankOf(b.it)
+        || String(b.it.created_at || '').localeCompare(String(a.it.created_at || '')));
+
+    if (!view.length) {
+      el.innerHTML = `<div class="glass-panel rounded-xl p-8 text-center">
+        <p class="font-body-md text-body-md text-on-surface-variant">Niets in deze categorie.</p></div>`;
+      return;
+    }
+
+    el.innerHTML = `<div class="stagger space-y-stack-sm">${view.map(({ it, idx }) => {
       const m = KIND_META[it.dismiss_kind] || { icon: 'radio_button_unchecked', label: it.dismiss_kind };
+      const { chip, text } = summaryBits(it);
+      const urgent = it.decision_status === 'failed' || it.dismiss_kind === 'error';
+      const quick = it.dismiss_kind === 'content' && !it.decision_status;
       return `
-      <div class="glass-panel p-stack-md rounded-xl space-y-3 cursor-pointer hover:border-primary/40 transition-colors group item" data-idx="${idx}">
-        <div class="flex justify-between items-start gap-3">
-          <div class="flex gap-4 min-w-0">
-            <div class="w-12 h-12 shrink-0 rounded-lg bg-primary-container/20 flex items-center justify-center border border-primary/20">
-              <span class="material-symbols-outlined text-primary">${m.icon}</span>
-            </div>
-            <div class="min-w-0">
-              <p class="font-label-caps text-label-caps text-primary mb-1 uppercase">${esc(m.label)}${it.project ? ' · ' + esc(it.project) : ''}</p>
-              <h3 class="font-headline-sm text-headline-sm text-on-surface leading-snug">${esc(it.title)}</h3>
-            </div>
+      <div class="glass-panel p-3 rounded-xl cursor-pointer hover:border-primary/40 transition-colors item ${urgent ? 'border-l-4 border-l-error/70' : ''}" data-idx="${idx}">
+        <div class="flex gap-3 min-w-0">
+          <div class="w-9 h-9 shrink-0 rounded-lg bg-primary-container/20 flex items-center justify-center border border-primary/20">
+            <span class="material-symbols-outlined text-primary text-[20px]">${m.icon}</span>
           </div>
-          <span class="font-label-caps text-label-caps text-on-surface-variant shrink-0">${esc(fmtDate(it.created_at))}</span>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 mb-0.5">
+              <p class="font-label-caps text-[10px] text-primary uppercase truncate min-w-0">${esc(m.label)}${it.project ? ' · ' + esc(it.project) : ''}</p>
+              ${chip}
+              <span class="font-label-caps text-[10px] text-on-surface-variant/60 ml-auto shrink-0">${esc(fmtDate(it.created_at))}</span>
+            </div>
+            <h3 class="font-headline-sm text-[15px] leading-snug text-on-surface line-clamp-2">${esc(it.title)}</h3>
+            ${text ? `<p class="font-body-md text-[12px] text-on-surface-variant/80 leading-snug mt-1 line-clamp-2">${esc(text)}</p>` : ''}
+            ${decisionBadge(it)}
+          </div>
         </div>
-        <div class="bg-surface-container-lowest/50 rounded-lg p-3 border border-white/5 font-body-md text-body-md text-on-surface-variant leading-relaxed">
-          ${esc(it.summary || '')}
-        </div>
-        ${decisionBadge(it)}
+        ${quick ? `<div class="flex gap-2 mt-2.5 pt-2.5 border-t border-white/5">
+          <button class="quick flex-1 bg-primary/90 text-on-primary font-headline-sm text-[13px] py-2 rounded-lg" data-quick="approve" data-idx="${idx}">Goedkeuren</button>
+          <button class="quick px-4 border border-white/10 text-error font-headline-sm text-[13px] py-2 rounded-lg" data-quick="reject" data-idx="${idx}">Afwijzen</button>
+          <button class="quick px-3 border border-white/10 text-on-surface-variant rounded-lg" data-open="${idx}" title="Preview">
+            <span class="material-symbols-outlined text-[18px]">visibility</span></button>
+        </div>` : ''}
       </div>`;
     }).join('')}</div>`;
-    el.querySelectorAll('.item').forEach((card) => { card.onclick = () => openDetail(items[card.dataset.idx]); });
+
+    el.querySelectorAll('.item').forEach((card) => {
+      card.onclick = (e) => {
+        if (e.target.closest('.quick')) return; // knoppen hebben hun eigen handler
+        openDetail(items[card.dataset.idx]);
+      };
+    });
+    el.querySelectorAll('[data-open]').forEach((b) => {
+      b.onclick = () => openDetail(items[b.dataset.open]);
+    });
+    el.querySelectorAll('[data-quick]').forEach((btn) => {
+      btn.onclick = async () => {
+        const it = items[btn.dataset.idx];
+        const action = btn.dataset.quick;
+        btn.disabled = true;
+        btn.textContent = '…';
+        try {
+          await api('decide', 'POST', { item_key: it.key, action, payload: {} });
+          toast(action === 'approve' ? 'Goedkeuring vastgelegd' : 'Afwijzing vastgelegd', 'ok', 'check_circle');
+          refresh();
+        } catch (e) {
+          toast(e.message, 'err', 'error');
+          btn.disabled = false;
+          btn.textContent = action === 'approve' ? 'Goedkeuren' : 'Afwijzen';
+        }
+      };
+    });
   }
 
   // ── Detail bottom-sheet + acties ─────────────────────────────────────────
@@ -436,6 +598,65 @@
       ${p.oordeel ? `<p class="font-body-md text-[13px] text-on-surface-variant leading-snug mt-3 border-t border-white/5 pt-3">${esc(p.oordeel)}</p>` : ''}
     </div>`;
   }
+  // Compacte regel voor de middenmoot: cijfer + naam + twee delta-chips.
+  // 11 volle kaarten onder elkaar is de tweede overzichtskiller; alleen de
+  // projecten die aandacht vragen krijgen de volledige kaart.
+  function projectRow(p, idx) {
+    const t = p.trend || {};
+    const g = Number(p.grade) || 0;
+    const cls = g >= 7 ? 'text-green-400' : g >= 5.5 ? 'text-primary' : 'text-error';
+    return `<button class="proj-row w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/5 transition-colors" data-proj="${idx}" aria-expanded="false">
+      <span class="font-label-caps text-[13px] font-bold ${cls} w-8 shrink-0">${g.toFixed(1)}</span>
+      <span class="font-body-md text-[14px] text-on-surface truncate flex-1 min-w-0">${esc(p.project)}</span>
+      <span class="flex items-center gap-2 shrink-0">
+        ${deltaChip(t.delta_clicks, 'clicks')}
+        ${deltaChip(t.delta_position, 'pos', true)}
+      </span>
+      <span class="material-symbols-outlined text-[18px] text-on-surface-variant/50 shrink-0">expand_more</span>
+    </button>`;
+  }
+
+  function projectsPanel(projects, seriesById) {
+    // Zwakste eerst: dat is waar de aandacht heen moet.
+    const sorted = [...projects].sort((a, b) => (Number(a.grade) || 0) - (Number(b.grade) || 0));
+    const FULL = 3;
+    const full = sorted.slice(0, FULL);
+    const rest = sorted.slice(FULL);
+    let html = `<div class="flex items-center justify-between mt-2">
+      <h3 class="font-label-caps text-label-caps text-primary uppercase">Vraagt aandacht</h3>
+      <span class="font-label-caps text-[10px] text-on-surface-variant">${sorted.length} projecten</span>
+    </div>`;
+    html += full.map((x) => projectCard(x, seriesById[x.site_id])).join('');
+    if (rest.length) {
+      html += `<div class="glass-panel rounded-xl p-2 fade-up">
+        <p class="font-label-caps text-label-caps text-on-surface-variant uppercase px-3 pt-2 pb-1">Overige projecten</p>
+        <div class="divide-y divide-white/5">${rest.map((p, i) => `
+          <div>${projectRow(p, i)}
+            <div class="proj-detail px-1 pb-2" data-detail="${i}" hidden></div>
+          </div>`).join('')}</div>
+      </div>`;
+    }
+    return { html, rest };
+  }
+
+  function bottleneckPanel(list) {
+    const items = (list || []).filter((b) => b && b.actie).slice(0, 3);
+    if (!items.length) return '';
+    const [first, ...others] = items;
+    return `<div class="glass-panel rounded-xl p-4 fade-up border-l-4 border-l-error/70">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="material-symbols-outlined text-error text-[18px]">priority_high</span>
+        <h3 class="font-label-caps text-label-caps text-error uppercase">Probleem nummer één</h3>
+      </div>
+      <p class="font-body-lg text-[15px] text-on-surface leading-snug">${esc(first.actie)}</p>
+      ${first.waarom ? `<p class="font-body-md text-[12px] text-on-surface-variant/80 mt-1">${esc(first.waarom)}</p>` : ''}
+      ${others.length ? `<ul class="mt-3 pt-3 border-t border-white/5 space-y-1.5">${others.map((b) => `
+        <li class="flex gap-2 font-body-md text-[13px] text-on-surface-variant">
+          <span class="text-on-surface-variant/40">${b.prio ?? '·'}</span><span>${esc(b.actie)}</span>
+        </li>`).join('')}</ul>` : ''}
+    </div>`;
+  }
+
   const FUNNEL_STAGES = [['contacted', 'Benaderd'], ['replied', 'Reactie'], ['call', 'Gesprek'], ['won', 'Klant']];
   function funnelPanel(f) {
     const reached = f.reached || {};
@@ -486,12 +707,14 @@
       const projects = p.projects || [];
       const seriesById = p.series || {};
       let html = '';
+      let restProjects = [];
       if (p.iris) {
         html += `<div class="flex items-center justify-between">
           <p class="font-label-caps text-label-caps text-on-surface-variant uppercase">Briefing ${esc(p.iris.date || '')}</p>
           ${p.iris.llm_ok === false ? '<span class="font-label-caps text-[10px] text-error border border-error/30 rounded px-2 py-0.5">TERUGVAL — alleen cijfers</span>' : ''}
         </div>`;
       }
+      html += bottleneckPanel(p.bottlenecks);
       if (projects.length) {
         const withTrend = projects.filter((x) => x.trend && x.trend.last7);
         const clicks7 = withTrend.reduce((s, x) => s + (x.trend.last7.clicks || 0), 0);
@@ -508,23 +731,75 @@
           ${statTile('Leads', (p.funnel || {}).total_leads ?? '–', `<span class="font-label-caps text-[11px] text-on-surface-variant">${((p.funnel || {}).reached || {}).contacted ?? 0} benaderd</span>`)}
         </div>`;
         if (p.iris) html += advicePanel(p.iris.advice);
-        html += projects.map((x) => projectCard(x, seriesById[x.site_id])).join('');
+        const panel = projectsPanel(projects, seriesById);
+        html += panel.html;
+        restProjects = panel.rest;
       }
       if (p.funnel) html += funnelPanel(p.funnel);
       if (p.iris && p.iris.markdown) {
-        html += `<details class="glass-panel rounded-xl">
-          <summary class="p-4 cursor-pointer font-label-caps text-label-caps text-primary uppercase select-none">Volledige briefing van Iris</summary>
-          <div class="markdown font-body-md text-body-md text-on-surface-variant leading-relaxed px-4 pb-4">${mdLite(p.iris.markdown)}</div>
-        </details>`;
+        // Per ##-sectie een eigen inklapbaar paneel; de tabel-sectie met de
+        // projectcijfers slaan we over — die staat hierboven al als kaarten.
+        const secs = mdSections(p.iris.markdown)
+          .filter((s) => !/cijfers per project/i.test(s.title))
+          .filter((s) => s.title && s.body);
+        if (secs.length) {
+          html += `<div class="mt-2"><h3 class="font-label-caps text-label-caps text-primary uppercase mb-2">Iris' analyse</h3>
+            <div class="space-y-2">${secs.map((s) => `
+              <details class="glass-panel rounded-xl group">
+                <summary class="p-4 cursor-pointer select-none flex items-center justify-between gap-3">
+                  <span class="font-headline-sm text-[15px] text-on-surface">${esc(s.title)}</span>
+                  <span class="material-symbols-outlined text-on-surface-variant/60 text-[20px] transition-transform group-open:rotate-180">expand_more</span>
+                </summary>
+                <div class="markdown px-4 pb-4">${mdLite(s.body)}</div>
+              </details>`).join('')}</div></div>`;
+        }
       }
       if (!projects.length && !html && p.iris) {
         html = `<div class="glass-panel rounded-xl p-gutter">
           <div class="markdown font-body-md text-body-md text-on-surface-variant leading-relaxed">${mdLite(p.iris.markdown || '')}</div></div>`;
       }
+      // Analytics en pagina-bewegingen komen uit de contextsnapshot, niet uit
+      // de briefing: ze verversen elk uur i.p.v. één keer per dag. Ze horen
+      // wél hier — dit is het scherm waar je naar cijfers komt kijken.
+      let ctx = contextCache;
+      if (!ctx) {
+        try { ctx = (await api('context')).payload; contextCache = ctx; } catch { ctx = null; }
+      }
+      if (token !== loadToken) return;
+      if (ctx) html += analyticsPanel(ctx.analytics) + seoMoversPanel(ctx.seo);
+
       el.innerHTML = html || `<div class="glass-panel rounded-xl p-10 text-center fade-up">
         <span class="material-symbols-outlined text-primary text-4xl mb-2">auto_awesome</span>
         <p class="font-body-lg text-body-lg text-on-surface-variant">Nog geen briefing gesynchroniseerd.</p></div>`;
+      el.querySelectorAll('[data-cmd]').forEach((btn) => {
+        btn.onclick = async () => {
+          btn.disabled = true;
+          await sendCommand(btn.dataset.cmd,
+            btn.dataset.siteId ? { site: btn.dataset.siteId } : {});
+          setTimeout(() => { btn.disabled = false; }, 1500);
+        };
+      });
       bindSparkTips(el, seriesById);
+      // Compacte regel → volledige kaart bij tikken (lazy, incl. sparkline).
+      el.querySelectorAll('.proj-row').forEach((row) => {
+        row.onclick = () => {
+          const i = row.dataset.proj;
+          const box = el.querySelector(`[data-detail="${i}"]`);
+          if (!box) return;
+          const open = !box.hidden;
+          if (open) { box.hidden = true; }
+          else {
+            const proj = restProjects[i];
+            if (!box.innerHTML) {
+              box.innerHTML = projectCard(proj, seriesById[proj.site_id]);
+              bindSparkTips(box, seriesById);
+            }
+            box.hidden = false;
+          }
+          row.setAttribute('aria-expanded', String(!open));
+          row.querySelector('.material-symbols-outlined').style.transform = open ? '' : 'rotate(180deg)';
+        };
+      });
     } catch (e) {
       if (e.message === 'login') return;
       el.innerHTML = `<div class="glass-panel rounded-xl p-6 fade-up text-error font-body-md">
@@ -534,14 +809,92 @@
   }
   window.__retryBriefing = () => loadBriefing();
 
-  function mdLite(md) {
-    return esc(md)
-      .replace(/^### (.*)$/gm, '<h4 class="font-headline-sm text-[16px] text-on-surface mt-4 mb-1">$1</h4>')
-      .replace(/^## (.*)$/gm, '<h3 class="font-headline-sm text-headline-sm text-on-surface mt-5 mb-1">$1</h3>')
-      .replace(/^# (.*)$/gm, '<h3 class="font-headline-sm text-headline-sm text-on-surface mt-5 mb-1">$1</h3>')
+  // ── Markdown ─────────────────────────────────────────────────────────────
+  // Regel-gebaseerde mini-renderer. De vorige versie plakte alles aan elkaar
+  // met <br><br>; Iris' tabellen ("| Project | Cijfer |…") werden daardoor één
+  // onleesbare lange regel. Tabellen, lijsten en alinea's krijgen nu elk hun
+  // eigen blok-element.
+  function inline(s) {
+    return esc(s)
       .replace(/\*\*(.+?)\*\*/g, '<b class="text-on-surface">$1</b>')
-      .replace(/^[-*] (.*)$/gm, '<li class="ml-4">$1</li>')
-      .replace(/\n{2,}/g, '<br><br>');
+      .replace(/(^|[^*])\*([^*]+)\*/g, '$1<i>$2</i>')
+      .replace(/`([^`]+)`/g, '<code class="font-label-caps text-[12px] bg-white/5 rounded px-1">$1</code>');
+  }
+  const isTableRow = (l) => /^\s*\|.*\|\s*$/.test(l);
+  const isDivider = (l) => /^\s*\|?[\s:|-]*-{2,}[\s:|-]*\|?\s*$/.test(l);
+  const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+
+  function renderTable(rows) {
+    if (!rows.length) return '';
+    const head = cells(rows[0]);
+    const body = rows.slice(isDivider(rows[1] || '') ? 2 : 1).filter((r) => !isDivider(r));
+    return `<div class="md-table-wrap"><table class="md-table">
+      <thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join('')}</tr></thead>
+      <tbody>${body.map((r) => {
+        const cs = cells(r);
+        return `<tr>${head.map((_, i) => `<td>${inline(cs[i] || '')}</td>`).join('')}</tr>`;
+      }).join('')}</tbody></table></div>`;
+  }
+
+  function mdLite(md) {
+    const lines = String(md || '').replace(/\r/g, '').split('\n');
+    const out = [];
+    let list = null, table = null, para = [];
+    const flushPara = () => {
+      if (para.length) { out.push(`<p class="md-p">${inline(para.join(' '))}</p>`); para = []; }
+    };
+    const flushList = () => {
+      if (list) { out.push(`<${list.tag} class="md-list">${list.items.join('')}</${list.tag}>`); list = null; }
+    };
+    const flushTable = () => { if (table) { out.push(renderTable(table)); table = null; } };
+    const flushAll = () => { flushPara(); flushList(); flushTable(); };
+
+    for (const raw of lines) {
+      const l = raw.trimEnd();
+      if (isTableRow(l)) { flushPara(); flushList(); (table = table || []).push(l); continue; }
+      flushTable();
+      if (!l.trim()) { flushPara(); flushList(); continue; }
+      let m;
+      if ((m = l.match(/^(#{1,6})\s+(.*)$/))) {
+        flushPara(); flushList();
+        const lvl = m[1].length;
+        const cls = lvl <= 2 ? 'font-headline-sm text-headline-sm text-on-surface mt-5 mb-2'
+          : 'font-headline-sm text-[15px] text-on-surface mt-4 mb-1';
+        out.push(`<h4 class="${cls}">${inline(m[2])}</h4>`);
+      } else if ((m = l.match(/^\s*[-*+]\s+(.*)$/))) {
+        flushPara();
+        if (!list || list.tag !== 'ul') { flushList(); list = { tag: 'ul', items: [] }; }
+        list.items.push(`<li>${inline(m[1])}</li>`);
+      } else if ((m = l.match(/^\s*\d+[.)]\s+(.*)$/))) {
+        flushPara();
+        if (!list || list.tag !== 'ol') { flushList(); list = { tag: 'ol', items: [] }; }
+        list.items.push(`<li>${inline(m[1])}</li>`);
+      } else if (/^\s*(---|___|\*\*\*)\s*$/.test(l)) {
+        flushPara(); flushList(); out.push('<hr class="md-hr">');
+      } else {
+        flushList(); para.push(l.trim());
+      }
+    }
+    flushAll();
+    return out.join('');
+  }
+
+  // Splitst de briefing in secties op ## / # -koppen, zodat elke sectie een
+  // eigen inklapbaar paneel krijgt in plaats van één doorlopende lap.
+  function mdSections(md) {
+    const lines = String(md || '').replace(/\r/g, '').split('\n');
+    const secs = [];
+    let cur = { title: '', lines: [] };
+    for (const l of lines) {
+      const m = l.match(/^(#{1,3})\s+(.*)$/);
+      if (m && m[1].length <= 2) {
+        if (cur.title || cur.lines.some((x) => x.trim())) secs.push(cur);
+        cur = { title: m[2].trim(), lines: [] };
+      } else cur.lines.push(l);
+    }
+    if (cur.title || cur.lines.some((x) => x.trim())) secs.push(cur);
+    return secs.map((s) => ({ title: s.title, body: s.lines.join('\n').trim() }))
+      .filter((s) => s.title || s.body);
   }
 
   // ── Notities ─────────────────────────────────────────────────────────────
@@ -584,7 +937,9 @@
   // ── Systeem ──────────────────────────────────────────────────────────────
   async function loadSystem(token = loadToken) {
     try {
-      const [itemsData, outboxData] = await Promise.all([api('items'), api('outbox')]);
+      const [itemsData, outboxData, sessionData] = await Promise.all([
+        api('items'), api('outbox'), api('sessions'),
+      ]);
       if (token !== loadToken) return;
       const lastPush = itemsData.last_push ? new Date(itemsData.last_push) : null;
       const age = lastPush ? Math.round((Date.now() - lastPush) / 60000) : null;
@@ -596,7 +951,7 @@
             <div>
               <h3 class="font-headline-sm text-headline-sm">Sync status</h3>
               <div class="flex items-center gap-2 mt-1">
-                <span class="status-dot ${online ? 'pulse' : ''}" ${online ? '' : 'style="background:#ffb4ab"'}'></span>
+                <span class="status-dot ${online ? 'pulse' : 'offline'}"></span>
                 <p class="font-body-md text-body-md text-on-surface-variant">Lokale AgentOS-bridge:
                   <span class="${online ? 'text-primary' : 'text-error'} font-medium">${online ? 'Online' : 'Offline / uit'}</span></p>
               </div>
@@ -625,17 +980,347 @@
           </div>
         </div>`).join('')
         : '<p class="font-body-md text-body-md text-on-surface-variant">Nog geen besluiten.</p>';
+
+      const sess = sessionData.sessions || [];
+      $('sessions-list').innerHTML = sess.map((s) => `
+        <div class="flex items-center justify-between gap-3 py-2 border-b border-white/5 last:border-0">
+          <div class="min-w-0">
+            <p class="font-body-lg text-body-lg text-on-surface truncate">${esc(s.label)}${s.current ? ' <span class="font-label-caps text-label-caps text-primary">· DIT APPARAAT</span>' : ''}</p>
+            <p class="font-body-md text-body-md text-on-surface-variant">Laatst actief ${fmtDate(s.last_seen)}</p>
+          </div>
+        </div>`).join('');
     } catch (e) { /* login afgehandeld */ }
+  }
+
+  $('logoutAllBtn').onclick = async () => {
+    try {
+      await api('logout-all', 'POST', {});
+      toast('Alle apparaten uitgelogd', 'ok', 'logout');
+      show('login');
+    } catch (e) { if (e.message !== 'login') toast(e.message, 'err'); }
+  };
+
+  // ── Vandaag ──────────────────────────────────────────────────────────────
+  // Het scherm dat van Iris Remote een assistent maakt in plaats van een
+  // afstandsbediening: je dag, je mailbox en het oordeel over hoe het gaat —
+  // vóórdat je iets hoeft te vragen.
+  let contextCache = null;
+
+  async function sendCommand(action, payload = {}, label = '') {
+    try {
+      const r = await api('command', 'POST', { action, payload });
+      toast(r.queued ? `Klaargezet: ${r.label || label}` : 'Stond al in de rij',
+        r.queued ? 'ok' : '', r.queued ? 'bolt' : 'schedule');
+    } catch (e) {
+      if (e.message !== 'login') toast(e.message, 'err');
+    }
+  }
+
+  // Een sectie die uit staat is géén sectie zonder nieuws. Dat onderscheid
+  // expliciet tonen voorkomt dat een kapotte koppeling als rust leest.
+  function sectionOff(icon, title, sec) {
+    return `<div class="glass-panel rounded-xl p-4 flex items-start gap-3">
+      <span class="material-symbols-outlined text-on-surface-variant/50">${icon}</span>
+      <div class="min-w-0">
+        <p class="font-headline-sm text-[15px] text-on-surface">${esc(title)}</p>
+        <p class="font-body-md text-[13px] text-on-surface-variant mt-1">${esc(sec.reason || sec.error || 'Niet beschikbaar')}</p>
+        ${sec.action_hint ? `<p class="font-body-md text-[13px] text-primary mt-1">${esc(sec.action_hint)}</p>` : ''}
+      </div>
+    </div>`;
+  }
+
+  const SEV = { hoog: 'text-error border-error/30', midden: 'text-warn border-warn/30', laag: 'text-on-surface-variant border-white/10' };
+
+  function pulsePanel(pulse) {
+    if (!pulse) return '';
+    const bad = pulse.bad || [];
+    const good = pulse.good || [];
+    if (!bad.length && !good.length) return '';
+    return `<div class="space-y-stack-sm">
+      ${bad.length ? `<div class="glass-panel rounded-xl p-4">
+        <p class="font-label-caps text-label-caps text-error uppercase mb-3">Vraagt aandacht</p>
+        <ul class="space-y-3">${bad.map((b) => `
+          <li class="flex gap-3">
+            <span class="font-label-caps text-[10px] px-1.5 py-0.5 rounded border h-fit shrink-0 ${SEV[b.severity] || SEV.laag}">${esc((b.severity || '').toUpperCase() || b.area.toUpperCase())}</span>
+            <div class="min-w-0">
+              <p class="font-body-md text-[13px] text-on-surface leading-snug">${esc(b.what)}</p>
+              ${b.detail ? `<p class="font-body-md text-[12px] text-on-surface-variant/70 leading-snug mt-0.5 truncate">${esc(b.detail)}</p>` : ''}
+              ${b.why ? `<p class="font-body-md text-[12px] text-on-surface-variant/60 leading-snug mt-0.5">${esc(b.why)}</p>` : ''}
+            </div>
+          </li>`).join('')}</ul>
+      </div>` : ''}
+      ${good.length ? `<div class="glass-panel rounded-xl p-4">
+        <p class="font-label-caps text-label-caps text-primary uppercase mb-3">Gaat goed</p>
+        <ul class="space-y-2">${good.map((g) => `
+          <li class="flex gap-2 items-start">
+            <span class="material-symbols-outlined text-[16px] text-green-400 mt-0.5">check_small</span>
+            <p class="font-body-md text-[13px] text-on-surface-variant leading-snug">${esc(g.what)}</p>
+          </li>`).join('')}</ul>
+      </div>` : ''}
+    </div>`;
+  }
+
+  function agendaPanel(a) {
+    if (!a || a.status !== 'ok') return a ? sectionOff('event_busy', 'Agenda', a) : '';
+    const ev = (e) => `<li class="flex gap-3 items-baseline ${e.declined ? 'opacity-40 line-through' : ''}">
+      <span class="font-label-caps text-[12px] text-primary w-12 shrink-0">${esc(e.time)}</span>
+      <div class="min-w-0">
+        <p class="font-body-md text-[13px] text-on-surface leading-snug truncate">${esc(e.summary)}</p>
+        ${e.location || e.online ? `<p class="font-body-md text-[12px] text-on-surface-variant/60 truncate">${e.online ? 'online' : esc(e.location)}</p>` : ''}
+      </div>
+    </li>`;
+    const free = (a.free_today || []).map((g) => `${g.start}–${g.end}`).join(' · ');
+    return `<div class="glass-panel rounded-xl p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <p class="font-label-caps text-label-caps text-primary uppercase">Je dag</p>
+        <span class="font-label-caps text-[11px] text-on-surface-variant">${(a.today || []).length} afspraken</span>
+      </div>
+      ${a.unreachable && a.unreachable.length ? `<p class="font-body-md text-[12px] text-error">⚠ Niet alle agenda's leesbaar (${esc(a.unreachable.map((u) => u.id).join(', '))}) — dit overzicht is mogelijk onvolledig.</p>` : ''}
+      ${a.next ? `<div class="bg-primary-container/10 border border-primary/20 rounded-lg p-3">
+        <p class="font-label-caps text-label-caps text-primary">HIERNA · ${esc(a.next.time)}</p>
+        <p class="font-body-lg text-[15px] text-on-surface mt-1">${esc(a.next.summary)}</p>
+        ${a.next.location || a.next.online ? `<p class="font-body-md text-[12px] text-on-surface-variant mt-0.5">${a.next.online ? 'online' : esc(a.next.location)}</p>` : ''}
+      </div>` : ''}
+      ${(a.today || []).length ? `<ul class="space-y-2">${a.today.map(ev).join('')}</ul>`
+        : '<p class="font-body-md text-[13px] text-on-surface-variant">Geen afspraken vandaag.</p>'}
+      <p class="font-body-md text-[12px] text-on-surface-variant/70 pt-1 border-t border-white/5">
+        ${free ? `Nog vrij: <span class="text-on-surface">${esc(free)}</span>` : 'Geen vrij blok van 45+ min meer vandaag.'}
+      </p>
+      ${(a.days || []).length > 1 ? `<details class="pt-1">
+        <summary class="font-label-caps text-label-caps text-on-surface-variant cursor-pointer">KOMENDE DAGEN</summary>
+        <ul class="mt-2 space-y-1">${a.days.slice(1, 6).map((d) => `
+          <li class="flex justify-between gap-3 font-body-md text-[12px]">
+            <span class="text-on-surface-variant truncate">${esc(d.date)} · ${esc((d.titles || []).join(', '))}</span>
+            <span class="${d.count >= 6 ? 'text-warn' : 'text-on-surface-variant/60'} shrink-0">${d.count}</span>
+          </li>`).join('')}</ul>
+      </details>` : ''}
+    </div>`;
+  }
+
+  function mailPanel(m) {
+    if (!m || m.status !== 'ok') return m ? sectionOff('mail_off', 'Mailbox', m) : '';
+    const w = m.week || {};
+    const old = m.oldest_open;
+    return `<div class="glass-panel rounded-xl p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <p class="font-label-caps text-label-caps text-primary uppercase">Mailbox</p>
+        <button class="font-label-caps text-[11px] text-primary border border-primary/30 rounded px-2 py-0.5" data-cmd="mail_sync">OPHALEN</button>
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-center">
+        <div><p class="text-[22px] font-bold ${m.backlog >= 15 ? 'text-error' : 'text-on-surface'}">${m.backlog}</p><p class="font-label-caps text-[10px] text-on-surface-variant">OPEN</p></div>
+        <div><p class="text-[22px] font-bold text-on-surface">${w.reply_rate == null ? '–' : `${w.reply_rate}%`}</p><p class="font-label-caps text-[10px] text-on-surface-variant">BEANTWOORD 7D</p></div>
+        <div><p class="text-[22px] font-bold ${m.helpdesk_pending ? 'text-primary' : 'text-on-surface'}">${m.helpdesk_pending}</p><p class="font-label-caps text-[10px] text-on-surface-variant">CONCEPTEN</p></div>
+      </div>
+      ${old ? `<p class="font-body-md text-[12px] ${old.days >= 3 ? 'text-warn' : 'text-on-surface-variant'}">
+        Oudste open: <span class="text-on-surface">${esc(old.from)}</span> — ${esc(old.subject)} (${old.days ?? '?'} d)</p>` : ''}
+      ${(m.urgent || []).length ? `<div class="pt-1 border-t border-white/5">
+        <p class="font-label-caps text-label-caps text-on-surface-variant mb-2">URGENT VOLGENS TRIAGE</p>
+        <ul class="space-y-2">${m.urgent.slice(0, 5).map((u) => `
+          <li>
+            <p class="font-body-md text-[13px] text-on-surface leading-snug truncate">${esc(u.subject || '(geen onderwerp)')}</p>
+            <p class="font-body-md text-[12px] text-on-surface-variant/70 truncate">${esc(u.from_name || u.from_email)} · ${esc(u.ai_action || u.triage_label || '')}</p>
+          </li>`).join('')}</ul>
+      </div>` : ''}
+    </div>`;
+  }
+
+  // Snelle acties: alles wat hier staat landt achter een review-gate. Bewust
+  // géén knop die publiceert of verstuurt — dat blijft per item een besluit.
+  const QUICK = [
+    { cmd: 'content_run', icon: 'edit_document', label: 'Artikelen schrijven', hint: 'naar Wachtrij', needsSite: true },
+    { cmd: 'seo_refresh', icon: 'trending_up', label: 'Pagina’s verrijken', hint: 'wegzakkers → Wachtrij', needsSite: true },
+    { cmd: 'outreach_run', icon: 'campaign', label: 'Outreach klaarzetten', hint: 'concepten ter review' },
+    { cmd: 'helpdesk_run', icon: 'support_agent', label: 'Helpdesk-concepten', hint: 'antwoorden schrijven' },
+    { cmd: 'iris_briefing', icon: 'auto_awesome', label: 'Iris laten analyseren', hint: 'nieuwe briefing' },
+    { cmd: 'context_refresh', icon: 'refresh', label: 'Cijfers verversen', hint: 'cache legen' },
+  ];
+
+  function quickPanel(ctx) {
+    const sites = ((ctx.seo || {}).sites || []).map((s) => s.site_id);
+    return `<div class="glass-panel rounded-xl p-4">
+      <p class="font-label-caps text-label-caps text-primary uppercase mb-3">Zet werk in gang</p>
+      <p class="font-body-md text-[12px] text-on-surface-variant/70 mb-3">Alles landt achter de review-gate — er gaat niets live zonder jouw tik.</p>
+      ${sites.length ? `<select id="quick-site" class="w-full bg-[#020617] border-none rounded-lg p-2 mb-3 text-on-surface font-body-md text-[13px]">
+        ${sites.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('')}
+      </select>` : ''}
+      <div class="grid grid-cols-2 gap-2">
+        ${QUICK.filter((q) => !q.needsSite || sites.length).map((q) => `
+          <button data-cmd="${q.cmd}" ${q.needsSite ? 'data-site="1"' : ''}
+            class="text-left bg-transparent border border-white/10 rounded-lg p-3 hover:bg-white/5 active:scale-[0.98] transition-all">
+            <span class="material-symbols-outlined text-primary text-[20px]">${q.icon}</span>
+            <p class="font-headline-sm text-[13px] text-on-surface mt-1 leading-snug">${q.label}</p>
+            <p class="font-body-md text-[11px] text-on-surface-variant/60 leading-snug">${q.hint}</p>
+          </button>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  function greeting() {
+    const h = new Date().getHours();
+    if (h < 6) return 'Nog wakker?';
+    if (h < 12) return 'Goedemorgen';
+    if (h < 18) return 'Goedemiddag';
+    return 'Goedenavond';
+  }
+
+  async function loadToday(token = loadToken) {
+    const el = $('today-body');
+    if (token === loadToken && !contextCache) el.innerHTML = skeletons(3);
+    $('today-greeting').textContent = greeting();
+    try {
+      const data = await api('context');
+      if (token !== loadToken) return;
+      const ctx = data.payload;
+      if (!ctx) {
+        el.innerHTML = `<div class="glass-panel rounded-xl p-10 text-center">
+          <span class="material-symbols-outlined text-primary text-4xl mb-2">cloud_off</span>
+          <p class="font-body-lg text-body-lg text-on-surface-variant">Nog geen context gesynchroniseerd.<br>Draait AgentOS?</p></div>`;
+        return;
+      }
+      contextCache = ctx;
+      const stamp = data.generated_at ? `Stand van ${fmtDate(data.generated_at)}` : '';
+      $('today-stamp').textContent = stamp;
+      const open = items.filter((i) => !i.decision_status || i.decision_status === 'failed').length;
+      $('today-sub').textContent = open ? `${open} besluit(en) wachten op je` : 'Niets wacht op je';
+      el.innerHTML = [
+        pulsePanel(ctx.pulse),
+        agendaPanel(ctx.agenda),
+        mailPanel(ctx.mail),
+        quickPanel(ctx),
+      ].filter(Boolean).join('');
+
+      el.querySelectorAll('[data-cmd]').forEach((btn) => {
+        btn.onclick = async () => {
+          btn.disabled = true;
+          const payload = {};
+          if (btn.dataset.site) {
+            const sel = $('quick-site');
+            if (sel) payload.site = sel.value;
+          }
+          await sendCommand(btn.dataset.cmd, payload);
+          setTimeout(() => { btn.disabled = false; }, 1500);
+        };
+      });
+    } catch (e) {
+      if (e.message === 'login') return;
+      el.innerHTML = `<div class="glass-panel rounded-xl p-6 text-error font-body-md">
+        Kon je dag niet laden: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Cijfers: analytics + SEO (onderaan de Briefings-tab) ─────────────────
+  function analyticsPanel(ga) {
+    if (!ga || ga.status !== 'ok') return ga ? sectionOff('analytics', 'Analytics', ga) : '';
+    const c = ga.compare || {};
+    const tile = (label, cmp) => {
+      if (!cmp) return statTile(label, '–', '');
+      const chip = cmp.pct == null ? '' :
+        `<span class="font-label-caps text-[11px] ${cmp.pct > 0 ? 'text-green-400' : cmp.pct < 0 ? 'text-error' : 'text-on-surface-variant'}">${cmp.pct > 0 ? '▲' : cmp.pct < 0 ? '▼' : '·'} ${Math.abs(cmp.pct)}% vs vorige wk</span>`;
+      return statTile(label, cmp.now, chip);
+    };
+    const ch = (ga.channels || []).slice(0, 5);
+    const chMax = Math.max(1, ...ch.map((x) => x.sessions));
+    return `<div class="space-y-stack-sm">
+      <h3 class="font-label-caps text-label-caps text-primary uppercase">Websiteverkeer · 7 dagen</h3>
+      <div class="grid grid-cols-2 gap-3">
+        ${tile('Sessies', c.sessions)}
+        ${tile('Gebruikers', c.users)}
+      </div>
+      ${ch.length ? `<div class="glass-panel rounded-xl p-4">
+        <p class="font-label-caps text-label-caps text-on-surface-variant uppercase mb-3">Verkeersbronnen</p>
+        <div class="space-y-2">${ch.map((x) => `
+          <div>
+            <div class="flex justify-between font-body-md text-[12px]">
+              <span class="text-on-surface truncate">${esc(x.channel)}</span>
+              <span class="text-on-surface-variant shrink-0">${x.sessions}</span>
+            </div>
+            <div class="h-1.5 bg-white/5 rounded mt-1 overflow-hidden">
+              <div class="h-full bg-primary/70 rounded" style="width:${Math.round(100 * x.sessions / chMax)}%"></div>
+            </div>
+          </div>`).join('')}</div>
+      </div>` : ''}
+      ${(ga.top_pages || []).length ? `<details class="glass-panel rounded-xl">
+        <summary class="p-4 cursor-pointer font-headline-sm text-[15px]">Best bekeken pagina's</summary>
+        <ul class="px-4 pb-4 space-y-2">${ga.top_pages.slice(0, 6).map((p) => `
+          <li class="flex justify-between gap-3 font-body-md text-[12px]">
+            <span class="text-on-surface-variant truncate">${esc(p.title || p.path)}</span>
+            <span class="text-on-surface shrink-0">${p.pageviews}</span>
+          </li>`).join('')}</ul>
+      </details>` : ''}
+    </div>`;
+  }
+
+  function seoMoversPanel(seo) {
+    if (!seo || seo.status !== 'ok') return '';
+    const sites = (seo.sites || []).filter((s) => (s.risers || []).length || (s.fallers || []).length);
+    if (!sites.length) return '';
+    const row = (p, up) => `<li class="flex justify-between gap-3 font-body-md text-[12px]">
+      <span class="text-on-surface-variant truncate">${esc(String(p.page_url || '').replace(/^https?:\/\/[^/]+/, '') || '/')}</span>
+      <span class="${up ? 'text-green-400' : 'text-error'} shrink-0">${up ? '▲' : '▼'} ${Math.abs(p.delta_clicks)}</span>
+    </li>`;
+    return `<div class="space-y-stack-sm">
+      <h3 class="font-label-caps text-label-caps text-primary uppercase">Pagina's in beweging</h3>
+      ${sites.map((s) => `<div class="glass-panel rounded-xl p-4">
+        <p class="font-headline-sm text-[15px] mb-2">${esc(s.name)}</p>
+        <ul class="space-y-1">
+          ${(s.risers || []).slice(0, 3).map((p) => row(p, true)).join('')}
+          ${(s.fallers || []).slice(0, 3).map((p) => row(p, false)).join('')}
+        </ul>
+        ${(s.fallers || []).length ? `<button data-cmd="seo_refresh" data-site-id="${esc(s.site_id)}"
+          class="mt-3 w-full bg-transparent border border-primary/30 text-primary font-headline-sm text-[13px] py-2 rounded-lg active:scale-[0.98] transition-all">
+          Laat Iris de dalers verrijken</button>` : ''}
+      </div>`).join('')}
+    </div>`;
   }
 
   // ── Cloud-Iris chat ──────────────────────────────────────────────────────
   const chatHistory = [];
+  const PROPOSAL_LABELS = { approve: 'Goedkeuren', send: 'Versturen', reject: 'Afwijzen', dismiss: 'Wegklikken' };
+
+  // Wat Iris zélf startte (commando's, altijd achter een gate) en wat ze
+  // vóórstelt (gate-passerende besluiten — die blijven een menselijke tik).
+  function effectsHtml(m) {
+    let html = '';
+    for (const c of m.commands || []) {
+      html += `<div class="flex items-center gap-2 mt-2 text-[12px] font-label-caps ${c.queued ? 'text-primary' : 'text-on-surface-variant'}">
+        <span class="material-symbols-outlined text-[14px]">${c.queued ? 'bolt' : 'schedule'}</span>
+        ${esc(c.queued ? `GESTART · ${c.label}` : `STOND AL IN DE RIJ · ${c.label}`)}
+      </div>`;
+    }
+    (m.proposals || []).forEach((p, i) => {
+      html += `<div class="mt-2 bg-surface-container-lowest/60 border border-primary/20 rounded-lg p-3">
+        <p class="font-body-md text-[12px] text-on-surface-variant">${esc(p.why || '')}</p>
+        <p class="font-body-md text-[13px] text-on-surface mt-1 truncate">${esc(p.title || p.item_key)}</p>
+        <button class="mt-2 w-full bg-primary text-on-primary font-headline-sm text-[13px] py-2 rounded-lg active:scale-[0.98] transition-all"
+          data-prop="${m.idx}:${i}">${esc(PROPOSAL_LABELS[p.action] || p.action)} — jij beslist</button>
+      </div>`;
+    });
+    return html;
+  }
+
   function renderChat(pending = false) {
     const el = $('chat-messages');
+    chatHistory.forEach((m, i) => { m.idx = i; });
     el.innerHTML = chatHistory.map((m) => m.role === 'user'
       ? `<div class="flex justify-end fade-up"><div class="bg-primary/15 border border-primary/20 rounded-xl rounded-br-sm px-3 py-2 max-w-[85%] font-body-md text-body-md">${esc(m.content)}</div></div>`
-      : `<div class="flex justify-start fade-up"><div class="bg-surface-container-lowest/60 border border-white/5 rounded-xl rounded-bl-sm px-3 py-2 max-w-[85%] font-body-md text-body-md text-on-surface-variant">${mdLite(m.content)}</div></div>`).join('')
+      : `<div class="flex justify-start fade-up"><div class="bg-surface-container-lowest/60 border border-white/5 rounded-xl rounded-bl-sm px-3 py-2 max-w-[85%] font-body-md text-body-md text-on-surface-variant">${mdLite(m.content)}${effectsHtml(m)}</div></div>`).join('')
       + (pending ? '<div class="flex justify-start"><div class="px-3 py-2 text-primary font-label-caps text-label-caps animate-pulse">IRIS DENKT NA…</div></div>' : '');
+    el.querySelectorAll('[data-prop]').forEach((btn) => {
+      btn.onclick = async () => {
+        const [mi, pi] = btn.dataset.prop.split(':').map(Number);
+        const p = (chatHistory[mi].proposals || [])[pi];
+        if (!p) return;
+        btn.disabled = true;
+        try {
+          const r = await api('decide', 'POST', { item_key: p.item_key, action: p.action, payload: {} });
+          btn.textContent = r.queued ? '✓ Vastgelegd — AgentOS voert het uit' : 'Stond al in de wachtrij';
+          toast('Besluit vastgelegd', 'ok', 'check_circle');
+          refresh();
+        } catch (e) {
+          if (e.message !== 'login') { toast(e.message, 'err'); btn.disabled = false; }
+        }
+      };
+    });
     el.scrollTop = el.scrollHeight;
   }
   $('chat-form').onsubmit = async (e) => {
@@ -648,11 +1333,16 @@
     renderChat(true);
     $('chat-send').disabled = true;
     try {
-      const r = await fetch('/api/iris', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: chatHistory.slice(-12) }) });
+      // Alleen role+content terugsturen: de effect-velden zijn UI-staat en
+      // horen niet in de modelgeschiedenis.
+      const history = chatHistory.slice(-12).map((m) => ({ role: m.role, content: m.content }));
+      const r = await fetch('/api/iris', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: history }) });
       if (r.status === 401) { show('login'); return; }
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-      chatHistory.push({ role: 'assistant', content: data.reply });
+      chatHistory.push({ role: 'assistant', content: data.reply,
+        commands: data.commands || [], proposals: data.proposals || [] });
+      if ((data.commands || []).some((c) => c.queued)) refresh();
     } catch (err) {
       chatHistory.push({ role: 'assistant', content: `⚠ ${err.message}` });
     }
@@ -705,9 +1395,7 @@
       ptrActive = false;
       if (ptrPull > 56) {
         ptr.classList.add('spinning'); ptr.style.transform = 'translateY(0)';
-        const active = views.find((v) => !$(`view-${v}`).hidden) || 'inbox';
-        await refreshRaw();
-        if (active === 'inbox') refresh(); else if (active === 'briefing') loadBriefing(); else if (active === 'system') loadSystem();
+        await reloadActive();
         setTimeout(() => { ptr.classList.remove('spinning'); ptr.style.transform = 'translateY(-64px)'; }, 500);
       } else { ptr.style.transform = 'translateY(-64px)'; }
       ptrPull = 0;
@@ -718,18 +1406,25 @@
   function startPolling() {
     if (polling) return;
     polling = true;
+    let tick = 0;
     setInterval(async () => {
       const hidden = document.visibilityState === 'hidden';
       const onInbox = !$('view-inbox').hidden;
       const onSystem = !$('view-system').hidden;
+      const onToday = !$('view-today').hidden;
       if (hidden) return; // batterij/CPU besparen in achtergrond
+      tick += 1;
       const data = await refreshRaw();
       if (!data) return;
       setSyncPill(data.last_push);
-      if (onInbox) { items = data.items || []; renderItems(); }
-      else if (onSystem) { const [, out] = await Promise.all([api('items'), api('outbox')]); loadSystem(); }
+      items = data.items || [];
+      if (onInbox) renderItems();
+      else if (onSystem) loadSystem();
+      // De context ververst lokaal hooguit elke paar minuten; hem elke 20
+      // seconden ophalen kost alleen data zonder nieuwe informatie.
+      else if (onToday && tick % 3 === 0) loadToday();
     }, 20000);
   }
-  show('inbox');
+  show('today');
   startPolling();
 })();

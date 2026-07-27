@@ -60,6 +60,17 @@ async function push(req, res) {
     await sql`DELETE FROM briefings WHERE id NOT IN
               (SELECT id FROM briefings ORDER BY generated_at DESC LIMIT 7)`;
   }
+  // Context: precies één rij, elke sync overschreven. Een lege context (de
+  // lokale opbouw faalde) mag de vorige nooit wissen — dan zou een hik in
+  // Google's API het Vandaag-scherm leegmaken in plaats van het oud te tonen.
+  if (body.context && Object.keys(body.context).length) {
+    await sql`
+      INSERT INTO context_snapshot (id, payload, generated_at)
+      VALUES (1, ${JSON.stringify(body.context)}::jsonb, now())
+      ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload,
+                                     generated_at = EXCLUDED.generated_at`;
+  }
+
   // Opruimen: gearchiveerde items ouder dan 14 dagen.
   await sql`DELETE FROM sync_items WHERE status = 'archived'
             AND updated_at < now() - interval '14 days'`;
