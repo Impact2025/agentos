@@ -128,3 +128,61 @@ def test_ee_at_guard_folds_diacritics_in_keyword():
             "ideeën zijn ervaringen. " + "woord " * 300 + "</p>")
     issues = ee_at_guard(html, "jubileum cadeau ideeen", {"ctas": []})
     assert not any("komt niet voor" in i for i in issues), issues
+
+
+def test_json_ld_faqpage_is_top_level_entity(site):
+    """FAQPage moet naast Article staan, niet erin genest.
+
+    Genest als `Article.mainEntity` leest Google het niet als FAQPage: het
+    rich result bleef uit terwijl de QC 'json_ld: ok' rapporteerde.
+    """
+    import json as _json
+    import re as _re
+    from backend.domains.seo.enhancements import generate_json_ld, extract_faq
+
+    faq = extract_faq(ARTICLE_HTML)
+    assert faq, "testartikel moet een FAQ bevatten"
+    ld = generate_json_ld(site, "vrijwilligers werven", ARTICLE_HTML, faq=faq)
+    data = _json.loads(_re.search(r">\s*(\{.*\})\s*<", ld, _re.DOTALL).group(1))
+
+    types = [n.get("@type") for n in data["@graph"]]
+    assert "Article" in types and "FAQPage" in types
+    article = next(n for n in data["@graph"] if n["@type"] == "Article")
+    assert "mainEntity" not in article  # niet meer genest
+    faq_node = next(n for n in data["@graph"] if n["@type"] == "FAQPage")
+    assert faq_node["mainEntity"][0]["acceptedAnswer"]["text"]
+
+
+def test_validate_json_ld_accepts_graph_form(site):
+    from backend.domains.seo.enhancements import (
+        generate_json_ld, extract_faq, validate_json_ld,
+    )
+
+    ld = generate_json_ld(site, "vrijwilligers werven", ARTICLE_HTML,
+                          faq=extract_faq(ARTICLE_HTML))
+    r = validate_json_ld(ld)
+    assert r["valid"] is True, r["errors"]
+    assert r["has_faq"] is True
+
+
+def test_extract_faq_accepts_answers_without_paragraph_tags():
+    """FAQ-antwoorden zonder <p> tellen ook mee.
+
+    De schrijvers leveren de FAQ soms als kale tekst onder de vraag-kop. Dat
+    telde als 'geen FAQ', wat 5 punten kostte in de kwaliteitsgate: artikelen
+    mét een prima FAQ bleven zo onder de publicatiegrens hangen.
+    """
+    from backend.domains.seo.enhancements import extract_faq
+
+    html = (
+        "<h2>Veelgestelde vragen</h2>\n"
+        "<h3>Wat kost een GPS-avontuur?</h3>\n"
+        "De prijs hangt af van het aantal deelnemers en de gekozen route.\n"
+        "<h3>Hoeveel begeleiders heb ik nodig?</h3>\n"
+        "Eén volwassene per vijf tot zes kinderen is voldoende.\n"
+    )
+    faq = extract_faq(html)
+    assert len(faq) == 2
+    assert faq[0]["question"] == "Wat kost een GPS-avontuur?"
+    assert "aantal deelnemers" in faq[0]["answer"]
+    assert "vijf tot zes kinderen" in faq[1]["answer"]

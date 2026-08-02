@@ -67,23 +67,33 @@ def generate_json_ld(site: Dict, keyword: str, html_body: str,
     }
     if author:
         article["author"] = {"@type": "Person", "name": author[:80]}
-    if faq:
-        article["mainEntity"] = {
-            "@type": "FAQPage",
-            "mainEntity": [
-                {
-                    "@type": "Question",
-                    "name": q.get("question", ""),
-                    "acceptedAnswer": {
-                        "@type": "Answer",
-                        "text": _plain_text(q.get("answer", "")),
-                    },
-                }
-                for q in faq
-            ],
-        }
+    if not faq:
+        return ("<script type=\"application/ld+json\">\n"
+                + json.dumps(article, ensure_ascii=False, indent=2) + "\n</script>")
 
-    return "<script type=\"application/ld+json\">\n" + json.dumps(article, ensure_ascii=False, indent=2) + "\n</script>"
+    # FAQPage moet een eigen entiteit op het hoogste niveau zijn. Hij stond
+    # eerder genest als `Article.mainEntity`, en zo leest Google hem NIET als
+    # FAQPage: het rich result (en de PAA-uitlezing door AI-modellen) bleef
+    # daardoor uit terwijl de QC-rapporten "json_ld: ok" meldden. Een @graph
+    # zet Article en FAQPage naast elkaar in één blok.
+    faq_page = {
+        "@type": "FAQPage",
+        "mainEntity": [
+            {
+                "@type": "Question",
+                "name": q.get("question", ""),
+                "acceptedAnswer": {
+                    "@type": "Answer",
+                    "text": _plain_text(q.get("answer", "")),
+                },
+            }
+            for q in faq
+        ],
+    }
+    article.pop("@context", None)
+    graph = {"@context": "https://schema.org", "@graph": [article, faq_page]}
+    return ("<script type=\"application/ld+json\">\n"
+            + json.dumps(graph, ensure_ascii=False, indent=2) + "\n</script>")
 
 
 # ── 2. Direct-answer paragraaf (AI Overview / SGE) ──────────────────────────────
@@ -139,8 +149,16 @@ def extract_faq(html_body: str) -> List[Dict[str, str]]:
             pm = re.search(r"<p[^>]*>(.*?)</p>", chunk, re.IGNORECASE | re.DOTALL)
             if pm:
                 ans = _plain_text(pm.group(1)).strip()
-                if len(ans) > 15:
-                    faq.append({"question": heading, "answer": ans})
+            else:
+                # Antwoord zonder <p>-tags. De schrijvers leveren de FAQ soms als
+                # kale tekst onder de vraag-kop; dat is geldige HTML en leest voor
+                # de bezoeker identiek. Zonder deze terugval telde zo'n artikel als
+                # 'geen FAQ' — en dat kostte 5 punten in de kwaliteitsgate plus de
+                # FAQPage-markup, waardoor artikelen mét een prima FAQ onder de
+                # publicatiegrens bleven hangen.
+                ans = _plain_text(chunk).strip()
+            if len(ans) > 15:
+                faq.append({"question": heading, "answer": ans})
             heading = None
         elif in_faq_section:
             # Binnen een FAQ-sectie: vang <p><strong>Vraag?</strong> antwoord</p>
@@ -385,6 +403,15 @@ def validate_json_ld(html_body: str) -> Dict:
         data = json.loads(m.group(1))
     except Exception as e:
         return {"valid": False, "errors": [f"JSON-LD is geen geldig JSON: {str(e)[:80]}"], "has_faq": False}
+
+    # Twee vormen: één Article-object, of een @graph met Article + FAQPage
+    # naast elkaar (de vorm die Google nodig heeft voor het FAQ-rich-result).
+    faq_node = None
+    if isinstance(data.get("@graph"), list):
+        nodes = data["@graph"]
+        data = next((n for n in nodes if n.get("@type") == "Article"), nodes[0] if nodes else {})
+        faq_node = next((n for n in nodes if n.get("@type") == "FAQPage"), None)
+
     if data.get("@type") != "Article" and not (
         isinstance(data.get("@type"), list) and "Article" in data.get("@type")
     ):
@@ -395,7 +422,11 @@ def validate_json_ld(html_body: str) -> Dict:
     if not (pub.get("name") or "").strip():
         errors.append("JSON-LD mist publisher.name")
     has_faq = False
-    me = data.get("mainEntity")
+    me = faq_node
+    if me is None:
+        # Oudere artikelen dragen de FAQ nog genest in het Article.
+        nested = data.get("mainEntity")
+        me = nested if isinstance(nested, dict) else None
     if me and me.get("@type") == "FAQPage":
         qs = me.get("mainEntity") or []
         has_faq = len(qs) > 0
