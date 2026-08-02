@@ -141,7 +141,7 @@ def test_evaluate_due_rekent_af_en_leert(conn, pred_clean):
     assert les["confidence"] > 0.5
 
 
-def test_evaluate_due_niet_meetbaar_is_unclear(conn, pred_clean):
+def test_evaluate_due_niet_meetbaar_is_untested(conn, pred_clean):
     from backend.domains.iris import predictions
     now = "2026-07-01T00:00:00"
     pid = str(uuid.uuid4())
@@ -152,12 +152,20 @@ def test_evaluate_due_niet_meetbaar_is_unclear(conn, pred_clean):
         "status, created_at) VALUES (?, '2026-06-24', 'X', 's1', 'clicks', 'up', "
         "10.0, NULL, 7, ?, '', 'meer clicks', 'open', ?)", (pid, yesterday, now))
     conn.commit()
-    # Project zonder trend → clicks niet meetbaar → unclear (geen straf).
+    # Project zonder trend → clicks niet meetbaar → untested (geen straf).
+    #
+    # Sinds 27-07-2026 'untested' i.p.v. 'unclear'. Reden: 'unclear' hoort te
+    # betekenen "wél gemeten, geen uitsluitsel" (nauwelijks bewogen, of de
+    # juiste kant op zonder het doel te halen). Een metriek die niet te meten
+    # was, zegt niets over Iris' trefzekerheid. Op één hoop gegooid stonden er
+    # 12 uitkomsten als 'unclear' geboekt waarvan er 6 puur opruimwerk waren,
+    # en dat laat de leerlus slechter lijken dan hij is.
     projects = [{"project": "X", "site_id": "s1",
                  "pillars": {"content": {"live_30d": 0}, "seo": {"pages": 0, "note": ""}},
                  "trend": None}]
     result = predictions.evaluate_due(projects, today=date.today().isoformat())
-    assert result["unclear"] == 1 and result["correct"] == 0 and result["wrong"] == 0
+    assert result["untested"] == 1
+    assert result["unclear"] == 0 and result["correct"] == 0 and result["wrong"] == 0
 
 
 @pytest.mark.asyncio

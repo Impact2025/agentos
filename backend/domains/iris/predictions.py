@@ -156,12 +156,12 @@ def evaluate_due(projects: List[Dict[str, Any]], today: Optional[str] = None) ->
         p = dict(row)
         snap = by_site.get(p["site_id"]) or by_name.get(p["project"])
         if not snap:
-            _close_prediction(p["id"], "unclear", None, "project niet meer in snapshot")
+            _close_prediction(p["id"], "untested", None, "project niet meer in snapshot")
             continue
         outcome = metric_value(snap, p["metric"])
         if outcome is None:
-            _close_prediction(p["id"], "unclear", None, "metriek nog niet meetbaar")
-            evaluated.append({**p, "status": "unclear", "outcome": None,
+            _close_prediction(p["id"], "untested", None, "metriek nog niet meetbaar")
+            evaluated.append({**p, "status": "untested", "outcome": None,
                               "note": "nog niet meetbaar"})
             continue
         status, note = _judge(p["metric"], p["direction"], p["baseline"], p["target"], outcome)
@@ -177,7 +177,14 @@ def evaluate_due(projects: List[Dict[str, Any]], today: Optional[str] = None) ->
         "evaluated": evaluated,
         "correct": correct,
         "wrong": wrong,
+        # 'unclear' = wél gemeten, geen uitsluitsel (nauwelijks bewogen, of de
+        # juiste kant op zonder het doel te halen). 'untested' = nooit gemeten,
+        # dus geen uitspraak over Iris' trefzekerheid. Die twee op één hoop
+        # gooien laat de leerlus slechter lijken dan hij is: op 27 jul 2026
+        # stonden 12 uitkomsten als 'unclear' geboekt, waarvan er 6 puur
+        # opruimwerk waren van dubbele voorspellingen.
         "unclear": sum(1 for e in evaluated if e["status"] == "unclear"),
+        "untested": sum(1 for e in evaluated if e["status"] == "untested"),
         "accuracy": round(correct / decided * 100, 1) if decided else None,
     }
 
@@ -238,6 +245,9 @@ def track_record(days: int = 60) -> Dict[str, Any]:
         "correct": correct,
         "wrong": wrong,
         "unclear": counts.get("unclear", 0),
+        # Nooit gemeten (project weg, metriek niet meetbaar, duplicaat) — telt
+        # niet mee als Iris' onvermogen om te voorspellen.
+        "untested": counts.get("untested", 0) + counts.get("superseded", 0),
         "accuracy": round(correct / decided * 100, 1) if decided else None,
         "open": len(open_predictions()),
     }

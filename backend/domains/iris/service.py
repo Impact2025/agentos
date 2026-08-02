@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -250,6 +251,70 @@ def _upsert_lessons(lessons: List[Dict[str, Any]]) -> Dict[str, str]:
                 )
                 ids[text.lower()] = lid
     return ids
+
+
+def _lesson_tokens(text: str) -> set:
+    """Betekenisdragende woorden uit een lestekst, voor een tolerante match."""
+    words = re.findall(r"[a-z0-9]{4,}", (text or "").lower())
+    return set(words) - _LESSON_STOPWORDS
+
+
+# Nederlandse vulwoorden van 4+ tekens: zonder deze lijst matcht elke les op
+# elke andere via 'meer', 'wordt', 'voor'.
+_LESSON_STOPWORDS = {
+    "meer", "minder", "wordt", "worden", "voor", "naar", "door", "over", "deze",
+    "voordat", "omdat", "zodat", "maar", "want", "toch", "alleen", "altijd",
+    "nooit", "vaak", "soms", "welke", "waar", "wanneer", "moet", "moeten", "kunnen",
+    "hebben", "heeft", "zijn", "wordt", "elke", "iedere", "veel", "weinig", "goed",
+    "beter", "beste", "slecht", "groot", "klein", "eerst", "daarna", "dus",
+}
+
+
+def _match_lesson(lesson_text: str, lesson_ids: Dict[str, str]) -> str:
+    """Zoek het lesson_id dat bij de door de LLM genoemde les hoort.
+
+    Waarom niet gewoon lesson_ids[tekst] (27 jul 2026): dat was een exacte
+    stringvergelijking, en die eist dat het model de lestekst woordelijk
+    herhaalt. Dat doet het vrijwel nooit — het parafraseert. Resultaat: van de
+    51 actieve lessen waren er ooit 2 aan een voorspelling gekoppeld, dus won of
+    verloor er nooit een les vertrouwen en bleef `confidence` overal op de
+    startwaarde 0,50 staan. De leerlus was gebouwd maar draaide leeg.
+
+    Twee uitbreidingen: (a) tolerante match op woord-overlap i.p.v. exact, en
+    (b) óók zoeken in álle actieve lessen, niet alleen in die van vandaag — Iris
+    verwijst regelmatig naar een les van vorige week.
+    """
+    key = (lesson_text or "").strip().lower()
+    if not key:
+        return ""
+    if key in lesson_ids:
+        return lesson_ids[key]
+
+    kandidaten = dict(lesson_ids)
+    with get_conn() as conn:
+        for row in conn.execute(
+            "SELECT id, lesson FROM iris_lessons WHERE active = 1"
+        ):
+            kandidaten.setdefault((row["lesson"] or "").strip().lower(), row["id"])
+
+    doel = _lesson_tokens(key)
+    if not doel:
+        return ""
+    beste_id, beste_score = "", 0.0
+    for tekst, lid in kandidaten.items():
+        tokens = _lesson_tokens(tekst)
+        if not tokens:
+            continue
+        overlap = doel & tokens
+        # Jaccard: straft zowel een te korte als een te lange kandidaat af.
+        score = len(overlap) / len(doel | tokens)
+        if score > beste_score:
+            beste_id, beste_score = lid, score
+    # 0.4 is streng genoeg dat twee ongerelateerde lessen elkaar niet vangen, en
+    # los genoeg voor een parafrase. Onder de drempel liever géén koppeling dan
+    # een verkeerde: een les die krediet krijgt voor andermans voorspelling
+    # maakt het vertrouwenscijfer waardeloos.
+    return beste_id if beste_score >= 0.4 else ""
 
 
 def latest_report() -> Optional[Dict[str, Any]]:
@@ -960,7 +1025,8 @@ def _store_predictions(report_date: str, items: List[Dict[str, Any]],
             metric=metric, direction=(it.get("richting") or "").strip().lower(),
             baseline=baseline, statement=(it.get("uitspraak") or "")[:400],
             horizon_days=int(it.get("horizon_dagen") or 7),
-            target=_as_float(it.get("doel")), lesson_id=lesson_ids.get(lesson_text, ""),
+            target=_as_float(it.get("doel")),
+            lesson_id=_match_lesson(lesson_text, lesson_ids),
         )
         if pid:
             saved += 1
