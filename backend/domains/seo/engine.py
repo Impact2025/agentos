@@ -10,6 +10,7 @@ Het zware denkwerk doet Claude (slim, duur); het bulk-schrijven doet later
 Hermes via de conveyor (goedkoop). Dat is precies de taakverdeling uit de video.
 """
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -24,6 +25,8 @@ from ...shared.config import (
 )
 from ...shared.database import get_conn
 from .gsc import fetch_query_performance
+
+logger = logging.getLogger(__name__)
 
 # 'Striking distance': nog niet in de top, maar wel binnen bereik.
 MIN_POSITION = 4.0
@@ -361,6 +364,15 @@ async def run_weekly_demand_scan() -> None:
     from ...shared.outcomes import log_outcome
     from . import sites as sites_service
 
+    # Eerst opruimen, dan pas nieuwe kansen zoeken: een zoekwoord waarvan het
+    # artikel is afgewezen hoort weer beschikbaar te zijn vóór we ergens anders
+    # een nieuwe kans vandaan halen. Zonder deze stap groeit 'in_progress'
+    # monotoon en droogt de contentmotor op met een volle tabel.
+    try:
+        await asyncio.to_thread(reconcile_opportunities)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[demand] Reconciliatie mislukt (niet fataal): %s", e)
+
     scanned, new_total, cold_total, grounded_total, failed = 0, 0, 0, 0, []
     for s in sites_service.list_sites():
         site = sites_service.get_site(s["id"]) or s
@@ -534,6 +546,73 @@ def list_opportunities_truth(site_id: Optional[str] = None,
         else:
             kansen = [o for o in kansen if o["status"] == status]
     return kansen
+
+
+def reconcile_opportunities(site_id: Optional[str] = None) -> Dict[str, int]:
+    """Schrijf de waarheid uit `list_opportunities_truth` ook echt weg.
+
+    Waarom dit nodig is (27 jul 2026): er stonden 62 kansen op 'in_progress'
+    tegen 11 op 'published'. `select_topic` zet een kans op 'in_progress' zodra
+    hij hem uitdeelt, maar niets zet hem ooit terug. Loopt het artikel daarna
+    vast op de kwaliteitsgate, wordt het afgewezen, of struikelt de publicatie —
+    dan is dat zoekwoord voorgoed verbruikt zonder dat er iets live staat.
+
+    `list_opportunities_truth` corrigeerde de status al bij het lézen, maar
+    `select_topic` leest `list_opportunities(status='new')` uit de tabel zelf en
+    ziet die correctie dus nooit. Daardoor droogt de contentmotor op terwijl er
+    tientallen bruikbare zoekwoorden in de tabel staan.
+
+    Drie uitkomsten per kans:
+      - er staat een artikel live      → 'published' + live_url
+      - het artikel is afgewezen/vast  → terug naar 'new' (opnieuw oppakbaar)
+      - er loopt nog werk              → laat 'in_progress' staan
+    """
+    from ..publish import content_pipeline as cp
+
+    telling = {"published": 0, "vrijgegeven": 0, "ongewijzigd": 0}
+    site_ids = [site_id] if site_id else [
+        s["id"] for s in _all_site_ids()
+    ]
+    for sid in site_ids:
+        for opp in list_opportunities(site_id=sid, status="in_progress"):
+            job = _published_job_for_query(sid, opp.get("query", ""))
+            if job:
+                update_opportunity(opp["id"], status="published",
+                                   live_url=job.get("live_url") or None,
+                                   published_at=opp.get("published_at") or _now())
+                telling["published"] += 1
+                continue
+            if _has_open_job(sid, opp.get("query", "")):
+                telling["ongewijzigd"] += 1
+                continue
+            # Geen live artikel en geen lopend werk: het zoekwoord is vrij.
+            update_opportunity(opp["id"], status="new")
+            telling["vrijgegeven"] += 1
+    logger.info("[demand] Kansen gereconcilieerd: %s", telling)
+    return telling
+
+
+def _all_site_ids() -> List[Dict]:
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute("SELECT id FROM sites")]
+
+
+def _has_open_job(site_id: str, query: str) -> bool:
+    """Loopt er nog werk voor dit zoekwoord? (wachtrij of verbeterronde)"""
+    q = (query or "").strip().lower()
+    if not q:
+        return False
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT keyword FROM content_jobs WHERE site_id = ? AND status IN "
+            "('pending_review', 'needs_work', 'approved', 'publish_failed')",
+            (site_id,),
+        ).fetchall()
+    for r in rows:
+        kw = (r["keyword"] or "").strip().lower()
+        if kw and (kw == q or q in kw or kw in q):
+            return True
+    return False
 
 
 def update_opportunity(opp_id: str, status: Optional[str] = None,
