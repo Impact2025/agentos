@@ -243,13 +243,27 @@ async def _qualify(site: Dict[str, Any], candidates: List[Dict[str, str]],
         "Je bent een nuchtere Nederlandse SEO-specialist die linkkansen beoordeelt. "
         "Je bent streng: liever 3 goede prospects dan 10 matige."
     )
-    raw = await _llm(system, prompt, max_tokens=2000, purpose="linkbuilding")
+    raw = await _llm(system, prompt, max_tokens=6000, purpose="linkbuilding")
     if not raw:
         return []
     try:
         data = json.loads(_extract_json(raw))
         return [p for p in data.get("prospects", []) if isinstance(p, dict)]
     except Exception:
+        # Afgekapt antwoord (max_tokens) levert halve JSON. In plaats van de hele
+        # batch weg te gooien redden we de prospect-objecten die WEL compleet zijn.
+        salvaged = []
+        for m in re.finditer(r"\{[^{}]*\"url\"\s*:\s*\"[^\"]+\"[^{}]*\}", raw):
+            try:
+                obj = json.loads(m.group(0))
+                if isinstance(obj, dict) and obj.get("url"):
+                    salvaged.append(obj)
+            except Exception:
+                continue
+        if salvaged:
+            logger.warning("[linkbuilding] JSON afgekapt — %d complete prospect(s) gered",
+                           len(salvaged))
+            return salvaged
         logger.warning("[linkbuilding] Onleesbare kwalificatie-JSON — batch overgeslagen")
         return []
 
