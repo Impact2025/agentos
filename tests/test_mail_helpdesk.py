@@ -144,7 +144,8 @@ def test_appointment_mail_is_processed_outside_the_poll_transaction(mailbox_row,
     dus hij faalt zodra de poll-transactie weer om hem heen komt te liggen.
     """
     monkeypatch.setattr(poplib, "POP3", FakePop)
-    monkeypatch.setattr(classify, "classify", lambda s, b, f: "appointment")
+    monkeypatch.setattr(classify, "classify",
+                        lambda s, b, f, headers=None: "appointment")
 
     from backend.domains.calendar import agent as agenda_agent
 

@@ -12,7 +12,7 @@ import smtplib
 from typing import List, Dict, Optional
 
 from ...shared.database import get_conn
-from . import inbox, classify, drafter, knowledge as knowledge_mod
+from . import inbox, classify, drafter, bulk, knowledge as knowledge_mod
 
 logger = logging.getLogger(__name__)
 
@@ -145,9 +145,15 @@ def _run_mailbox_graph(mailbox: Dict) -> int:
             auto_sub = graph_mod._is_auto_submitted(m)
             label = "auto" if auto_sub else "unknown"
             from_addr = m["from_addr"]
-            if graph_mod._should_ignore(from_addr, m["subject"], m["body_text"], auto_sub):
-                label = "newsletter" if graph_mod._looks_like_newsletter(m["subject"], m["body_text"]) else (
-                    "auto" if auto_sub else "spam")
+            hdrs = m.get("headers") or []
+            bulk_reden = bulk.bulk_reason(hdrs, from_addr, m["subject"], m["body_text"])
+            if graph_mod._should_ignore(from_addr, m["subject"], m["body_text"],
+                                        auto_sub, headers=hdrs):
+                label = "auto" if auto_sub else (
+                    "newsletter"
+                    if (bulk_reden or graph_mod._looks_like_newsletter(
+                        m["subject"], m["body_text"]))
+                    else "spam")
                 conn.execute(
                     "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,subject,body_text,"
                     "classified,message_id,in_reply_to,\"references\",auto_submitted) "
@@ -171,7 +177,8 @@ def _run_mailbox_graph(mailbox: Dict) -> int:
                     conn.execute("UPDATE mail_inbox SET classified='ignored' WHERE id=?",
                                  (cur.lastrowid,))
                     continue
-                kind = classify.classify(m["subject"], m["body_text"], from_addr)
+                kind = classify.classify(m["subject"], m["body_text"], from_addr,
+                                         headers=hdrs)
                 conn.execute("UPDATE mail_inbox SET classified=? WHERE id=?", (kind, cur.lastrowid))
                 # Agenda-voorstel of mailconcept: pas ná de transactie.
                 if kind in ("appointment", "question"):
@@ -266,7 +273,8 @@ def run_mailbox(mailbox: Dict) -> int:
                         (m["id"],),
                     )
                     continue
-                kind = classify.classify(m["subject"], m["body_text"], m["from_addr"])
+                kind = classify.classify(m["subject"], m["body_text"],
+                                         m["from_addr"], headers=m.get("headers"))
                 conn.execute(
                     "UPDATE mail_inbox SET classified=? WHERE id=?",
                     (kind, m["id"]),

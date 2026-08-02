@@ -18,6 +18,8 @@ Categorieën:
 """
 import re
 
+from . import bulk as bulk_mod
+
 # ── Spam / scam / promo (harde signalen) ────────────────────────────────────
 # Dit zijn domein- en merkpatronen die bijna altijd ongewenst zijn. De
 # classifier weegt deze zwaarder dan de vraag-signalen: zelfs met een "?" in
@@ -108,14 +110,43 @@ def _sender_domain(from_addr: str) -> str:
 
 
 def _count_hits(text: str, hints) -> int:
+    """Losse sub-string-telling — bewust behouden voor de spam/nieuwsbrief/
+    systeem-lijsten. Daar is over-matchen de veilige kant op: de mail wordt
+    gelabeld en blijft staan, er vertrekt niets. Voor vraag- en afspraak-
+    signalen geldt het omgekeerde, en daar gebruiken we `_count_words`."""
     return sum(1 for h in hints if h in text)
 
 
-def classify(subject: str, body: str, from_addr: str = "") -> str:
+def _count_words(text: str, hints) -> int:
+    """Woordgrens-telling voor de signalen die wél iets in gang zetten.
+
+    'wat' mag niet matchen binnen 'watersport' en 'hoe' niet binnen
+    'schoenen'; met sub-string-tellen haalde élke marketingmail van 2000
+    tekens moeiteloos twee vraag-hits, en elk artikel van 7000 tekens de
+    afspraak-marker 'hebben we' (1 aug 2026)."""
+    aantal, _ = bulk_mod.count_words(text, hints)
+    return aantal
+
+
+def classify(subject: str, body: str, from_addr: str = "", headers=None) -> str:
+    """Bepaal het type van een inkomende mail.
+
+    `headers` is optioneel maar zwaarwegend: bevat de mail List-Unsubscribe of
+    Precedence: bulk, dan is het een verzending en kan het per definitie geen
+    persoonlijke vraag of afspraak-verzoek zijn. Zonder headers valt de
+    beoordeling terug op de tekst-heuristiek in `bulk.bulk_reason`.
+    """
     s = (subject or "").lower()
     b = (body or "").lower()
     frm = (from_addr or "").lower()
     dom = _sender_domain(from_addr)
+
+    # 0) Bulk wint van alles wat een antwoord of afspraak zou opleveren. Een
+    #    mailing beantwoord je niet, hoe vriendelijk de vraagzin ook klinkt.
+    #    Deze check staat vóór de spam-check zodat een legitieme nieuwsbrief
+    #    ook als nieuwsbrief in het overzicht komt en niet als 'spam'.
+    if bulk_mod.bulk_reason(headers, from_addr, subject, body):
+        return "newsletter"
 
     # 1) Harde spam: verdachte domeinen of crypto/promo-patronen. Getoetst op
     #    het VOLLEDIGE afzenderadres (niet alleen het domein) — anders glipt
@@ -138,19 +169,33 @@ def classify(subject: str, body: str, from_addr: str = "") -> str:
     if _count_hits(s, INVOICE_HINTS) >= 1 or _count_hits(b, INVOICE_HINTS) >= 2:
         return "invoice"
 
+    # Afzender die naar een mailplatform ruikt (mkt./email./news.-subdomein,
+    # of een lokaal deel als 'newsletter'/'mailing'). Op zichzelf te zwak om
+    # iets weg te filteren — een mens mailt ook vanaf info@ — maar wél reden
+    # om de lat hoger te leggen voordat we een ANTWOORD of AFSPRAAK in gang
+    # zetten. Een mailing die toevallig een vraagteken bevat is geen vraag.
+    marketing = bulk_mod.looks_like_marketing_sender(from_addr)
+
     # 5) Afspraak-verzoek → agenda-agent. Sterk signaal volstaat alleen;
-    #    zwak signaal + dag/tijd-context ook.
-    if _count_hits(s + " " + b, APPOINTMENT_STRONG) >= 1:
+    #    zwak signaal + dag/tijd-context ook. De zwakke routes gelden niet
+    #    voor marketing-afzenders: die sturen geen afspraak-verzoeken, en zo
+    #    werd een nieuwsbrief over Apple een voorstel voor 30 mei 2027.
+    if _count_words(s + " " + b, APPOINTMENT_STRONG) >= 1:
         return "appointment"
-    if _count_hits(s + " " + b, APPOINTMENT_HINTS) >= 2:
-        return "appointment"
-    if _count_hits(s + " " + b, APPOINTMENT_HINTS) >= 1 and _has_time_context(s + " " + b):
-        return "appointment"
+    if not marketing:
+        if _count_words(s + " " + b, APPOINTMENT_HINTS) >= 2:
+            return "appointment"
+        if _count_words(s + " " + b, APPOINTMENT_HINTS) >= 1 and _has_time_context(s + " " + b):
+            return "appointment"
 
     # 6) Échte vraag — pas ná alle bovenstaande filters, en vereis méér dan
     #    alleen een "?" (die zit ook in promo's). Minimaal 1 sterk vraag-woord
     #    OF ("?" + een werkwoord-achtig signaal).
-    q_hits = _count_hits(s + " " + b, QUESTION_HINTS)
+    q_hits = _count_words(s + " " + b, QUESTION_HINTS)
+    if marketing:
+        # Geen "?"-kortsluiting en een hogere drempel: bij een mailplatform
+        # moet de tekst echt op een vraag lijken vóórdat er een concept komt.
+        return "question" if q_hits >= 3 else "newsletter"
     if q_hits >= 2:
         return "question"
     if "?" in (s + b) and q_hits >= 1:

@@ -42,9 +42,13 @@ from .inbox import _should_ignore, _looks_like_newsletter  # noqa: E402,F401
 def _is_auto_submitted(msg: Dict) -> bool:
     """Graph kent geen Auto-Submitted-header zoals POP3; we deduceren het uit
     de aanwezigheid van internetMessageHeaders of bekende markers."""
-    headers = msg.get("internetMessageHeaders") or []
+    headers = msg.get("internetMessageHeaders") or msg.get("headers") or []
     for h in headers:
-        if (h.get("name") or "").lower() == "auto-submitted":
+        naam = (h.get("name") or "").lower()
+        if naam == "auto-submitted":
+            return True
+        if naam == "precedence" and str(h.get("value") or "").strip().lower() in (
+                "bulk", "list", "junk"):
             return True
     subj = (msg.get("subject") or "").lower()
     if any(k in subj for k in ("out of office", "automatisch antwoord", "niet op kantoor")):
@@ -143,7 +147,14 @@ def fetch_messages(mailbox: Dict, top: int = 25, timeout: int = 30) -> List[Dict
         mailbox["graph_client_secret"], timeout=timeout,
     )
     upn = mailbox["graph_user_upn"] or mailbox["address"]
-    select = "id,subject,from,bodyPreview,body,receivedDateTime,internetMessageId,replyTo,conversationId,isRead"
+    # internetMessageHeaders MOET expliciet opgevraagd worden: Graph levert het
+    # niet in de standaard-selectie. Zonder dit veld zag `_is_auto_submitted`
+    # altijd een lege lijst en kon de Graph-flow bulk/auto-mail per definitie
+    # niet herkennen — de POP3-flow deed dat wél, dus hetzelfde bericht kreeg
+    # een ander oordeel afhankelijk van het transportpad (1 aug 2026).
+    select = ("id,subject,from,bodyPreview,body,receivedDateTime,"
+              "internetMessageId,replyTo,conversationId,isRead,"
+              "internetMessageHeaders")
     url = (f"{_GRAPH_BASE}/users/{urllib.parse.quote(upn)}/mailFolders('inbox')/messages"
            f"?$top={top}&$orderby=receivedDateTime%20desc&$select={urllib.parse.quote(select)}")
     data = _graph_get(url, token, timeout=timeout)
@@ -168,6 +179,9 @@ def fetch_messages(mailbox: Dict, top: int = 25, timeout: int = 30) -> List[Dict
             "received_at": m.get("receivedDateTime"),
             "is_read": bool(m.get("isRead")),
             "graph_id": m.get("id"),
+            # Ruwe headers meegeven zodat de classificatie hetzelfde bewijs
+            # heeft als de POP3-flow (List-Unsubscribe, Precedence, ...).
+            "headers": m.get("internetMessageHeaders") or [],
         })
     return out
 

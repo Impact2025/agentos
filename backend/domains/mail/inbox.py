@@ -6,6 +6,8 @@ import re
 from email.header import decode_header
 from typing import List, Dict, Optional
 
+from . import bulk
+
 # Afzenders die nooit een antwoord verdienen: nieuwsbrieven / hoster-spamrapporten.
 SPAM_SENDERS = (
     "mail.vapidkeys.com",
@@ -87,7 +89,16 @@ def _body(msg: email.message.Message) -> str:
     return decoded
 
 
-def _should_ignore(from_addr: str, subject: str, body: str = "", auto_submitted: bool = False) -> bool:
+def _should_ignore(from_addr: str, subject: str, body: str = "",
+                   auto_submitted: bool = False, headers=None) -> bool:
+    """Mag deze mail meteen weggeschreven worden zonder classificatie?
+
+    `headers` is nieuw (1 aug 2026) en het belangrijkste argument: bulkmail
+    identificeert zichzelf via List-Unsubscribe/Precedence. Voorheen kreeg
+    deze functie vanuit `fetch_new` alléén het onderwerp mee (body="") — de
+    afmeld-footer, verreweg het sterkste tekstsignaal, was op het moment van
+    beslissen dus per definitie niet beschikbaar.
+    """
     # Nooit antwoorden op auto-generated mail (out-of-office, bounce, vacation,
     # mailinglist-verwerking). Voorkomt reply-loops.
     if auto_submitted:
@@ -97,6 +108,8 @@ def _should_ignore(from_addr: str, subject: str, body: str = "", auto_submitted:
         return True
     subj = (subject or "").lower()
     if any(h in subj for h in IGNORE_SUBJECT_HINTS if h):
+        return True
+    if bulk.bulk_reason(headers, from_addr, subject, body):
         return True
     if _looks_like_newsletter(subject, body):
         return True
@@ -168,9 +181,17 @@ def fetch_new(
             or msg.get("Precedence") in ("junk", "bulk", "list")
             or "Auto-Submitted" in (msg.get("X-Auto-Response", ""))
         )
-        if _should_ignore(from_addr, subject, body="", auto_submitted=auto_sub):
-            label = "newsletter" if _looks_like_newsletter(subject, "") else (
-                "auto" if auto_sub else "spam")
+        # De body eerst uitpakken: de afmeld-footer is het sterkste
+        # tekstsignaal en die zit nooit in het onderwerp. Uitpakken is gratis
+        # (het bericht staat al in het geheugen) en het scheelde vijf
+        # concept-antwoorden op nieuwsbrieven (1 aug 2026).
+        body = _body(msg)
+        bulk_reden = bulk.bulk_reason(msg, from_addr, subject, body)
+        if _should_ignore(from_addr, subject, body=body,
+                          auto_submitted=auto_sub, headers=msg):
+            label = "auto" if auto_sub else (
+                "newsletter" if (bulk_reden or _looks_like_newsletter(subject, body))
+                else "spam")
             conn.execute(
                 "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,subject,body_text,"
                 "classified,message_id,in_reply_to,\"references\",auto_submitted) "
@@ -180,7 +201,6 @@ def fetch_new(
                  _hdr(msg, "References"), 1 if auto_sub else 0),
             )
             continue
-        body = _body(msg)
         cur = conn.execute(
             "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
             "classified,message_id,in_reply_to,\"references\",auto_submitted) "
@@ -199,6 +219,10 @@ def fetch_new(
             "message_id": _hdr(msg, "Message-ID"),
             "in_reply_to": _hdr(msg, "In-Reply-To"),
             "references": _hdr(msg, "References"),
+            # De headers meegeven zodat de classificatie verderop hetzelfde
+            # bulk-bewijs heeft als deze gate. Een dict (geen Message-object)
+            # omdat de aanroeper hem alleen leest.
+            "headers": {k.lower(): v for k, v in msg.items()},
         })
     srv.quit()
     return out
