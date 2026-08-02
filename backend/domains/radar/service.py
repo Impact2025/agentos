@@ -1091,4 +1091,38 @@ async def scan_the_skies() -> int:
             sync_all_trend_opportunities()
         except Exception:
             log.exception("[radar] Trend-sync naar Demand Engine mislukt")
+    try:
+        prune_stale_signals()
+    except Exception:
+        log.exception("[radar] Opruimen van oude signalen mislukt (niet fataal)")
     return saved
+
+
+# Signalen zijn een momentopname: een trend van vijf weken geleden die toen al
+# onder de vault-drempel bleef, gaat vandaag niemand meer aanvallen. Zonder
+# opruimen groeit de tabel monotoon — 2656 rijen in de eerste drie weken, en
+# 2411 daarvan stonden nog op 'new' (27 jul 2026).
+SIGNAL_RETENTION_DAYS = 30
+
+
+def prune_stale_signals(days: int = SIGNAL_RETENTION_DAYS) -> int:
+    """Ruim ongetriageerde, laagscorende signalen op die over hun datum zijn.
+
+    Bewust alleen status 'new': 'targeted' en 'converted' zijn besluiten en
+    horen in de historie te blijven staan, net als 'dismissed' (anders biedt de
+    volgende scan hetzelfde signaal opnieuw aan). En bewust alleen ónder
+    MIN_SCORE_FOR_OBSIDIAN: een topsignaal dat nog niemand heeft opgepakt is een
+    gemiste kans, geen ruis — die laten we juist staan.
+    """
+    with get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM radar_signals WHERE status = 'new' "
+            "AND signal_score < ? AND created_at < datetime('now', ?)",
+            (MIN_SCORE_FOR_OBSIDIAN, f"-{int(days)} days"),
+        )
+        verwijderd = cur.rowcount or 0
+    if verwijderd:
+        log.info("[radar] %s verouderde signalen opgeruimd (ouder dan %s dagen, "
+                 "score < %s, nooit opgepakt)", verwijderd, days,
+                 MIN_SCORE_FOR_OBSIDIAN)
+    return verwijderd
