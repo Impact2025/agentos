@@ -7,8 +7,11 @@ verbeteren aan de snippet. Tegelijk werd 'origineel jubileum cadeau' als nieuw
 artikel voorgesteld terwijl er al een job over hetzelfde onderwerp vaststond op
 `needs_work`. Twee tips, allebei geen werk maar ruis.
 """
+import re
 import uuid
 from datetime import datetime, timezone
+
+import pytest
 
 from backend.domains.projects.router import (
     _keyword_already_covered,
@@ -144,3 +147,38 @@ def test_korte_titel_blijft_intact():
 def test_slug_zonder_streepjes_wordt_niet_leeg():
     slug = slugify_title("a" * 80)
     assert slug and len(slug) <= 60
+
+
+# ── Slug: witte lijst, geen zwarte lijst ────────────────────────────────
+#
+# De oude slugify verving een handjevol leestekens en liet de rest staan. Zo
+# gingen 'levensverhaal-vastleggen-complete-gids-+-casestudy-anton-(12' en
+# 'schrijf-meta-titel-&-description-voor-pagina-2' live — allebei een harde 404,
+# want een '&' of '(' in een pad overleeft geen enkele route-matching.
+
+@pytest.mark.parametrize("titel", [
+    "Levensverhaal vastleggen: complete gids + casestudy Anton (12 jaar)",
+    "Schrijf meta-titel & -description voor Pagina 2",
+    "Bedrijfsuitje Hoofddorp Schiphol – Jouw teambeleving in de lucht",
+    "Feedback verwerken in je contentkalender | 3 praktische stappen",
+    "Plan: Directe antwoorden toevoegen aan alle 28 pagina's — Bijeen",
+    'Wat kost een "levensverhaal"? 100% eerlijk antwoord!',
+])
+def test_slug_bevat_alleen_url_veilige_tekens(titel):
+    slug = slugify_title(titel)
+    assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", slug), slug
+
+
+def test_accenten_worden_ontleed_niet_verwijderd():
+    """'ideeën' hoort 'ideeen' te worden, niet 'ideen' — anders matcht de slug
+    het zoekwoord niet meer."""
+    assert "ideeen" in slugify_title("7 ideeën die binden")
+    assert slugify_title("Café") == "cafe"
+    assert slugify_title("Señor Ángel") == "senor-angel"
+
+
+def test_titel_zonder_bruikbare_tekens_geeft_lege_slug():
+    """Beter een lege slug dan een slug van losse koppeltekens: de aanroeper
+    kan op leeg controleren, op '---' niet."""
+    assert slugify_title("!!! ??? ...") == ""
+    assert slugify_title("") == ""

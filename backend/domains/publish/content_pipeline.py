@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 import uuid
 
 import httpx
@@ -128,20 +129,22 @@ async def _stream_hermes_retry(system: str, prompt: str, max_tokens: int = 2000,
 
 
 def slugify_title(title: str) -> str:
-    slug = title.strip().lower() \
-        .replace(" ", "-") \
-        .replace("é", "e").replace("ë", "e").replace("è", "e") \
-        .replace("á", "a").replace("à", "a") \
-        .replace("í", "i").replace("ï", "i") \
-        .replace("ó", "o").replace("ö", "o") \
-        .replace("ú", "u").replace("ü", "u") \
-        .replace("'", "").replace('"', "") \
-        .replace("?", "").replace("!", "") \
-        .replace(",", "").replace(".", "") \
-        .replace(":", "").replace(";", "") \
-        .replace("--", "-") \
-        .strip("-")
-    slug = re.sub(r"-+", "-", slug)
+    """Maak een URL-veilige slug: alleen a-z, 0-9 en koppeltekens.
+
+    Bewust een witte lijst en geen lijst-van-te-vervangen-tekens (27 jul 2026).
+    De oude versie verving een handjevol leestekens en liet al het andere staan,
+    waardoor er slugs live gingen als
+    'levensverhaal-vastleggen-complete-gids-+-casestudy-anton-(12' en
+    'schrijf-meta-titel-&-description-voor-pagina-2'. Beide gaven een harde 404:
+    een '&' of '(' in een pad overleeft de route-matching van geen enkele site.
+    Bij een zwarte lijst is elk teken dat je niet bedacht een toekomstige 404;
+    bij een witte lijst kan er per definitie niets doorheen glippen.
+    """
+    # Accenten ontleden (é -> e) i.p.v. per teken opsommen — dekt ook ç, ñ, ø.
+    normalised = unicodedata.normalize("NFKD", (title or "").strip().lower())
+    stripped = "".join(c for c in normalised if not unicodedata.combining(c))
+    # Alles wat geen letter/cijfer is wordt een koppelteken; daarna inklappen.
+    slug = re.sub(r"[^a-z0-9]+", "-", stripped).strip("-")
     # Kap af op een woordgrens. Een harde [:60] sneed midden in een woord
     # ("…-bouw-wat-woor") en leverde een URL op die nergens naar verwijst —
     # zo raakten de artikelen van 24 jul 2026 uit de sitemap (25 jul 2026).
@@ -1041,6 +1044,25 @@ async def _generate_article_infographic(site: Dict, title: str, keyword: str,
 
 # ── Content-jobs CRUD ────────────────────────────────────────────────────────
 
+# Statussen waarin een job "bezet" is: hij hangt in de wachtrij, staat live, of
+# wacht op een herpublicatie. Alleen 'rejected' en 'stuck' geven een zoekwoord
+# weer vrij — die zijn bewust afgeschreven.
+_JOB_ACTIVE_STATUSES = (
+    "pending_review", "needs_work", "published", "approved", "publish_failed",
+)
+
+
+def _keyword_key(keyword: str) -> str:
+    """Normaliseer een zoekwoord voor dedupe.
+
+    GSC levert queries zoals de gebruiker ze typt: met vraagteken, hoofdletters
+    en dubbele spaties. 'Beste partners voor AI-oplossingen …?' en 'beste
+    partners voor ai-oplossingen …' zijn hetzelfde zoekwoord, en twee artikelen
+    daarvoor kannibaliseren elkaar.
+    """
+    return " ".join((keyword or "").lower().replace("?", " ").split())
+
+
 def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html: str,
                 seo_score: float, social_copy: Dict[str, str], image_bytes: Optional[bytes],
                 slug: str, status: str = "pending_review",
@@ -1050,21 +1072,56 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
     """status 'pending_review' = klaar om goed te keuren (score ≥ gate);
     'needs_work' = onder de kwaliteitsgate — eerst verbeteren of afwijzen.
 
-    dedupe=True (default): als er al een job voor (site_id, slug) bestaat met
-    status in ('pending_review','needs_work','published','approved','publish_failed') wordt die
+    dedupe=True (default): als er al een job voor deze site bestaat met dezelfde
+    slug óf hetzelfde zoekwoord (status in _JOB_ACTIVE_STATUSES) wordt die
     bijgewerkt in plaats van een nieuwe rij aangemaakt. Voorkomt dat een
     content-goal in een oneindige loop hetzelfde artikel tientallen keren in de
-    wachtrij dumpt (zie de 17x 'gelukkige hond'-incident)."""
+    wachtrij dumpt (zie de 17x 'gelukkige hond'-incident).
+
+    Waarom óók op zoekwoord en niet alleen op slug (23 jul 2026): voor het
+    zoekwoord 'beste partners voor AI-oplossingen in het sociale domein in
+    Nederland?' stond één opportunity, maar liepen twee jobs met verschillende
+    titels — '9 beste partners voor AI-oplossingen …' en 'Zeven AI-partners die
+    bewezen hebben …'. Verschillende titel = verschillende slug, dus de
+    slug-dedupe liet ze allebei door en beide zijn op weareimpact.nl live
+    gegaan; ze kannibaliseren elkaar nu op hetzelfde zoekwoord. select_topic zet
+    een kans op 'in_progress' en dekt daarmee alleen zijn eigen route af — Iris'
+    content_run en de goal-publisher komen daar niet langs. create_job is de
+    enige trechter die álle routes passeren, dus hoort de controle hier."""
     import base64
+    kw_key = _keyword_key(keyword)
     with get_conn() as conn:
         if dedupe:
+            placeholders = ",".join("?" * len(_JOB_ACTIVE_STATUSES))
             existing = conn.execute(
-                "SELECT id, status FROM content_jobs "
-                "WHERE site_id=? AND slug=? AND status IN "
-                "('pending_review','needs_work','published','approved','publish_failed') "
-                "ORDER BY created_at DESC LIMIT 1",
-                (site_id, slug),
+                f"SELECT id, status FROM content_jobs "
+                f"WHERE site_id=? AND slug=? AND status IN ({placeholders}) "
+                f"ORDER BY created_at DESC LIMIT 1",
+                (site_id, slug, *_JOB_ACTIVE_STATUSES),
             ).fetchone()
+            if not existing and kw_key:
+                # Zelfde zoekwoord, andere titel: een herschrijving of een
+                # tweede route die hetzelfde onderwerp oppakt. Werk de bestaande
+                # rij bij (inclusief de nieuwe slug) i.p.v. een tweede artikel
+                # naast het eerste te zetten. De vergelijking gebeurt in Python
+                # met _keyword_key, zodat het normaliseren op één plek staat —
+                # in SQL nabouwen (LOWER/TRIM/REPLACE) vangt bijvoorbeeld drie
+                # opeenvolgende spaties niet en zou stil weer duplicaten laten
+                # doorglippen.
+                for row in conn.execute(
+                    f"SELECT id, status, keyword FROM content_jobs "
+                    f"WHERE site_id=? AND status IN ({placeholders}) "
+                    f"ORDER BY created_at DESC",
+                    (site_id, *_JOB_ACTIVE_STATUSES),
+                ):
+                    if _keyword_key(row["keyword"]) == kw_key:
+                        existing = row
+                        logger.info(
+                            "[content-pipeline] Zoekwoord-dedupe: '%s' hoort bij "
+                            "bestaande job %s — bijgewerkt i.p.v. tweede artikel.",
+                            keyword, row["id"],
+                        )
+                        break
             if existing:
                 # Bijwerken: nieuwe body/score, status naar meegegeven waarde
                 # (behalve als de bestaande al 'published' is — dan niet
@@ -1658,6 +1715,31 @@ _TASK_TITLE_JARGON = (
     "gsc", "search console", "seo-score", "striking distance", "canonical",
 )
 
+# Test-artefacten. Een titel die zegt dat hij een test is, is er een — en die
+# hoort niet op de site van een klant. 'Agent OS end-to-end publicatietest'
+# stond tot 1 aug 2026 als publicatiepoging in de historie: hij haalde de
+# kwaliteitsgate niet als bezwaar tegen (het is technisch prima proza) en er
+# was geen enkele regel die zei dat het een proefrit was.
+# Bewust specifieke samenstellingen: kaal "test" zou 'Test je kennis van…'
+# tegenhouden, en dát is wél een artikel.
+_TEST_ARTIFACT_MARKERS = (
+    "publicatietest", "publicatie-test", "testartikel", "test artikel",
+    "testpublicatie", "end-to-end", "end to end", "e2e", "smoke test",
+    "lorem ipsum", "dummy-artikel", "dummy artikel", "agent os", "agentos",
+)
+
+# Redactionele werktitels: de versie-aanduiding waarmee een mens zijn eigen
+# bestanden uit elkaar houdt. 'Klantcases overzichtspagina Ictusgo –
+# Definitieve versie (geredigeerd & SEO-geoptimaliseerd)' is een bestandsnaam,
+# geen kop die een bezoeker hoort te zien. Deze staan mídden in de titel, niet
+# vooraan, dus de prefix-lijst hierboven ving ze niet.
+_WORKING_TITLE_MARKERS = (
+    "definitieve versie", "definitieve v", "def. versie", "herziene versie",
+    "geredigeerd", "geredigeerde versie", "concept versie", "conceptversie",
+    "(concept)", "[concept]", "eindversie", "laatste versie", "versie 2",
+    "versie 3", "final version", "seo-geoptimaliseerd)",
+)
+
 # Zinsneden die verraden dat de tekst over het eigen werkproces gaat in plaats
 # van over het onderwerp van de site.
 _INTERNAL_BODY_MARKERS = (
@@ -1681,6 +1763,16 @@ def is_internal_document(title: str, html_body: str = "") -> Optional[str]:
     for prefix in _INTERNAL_TITLE_PREFIXES:
         if t.startswith(prefix):
             return f"titel begint met '{prefix.strip()}' — dit is een intern werkstuk, geen artikel"
+
+    marker = next((m for m in _TEST_ARTIFACT_MARKERS if m in t), None)
+    if marker:
+        return (f"titel bevat '{marker}' — dit is een test-artefact, "
+                "geen artikel voor bezoekers")
+
+    marker = next((m for m in _WORKING_TITLE_MARKERS if m in t), None)
+    if marker:
+        return (f"titel bevat '{marker}' — dit is een redactionele werktitel, "
+                "geen kop voor bezoekers")
 
     # Agent-taaktitel: opdracht-werkwoord vooraan + een tweede signaal.
     if t.startswith(_TASK_TITLE_VERBS):
@@ -1765,6 +1857,24 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
     de website-publicatie nooit blokkeert."""
     import os
     name = site.get("name", "")
+
+    # Publiceerbaarheidsgate, óók hier — niet alleen in approve_and_publish.
+    # Aanleiding (23 jul 2026): 'Schrijf meta-titel & -description voor Pagina 2'
+    # ging live op bewaardvoorjou.nl terwijl approve_and_publish deze titel al
+    # blokkeerde. De publicatie kwam van scripts/republish_bewaard_404.py, een
+    # eenmalig reparatiescript dat jobs met een ongeldige slug opnieuw uitrolde
+    # en daarbij rechtstreeks HTTP deed — langs elke gate heen. Precies déze
+    # titel had een ongeldige slug (een '&'), dus het script pikte hem eruit.
+    # Een gate die alleen op de nette route staat, beschermt alleen de nette
+    # route. Dit is de laagste functie in de codebase die daadwerkelijk naar een
+    # site pusht; hier staat hij op de plek waar het gebeurt.
+    intern = is_internal_document(title, html_body)
+    if intern:
+        logger.warning("[content-pipeline] Publicatie geweigerd voor '%s': %s",
+                       title, intern)
+        return {"success": False,
+                "error": f"niet publiceerbaar: {intern}"}
+
     env_prefix = re.sub(r"[^A-Z0-9]", "", name.upper())
     publish_url = os.getenv(f"{env_prefix}_PUBLISH_URL", "").strip()
     publish_key = os.getenv(f"{env_prefix}_PUBLISH_KEY", "").strip()

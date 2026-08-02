@@ -265,3 +265,73 @@ def test_create_job_stores_qc_report(site_with_page):
     job = _with_parsed_social_copy(content_pipeline.get_job(job_id))
     assert job["qc_report"]["staged"] is True
     assert job["case_study_id"] == "cs-1"
+
+
+# ── Interne-link-allowlist: register vs. sitemap-spelling ───────────────────
+# Het vault-register en de live sitemap spellen dezelfde pagina verschillend
+# (`daar.nl/platform` vs. `www.daar.nl/platform`). Letterlijk vergelijken wees
+# élke sitemap-URL af, waardoor artikelen structureel zónder interne links
+# werden gepubliceerd — precies wat het register moest voorkomen.
+
+def test_allowed_internal_matches_across_www_prefix():
+    from backend.domains.publish.article_writer import _is_allowed_internal
+
+    register = {"https://daar.nl/platform", "https://daar.nl/kennisbank"}
+    assert _is_allowed_internal("https://www.daar.nl/platform", register)
+    assert _is_allowed_internal("https://daar.nl/platform/", register)
+    assert not _is_allowed_internal("https://www.daar.nl/verzonnen-pagina", register)
+
+
+def test_allowed_internal_blocklist_survives_www_and_slash():
+    from backend.domains.publish.article_writer import _is_allowed_internal
+
+    # Bekende 404 mag ook in www-/slash-vorm nooit als kandidaat terugkomen.
+    assert not _is_allowed_internal(
+        "https://www.weareimpact.nl/digitalisering-bij-gemeenten/", None)
+
+
+# ── FAQ-vangnet: ontbreekt de sectie, dan schrijft de generator hem alsnog ───
+# Zonder dit bleven artikelen op 77 steken: -5 in de kwaliteitsgate voor een
+# ontbrekende FAQ, terwijl de reviewer om heel andere dingen vroeg.
+
+def test_ensure_faq_appends_generated_section(monkeypatch):
+    import asyncio
+    from backend.domains.publish import article_writer as aw
+
+    async def fake_llm(system, prompt, **kw):
+        return ("<h2>Veelgestelde vragen</h2>\n"
+                "<h3>Wat kost het?</h3>\n<p>Dat hangt af van de omvang.</p>\n"
+                "<h3>Hoe lang duurt het?</h3>\n<p>Reken op enkele weken werk.</p>")
+
+    monkeypatch.setattr(aw, "_llm", fake_llm)
+    html, faq = asyncio.run(aw._ensure_faq({"name": "S"}, "kw", "<h1>T</h1><p>Body</p>"))
+    assert len(faq) == 2
+    assert "Veelgestelde vragen" in html
+    assert html.startswith("<h1>T</h1>")
+
+
+def test_ensure_faq_keeps_article_when_output_unusable(monkeypatch):
+    import asyncio
+    from backend.domains.publish import article_writer as aw
+
+    async def junk_llm(system, prompt, **kw):
+        return '{"score": 80, "feedback": "nope"}'
+
+    monkeypatch.setattr(aw, "_llm", junk_llm)
+    original = "<h1>T</h1><p>Body</p>"
+    html, faq = asyncio.run(aw._ensure_faq({"name": "S"}, "kw", original))
+    assert html == original and faq == []
+
+
+def test_ensure_faq_inserts_before_meta_block(monkeypatch):
+    import asyncio
+    from backend.domains.publish import article_writer as aw
+
+    async def fake_llm(system, prompt, **kw):
+        return "<h2>Veelgestelde vragen</h2>\n<h3>Werkt dit?</h3>\n<p>Ja, dat werkt prima.</p>"
+
+    monkeypatch.setattr(aw, "_llm", fake_llm)
+    body = "<h1>T</h1><p>Body</p>\n<!-- Meta-titel: X -->"
+    html, faq = asyncio.run(aw._ensure_faq({"name": "S"}, "kw", body))
+    assert faq
+    assert html.index("Veelgestelde vragen") < html.index("<!-- Meta-titel")

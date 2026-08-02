@@ -270,6 +270,53 @@ async def _format_pass(html_body: str) -> str:
     return out.strip() if len(out.strip()) >= len(html_body) * 0.6 else html_body
 
 
+async def _ensure_faq(site: Dict, keyword: str, html_body: str) -> Tuple[str, list]:
+    """Schrijf alsnog een FAQ-sectie als het artikel er geen heeft.
+
+    Retourneert (html, faq). Bij twijfel wordt het artikel ongemoeid gelaten:
+    liever geen FAQ dan een verzonnen of half aangehechte sectie. De vragen
+    moeten uit het artikel zelf volgen — nieuwe cijfers of claims zijn verboden,
+    want een FAQ is geen plek om ongefundeerde beweringen binnen te smokkelen.
+    """
+    from ..seo.enhancements import extract_faq
+
+    system = (
+        "Je bent een Nederlandse SEO-redacteur. Schrijf een FAQ-sectie bij het "
+        "aangeleverde artikel: 4 of 5 vragen die een lezer na dit artikel nog "
+        "écht stelt. Antwoord per vraag in 2-3 zinnen.\n"
+        "HARDE EISEN:\n"
+        "- Baseer je UITSLUITEND op wat er in het artikel staat. Geen nieuwe "
+        "cijfers, percentages, jaartallen, prijzen of bronnen verzinnen.\n"
+        "- Herhaal geen vraag die het artikel al als kop behandelt.\n"
+        "- Exact dit formaat, en niets anders:\n"
+        "<h2>Veelgestelde vragen</h2>\\n<h3>Vraag?</h3>\\n<p>Antwoord.</p>\n"
+        "- Lever ALLEEN die HTML. Geen inleiding, geen uitleg, geen JSON."
+    )
+    try:
+        out = (await _llm(system, f"Kernzoekwoord: {keyword}\n\nARTIKEL:\n{html_body}",
+                          max_tokens=1200) or "").strip()
+    except Exception as e:
+        logger.warning("[article-writer] FAQ-generatie mislukt: %s", str(e)[:150])
+        return html_body, []
+
+    out = re.sub(r"^```(?:html)?\s*|\s*```$", "", out).strip()
+    # Alleen accepteren als het ook echt een bruikbare FAQ-sectie is.
+    if "<h3" not in out or "veelgestelde" not in out.lower():
+        logger.info("[article-writer] FAQ-generatie leverde geen bruikbare sectie — overgeslagen.")
+        return html_body, []
+
+    # Vóór een eventueel meta-blok invoegen, anders raakt dat achterop in de body.
+    m = re.search(r"\n*<!--\s*[Mm]eta", html_body)
+    merged = (html_body[:m.start()] + "\n\n" + out + "\n" + html_body[m.start():]) if m \
+        else html_body.rstrip() + "\n\n" + out + "\n"
+
+    faq = extract_faq(merged)
+    if not faq:
+        return html_body, []
+    logger.info("[article-writer] FAQ-sectie alsnog gegenereerd (%d vragen).", len(faq))
+    return merged, faq
+
+
 # ── Fase 4: Links ────────────────────────────────────────────────────────────
 
 # ── Canonieke URL-allowlist: interne links mogen ALLEEN naar deze bestemmingen.
@@ -288,6 +335,22 @@ _BLOCKED_INTERNAL_PATHS = {urlparse(u).path.rstrip("/") for u in _BLOCKED_INTERN
 # staan als kandidaat toegelaten — zo kan de sitemap nooit meer kapotte links
 # leveren. Zonder register blijft de sitemap de fallback (minus de blokkades).
 _URL_REGISTER_CACHE: Dict[str, Optional[set]] = {}
+
+
+def _canon_url(url: str) -> str:
+    """Vergelijkbare vorm van een URL: zonder schema, zonder `www.`, zonder
+    trailing slash, lowercase.
+
+    Nodig omdat register en sitemap dezelfde pagina verschillend spellen: het
+    vault-register bevat `https://daar.nl/platform`, de live sitemap levert
+    `https://www.daar.nl/platform`. Letterlijk vergelijken wees daardoor élke
+    sitemap-URL af op alleen het `www.`-voorvoegsel — met als gevolg nul
+    interne-link-kandidaten en dus artikelen zónder één interne link, terwijl
+    het register juist bedoeld was om links te gáránderen."""
+    u = (url or "").strip().rstrip("/").lower()
+    parsed = urlparse(u if "://" in u else f"//{u}")
+    host = (parsed.netloc or "").removeprefix("www.")
+    return f"{host}{parsed.path.rstrip('/')}"
 
 
 def _load_url_register(site: Dict) -> Optional[set]:
@@ -326,12 +389,13 @@ def _load_url_register(site: Dict) -> Optional[set]:
 
 def _is_allowed_internal(url: str, register: Optional[set]) -> bool:
     u = url.strip().rstrip("/")
-    if u in _BLOCKED_INTERNAL_URLS:
+    if _canon_url(u) in {_canon_url(b) for b in _BLOCKED_INTERNAL_URLS}:
         return False
     if urlparse(u).path.rstrip("/") in _BLOCKED_INTERNAL_PATHS:
         return False
     if register is not None:
-        return u in register  # register is de enige bron van waarheid
+        # Op genormaliseerde vorm, niet letterlijk — zie `_canon_url`.
+        return _canon_url(u) in {_canon_url(r) for r in register}
     return True  # fallback: sitemap (minus blokkades)
 
 
@@ -686,12 +750,20 @@ async def write_article_staged(site: Dict, keyword: str, angle: str, rationale: 
     qc["links"] = link_report
 
     # ── Fase 5b: AEO / structured data ──────────────────────────────────────
-    # FAQ extraheren uit de body; als die er (nog) niet is, genereren we hem
-    # niet forcerend (de schrijf-prompts eisen hem al). JSON-LD (Article +
-    # FAQPage) wordt aan de body gehangen zodat de publisher hem in <head> zet.
+    # FAQ extraheren uit de body. De schrijf-prompts eisen een FAQ-sectie, maar
+    # het model levert die niet altijd — en dan kost het artikel 5 punten in de
+    # kwaliteitsgate (`_review_article`) én de FAQPage-markup. Dat is precies hoe
+    # artikelen op 77 blijven steken: inhoudelijk prima, maar geblokkeerd op een
+    # gebrek dat geen enkele herschrijfronde aanpakt, omdat de reviewer om
+    # ándere dingen vraagt. Ontbreekt de sectie, dan schrijven we hem hier
+    # alsnog; mislukt dat, dan gaat het artikel gewoon door zonder (nooit
+    # blokkeren op een nice-to-have).
     try:
         from ..seo.enhancements import extract_faq, generate_json_ld
         faq = extract_faq(html_body)
+        if not faq:
+            html_body, faq = await _ensure_faq(site, keyword, html_body)
+            qc["faq_generated"] = bool(faq)
         if faq:
             author = site.get("author") or (profile[:60] if profile else "")
             json_ld = generate_json_ld(site, keyword, html_body, author=author, faq=faq)

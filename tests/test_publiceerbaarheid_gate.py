@@ -119,6 +119,61 @@ class TestLiveControle:
         assert await cp._verify_live("https://bijeen.app/blog/x") is None
 
 
+class TestGateOpHetLaagstePublicatiepunt:
+    """De gate moet staan waar er gepubliceerd wordt, niet alleen op de nette route.
+
+    Aanleiding (23 jul 2026): 'Schrijf meta-titel & -description voor Pagina 2'
+    ging live op bewaardvoorjou.nl, terwijl approve_and_publish die titel toen al
+    blokkeerde. De publicatie kwam van een eenmalig reparatiescript dat jobs met
+    een ongeldige slug opnieuw uitrolde — en juist deze titel had een ongeldige
+    slug (een '&'). Een gate op één route beschermt één route.
+    """
+
+    @pytest.mark.asyncio
+    async def test_agent_taaktitel_bereikt_de_site_niet(self, monkeypatch):
+        # Credentials bewust gezet: zonder de gate zou dit een echte poging worden.
+        monkeypatch.setenv("TESTSITE_PUBLISH_URL", "https://testsite.nl/api/publish")
+        monkeypatch.setenv("TESTSITE_PUBLISH_KEY", "geheim")
+
+        geposte_urls = []
+
+        class _Boom:
+            AsyncClient = None
+
+            def __getattr__(self, _name):  # pragma: no cover - mag nooit
+                geposte_urls.append("aangeroepen")
+                raise AssertionError("er mag geen HTTP-verkeer zijn")
+
+        monkeypatch.setattr(cp, "httpx", _Boom(), raising=False)
+
+        result = await cp._publish_to_project_site(
+            {"name": "TestSite", "base_url": "https://testsite.nl"},
+            "Schrijf meta-titel & -description voor Pagina 2",
+            "<p>wat tekst</p>", "kw", "schrijf-meta-titel-description-voor-pagina-2", 85,
+        )
+        assert result["success"] is False
+        assert "niet publiceerbaar" in result["error"]
+        assert "pagina 2" in result["error"]
+        assert not geposte_urls
+
+    @pytest.mark.asyncio
+    async def test_gewoon_artikel_wordt_niet_geblokkeerd(self, monkeypatch):
+        """De gate mag geen echte artikelen tegenhouden: zonder credentials
+        hoort hij door te lopen tot de bekende 'geen PUBLISH_URL'-melding."""
+        monkeypatch.delenv("TESTSITE_PUBLISH_URL", raising=False)
+        monkeypatch.delenv("TESTSITE_PUBLISH_KEY", raising=False)
+
+        result = await cp._publish_to_project_site(
+            {"name": "TestSite", "base_url": "https://testsite.nl"},
+            "Digitale erfenis regelen: meer dan alleen wachtwoorden",
+            "<p>Een echt artikel over nalatenschap.</p>", "digitale erfenis",
+            "digitale-erfenis-regelen", 85,
+        )
+        assert result["success"] is False
+        assert "PUBLISH_URL" in result["error"]
+        assert "niet publiceerbaar" not in result["error"]
+
+
 def _fake_httpx(status: int = 200, exc: Exception | None = None,
                 body: str = "", probe_status: int = 404, probe_body: str = ""):
     """Minimale httpx-dubbel: AsyncClient als context manager met .get().
@@ -152,3 +207,31 @@ def _fake_httpx(status: int = 200, exc: Exception | None = None,
         AsyncClient = _Client
 
     return _Mod()
+
+
+# ── Test-artefacten en werktitels (1 aug 2026) ──────────────────────────────
+# Bij het opruimen na vijf dagen offline bleken twee van de achttien mislukte
+# publicaties nooit bedoeld voor een bezoeker: een end-to-end proefrit van het
+# systeem zelf, en een bestandsnaam met versie-aanduiding. Beide haalden de
+# kwaliteitsgate moeiteloos — het is technisch prima proza — en er was geen
+# regel die zei dat ze geen artikel waren.
+
+def test_test_artefact_wordt_geblokkeerd():
+    reden = cp.is_internal_document("Agent OS end-to-end publicatietest")
+    assert reden and "test-artefact" in reden
+
+
+def test_redactionele_werktitel_wordt_geblokkeerd():
+    reden = cp.is_internal_document(
+        "Klantcases overzichtspagina Ictusgo – Definitieve versie "
+        "(geredigeerd & SEO-geoptimaliseerd)")
+    assert reden and "werktitel" in reden
+
+
+def test_gewoon_artikel_met_het_woord_test_mag_wel():
+    """Kaal 'test' als marker zou dit tegenhouden, en dit is een artikel."""
+    assert cp.is_internal_document("Test je kennis van digitale nalatenschap") is None
+
+
+def test_versienummer_in_een_productnaam_blokkeert_niet():
+    assert cp.is_internal_document("Wat is er nieuw in iOS 26 voor mantelzorgers") is None
