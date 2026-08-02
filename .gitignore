@@ -56,3 +56,5 @@ scripts/.tbi_import_state.json
 
 # Windows-artefact
 nul
+
+.vercel
