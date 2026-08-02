@@ -382,3 +382,26 @@ def test_router_booking_error_returns_502(vrijdag, mailbox, monkeypatch):
     assert r.status_code == 502
     assert "403" in r.json()["detail"]
 
+
+
+# ── Horizon-controle (1 aug 2026) ───────────────────────────────────────────
+# Een nieuwsbrief over Apple en AI bevatte de zin "op 30 mei presenteerde het
+# bedrijf...". De parser pakte die datum, zag dat mei vóór augustus ligt, telde
+# er een jaar bij op en stelde een afspraak voor op 30 mei 2027. Een datum die
+# maanden vooruit ligt is geen afspraak maar een misparse.
+
+def test_datum_ver_in_de_toekomst_wordt_niet_als_afspraak_gelezen():
+    from backend.domains.calendar import agent as ag
+    nu = ag._amsterdam_now()
+    # Kies een maand die zeker vóór de huidige ligt, zodat de jaar-ophoging
+    # aanslaat en de uitkomst ~10 maanden vooruit ligt.
+    maand = "januari" if nu.month > 2 else "december"
+    assert ag._parse_datetime(f"op 30 {maand} presenteerde het bedrijf zijn plannen") is None
+
+
+def test_normale_afspraak_binnen_de_horizon_blijft_werken():
+    from datetime import timedelta
+    from backend.domains.calendar import agent as ag
+    resultaat = ag._parse_datetime("zullen we volgende week om 14:00 bellen?")
+    assert resultaat is not None
+    assert resultaat <= ag._amsterdam_now() + timedelta(days=ag._MAX_HORIZON_DAGEN)

@@ -44,6 +44,10 @@ _TRAVEL_BUFFER_MIN = 30
 _DEFAULT_DURATION_MIN = 30
 # Ver onder de drukke uren: vrije-slot-voorstel werkt binnen kantooruren NL.
 _WORK_START_H, _WORK_END_H = 9, 17
+# Hoe ver vooruit een uit vrije tekst geraapte datum nog geloofwaardig is.
+# Een afspraak die per mail geregeld wordt ligt weken vooruit, geen seizoenen;
+# alles daarbuiten is een misparse (zie de horizon-controle in _parse_datetime).
+_MAX_HORIZON_DAGEN = 180
 
 _NL_DAYS = {
     "maandag": 0, "dinsdag": 1, "woensdag": 2, "donderdag": 3,
@@ -200,6 +204,18 @@ def _parse_datetime(text: str) -> Optional[datetime]:
     # zijn (anders wordt 'dinsdag 09:00' op dinsdagmiddag stilletjes woensdag).
     if target < now:
         target = target + timedelta(days=7 if target_weekday is not None else 1)
+
+    # Horizon-controle. Deze parser leest vrije tekst en pakt élke dag-maand-
+    # combinatie die hij tegenkomt — ook eentje die in een lopende zin staat.
+    # Staat de genoemde maand vóór de huidige, dan telt de regel hierboven er
+    # een jaar bij op; op een nieuwsbriefzin als "op 30 mei presenteerde het
+    # bedrijf..." leverde dat in augustus 2026 een afspraakvoorstel voor
+    # 30 mei 2027 op (1 aug 2026). Niemand plant tien maanden vooruit per mail.
+    # Zó ver weg is het bewijs dat we een zin hebben gelezen die geen afspraak
+    # beschrijft — dan liever géén tijd voorstellen (de agent stelt dan zelf
+    # een vrij slot voor) dan een verzonnen datum.
+    if target > now + timedelta(days=_MAX_HORIZON_DAGEN):
+        return None
     return target
 
 
