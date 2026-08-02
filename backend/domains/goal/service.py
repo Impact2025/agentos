@@ -238,9 +238,21 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str
         # terug op een concept en de Wachtrij blijft vrij van niet-publiceerbare
         # items.
         from ...shared.config import CONTENT_MIN_SCORE
+        import httpx as _httpx
         try:
             html_body, review = await content_pipeline.review_and_improve(full_site, "", html_body)
             seo_score = int(review.get("score", 0))
+        except (_httpx.ConnectError, _httpx.TimeoutException, _httpx.ConnectTimeout,
+                _httpx.ReadTimeout, _httpx.WriteTimeout, _httpx.PoolTimeout) as e:
+            # Tijdelijke LLM/network-outage (bijv. de openmodel-proxy is even
+            # down). Niet stil naar score=0 vertalen en de taak als "slechte
+            # content" blokkeren — dat is oneerlijk én dempt de alerts. De
+            # goal-loop retry't deze fout (zie de except Exception daarboven),
+            # dus de publish wordt later opnieuw geprobeerd zodra de LLM weer
+            # bereikbaar is. Alleen een échte, bereikbare review die onder de
+            # grens zit blokkeert permanent.
+            logger.warning(f"Review-loop kon '{title}' niet scoren (LLM tijdelijk onbereikbaar): {e}")
+            raise
         except Exception as e:
             logger.warning(f"Review/verbeter-loop mislukt voor '{title}': {e}")
             seo_score = 0
