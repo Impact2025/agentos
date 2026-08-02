@@ -20,6 +20,7 @@ Status-funnel: new → enriched → valid → contacted → replied
 import io
 import json
 import asyncio
+import logging
 from datetime import datetime
 from typing import List, Optional
 
@@ -27,7 +28,10 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from . import validate
 from .service import LeadsService, BATCH_TEMPLATES, TEMPLATE_LEAD_TYPE
+
+log = logging.getLogger(__name__)
 from ...shared.models import LeadUpdate
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
@@ -86,37 +90,58 @@ async def search_leads(body: LeadSearchRequest):
             yield _sse({"type": "done", "message": "Alle gevonden resultaten zijn al in je database."})
             return
 
+        # Zeef artikelen, vacatures en portals eruit vóór het scrapen en de
+        # LLM-analyse — zie prospecting/validate.py. Dezelfde zeef als in
+        # run_search_batch, zodat de Leads-tab en Iris' lead_search_run dezelfde
+        # voorraad opleveren.
+        gezeefd, overgeslagen = [], []
+        for r in results:
+            geschikt, reden = validate.looks_like_organisation(
+                r.get("title", ""), r.get("url", ""), r.get("snippet", ""))
+            (gezeefd if geschikt else overgeslagen).append(
+                r if geschikt else {"titel": r.get("title", "")[:70], "reden": reden})
+        results = gezeefd
+        if overgeslagen:
+            yield _sse({"type": "filtered", "count": len(overgeslagen),
+                        "items": overgeslagen[:10]})
+        if not results:
+            yield _sse({"type": "done",
+                        "message": "Geen van de resultaten was een organisatie "
+                                   "(alleen artikelen, vacatures of portals)."})
+            return
+
         yield _sse({"type": "found", "count": len(results)})
 
         for i, r in enumerate(results):
+            org_name = validate.clean_org_name(r["title"], r["url"])
             yield _sse({
                 "type": "analyzing",
-                "org": r["title"],
+                "org": org_name,
                 "index": i + 1,
                 "total": len(results),
                 "phase": "scrapen",
             })
 
             scraped = await loop.run_in_executor(
-                None, lambda r=r: _svc.scrape_and_enrich(r["url"], r["title"])
+                None, lambda r=r, o=org_name: _svc.scrape_and_enrich(r["url"], o)
             )
 
             yield _sse({
                 "type": "analyzing",
-                "org": r["title"],
+                "org": org_name,
                 "index": i + 1,
                 "total": len(results),
                 "phase": "ai-analyse",
             })
 
             analysis = await loop.run_in_executor(
-                None, lambda r=r, s=scraped: _svc.analyze_lead(
-                    r["title"], r["url"], r["snippet"], s
+                None, lambda r=r, s=scraped, o=org_name: _svc.analyze_lead(
+                    o, r["url"], r["snippet"], s
                 )
             )
 
             lead_data = {
-                "org_name":    r["title"],
+                "org_name":    org_name,
                 "website":     r["url"],
                 "summary":     analysis.get("summary", ""),
                 "contacts":    analysis.get("contacts", []),
@@ -209,9 +234,21 @@ async def batch_search(body: BatchSearchRequest):
                 None, lambda q=query: _svc.search_web(q, body.max_per_query)
             )
 
-            # Dedupliceer
+            # Dedupliceer, en zeef daarna alles wat geen organisatie is
+            # (artikel/vacature/portal) — zie prospecting/validate.py.
             new_results = [r for r in results if not _svc.is_duplicate(r["url"])]
             skipped = len(results) - len(new_results)
+            gezeefd = []
+            for r in new_results:
+                geschikt, reden = validate.looks_like_organisation(
+                    r.get("title", ""), r.get("url", ""), r.get("snippet", ""))
+                if geschikt:
+                    gezeefd.append(r)
+                else:
+                    skipped += 1
+                    log.info("[leads] Overgeslagen (%s): %s", reden,
+                             (r.get("title") or "")[:70])
+            new_results = gezeefd
 
             if not new_results:
                 yield _sse({
@@ -225,29 +262,30 @@ async def batch_search(body: BatchSearchRequest):
                 continue
 
             for r in new_results:
+                org_name = validate.clean_org_name(r["title"], r["url"])
                 yield _sse({
                     "type": "analyzing",
-                    "org": r["title"],
+                    "org": org_name,
                     "query_index": qi + 1,
                     "total_queries": total_queries,
                     "phase": "scrapen",
                 })
 
                 scraped = await loop.run_in_executor(
-                    None, lambda r=r: _svc.scrape_and_enrich(r["url"], r["title"])
+                    None, lambda r=r, o=org_name: _svc.scrape_and_enrich(r["url"], o)
                 )
 
                 yield _sse({
                     "type": "analyzing",
-                    "org": r["title"],
+                    "org": org_name,
                     "query_index": qi + 1,
                     "total_queries": total_queries,
                     "phase": "ai-analyse",
                 })
 
                 analysis = await loop.run_in_executor(
-                    None, lambda r=r, s=scraped: _svc.analyze_lead(
-                        r["title"], r["url"], r["snippet"], s
+                    None, lambda r=r, s=scraped, o=org_name: _svc.analyze_lead(
+                        o, r["url"], r["snippet"], s
                     )
                 )
 

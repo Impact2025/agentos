@@ -33,6 +33,7 @@ from ...shared.database import get_conn
 from .scraper import ScraperService
 from .hunter import HunterService
 from . import kvk as kvk_service
+from . import validate
 
 log = logging.getLogger(__name__)
 
@@ -221,7 +222,7 @@ class LeadsService:
         maar aanroepbaar door agents zoals Iris' lead_search_run. Een
         provider-fout op álle queries gooit door, zodat de aanroeper een
         foutkaart kan loggen i.p.v. stil met 0 leads te eindigen."""
-        found = saved = failed_queries = 0
+        found = saved = failed_queries = skipped = 0
         last_error = ""
         for query in queries:
             try:
@@ -233,11 +234,25 @@ class LeadsService:
             results = [r for r in results if not self.is_duplicate(r["url"])]
             found += len(results)
             for r in results:
+                # Vóór het scrapen en de LLM-analyse: is dit überhaupt een
+                # organisatie? Op 27 jul 2026 was 60% van de leadvoorraad een
+                # paginatitel van een artikel of vacature ('Top AI Consulting
+                # Companies in the Netherlands'). Elke zo'n rij kostte een
+                # scrape én een LLM-call, en verpestte daarna de conversiecijfers
+                # van de acquisitieformule. Hier weggooien is het goedkoopst.
+                geschikt, reden = validate.looks_like_organisation(
+                    r.get("title", ""), r.get("url", ""), r.get("snippet", ""))
+                if not geschikt:
+                    log.info("[leads] Overgeslagen (%s): %s", reden,
+                             (r.get("title") or "")[:70])
+                    skipped += 1
+                    continue
                 try:
-                    scraped = self.scrape_and_enrich(r["url"], r["title"])
-                    analysis = self.analyze_lead(r["title"], r["url"], r["snippet"], scraped)
+                    org_name = validate.clean_org_name(r["title"], r["url"])
+                    scraped = self.scrape_and_enrich(r["url"], org_name)
+                    analysis = self.analyze_lead(org_name, r["url"], r["snippet"], scraped)
                     lead = {
-                        "org_name":    r["title"],
+                        "org_name":    org_name,
                         "website":     r["url"],
                         "summary":     analysis.get("summary", ""),
                         "contacts":    analysis.get("contacts", []),
@@ -269,7 +284,7 @@ class LeadsService:
                 f"Alle {len(queries)} zoekopdrachten faalden — zoekprovider plat "
                 f"(laatste fout: {last_error})")
         return {"queries": len(queries), "failed_queries": failed_queries,
-                "found": found, "saved": saved}
+                "found": found, "saved": saved, "skipped": skipped}
 
     # ── Scraping & verrijking ─────────────────────────────────────────────────
 
