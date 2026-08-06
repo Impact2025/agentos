@@ -8,6 +8,8 @@
     "assets": "npm run assets:css && npm run assets:fonts",
     "assets:css": "tailwindcss -c tailwind.config.js -i tailwind-src.css -o tailwind.css --minify",
     "assets:fonts": "node build-fonts.mjs",
+    "assets:check": "node build-fonts.mjs --check",
+    "assets:icons": "../.venv/Scripts/python.exe build-icons.py",
     "dev": "node dev-server.mjs"
   },
   "dependencies": {

@@ -96,11 +96,42 @@
 
   // ── Views + nav ──────────────────────────────────────────────────────────
   const views = ['login', 'today', 'inbox', 'briefing', 'note', 'system'];
-  function show(view) {
+
+  // Historie: op Android is de terugknop (of de veeg vanaf de rand) het eerste
+  // wat iemand probeert. Zonder deze koppeling sloot dat de hele app af in
+  // plaats van het sheet of de vorige tab — inclusief een half ingevulde
+  // notitie. Elke view krijgt daarom een history-entry en het bottom-sheet een
+  // extra bovenop. Wat we bewust NIET doen is de gebruiker vasthouden: vanaf
+  // 'today' (de startview) verlaat terug gewoon de app, zoals het hoort.
+  let navReady = false;
+  function pushView(view) {
+    if (view === 'login') return;             // sessie verlopen is geen navigatie
+    if (!navReady) { history.replaceState({ view }, ''); navReady = true; return; }
+    const st = history.state || {};
+    if (st.view === view && !st.sheet) return; // dezelfde tab nogmaals: geen entry
+    history.pushState({ view }, '');
+  }
+
+  function currentView() {
+    return views.find((v) => !$(`view-${v}`).hidden) || 'today';
+  }
+
+  window.addEventListener('popstate', (e) => {
+    // Staat het sheet open, dan hoort terug dát te sluiten en niets anders.
+    if (!$('detail-overlay').hidden) { hideDetail(); return; }
+    const target = (e.state && e.state.view) || 'today';
+    if (target !== currentView()) show(target, false);
+  });
+
+  function show(view, push = true) {
     const myToken = ++loadToken;
+    if (push) pushView(view);
     views.forEach((v) => { $(`view-${v}`).hidden = v !== view; });
-    document.querySelectorAll('.nav-btn').forEach((b) =>
-      b.classList.toggle('nav-active', b.dataset.view === view));
+    document.querySelectorAll('.nav-btn').forEach((b) => {
+      const on = b.dataset.view === view;
+      b.classList.toggle('nav-active', on);
+      b.setAttribute('aria-current', on ? 'page' : 'false');
+    });
     // Vandaag leunt op de itemtelling ('3 besluiten wachten op je'), dus die
     // halen we mee op — anders staat er bij een koude start altijd 0.
     if (view === 'today') { refresh(myToken).then(() => loadToday(myToken)); }
@@ -441,12 +472,14 @@
     const m = KIND_META[it.dismiss_kind] || { icon: 'radio_button_unchecked', label: it.dismiss_kind };
     const acts = (ACTIONS_PER_KIND[it.dismiss_kind] || []).concat(['dismiss']);
     $('detail-card').innerHTML = `
+      <div class="sheet-grabber" aria-hidden="true"></div>
       <div class="flex justify-between items-start gap-3">
         <div>
           <p class="font-label-caps text-label-caps text-primary uppercase mb-1">${esc(m.label)}</p>
-          <h2 class="font-headline-sm text-headline-sm">${esc(it.title)}</h2>
+          <h2 id="detail-title" class="font-headline-sm text-headline-sm">${esc(it.title)}</h2>
         </div>
-        <button id="detail-close" class="text-on-surface-variant hover:text-primary shrink-0">
+        <button id="detail-close" class="tap-target text-on-surface-variant hover:text-primary shrink-0"
+          aria-label="Sluiten">
           <span class="material-symbols-outlined">close</span>
         </button>
       </div>
@@ -457,7 +490,7 @@
           ${ACTION_LABELS[a]?.[it.dismiss_kind] || (a === 'dismiss' ? 'Wegklikken' : a)}</button>`).join('')}
       </div>
       <p id="detail-status" class="font-body-md text-body-md text-on-surface-variant mt-3"></p>`;
-    $('detail-overlay').hidden = false;
+    showDetail();
     $('detail-close').onclick = closeDetail;
     document.querySelectorAll('#detail-card [data-action]').forEach((btn) => {
       btn.onclick = async () => {
@@ -483,8 +516,113 @@
       };
     });
   }
-  function closeDetail() { $('detail-overlay').hidden = true; }
+  // ── Bottom-sheet: openen, sluiten, wegvegen ──────────────────────────────
+  //
+  // Het sheet is de plek waar besluiten vallen, dus het moet zich gedragen als
+  // een sheet en niet als een div die toevallig onderaan staat:
+  //   • de achtergrond scrollt niet mee (op iOS anders gegarandeerd);
+  //   • toetsenbord-focus blijft binnen het sheet, Escape sluit;
+  //   • terug (Android) sluit het sheet, niet de app;
+  //   • omlaag vegen sluit het — mits de inhoud al bovenaan staat, anders
+  //     vecht het gebaar met het scrollen van een lange artikelpreview.
+  let lastFocus = null;
+
+  function showDetail() {
+    const ov = $('detail-overlay');
+    lastFocus = document.activeElement;
+    lockScroll(true);
+    ov.hidden = false;
+    // display:none → flex en de opacity-overgang in dezelfde stijlberekening
+    // betekent géén overgang; dit is waarom de slide-in nooit draaide. Een
+    // requestAnimationFrame is hier niet genoeg — de browser mag beide
+    // wijzigingen alsnog samenvatten (gemeten: opacity al op 1 na 60ms van een
+    // overgang van 280ms). Een afgedwongen reflow legt de startwaarden wél vast.
+    void ov.offsetWidth;
+    ov.classList.add('open');
+    history.pushState({ view: currentView(), sheet: true }, '');
+    setTimeout(() => $('detail-close')?.focus(), 60);
+  }
+
+  // Sluit écht (opruimen + animatie). Wordt aangeroepen vanuit popstate.
+  function hideDetail() {
+    const ov = $('detail-overlay');
+    if (ov.hidden) return;
+    ov.classList.remove('open');
+    const card = $('detail-card');
+    card.classList.remove('dragging');
+    card.style.transform = '';
+    setTimeout(() => {
+      ov.hidden = true;
+      lockScroll(false);
+      if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
+      lastFocus = null;
+    }, 280);
+  }
+
+  // Sluit via de knop, de backdrop, Escape of een veeg: we lopen bewust langs
+  // history.back(), zodat de sheet-entry uit de stack verdwijnt. Deed hij dat
+  // niet, dan moest je na tien besluiten tien keer terug om de app te verlaten.
+  function closeDetail() {
+    if (history.state && history.state.sheet) history.back();
+    else hideDetail();
+  }
+
+  function lockScroll(on) {
+    const b = document.body;
+    if (on) {
+      b.style.setProperty('--scroll-lock-top', `-${window.scrollY}px`);
+      b.classList.add('sheet-open');
+    } else {
+      const y = parseInt(b.style.getPropertyValue('--scroll-lock-top') || '0', 10);
+      b.classList.remove('sheet-open');
+      b.style.removeProperty('--scroll-lock-top');
+      window.scrollTo(0, Math.abs(y));
+    }
+  }
+
   $('detail-overlay').onclick = (e) => { if (e.target.id === 'detail-overlay') closeDetail(); };
+
+  document.addEventListener('keydown', (e) => {
+    if ($('detail-overlay').hidden) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeDetail(); return; }
+    if (e.key !== 'Tab') return;
+    // Focus-trap: zonder dit tabt een toetsenbordgebruiker achter het sheet
+    // langs door een lijst die hij niet ziet, en drukt daar op 'Publiceren'.
+    const f = [...$('detail-card').querySelectorAll(
+      'button:not([disabled]), input, textarea, select, a[href], [tabindex]:not([tabindex="-1"])')]
+      .filter((el) => el.offsetParent !== null);
+    if (!f.length) return;
+    const first = f[0];
+    const last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+
+  // Swipe-to-dismiss.
+  (() => {
+    const card = $('detail-card');
+    let y0 = 0, dy = 0, dragging = false;
+    card.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1 || card.scrollTop > 0) return;
+      y0 = e.touches[0].clientY; dy = 0; dragging = true;
+      card.classList.add('dragging');
+    }, { passive: true });
+    card.addEventListener('touchmove', (e) => {
+      if (!dragging) return;
+      dy = e.touches[0].clientY - y0;
+      // Omhoog vegen is scrollen, niet sluiten: dan het gebaar teruggeven.
+      if (dy < 0) { dy = 0; dragging = false; card.classList.remove('dragging'); card.style.transform = ''; return; }
+      card.style.transform = `translateY(${dy}px)`;
+    }, { passive: true });
+    card.addEventListener('touchend', () => {
+      if (!dragging) return;
+      dragging = false;
+      card.classList.remove('dragging');
+      // 96px is ruim boven een onbedoeld schokje en ruim onder een halve veeg.
+      if (dy > 96) { card.style.transform = ''; closeDetail(); }
+      else card.style.transform = '';
+    });
+  })();
 
   // ── Briefings — dashboard ────────────────────────────────────────────────
   function deltaChip(delta, unit, invert = false) {
@@ -1377,17 +1515,32 @@
   if ('serviceWorker' in navigator && Notification.permission === 'granted') navigator.serviceWorker.register('/sw.js').catch(() => {});
 
   // ── Pull-to-refresh (mobiel) ─────────────────────────────────────────────
-  let ptrStartY = 0, ptrPull = 0, ptrActive = false;
+  // De guard stond op `main.scrollTop`, maar `main` is geen scroll-container —
+  // het document scrolt. `main.scrollTop` was dus altijd 0 en élke neerwaartse
+  // veeg activeerde de indicator: scrollde je halverwege een lange briefing
+  // omhoog, dan herlaadde de app het scherm onder je vinger vandaan. De juiste
+  // vraag is of de pagína bovenaan staat.
+  let ptrStartY = 0, ptrStartX = 0, ptrPull = 0, ptrActive = false;
   const ptr = $('ptr');
   const main = document.querySelector('main');
+  const atTop = () => (window.scrollY || document.documentElement.scrollTop || 0) <= 0;
+  function ptrReset() { ptrActive = false; ptrPull = 0; ptr.style.transform = 'translateY(-64px)'; }
   if (main) {
     main.addEventListener('touchstart', (e) => {
-      if (main.scrollTop > 0 || ptrActive) return;
-      ptrStartY = e.touches[0].clientY; ptrActive = true;
+      // Eén vinger, pagina bovenaan, geen sheet open (dat heeft zijn eigen gebaar).
+      if (e.touches.length !== 1 || !atTop() || ptrActive) return;
+      if (!$('detail-overlay').hidden) return;
+      ptrStartY = e.touches[0].clientY; ptrStartX = e.touches[0].clientX; ptrActive = true;
     }, { passive: true });
     main.addEventListener('touchmove', (e) => {
       if (!ptrActive) return;
-      ptrPull = Math.max(0, e.touches[0].clientY - ptrStartY);
+      const dy = e.touches[0].clientY - ptrStartY;
+      const dx = Math.abs(e.touches[0].clientX - ptrStartX);
+      // Een horizontale veeg is de filter-chiprij of een brede tabel, geen refresh.
+      if (dx > Math.abs(dy) && dx > 12) { ptrReset(); return; }
+      // Tijdens de veeg alsnog van bovenaan weggescrold: afbreken.
+      if (dy < 0 || !atTop()) { ptrReset(); return; }
+      ptrPull = dy;
       if (ptrPull > 0) { ptr.style.transform = `translateY(${Math.min(ptrPull, 64) - 40}px)`; }
     }, { passive: true });
     main.addEventListener('touchend', async () => {
@@ -1400,6 +1553,7 @@
       } else { ptr.style.transform = 'translateY(-64px)'; }
       ptrPull = 0;
     });
+    main.addEventListener('touchcancel', ptrReset, { passive: true });
   }
 
   // ── Start + realtime loop ────────────────────────────────────────────────

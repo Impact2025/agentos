@@ -18,6 +18,56 @@ body {
   overflow-x: hidden;
   min-height: max(100dvh, 640px);
   -webkit-font-smoothing: antialiased;
+  /* De bottom-nav is fixed en groeit mee met de home-indicator; de ruimte
+     eronder moet dus mee groeien, anders valt de laatste kaart erachter. */
+  padding-bottom: calc(128px + env(safe-area-inset-bottom, 0px));
+}
+
+/* ── Safe areas ─────────────────────────────────────────────────────────────
+ * `viewport-fit=cover` + `apple-mobile-web-app-status-bar-style: black-translucent`
+ * laten de app tot in de hoeken lopen. Dat is alleen mooi als de vaste balken de
+ * insets respecteren: zonder deze regels stond de titel onder de Dynamic Island
+ * en overlapte de home-indicator de nav-knoppen (de toast-host deed het al goed,
+ * de rest niet). De zij-insets tellen in landschap op een notch-toestel.
+ */
+#topbar {
+  height: calc(64px + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+}
+#main {
+  padding-top: calc(96px + env(safe-area-inset-top, 0px));
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+}
+#bottomnav {
+  /* De ondergrens is geen sierpadding: Chrome op Android rapporteert de
+     gebarenbalk niet als inset (env = 0), dus zonder max() zouden de labels
+     daar strakker tegen de rand komen dan in de vorige versie. */
+  padding-bottom: max(16px, calc(8px + env(safe-area-inset-bottom, 0px)));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+#ptr { top: env(safe-area-inset-top, 0px); }
+
+/* Tikdoelen: Apple houdt 44pt aan, Android 48dp. Icoonknoppen halen dat niet
+   uit hun eigen inhoud, dus dwingen we het af zonder de glyph te vergroten. */
+.tap-target {
+  min-width: 44px; min-height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.nav-btn { min-width: 56px; min-height: 48px; }
+
+/* Achtergrond bevriezen zolang het sheet open staat. Enkel `overflow:hidden` op
+   body is op iOS niet genoeg — Safari scrollt dan alsnog door. De scrollpositie
+   wordt door JS in --scroll-lock-top bewaard en bij sluiten teruggezet. */
+body.sheet-open {
+  position: fixed;
+  top: var(--scroll-lock-top, 0px);
+  left: 0; right: 0;
+  width: 100%;
+  overflow: hidden;
 }
 .glass-panel, .glass-card {
   background: rgba(15, 23, 42, 0.8);
@@ -93,17 +143,37 @@ body {
 .stagger > *:nth-child(5) { animation-delay: 0.23s; }
 .stagger > *:nth-child(n+6) { animation-delay: 0.28s; }
 
-/* Bottom-sheet slide-in */
+/* ── Bottom-sheet ───────────────────────────────────────────────────────────
+ * De animatie hing eerst aan `:not([hidden])`. Dat draaide nooit: het overlay
+ * gaat van display:none naar flex in hetzelfde frame waarin de opacity zou
+ * moeten overgaan, en dan slaat de browser de transitie over. Het sheet klapte
+ * er dus zonder animatie in, met alle CSS ervoor keurig aanwezig. Nu hangt het
+ * aan een aparte `.open`-klasse die JS één frame later zet.
+ */
 #detail-overlay {
   transition: opacity 0.28s var(--ease);
   opacity: 0;
 }
-#detail-overlay:not([hidden]) { opacity: 1; }
+#detail-overlay.open { opacity: 1; }
 #detail-card {
-  transform: translateY(20px);
+  transform: translateY(24px);
   transition: transform 0.32s var(--ease);
+  padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  /* Tijdens een sleep mag de browser de verticale pan niet zelf afhandelen. */
+  touch-action: pan-y;
 }
-#detail-overlay:not([hidden]) #detail-card { transform: translateY(0); }
+#detail-overlay.open #detail-card { transform: translateY(0); }
+/* Tijdens het slepen volgt de kaart de vinger 1:1 — een transitie maakt dat stroperig. */
+#detail-card.dragging { transition: none; }
+
+/* Sleepgreep: de affordance voor swipe-to-dismiss. Zonder streepje weet niemand
+   dat het kan, en dan is de gebaar-ondersteuning verspilde moeite. */
+.sheet-grabber {
+  width: 40px; height: 4px; border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.22);
+  margin: -6px auto 12px;
+  flex: none;
+}
 
 /* Detail-actieknoppen: tik-feedback */
 [data-action] { transition: transform 0.12s var(--ease), background 0.2s; }

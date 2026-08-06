@@ -6,6 +6,18 @@
 <meta name="theme-color" content="#101415"/>
 <title>Iris Remote</title>
 <link rel="manifest" href="/manifest.json"/>
+<!-- iOS zet een screenshot van de pagina op het beginscherm zonder dit icoon, en
+     Android Chrome bíedt installeren niet aan zonder de iconen in het manifest.
+     Regenereren: `.venv/Scripts/python.exe remote/build-icons.py`. -->
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"/>
+<link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png"/>
+<!-- `black-translucent` laat de app onder de statusbalk doorlopen; dat mág pas
+     nu de header en de bottom-nav env(safe-area-inset-*) respecteren (style.css).
+     Zonder die twee samen staat de titel onder de Dynamic Island. -->
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Iris"/>
 <!-- Alles lokaal: geen CDN-script dat Tailwind in de browser compileert en geen
      fonts van derden op de pagina waar publicaties worden goedgekeurd.
      Regenereren: `npm run assets` (zie tailwind.config.js + build-fonts.mjs).
@@ -18,13 +30,14 @@
 <body class="bg-surface text-on-surface antialiased overflow-x-hidden pb-32">
 
 <!-- TopAppBar -->
-<header class="flex justify-between items-center w-full px-container-padding h-16 fixed top-0 z-50 bg-surface/80 backdrop-blur-xl border-b border-white/10">
+<header id="topbar" class="flex justify-between items-center w-full px-container-padding h-16 fixed top-0 z-50 bg-surface/80 backdrop-blur-xl border-b border-white/10">
   <div class="flex items-center gap-3">
     <span class="material-symbols-outlined text-primary">hub</span>
     <h1 class="font-headline-md text-headline-md font-bold text-on-surface">Iris Remote</h1>
     <span id="sync-pill" class="recent"><span class="dot"></span><span id="sync-pill-txt">…</span></span>
   </div>
-  <button class="text-primary hover:opacity-80 active:scale-95 transition-transform" id="syncTrigger" title="Verversen">
+  <button class="tap-target text-primary hover:opacity-80 active:scale-95 transition-transform" id="syncTrigger"
+    title="Verversen" aria-label="Verversen">
     <span class="material-symbols-outlined">sync</span>
   </button>
 </header>
@@ -35,7 +48,7 @@
 <!-- Toast host -->
 <div id="toast-host" aria-live="polite"></div>
 
-<main class="pt-24 px-container-padding max-w-[768px] mx-auto min-h-screen space-y-stack-lg">
+<main id="main" class="pt-24 px-container-padding max-w-[768px] mx-auto min-h-screen space-y-stack-lg">
 
   <!-- Login -->
   <section id="view-login" hidden>
@@ -211,13 +224,16 @@
   </section>
 </main>
 
-<!-- Detail bottom-sheet -->
-<div id="detail-overlay" class="fixed inset-0 z-[60] bg-black/60 items-end justify-center" hidden>
+<!-- Detail bottom-sheet. `role=dialog` + aria-modal zodat een screenreader de
+     lijst eronder niet blijft voorlezen; de sleepgreep is geen decoratie maar
+     de affordance voor swipe-to-dismiss. -->
+<div id="detail-overlay" class="fixed inset-0 z-[60] bg-black/60 items-end justify-center" hidden
+  role="dialog" aria-modal="true" aria-labelledby="detail-title">
   <div id="detail-card" class="glass-panel w-full max-w-[768px] max-h-[92dvh] overflow-y-auto custom-scrollbar rounded-t-xl p-5"></div>
 </div>
 
 <!-- BottomNavBar -->
-<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-2 bg-surface/80 backdrop-blur-xl border-t border-white/10 shadow-[0_-4px_20px_rgba(0,0,0,0.3)] rounded-t-xl">
+<nav id="bottomnav" class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pt-2 bg-surface/80 backdrop-blur-xl border-t border-white/10 shadow-[0_-4px_20px_rgba(0,0,0,0.3)] rounded-t-xl">
   <button class="nav-btn flex flex-col items-center justify-center transition-all active:scale-90 duration-200" data-view="today">
     <span class="material-symbols-outlined">wb_twilight</span>
     <span class="font-label-caps text-[10px] mt-1">Vandaag</span>

@@ -18,8 +18,17 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
 const KEEP_SUBSET = /^(latin|latin-ext)$/;
 
 // Een icoon dat hier niet uit komt rollen, rendert straks als losse tekst
-// ("warning") in plaats van een pictogram. De lijst die dit script afdrukt is
-// dus het controlemiddel — loop hem na als je iconen toevoegt.
+// ("WARNING") in plaats van een pictogram. Dat is precies wat er gebeurde:
+// `wb_twilight` (het Vandaag-tabje) en `cloud_off` stonden wél in de bron maar
+// niet in de gebouwde subset — fonts.css was ouder dan de code — en
+// `inbox`/`pending_actions` (de filterchips) waren zelfs onvindbaar, want die
+// staan als derde element in een array-literal die geen van de patronen kende.
+//
+// De console-lijst als "controlemiddel" was daarmee geen controle: hij vraagt
+// dat een mens hem naleest op het moment dat hij per ongeluk niet draait. Dus
+// staat de gebruikte lijst nu in fonts/icons.txt en toetst `npm run
+// assets:check` of die nog klopt met de bron — een verouderde subset valt dan
+// door de mand in plaats van pas op het beginscherm van een telefoon.
 function usedIcons() {
   const src = ['index.html', 'app.js']
     .map((f) => readFileSync(join(HERE, f), 'utf8')).join('\n');
@@ -29,11 +38,29 @@ function usedIcons() {
   for (const m of src.matchAll(/ICON\s*=\s*\{([^}]*)\}/g)) {
     for (const v of m[1].matchAll(/'([a-z_]+)'/g)) names.add(v[1]);
   }
+  // Tuples van de vorm ['sleutel', 'Label', 'icoonnaam'] — zo staan de
+  // filterchips in het Actiecentrum erin.
+  for (const m of src.matchAll(/\[\s*'[a-z_]+'\s*,\s*'[^']*'\s*,\s*'([a-z_]+)'\s*\]/g)) names.add(m[1]);
   return [...names].sort();
 }
 
 const ICONS = usedIcons();
 console.log(`${ICONS.length} iconen: ${ICONS.join(' ')}\n`);
+
+// Alleen de lijst nakijken (npm run assets:check), zonder iets te downloaden.
+if (process.argv.includes('--check')) {
+  const listFile = join(HERE, 'fonts', 'icons.txt');
+  const built = readFileSync(listFile, 'utf8').trim().split(/\s+/).filter(Boolean);
+  const missing = ICONS.filter((n) => !built.includes(n));
+  if (missing.length) {
+    console.error(`\nfonts.css is verouderd: ${missing.length} icoon(en) uit de bron zitten `
+      + `niet in de gebouwde subset en renderen als tekst:\n  ${missing.join(' ')}\n`
+      + 'Draai `npm run assets:fonts`.');
+    process.exit(1);
+  }
+  console.log('De gebouwde subset dekt alle iconen in de bron.');
+  process.exit(0);
+}
 
 const SOURCES = [
   'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700'
@@ -60,7 +87,15 @@ function fileNameFor(url, bytes) {
 }
 
 for (const src of SOURCES) {
-  const sheet = await (await fetch(src, { headers: { 'User-Agent': UA } })).text();
+  const res = await fetch(src, { headers: { 'User-Agent': UA } });
+  // Google geeft 400 op een onbekende icoonnaam. Zonder deze stop schreven we
+  // een foutpagina weg als stylesheet en verdwenen álle iconen tegelijk.
+  if (!res.ok) {
+    console.error(`\nOphalen mislukt (HTTP ${res.status}) voor:\n  ${src}\n`
+      + 'Bij de icoon-sheet betekent dit meestal een naam die niet bestaat.');
+    process.exit(1);
+  }
+  const sheet = await res.text();
 
   for (const match of sheet.matchAll(/@font-face\s*\{[^}]*\}/g)) {
     const face = match[0];
@@ -95,4 +130,7 @@ for (const src of SOURCES) {
 }
 
 writeFileSync(join(HERE, 'fonts.css'), css);
+// Wat er écht in de subset zit, naast de subset zelf: dit is waar
+// `assets:check` de bron tegenaan houdt.
+writeFileSync(join(FONT_DIR, 'icons.txt'), `${ICONS.join('\n')}\n`);
 console.log(`\nTotaal ${(total / 1024).toFixed(0)} KB in fonts/, stylesheet in fonts.css`);

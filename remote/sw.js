@@ -7,7 +7,7 @@
  *    nemen op een gecachete inbox betekent goedkeuren wat je niet meer ziet —
  *    dan liever een eerlijke foutmelding.
  */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL = `shell-${VERSION}`;
 const ASSETS = [
   '/', '/index.html', '/app.js', '/style.css', '/tailwind.css', '/fonts.css',

@@ -1,9 +1,20 @@
 {
+  "id": "/",
   "name": "Iris Remote",
   "short_name": "Iris",
+  "description": "Beslis onderweg over wat Agent OS heeft klaargezet — publiceren, mailen en boeken blijft achter de review-gate.",
+  "lang": "nl",
+  "dir": "ltr",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#101415",
   "theme_color": "#101415",
-  "icons": []
+  "categories": ["productivity", "business"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
 }
