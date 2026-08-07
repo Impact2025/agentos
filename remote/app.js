@@ -261,13 +261,18 @@
 
   // Groep + prioriteit. Mislukte besluiten en fouten horen bovenaan, niet op
   // datum tussen 14 identieke wachtrij-kaarten.
+  // Mail heeft een eigen groep (niet 'actie'): een klaarstaand conceptantwoord
+  // was alleen te vinden door tussen de artikelen in de Wachtrij te scrollen,
+  // en de enige ingang vanaf Vandaag verdween zodra de urgent-lijst leeg was.
   const GROUP_OF = {
-    content: 'actie', mail: 'actie', personal_mail: 'actie', outreach: 'actie', calendar: 'actie',
+    content: 'actie', outreach: 'actie', calendar: 'actie',
+    mail: 'mail', personal_mail: 'mail',
     error: 'fout',
   };
   const GROUPS = [
     ['all', 'Alles', 'inbox'],
     ['fout', 'Fouten', 'error'],
+    ['mail', 'Mail', 'mail'],
     ['actie', 'Wachtrij', 'pending_actions'],
     ['info', 'Info', 'info'],
   ];
@@ -275,7 +280,9 @@
   function rankOf(it) {
     if (it.decision_status === 'failed') return 0;
     if (it.dismiss_kind === 'error') return 1;
-    if (groupOf(it) === 'actie') return it.decision_status === 'pending' ? 3 : 2;
+    // Mail telt hier als 'actie': een eigen filtergroep mag niet betekenen dat
+    // een wachtend antwoord onder de artikelen zakt.
+    if (['actie', 'mail'].includes(groupOf(it))) return it.decision_status === 'pending' ? 3 : 2;
     return 4;
   }
   let inboxFilter = 'all';
@@ -283,7 +290,7 @@
   function renderFilters() {
     const host = $('inbox-filters');
     if (!host) return;
-    const counts = { all: items.length, fout: 0, actie: 0, info: 0 };
+    const counts = { all: items.length, fout: 0, mail: 0, actie: 0, info: 0 };
     items.forEach((it) => { counts[groupOf(it)] += 1; });
     host.innerHTML = GROUPS.filter(([k]) => k === 'all' || counts[k]).map(([k, label, icon]) => {
       const on = inboxFilter === k;
@@ -1271,10 +1278,38 @@
     </div>`;
   }
 
+  // Een leeg urgent-blok is niet hetzelfde als een rustige mailbox. Urgentie
+  // én conceptantwoorden hangen allebei aan de triage; draait die niet, dan is
+  // "0 urgent" honger en geen rust. Zwijgen daarover is precies hoe 68
+  // ongetrieerde mails er als een opgeruimd postvak uitzagen (7 aug 2026).
+  function triageNote(m) {
+    const n = m.untriaged || 0;
+    if (!n) return '';
+    const blocked = m.llm_paused;
+    // Onder de 10 zonder blokkade is dit gewoon werk in uitvoering: de
+    // volgende sync trieert ze. Melden zou dan ruis zijn.
+    if (n < 10 && !blocked) return '';
+    return `<div class="rounded-lg p-3 flex items-start gap-2" style="background:${blocked ? 'rgba(255,156,146,0.10)' : 'rgba(251,191,36,0.10)'}; border:1px solid ${blocked ? 'rgba(255,156,146,0.25)' : 'rgba(251,191,36,0.25)'}">
+      <span class="material-symbols-outlined text-[16px] mt-0.5" style="color:var(--${blocked ? 'err' : 'warn'})">${blocked ? 'error' : 'schedule'}</span>
+      <div class="min-w-0">
+        <p class="font-body-md text-[12px] leading-snug" style="color:var(--${blocked ? 'err' : 'warn'})">
+          ${n} mail(s) nog niet door de triage${blocked ? ' — LLM staat op pauze (quota/budget op)' : ''}.</p>
+        <p class="font-body-md text-[11px] text-on-surface-variant/70 leading-snug mt-0.5">
+          ${blocked
+            ? 'Zolang dat zo is komt er geen urgentie-oordeel en geen conceptantwoord — een leeg "urgent" betekent hier niet "niets aan de hand".'
+            : 'Urgentie en conceptantwoorden volgen zodra ze getrieerd zijn.'}</p>
+      </div>
+    </div>`;
+  }
+
   function mailPanel(m) {
     if (!m || m.status !== 'ok') return m ? sectionOff('mail', 'Postvak', m) : '';
     const w = m.week || {};
     const old = m.oldest_open;
+    // Eén getal voor beide soorten concept (helpdesk + je eigen postvak), want
+    // op deze plek is de vraag "ligt er iets klaar om te versturen?" — welke
+    // molen het schreef is een detail voor de detailkaart, niet voor de tegel.
+    const drafts = (m.helpdesk_pending || 0) + (m.personal_drafts || 0);
     return `<div class="glass-panel rounded-xl p-4 space-y-3">
       <div class="card-head">
         <div class="card-head-icon"><span class="material-symbols-outlined">mail</span></div>
@@ -1287,8 +1322,12 @@
       <div class="grid grid-cols-3 gap-2 text-center pt-1">
         <div><p class="text-[22px] stat-num ${m.backlog >= 15 ? 'text-error' : 'text-on-surface'}">${m.backlog}</p><p class="font-body-md text-[10.5px] text-on-surface-variant mt-0.5">Open</p></div>
         <div><p class="text-[22px] stat-num text-on-surface">${w.reply_rate == null ? '–' : `${w.reply_rate}%`}</p><p class="font-body-md text-[10.5px] text-on-surface-variant mt-0.5">Beantwoord 7d</p></div>
-        <div><p class="text-[22px] stat-num ${m.helpdesk_pending ? 'text-primary' : 'text-on-surface'}">${m.helpdesk_pending}</p><p class="font-body-md text-[10.5px] text-on-surface-variant mt-0.5">Concepten</p></div>
+        <button ${drafts ? 'data-goto-mail="1"' : 'disabled'} class="rounded-lg -m-1 p-1 ${drafts ? 'hover:bg-white/5 active:scale-[0.97] transition-all' : ''}">
+          <p class="text-[22px] stat-num ${drafts ? 'text-primary' : 'text-on-surface'}">${drafts}</p>
+          <p class="font-body-md text-[10.5px] ${drafts ? 'text-primary' : 'text-on-surface-variant'} mt-0.5">Concepten${drafts ? ' ›' : ''}</p>
+        </button>
       </div>
+      ${triageNote(m)}
       ${old ? `<p class="font-body-md text-[12px] ${old.days >= 3 ? 'text-warn' : 'text-on-surface-variant'}">
         Oudste open: <span class="text-on-surface">${esc(old.from)}</span> — ${esc(old.subject)} (${old.days ?? '?'} d)</p>` : ''}
       ${(m.urgent || []).length ? `<div class="pt-2 divider-line">
@@ -1389,6 +1428,10 @@
           setTimeout(() => { btn.disabled = false; }, 1500);
         };
       });
+      const goto = el.querySelector('[data-goto-mail]');
+      if (goto) {
+        goto.onclick = () => { inboxFilter = 'mail'; show('inbox'); renderItems(); };
+      }
       el.querySelectorAll('[data-open-mail]').forEach((row) => {
         row.onclick = () => {
           const it = items.find((i) => i.dismiss_kind === 'personal_mail'

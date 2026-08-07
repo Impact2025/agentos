@@ -187,6 +187,15 @@ def build_mail() -> Dict[str, Any]:
             "GROUP BY from_email ORDER BY c DESC LIMIT 5",
             (month_ago,),
         ).fetchall()
+        # Klaarstaande conceptantwoorden op Vincents éígen mail. Stond niet in
+        # de payload, waardoor de telefoon alleen `helpdesk_pending` kon tonen
+        # onder de kop "Concepten" — twee verschillende soorten, één getal, en
+        # de nieuwe soort telde niet mee.
+        personal_drafts = conn.execute(
+            "SELECT COUNT(*) c FROM outlook_emails "
+            "WHERE folder='inbox' AND is_replied=0 AND suggested_reply_dismissed=0 "
+            "AND suggested_reply IS NOT NULL AND suggested_reply != ''"
+        ).fetchone()["c"]
 
     helpdesk = 0
     try:
@@ -194,6 +203,19 @@ def build_mail() -> Dict[str, Any]:
         helpdesk = len(mail.pending_replies())
     except Exception:  # noqa: BLE001
         logger.warning("Bridge-context: helpdesk-concepten tellen mislukt", exc_info=True)
+
+    # Triage is de motor onder zowel urgentie als conceptantwoorden: zonder een
+    # priority >= 70 selecteert `ensure_suggested_replies` niets en blijft het
+    # urgent-blok leeg. Ligt de LLM plat (quota/budget), dan is die leegte geen
+    # rust maar honger — en precies dát moet de telefoon kunnen zeggen. Zwijgen
+    # laat "43 open, 0 urgent" lezen als een opgeruimde mailbox terwijl 68 mails
+    # nooit door de triage zijn gekomen (gemeten, 7 aug 2026).
+    llm_paused = False
+    try:
+        from ...shared.outcomes import llm_budget_exceeded
+        llm_paused = llm_budget_exceeded()
+    except Exception:  # noqa: BLE001
+        logger.warning("Bridge-context: LLM-budgetstand ophalen mislukt", exc_info=True)
 
     oldest_days = None
     if oldest:
@@ -209,6 +231,8 @@ def build_mail() -> Dict[str, Any]:
         "untriaged": stats.get("untriaged", 0),
         "by_label": stats.get("by_label", {}),
         "helpdesk_pending": helpdesk,
+        "personal_drafts": personal_drafts,
+        "llm_paused": llm_paused,
         "week": {"received": week_in, "replied": week_replied,
                  "reply_rate": round(100 * week_replied / week_in) if week_in else None},
         "oldest_open": ({"subject": oldest["subject"],
