@@ -41,6 +41,11 @@ function usedIcons() {
   // Tuples van de vorm ['sleutel', 'Label', 'icoonnaam'] — zo staan de
   // filterchips in het Actiecentrum erin.
   for (const m of src.matchAll(/\[\s*'[a-z_]+'\s*,\s*'[^']*'\s*,\s*'([a-z_]+)'\s*\]/g)) names.add(m[1]);
+  // sectionOff(icoonnaam, ...) geeft het icoon als los stringargument mee, niet
+  // als `material-symbols-outlined>naam` — dat patroon hierboven matcht dan
+  // niet, en zo'n icoon rendert stil als tekst ("EVENT_BUSY") zodra een sectie
+  // uitstaat, precies de plek waar niemand tijdens de bouw op let.
+  for (const m of src.matchAll(/sectionOff\(\s*'([a-z_]+)'/g)) names.add(m[1]);
   return [...names].sort();
 }
 

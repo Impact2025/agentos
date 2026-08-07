@@ -442,6 +442,38 @@ def build_inbox() -> Dict[str, Any]:
                 ],
             })
 
+        # ── 2d. Postvak: klaarstaande conceptantwoorden op eigen urgente mail ──
+        # Ánders dan 2c (helpdesk-projectmailboxen): dit is Vincents eigen
+        # postvak, en het concept is vooraf gegenereerd door
+        # outlook.ensure_suggested_replies() (zie bridge/context.py build_mail)
+        # omdat de bridge een pull-model is — er is geen 'tik en genereer nu'.
+        for r in conn.execute(
+            "SELECT id, subject, from_name, from_email, ai_summary, suggested_reply "
+            "FROM outlook_emails "
+            "WHERE folder='inbox' AND is_replied=0 AND suggested_reply_dismissed=0 "
+            "AND suggested_reply IS NOT NULL AND suggested_reply != '' "
+            "ORDER BY priority DESC, received_at DESC"
+        ):
+            if ("personal_mail", r["id"]) in skip:
+                continue
+            items.append({
+                "kind": "personal_mail",
+                "dismiss_kind": "personal_mail",
+                "id": r["id"],
+                "title": f"Mail {r['from_name'] or r['from_email']}: {r['subject']}",
+                "project": "Postvak",
+                "created_at": None,
+                "summary": r["ai_summary"] or (r["suggested_reply"][:240]),
+                # Bewerken en versturen zijn hier bewust één stap: het concept
+                # staat editable in de detail-sheet, 'Verstuur' stuurt precies
+                # de tekst die daar op dat moment staat (zie remote/app.js) —
+                # geen apart 'Bewerk'-tussenstation zoals bij de helpdesk-flow.
+                "actions": [
+                    {"label": "Verstuur", "type": "personal_mail_send", "id": r["id"]},
+                    {"label": "Afwijzen", "type": "personal_mail_reject", "id": r["id"], "danger": True},
+                ],
+            })
+
     # Scheduler-fouten. Staan sinds de run-historie in `scheduler_runs` ook een
     # herstart door: een gefaalde job blijft in het Actiecentrum tot hij slaagt.
     try:

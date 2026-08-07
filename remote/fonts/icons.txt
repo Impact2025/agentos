@@ -1,10 +1,13 @@
 alternate_email
+analytics
 article
 assignment
 auto_awesome
+bolt
 calendar_month
 campaign
 center_focus_strong
+check
 check_circle
 check_small
 close
@@ -15,6 +18,7 @@ devices
 edit_document
 edit_note
 error
+event_busy
 expand_more
 flag
 group_add
@@ -26,6 +30,7 @@ location_on
 lock_open
 logout
 mail
+mark_email_read
 notifications
 notifications_active
 pending_actions

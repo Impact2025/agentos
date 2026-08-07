@@ -100,6 +100,26 @@ def _mail_details() -> Dict[str, Dict]:
     return out
 
 
+def _personal_mail_details() -> Dict[str, Dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, subject, from_name, from_email, suggested_reply, ai_summary "
+            "FROM outlook_emails "
+            "WHERE folder='inbox' AND is_replied=0 AND suggested_reply_dismissed=0 "
+            "AND suggested_reply IS NOT NULL AND suggested_reply != ''"
+        ).fetchall()
+    return {
+        str(r["id"]): {
+            "draft_body": r["suggested_reply"],
+            "subject": r["subject"],
+            "from_name": r["from_name"],
+            "from_addr": r["from_email"],
+            "ai_summary": r["ai_summary"],
+        }
+        for r in rows
+    }
+
+
 def _outreach_details() -> Dict[str, Dict]:
     from ..prospecting import outreach
     from ..prospecting.router import _svc as leads_svc
@@ -131,6 +151,7 @@ def collect_items() -> List[Dict[str, Any]]:
     from ..action_center import service as ac
     inbox = ac.build_inbox()
     mail_d = _mail_details()
+    personal_mail_d = _personal_mail_details()
     outreach_d = _outreach_details()
     calendar_d = _calendar_details()
 
@@ -146,6 +167,8 @@ def collect_items() -> List[Dict[str, Any]]:
                 logger.exception("Bridge: content-detail mislukt voor %s", item_id)
         elif kind == "mail":
             detail = mail_d.get(item_id)
+        elif kind == "personal_mail":
+            detail = personal_mail_d.get(item_id)
         elif kind == "outreach":
             detail = outreach_d.get(item_id)
         elif kind == "calendar":

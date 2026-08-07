@@ -223,6 +223,7 @@
   const KIND_META = {
     content: { icon: 'article', label: 'Wachtrij · Artikel' },
     mail: { icon: 'mail', label: 'Helpdesk · Mail' },
+    personal_mail: { icon: 'mark_email_read', label: 'Postvak · Concept' },
     outreach: { icon: 'alternate_email', label: 'Outreach' },
     calendar: { icon: 'calendar_month', label: 'Agenda-voorstel' },
     goal: { icon: 'flag', label: 'Doel' },
@@ -261,7 +262,7 @@
   // Groep + prioriteit. Mislukte besluiten en fouten horen bovenaan, niet op
   // datum tussen 14 identieke wachtrij-kaarten.
   const GROUP_OF = {
-    content: 'actie', mail: 'actie', outreach: 'actie', calendar: 'actie',
+    content: 'actie', mail: 'actie', personal_mail: 'actie', outreach: 'actie', calendar: 'actie',
     error: 'fout',
   };
   const GROUPS = [
@@ -392,12 +393,13 @@
   // ── Detail bottom-sheet + acties ─────────────────────────────────────────
   const ACTION_LABELS = {
     approve: { content: 'Goedkeuren & publiceren', outreach: 'Versturen', calendar: 'Goedkeuren' },
-    send: { mail: 'Versturen' },
-    reject: { content: 'Afwijzen', mail: 'Afwijzen', outreach: 'Afwijzen (→ lost)', calendar: 'Afwijzen' },
+    send: { mail: 'Versturen', personal_mail: 'Versturen' },
+    reject: { content: 'Afwijzen', mail: 'Afwijzen', personal_mail: 'Afwijzen', outreach: 'Afwijzen (→ lost)', calendar: 'Afwijzen' },
     edit: { mail: 'Bewerking opslaan' },
   };
   const ACTIONS_PER_KIND = {
     content: ['approve', 'reject'], mail: ['send', 'edit', 'reject'],
+    personal_mail: ['send', 'reject'],
     outreach: ['approve', 'reject'], calendar: ['approve', 'reject'],
   };
   const inputCls = 'w-full bg-[#020617] border-none rounded-lg p-4 text-on-surface font-body-md focus:ring-2 focus:ring-primary/50 mt-2';
@@ -417,6 +419,13 @@
           <pre class="whitespace-pre-wrap break-words bg-surface-container-lowest/50 border border-white/5 rounded-lg p-3 font-body-md text-body-md text-on-surface-variant mt-2">${esc(d.question_body || '')}</pre>
         </details>
         <p class="font-body-md text-body-md text-on-surface-variant mt-3">Antwoord aan <b class="text-on-surface">${esc(d.to_addr || '?')}</b> — bewerk gerust vóór versturen:</p>
+        <textarea id="edit-text" rows="10" class="${inputCls}">${esc(d.draft_body || '')}</textarea>`;
+    }
+    if (it.dismiss_kind === 'personal_mail') {
+      return `
+        <p class="font-body-md text-body-md text-on-surface-variant mt-2">Van <b class="text-on-surface">${esc(d.from_name || d.from_addr || '?')}</b> — ${esc(d.subject || '')}</p>
+        ${d.ai_summary ? `<p class="font-body-md text-[12px] text-on-surface-variant/70 mt-1">${esc(d.ai_summary)}</p>` : ''}
+        <p class="font-body-md text-body-md text-on-surface-variant mt-3">Iris' conceptantwoord — bewerk gerust vóór versturen:</p>
         <textarea id="edit-text" rows="10" class="${inputCls}">${esc(d.draft_body || '')}</textarea>`;
     }
     if (it.dismiss_kind === 'outreach') {
@@ -455,6 +464,9 @@
   function payloadFor(it, action) {
     const p = {};
     if (it.dismiss_kind === 'mail' && action === 'edit') { const t = $('edit-text'); if (t) p.text = t.value; }
+    if (it.dismiss_kind === 'personal_mail' && action === 'send') {
+      const t = $('edit-text'); if (t) p.text = t.value;
+    }
     if (it.dismiss_kind === 'outreach' && action === 'approve') {
       const s = $('edit-subject'); const t = $('edit-text');
       if (s) p.subject = s.value; if (t) p.body = t.value;
@@ -1157,29 +1169,42 @@
   // Een sectie die uit staat is géén sectie zonder nieuws. Dat onderscheid
   // expliciet tonen voorkomt dat een kapotte koppeling als rust leest.
   function sectionOff(icon, title, sec) {
-    return `<div class="glass-panel rounded-xl p-4 flex items-start gap-3">
-      <span class="material-symbols-outlined text-on-surface-variant/50">${icon}</span>
-      <div class="min-w-0">
-        <p class="font-headline-sm text-[15px] text-on-surface">${esc(title)}</p>
-        <p class="font-body-md text-[13px] text-on-surface-variant mt-1">${esc(sec.reason || sec.error || 'Niet beschikbaar')}</p>
-        ${sec.action_hint ? `<p class="font-body-md text-[13px] text-primary mt-1">${esc(sec.action_hint)}</p>` : ''}
+    return `<div class="glass-panel rounded-xl p-4">
+      <div class="card-head">
+        <div class="card-head-icon" style="background:rgba(255,255,255,0.05); color:var(--on-surface-variant)">
+          <span class="material-symbols-outlined">${icon}</span>
+        </div>
+        <div class="min-w-0">
+          <p class="card-head-title">${esc(title)}</p>
+          <p class="card-head-meta mt-0.5">${esc(sec.reason || sec.error || 'Niet beschikbaar')}</p>
+        </div>
       </div>
+      ${sec.action_hint ? `<p class="font-body-md text-[13px] text-primary mt-3 pl-10">${esc(sec.action_hint)}</p>` : ''}
     </div>`;
   }
 
-  const SEV = { hoog: 'text-error border-error/30', midden: 'text-warn border-warn/30', laag: 'text-on-surface-variant border-white/10' };
+  const SEV = { hoog: 'sev-hoog', midden: 'sev-midden', laag: 'sev-laag' };
 
-  function pulsePanel(pulse) {
+  function pulsePanel(pulse, excludeAreas = []) {
     if (!pulse) return '';
-    const bad = pulse.bad || [];
-    const good = pulse.good || [];
+    // Op Vandaag staan mail/agenda al concreet in hun eigen kaarten erboven —
+    // dezelfde regel daar nóg een keer in 'Vraagt aandacht'/'Gaat goed' is
+    // geen extra informatie, alleen ruis. Elders (chat-context) blijft pulse
+    // compleet — dit filtert alleen de weergave, niet de berekening.
+    const bad = (pulse.bad || []).filter((b) => !excludeAreas.includes(b.area));
+    const good = (pulse.good || []).filter((g) => !excludeAreas.includes(g.area));
     if (!bad.length && !good.length) return '';
     return `<div class="space-y-stack-sm">
       ${bad.length ? `<div class="glass-panel rounded-xl p-4">
-        <p class="font-label-caps text-label-caps text-error uppercase mb-3">Vraagt aandacht</p>
+        <div class="card-head mb-3">
+          <div class="card-head-icon" style="background:rgba(255,156,146,0.14); color:var(--err)">
+            <span class="material-symbols-outlined">priority_high</span>
+          </div>
+          <p class="card-head-title">Vraagt aandacht</p>
+        </div>
         <ul class="space-y-3">${bad.map((b) => `
           <li class="flex gap-3">
-            <span class="font-label-caps text-[10px] px-1.5 py-0.5 rounded border h-fit shrink-0 ${SEV[b.severity] || SEV.laag}">${esc((b.severity || '').toUpperCase() || b.area.toUpperCase())}</span>
+            <span class="sev-pill h-fit shrink-0 mt-0.5 ${SEV[b.severity] || SEV.laag}">${esc((b.severity || '').toUpperCase() || b.area.toUpperCase())}</span>
             <div class="min-w-0">
               <p class="font-body-md text-[13px] text-on-surface leading-snug">${esc(b.what)}</p>
               ${b.detail ? `<p class="font-body-md text-[12px] text-on-surface-variant/70 leading-snug mt-0.5 truncate">${esc(b.detail)}</p>` : ''}
@@ -1188,10 +1213,15 @@
           </li>`).join('')}</ul>
       </div>` : ''}
       ${good.length ? `<div class="glass-panel rounded-xl p-4">
-        <p class="font-label-caps text-label-caps text-primary uppercase mb-3">Gaat goed</p>
+        <div class="card-head mb-3">
+          <div class="card-head-icon" style="background:rgba(74,222,128,0.14); color:var(--ok)">
+            <span class="material-symbols-outlined">check</span>
+          </div>
+          <p class="card-head-title">Gaat goed</p>
+        </div>
         <ul class="space-y-2">${good.map((g) => `
           <li class="flex gap-2 items-start">
-            <span class="material-symbols-outlined text-[16px] text-green-400 mt-0.5">check_small</span>
+            <span class="material-symbols-outlined text-[16px] mt-0.5" style="color:var(--ok)">check_small</span>
             <p class="font-body-md text-[13px] text-on-surface-variant leading-snug">${esc(g.what)}</p>
           </li>`).join('')}</ul>
       </div>` : ''}
@@ -1201,61 +1231,74 @@
   function agendaPanel(a) {
     if (!a || a.status !== 'ok') return a ? sectionOff('event_busy', 'Agenda', a) : '';
     const ev = (e) => `<li class="flex gap-3 items-baseline ${e.declined ? 'opacity-40 line-through' : ''}">
-      <span class="font-label-caps text-[12px] text-primary w-12 shrink-0">${esc(e.time)}</span>
+      <span class="font-body-md text-[12px] text-primary stat-num w-12 shrink-0">${esc(e.time)}</span>
       <div class="min-w-0">
         <p class="font-body-md text-[13px] text-on-surface leading-snug truncate">${esc(e.summary)}</p>
         ${e.location || e.online ? `<p class="font-body-md text-[12px] text-on-surface-variant/60 truncate">${e.online ? 'online' : esc(e.location)}</p>` : ''}
+        ${(e.attendees || []).length ? `<div class="flex flex-wrap gap-1 mt-1">${e.attendees.slice(0, 4).map((att) => `
+          <span class="font-body-md text-[10.5px] text-on-surface-variant bg-white/5 rounded-full px-2 py-0.5">${esc(att.name)}</span>`).join('')}</div>` : ''}
+        ${e.watch_for ? `<p class="font-body-md text-[12px] text-warn italic mt-1 leading-snug">⚠ ${esc(e.watch_for)}</p>` : ''}
       </div>
     </li>`;
     const free = (a.free_today || []).map((g) => `${g.start}–${g.end}`).join(' · ');
     return `<div class="glass-panel rounded-xl p-4 space-y-3">
-      <div class="flex items-center justify-between">
-        <p class="font-label-caps text-label-caps text-primary uppercase">Je dag</p>
-        <span class="font-label-caps text-[11px] text-on-surface-variant">${(a.today || []).length} afspraken</span>
+      <div class="card-head">
+        <div class="card-head-icon"><span class="material-symbols-outlined">calendar_month</span></div>
+        <div class="min-w-0 flex-1">
+          <p class="card-head-title">Agenda</p>
+          <p class="card-head-meta">${(a.today || []).length} afspra${(a.today || []).length === 1 ? 'ak' : 'ken'} vandaag</p>
+        </div>
       </div>
       ${a.unreachable && a.unreachable.length ? `<p class="font-body-md text-[12px] text-error">⚠ Niet alle agenda's leesbaar (${esc(a.unreachable.map((u) => u.id).join(', '))}) — dit overzicht is mogelijk onvolledig.</p>` : ''}
-      ${a.next ? `<div class="bg-primary-container/10 border border-primary/20 rounded-lg p-3">
-        <p class="font-label-caps text-label-caps text-primary">HIERNA · ${esc(a.next.time)}</p>
+      ${a.next ? `<div class="rounded-lg p-3" style="background:rgba(142,213,255,0.07); border:1px solid rgba(142,213,255,0.18)">
+        <p class="font-body-md text-[11px] font-semibold uppercase tracking-wide text-primary">Hierna · ${esc(a.next.time)}</p>
         <p class="font-body-lg text-[15px] text-on-surface mt-1">${esc(a.next.summary)}</p>
         ${a.next.location || a.next.online ? `<p class="font-body-md text-[12px] text-on-surface-variant mt-0.5">${a.next.online ? 'online' : esc(a.next.location)}</p>` : ''}
       </div>` : ''}
       ${(a.today || []).length ? `<ul class="space-y-2">${a.today.map(ev).join('')}</ul>`
         : '<p class="font-body-md text-[13px] text-on-surface-variant">Geen afspraken vandaag.</p>'}
-      <p class="font-body-md text-[12px] text-on-surface-variant/70 pt-1 border-t border-white/5">
+      <p class="font-body-md text-[12px] text-on-surface-variant/70 pt-2 divider-line">
         ${free ? `Nog vrij: <span class="text-on-surface">${esc(free)}</span>` : 'Geen vrij blok van 45+ min meer vandaag.'}
       </p>
       ${(a.days || []).length > 1 ? `<details class="pt-1">
-        <summary class="font-label-caps text-label-caps text-on-surface-variant cursor-pointer">KOMENDE DAGEN</summary>
+        <summary class="font-body-md text-[12px] text-on-surface-variant cursor-pointer">Komende dagen</summary>
         <ul class="mt-2 space-y-1">${a.days.slice(1, 6).map((d) => `
           <li class="flex justify-between gap-3 font-body-md text-[12px]">
             <span class="text-on-surface-variant truncate">${esc(d.date)} · ${esc((d.titles || []).join(', '))}</span>
-            <span class="${d.count >= 6 ? 'text-warn' : 'text-on-surface-variant/60'} shrink-0">${d.count}</span>
+            <span class="stat-num ${d.count >= 6 ? 'text-warn' : 'text-on-surface-variant/60'} shrink-0">${d.count}</span>
           </li>`).join('')}</ul>
       </details>` : ''}
     </div>`;
   }
 
   function mailPanel(m) {
-    if (!m || m.status !== 'ok') return m ? sectionOff('mail_off', 'Mailbox', m) : '';
+    if (!m || m.status !== 'ok') return m ? sectionOff('mail', 'Postvak', m) : '';
     const w = m.week || {};
     const old = m.oldest_open;
     return `<div class="glass-panel rounded-xl p-4 space-y-3">
-      <div class="flex items-center justify-between">
-        <p class="font-label-caps text-label-caps text-primary uppercase">Mailbox</p>
-        <button class="font-label-caps text-[11px] text-primary border border-primary/30 rounded px-2 py-0.5" data-cmd="mail_sync">OPHALEN</button>
+      <div class="card-head">
+        <div class="card-head-icon"><span class="material-symbols-outlined">mail</span></div>
+        <div class="min-w-0 flex-1">
+          <p class="card-head-title">Postvak</p>
+          <p class="card-head-meta">${m.backlog} openstaand</p>
+        </div>
+        <button class="font-body-md text-[12px] font-medium text-primary rounded-lg px-2.5 py-1.5 shrink-0" style="border:1px solid rgba(142,213,255,0.3)" data-cmd="mail_sync">Ophalen</button>
       </div>
-      <div class="grid grid-cols-3 gap-2 text-center">
-        <div><p class="text-[22px] font-bold ${m.backlog >= 15 ? 'text-error' : 'text-on-surface'}">${m.backlog}</p><p class="font-label-caps text-[10px] text-on-surface-variant">OPEN</p></div>
-        <div><p class="text-[22px] font-bold text-on-surface">${w.reply_rate == null ? '–' : `${w.reply_rate}%`}</p><p class="font-label-caps text-[10px] text-on-surface-variant">BEANTWOORD 7D</p></div>
-        <div><p class="text-[22px] font-bold ${m.helpdesk_pending ? 'text-primary' : 'text-on-surface'}">${m.helpdesk_pending}</p><p class="font-label-caps text-[10px] text-on-surface-variant">CONCEPTEN</p></div>
+      <div class="grid grid-cols-3 gap-2 text-center pt-1">
+        <div><p class="text-[22px] stat-num ${m.backlog >= 15 ? 'text-error' : 'text-on-surface'}">${m.backlog}</p><p class="font-body-md text-[10.5px] text-on-surface-variant mt-0.5">Open</p></div>
+        <div><p class="text-[22px] stat-num text-on-surface">${w.reply_rate == null ? '–' : `${w.reply_rate}%`}</p><p class="font-body-md text-[10.5px] text-on-surface-variant mt-0.5">Beantwoord 7d</p></div>
+        <div><p class="text-[22px] stat-num ${m.helpdesk_pending ? 'text-primary' : 'text-on-surface'}">${m.helpdesk_pending}</p><p class="font-body-md text-[10.5px] text-on-surface-variant mt-0.5">Concepten</p></div>
       </div>
       ${old ? `<p class="font-body-md text-[12px] ${old.days >= 3 ? 'text-warn' : 'text-on-surface-variant'}">
         Oudste open: <span class="text-on-surface">${esc(old.from)}</span> — ${esc(old.subject)} (${old.days ?? '?'} d)</p>` : ''}
-      ${(m.urgent || []).length ? `<div class="pt-1 border-t border-white/5">
-        <p class="font-label-caps text-label-caps text-on-surface-variant mb-2">URGENT VOLGENS TRIAGE</p>
+      ${(m.urgent || []).length ? `<div class="pt-2 divider-line">
+        <p class="font-body-md text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant mb-2 pt-2">Urgent volgens triage</p>
         <ul class="space-y-2">${m.urgent.slice(0, 5).map((u) => `
-          <li>
-            <p class="font-body-md text-[13px] text-on-surface leading-snug truncate">${esc(u.subject || '(geen onderwerp)')}</p>
+          <li class="${u.suggested_reply ? 'cursor-pointer' : ''}" ${u.suggested_reply ? `data-open-mail="${esc(u.id)}"` : ''}>
+            <div class="flex items-center gap-2">
+              <p class="font-body-md text-[13px] text-on-surface leading-snug truncate flex-1">${esc(u.subject || '(geen onderwerp)')}</p>
+              ${u.suggested_reply ? `<span class="font-body-md text-[10px] font-semibold text-primary bg-primary/10 rounded-full px-2 py-0.5 shrink-0">Concept klaar</span>` : ''}
+            </div>
             <p class="font-body-md text-[12px] text-on-surface-variant/70 truncate">${esc(u.from_name || u.from_email)} · ${esc(u.ai_action || u.triage_label || '')}</p>
           </li>`).join('')}</ul>
       </div>` : ''}
@@ -1276,18 +1319,21 @@
   function quickPanel(ctx) {
     const sites = ((ctx.seo || {}).sites || []).map((s) => s.site_id);
     return `<div class="glass-panel rounded-xl p-4">
-      <p class="font-label-caps text-label-caps text-primary uppercase mb-3">Zet werk in gang</p>
-      <p class="font-body-md text-[12px] text-on-surface-variant/70 mb-3">Alles landt achter de review-gate — er gaat niets live zonder jouw tik.</p>
+      <div class="card-head mb-1">
+        <div class="card-head-icon"><span class="material-symbols-outlined">bolt</span></div>
+        <p class="card-head-title">Zet werk in gang</p>
+      </div>
+      <p class="font-body-md text-[12px] text-on-surface-variant/70 mb-3 pl-10">Alles landt achter de review-gate — er gaat niets live zonder jouw tik.</p>
       ${sites.length ? `<select id="quick-site" class="w-full bg-[#020617] border-none rounded-lg p-2 mb-3 text-on-surface font-body-md text-[13px]">
         ${sites.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('')}
       </select>` : ''}
       <div class="grid grid-cols-2 gap-2">
         ${QUICK.filter((q) => !q.needsSite || sites.length).map((q) => `
           <button data-cmd="${q.cmd}" ${q.needsSite ? 'data-site="1"' : ''}
-            class="text-left bg-transparent border border-white/10 rounded-lg p-3 hover:bg-white/5 active:scale-[0.98] transition-all">
+            class="quick-card text-left rounded-lg p-3">
             <span class="material-symbols-outlined text-primary text-[20px]">${q.icon}</span>
-            <p class="font-headline-sm text-[13px] text-on-surface mt-1 leading-snug">${q.label}</p>
-            <p class="font-body-md text-[11px] text-on-surface-variant/60 leading-snug">${q.hint}</p>
+            <p class="font-headline-sm text-[13px] text-on-surface mt-1.5 leading-snug">${q.label}</p>
+            <p class="font-body-md text-[11px] text-on-surface-variant/60 leading-snug mt-0.5">${q.hint}</p>
           </button>`).join('')}
       </div>
     </div>`;
@@ -1320,10 +1366,14 @@
       $('today-stamp').textContent = stamp;
       const open = items.filter((i) => !i.decision_status || i.decision_status === 'failed').length;
       $('today-sub').textContent = open ? `${open} besluit(en) wachten op je` : 'Niets wacht op je';
+      // Dit ís de dag — agenda en postvak eerst, precies zo opent een
+      // secretaresse het gesprek ook. Pulse (bredere signalen) erna, met
+      // mail/agenda eruit gefilterd want die staan al concreet hierboven.
+      // Delegeren (snel-starten) komt pas na het overzicht, niet ervoor.
       el.innerHTML = [
-        pulsePanel(ctx.pulse),
         agendaPanel(ctx.agenda),
         mailPanel(ctx.mail),
+        pulsePanel(ctx.pulse, ['mail', 'agenda']),
         quickPanel(ctx),
       ].filter(Boolean).join('');
 
@@ -1337,6 +1387,14 @@
           }
           await sendCommand(btn.dataset.cmd, payload);
           setTimeout(() => { btn.disabled = false; }, 1500);
+        };
+      });
+      el.querySelectorAll('[data-open-mail]').forEach((row) => {
+        row.onclick = () => {
+          const it = items.find((i) => i.dismiss_kind === 'personal_mail'
+            && String(i.item_id) === String(row.dataset.openMail));
+          if (it) openDetail(it);
+          else toast('Concept nog niet gesynchroniseerd — probeer zo opnieuw', '', 'schedule');
         };
       });
     } catch (e) {

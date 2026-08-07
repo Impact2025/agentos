@@ -143,7 +143,7 @@ async def get_email(email_id: str):
     local = outlook_service.get_email_db(email_id)
     if local and local.get("body_html"):
         from_email = local.get("from_email", "")
-        lead = outlook_service._find_lead_by_email(from_email) if from_email else None
+        lead = outlook_service.find_lead_by_email(from_email) if from_email else None
         return {**local, "linked_lead": lead}
 
     if not outlook_service.is_authenticated():

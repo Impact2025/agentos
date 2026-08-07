@@ -1,13 +1,15 @@
-/* Iris Remote — custom laag bovenop Tailwind (glass, glow, scrollbar, animaties). */
+/* Iris Remote — custom laag bovenop Tailwind (kaarten, scrollbar, animaties). */
 :root {
   --iris-blue: #8ed5ff;
   --iris-blue-deep: #38bdf8;
-  --surface-bg: #101415;
-  --on-surface: #e0e3e5;
-  --on-surface-variant: #bdc8d1;
+  --surface-bg: #0c0e10;
+  --surface-1: #15181b;
+  --surface-1-line: rgba(255, 255, 255, 0.07);
+  --on-surface: #edf0f2;
+  --on-surface-variant: #a7b1b9;
   --ok: #4ade80;
   --warn: #fbbf24;
-  --err: #ffb4ab;
+  --err: #ff9c92;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 * { -webkit-tap-highlight-color: transparent; }
@@ -70,23 +72,22 @@ body.sheet-open {
   overflow: hidden;
 }
 .glass-panel, .glass-card {
-  background: rgba(15, 23, 42, 0.8);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-1);
+  border: 1px solid var(--surface-1-line);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 10px 24px -14px rgba(0, 0, 0, 0.55);
 }
 .glass-panel:focus-within {
-  border-color: var(--iris-blue);
-  box-shadow: inset 0 0 10px rgba(142, 213, 255, 0.1);
+  border-color: rgba(142, 213, 255, 0.4);
 }
 .iris-glow { box-shadow: 0 0 15px rgba(142, 213, 255, 0.2); }
 .active-glow { box-shadow: 0 0 15px rgba(142, 213, 255, 0.3); }
 
 .status-dot {
-  width: 8px; height: 8px; border-radius: 50%;
+  width: 7px; height: 7px; border-radius: 50%;
   background-color: var(--iris-blue); display: inline-block;
 }
 .pulse { animation: pulse-glow 2s infinite; }
-.status-dot.offline { background-color: #ffb4ab; }
+.status-dot.offline { background-color: var(--err); }
 /* Waarschuwing bij een bevroren lijst: valt op zonder de kaarten te verdringen. */
 .stale-note {
   color: var(--warn);
@@ -326,3 +327,42 @@ details > summary::-webkit-details-marker { display: none; }
 button:focus-visible, input:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--iris-blue); outline-offset: 2px;
 }
+
+/* ── Vandaag-tab: sectiekop, stat-cijfers, ernst-badges ──────────────────
+ * Elke kaart op Vandaag (Agenda, Postvak, Vraagt aandacht, …) deelt dezelfde
+ * kop-vorm: icoon in een gekleurd vlakje + titel, zodat een sectie in één
+ * oogopslag te herkennen is zonder op de kleine mono-caps labels te vertrouwen.
+ */
+.card-head { display: flex; align-items: center; gap: 10px; }
+.card-head-icon {
+  width: 30px; height: 30px; border-radius: 9px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(142, 213, 255, 0.12); color: var(--iris-blue);
+}
+.card-head-icon .material-symbols-outlined { font-size: 18px; }
+.card-head-title { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 15px; color: var(--on-surface); }
+.card-head-meta { font-family: 'Inter', sans-serif; font-size: 12px; color: var(--on-surface-variant); }
+
+.stat-num { font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: -0.01em; }
+
+.sev-pill {
+  display: inline-flex; align-items: center; font-family: 'Inter', sans-serif;
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 9999px;
+  white-space: nowrap;
+}
+.sev-hoog   { background: rgba(255, 156, 146, 0.14); color: var(--err); }
+.sev-midden { background: rgba(251, 191, 36, 0.14);  color: var(--warn); }
+.sev-laag   { background: rgba(255, 255, 255, 0.06); color: var(--on-surface-variant); }
+
+.divider-line { border-top: 1px solid rgba(255, 255, 255, 0.06); }
+
+/* Snel-starten-kaarten: rustiger dan de rest van de app, geen glow, wél een
+   duidelijke hover/press-state zodat ze als knop lezen i.p.v. als infokaart. */
+.quick-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--surface-1-line);
+  transition: background 0.15s var(--ease), border-color 0.15s var(--ease), transform 0.12s var(--ease);
+}
+.quick-card:hover { background: rgba(255, 255, 255, 0.045); border-color: rgba(142, 213, 255, 0.28); }
+.quick-card:active { transform: scale(0.98); }
+.quick-card:disabled { opacity: 0.5; }

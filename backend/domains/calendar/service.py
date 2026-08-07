@@ -265,7 +265,15 @@ async def get_events_range(start: datetime, end: datetime) -> dict:
                 "location": ev.get("location") or "",
                 "hangout_link": ev.get("hangoutLink") or "",
                 "html_link": ev.get("htmlLink") or "",
-                "attendees": len(ev.get("attendees") or []),
+                "description": (ev.get("description") or "")[:500],
+                # Naam+e-mail i.p.v. alleen een telling: de telefoon kan zo
+                # tonen wíe er in de afspraak zit. Jezelf (self=true) telt
+                # niet mee — dat is geen "deelnemer" om op te letten.
+                "attendees": [
+                    {"name": a.get("displayName") or a.get("email") or "?",
+                     "email": (a.get("email") or "").lower()}
+                    for a in (ev.get("attendees") or []) if not a.get("self")
+                ],
                 # 'Ik heb afgezegd' is geen afspraak meer, maar Google levert
                 # hem wél mee — de telefoon moet dat kunnen zien.
                 "declined": any(

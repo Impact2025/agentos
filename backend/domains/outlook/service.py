@@ -27,6 +27,12 @@ import httpx
 
 from ...shared.config import OUTLOOK_CLIENT_ID, OUTLOOK_TENANT_ID
 from ...shared.database import get_conn
+# `agent_service.run_agent(...)` hieronder verwees naar een module die nergens
+# werd geïmporteerd — triage_single()/draft_reply() gaven dus een NameError
+# zodra iemand ze écht aanriep. Onopgemerkt gebleven omdat niets in de
+# frontend deze endpoints aanroept (zie bridge/context.py's nieuwe
+# ensure_suggested_replies, die dit pad als eerste echt gebruikt).
+from ...shared import agent_runner as agent_service
 
 log = logging.getLogger(__name__)
 
@@ -387,12 +393,12 @@ async def get_email_detail(email_id: str) -> dict:
 
     # Detect linked lead
     from_email = (data.get("from") or {}).get("emailAddress", {}).get("address", "")
-    lead = _find_lead_by_email(from_email) if from_email else None
+    lead = find_lead_by_email(from_email) if from_email else None
 
     return {**data, "body_html": body_html, "linked_lead": lead}
 
 
-def _find_lead_by_email(email: str) -> Optional[dict]:
+def find_lead_by_email(email: str) -> Optional[dict]:
     if not email:
         return None
     with get_conn() as conn:
@@ -401,6 +407,56 @@ def _find_lead_by_email(email: str) -> Optional[dict]:
             (email.lower(),),
         ).fetchone()
     return dict(row) if row else None
+
+
+def lookup_contact(email: str) -> dict:
+    """Wat weten we deterministisch (geen LLM) over dit adres — voor de
+    'waar moet je op letten'-regel bij een agenda-afspraak of urgente mail.
+
+    Drie deterministische signalen, zelfde queryidioom als build_mail() in
+    bridge/context.py (from_email/is_replied/received_at): is dit een lead
+    (en welke funnel-status), ligt er nog een onbeantwoorde mail van hen, en
+    wanneer hoorden we voor het laatst iets. Puur data — geen oordeel — zodat
+    de aanroeper (bridge/context.py) bepaalt wat de moeite van het melden waard is.
+    """
+    email = (email or "").lower().strip()
+    if not email:
+        return {"lead": None, "open_email": None, "last_heard_from": None}
+
+    lead = find_lead_by_email(email)
+
+    with get_conn() as conn:
+        open_row = conn.execute(
+            "SELECT subject, received_at FROM outlook_emails "
+            "WHERE folder='inbox' AND from_email = ? AND is_replied = 0 "
+            "ORDER BY received_at DESC LIMIT 1",
+            (email,),
+        ).fetchone()
+        last_row = conn.execute(
+            "SELECT received_at FROM outlook_emails "
+            "WHERE folder='inbox' AND from_email = ? "
+            "ORDER BY received_at DESC LIMIT 1",
+            (email,),
+        ).fetchone()
+
+    def _days_ago(iso: Optional[str]) -> Optional[int]:
+        if not iso:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+            return (datetime.now(timezone.utc) - dt).days
+        except (ValueError, TypeError):
+            return None
+
+    open_email = None
+    if open_row:
+        open_email = {"subject": open_row["subject"], "days": _days_ago(open_row["received_at"])}
+
+    return {
+        "lead": lead,
+        "open_email": open_email,
+        "last_heard_from": _days_ago(last_row["received_at"]) if last_row else None,
+    }
 
 
 async def mark_as_read(email_id: str) -> None:
@@ -454,6 +510,18 @@ async def send_new_email(to: str, subject: str, body_html: str) -> dict:
     return {"success": True}
 
 
+def text_to_html(text: str) -> str:
+    """Platte tekst (zoals een LLM-concept, `\\n\\n`-alinea's) naar minimale
+    HTML. Graph's send/reply verwacht `contentType: HTML` — zonder deze stap
+    verdwijnen alle regel- en alinea-einden in één aaneengeplakte alinea bij
+    de ontvanger, want een browser negeert kale `\\n`'s in HTML."""
+    import html as html_lib
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
+    return "".join(
+        f"<p>{html_lib.escape(p).replace(chr(10), '<br>')}</p>" for p in paragraphs
+    )
+
+
 async def send_reply(email_id: str, body_html: str) -> dict:
     """Reply to an existing email via Graph."""
     token = get_valid_token()
@@ -473,6 +541,18 @@ async def send_reply(email_id: str, body_html: str) -> dict:
         conn.execute("UPDATE outlook_emails SET is_replied = 1, is_read = 1 WHERE id = ?", (email_id,))
 
     return {"success": True}
+
+
+def dismiss_suggested_reply(email_id: str) -> None:
+    """Vincent wees het voorgestelde antwoord af — de mail blijft in Postvak/
+    Besluiten staan (urgent, onbeantwoord), maar `ensure_suggested_replies`
+    genereert er niet stilzwijgend opnieuw een; dat zou een afwijzing zonder
+    reden negeren en telkens hetzelfde concept terugbrengen."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE outlook_emails SET suggested_reply_dismissed = 1 WHERE id = ?",
+            (email_id,),
+        )
 
 
 # ── Local DB queries ──────────────────────────────────────────────────────────
@@ -634,14 +714,10 @@ async def batch_triage(limit: int = 30) -> AsyncGenerator[dict, None]:
     yield {"type": "batch_done", "total": total}
 
 
-async def draft_reply(email_id: str, instructions: str = "") -> AsyncGenerator[dict, None]:
-    """AI schrijft een concept-antwoord via SSE."""
-    email = get_email_db(email_id)
-    if not email:
-        yield {"type": "error", "message": "E-mail niet gevonden"}
-        return
-
-    # Gebruik HTML-body als beschikbaar, anders preview
+def _draft_messages(email: dict, instructions: str = "") -> List[dict]:
+    """Bouwt de promptcontext voor een conceptantwoord — gedeeld door de
+    streamende route (draft_reply, mens wacht erop) en de batchroute
+    (ensure_suggested_replies, draait vooraf zonder toeschouwer)."""
     body_raw = email.get("body_html") or email.get("body_preview") or ""
     clean_body = re.sub(r"<[^>]+>", " ", body_raw)
     clean_body = re.sub(r"\s+", " ", clean_body).strip()[:2000]
@@ -655,8 +731,81 @@ async def draft_reply(email_id: str, instructions: str = "") -> AsyncGenerator[d
     )
     if instructions:
         context += f"\n\nINSTRUCTIES VOOR HET ANTWOORD:\n{instructions}"
+    return [{"role": "user", "content": f"Schrijf een antwoord op deze e-mail:\n\n{context}"}]
 
-    messages = [{"role": "user", "content": f"Schrijf een antwoord op deze e-mail:\n\n{context}"}]
 
+async def draft_reply(email_id: str, instructions: str = "") -> AsyncGenerator[dict, None]:
+    """AI schrijft een concept-antwoord via SSE."""
+    email = get_email_db(email_id)
+    if not email:
+        yield {"type": "error", "message": "E-mail niet gevonden"}
+        return
+
+    messages = _draft_messages(email, instructions)
     async for event in agent_service.run_agent(messages, _DRAFT_SYSTEM, use_tools=False):
         yield event
+
+
+async def _generate_draft_text(email_id: str, instructions: str = "") -> Optional[str]:
+    """Niet-streamende variant voor batchgebruik (ensure_suggested_replies):
+    zelfde prompt als draft_reply(), maar geeft het volledige antwoord in één
+    keer terug in plaats van SSE-events — er is hier niemand die meekijkt."""
+    email = get_email_db(email_id)
+    if not email:
+        return None
+    messages = _draft_messages(email, instructions)
+    full_text = ""
+    async for event in agent_service.run_agent(
+        messages, _DRAFT_SYSTEM, use_tools=False, purpose="mail-suggested-reply",
+    ):
+        if event.get("type") == "text":
+            full_text += event["text"]
+    return full_text.strip() or None
+
+
+async def ensure_suggested_replies(limit: int = 3) -> int:
+    """Genereert vast een conceptantwoord voor de top-`limit` urgente mails
+    die er nog geen hebben — zodat de telefoon (bridge/context.py build_mail)
+    het al klaar kan tonen i.p.v. pas na een tik-en-wacht-3-minuten (de bridge
+    is een pull-model, er is geen synchroon 'genereer nu'-pad naar de phone).
+
+    Eenmalig per mail (WHERE suggested_reply='' AND is_replied=0): budget kost
+    geld, dus geen concept opnieuw maken voor een mail die al beantwoord is of
+    er al een heeft. Budget-/quota-bewaakt zoals elke autonome LLM-route in dit
+    systeem (content_improver, biweekly-content) — stil overslaan, geen crash,
+    geen kaart: dit is geen taak die een mens hoeft te zien mislukken, de
+    e-mail blijft gewoon zonder concept staan tot de volgende sync.
+    """
+    from ...shared.outcomes import require_llm_budget, BudgetExceeded
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id FROM outlook_emails "
+            "WHERE folder='inbox' AND is_replied=0 AND priority>=70 "
+            "AND (suggested_reply IS NULL OR suggested_reply='') "
+            "AND suggested_reply_dismissed=0 "
+            "ORDER BY priority DESC, received_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+    made = 0
+    for row in rows:
+        try:
+            require_llm_budget("mail-suggested-reply")
+        except BudgetExceeded:
+            break
+        try:
+            text = await _generate_draft_text(row["id"])
+        except Exception:  # noqa: BLE001
+            log.warning("ensure_suggested_replies: genereren mislukt voor %s", row["id"], exc_info=True)
+            continue
+        if not text:
+            continue
+        now = datetime.now(timezone.utc).isoformat()
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE outlook_emails SET suggested_reply=?, suggested_reply_at=? WHERE id=?",
+                (text, now, row["id"]),
+            )
+        made += 1
+    return made

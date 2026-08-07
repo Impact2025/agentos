@@ -21,6 +21,10 @@ export default {
         secondary: '#b9c8de', 'on-secondary': '#233143',
         'secondary-container': '#39485a', tertiary: '#c5cce6',
         error: '#ffb4ab', 'error-container': '#93000a',
+        // Nooit in de Tailwind-config gestaan — elke `text-warn` in de app
+        // (agenda-drukte, achterstallige mail) compileerde stil naar niets en
+        // erfde de gewone tekstkleur. Zelfde amber als --warn in style.css.
+        warn: '#fbbf24',
         'on-surface': '#e0e3e5', 'on-surface-variant': '#bdc8d1',
         'on-background': '#e0e3e5', outline: '#87929a', 'outline-variant': '#3e484f',
       },

@@ -136,6 +136,15 @@ def build_mail() -> Dict[str, Any]:
         return {"status": "off", "reason": "Outlook niet ingelogd (device-flow)",
                 "action_hint": "Log opnieuw in via de Mail-tab in Agent OS."}
 
+    # Concepten liggen klaar vóórdat Vincent kijkt — de bridge is een pull-model
+    # (max 1x/3 min), dus 'tik en genereer nu' bestaat niet. Kost een LLM-call
+    # per nieuwe urgente mail; de functie zelf bewaakt budget/quota en slaat
+    # stil over als die op is (geen kaart, geen crash — zie ensure_suggested_replies).
+    try:
+        asyncio.run(outlook.ensure_suggested_replies(limit=3))
+    except Exception:  # noqa: BLE001
+        logger.warning("Bridge-context: ensure_suggested_replies mislukt", exc_info=True)
+
     stats = outlook.get_stats()
     week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
@@ -165,7 +174,7 @@ def build_mail() -> Dict[str, Any]:
         # Urgent = wat de triage hoog scoorde en nog openstaat.
         urgent = conn.execute(
             "SELECT id, subject, from_name, from_email, received_at, priority, "
-            "       triage_label, ai_summary, ai_action "
+            "       triage_label, ai_summary, ai_action, suggested_reply "
             "FROM outlook_emails WHERE folder='inbox' AND is_replied=0 "
             "AND priority >= 70 AND received_at >= ? "
             "ORDER BY priority DESC, received_at DESC LIMIT 8",
@@ -261,6 +270,37 @@ def _free_gaps(events: List[Dict], day: datetime,
     return gaps
 
 
+def _watch_for(attendees: List[Dict]) -> Optional[str]:
+    """Eén deterministische 'waar moet je op letten'-regel per afspraak.
+
+    Vraagt `outlook.lookup_contact()` (puur SQL, geen LLM) per deelnemer en
+    stopt bij het eerste signaal dat de moeite van het melden waard is: een
+    liggende onbeantwoorde mail van hen weegt zwaarder dan hun leadstatus.
+    Geen signaal = None, nooit een gedwongen zin — een lege agenda-notitie is
+    eerlijker dan verzonnen context.
+    """
+    if not attendees:
+        return None
+    from ..outlook import service as outlook
+
+    for a in attendees:
+        email = a.get("email")
+        if not email:
+            continue
+        try:
+            info = outlook.lookup_contact(email)
+        except Exception:  # noqa: BLE001
+            logger.warning("Bridge-context: lookup_contact mislukt voor %s", email, exc_info=True)
+            continue
+        open_email = info.get("open_email")
+        if open_email and open_email.get("days") is not None:
+            return f"{a.get('name')}: nog geen antwoord op hun mail van {open_email['days']} dag(en) geleden"
+        lead = info.get("lead")
+        if lead and lead.get("status"):
+            return f"{a.get('name')}: lead — status {lead['status']}"
+    return None
+
+
 async def build_agenda() -> Dict[str, Any]:
     """Vandaag in detail, de week in vogelvlucht, plus waar de gaten zitten."""
     from ..calendar import service as cal
@@ -281,6 +321,7 @@ async def build_agenda() -> Dict[str, Any]:
         s = _parse_dt(ev.get("start"))
         if not s:
             continue
+        is_today = s.date().isoformat() == today_str
         row = {
             "summary": ev["summary"],
             "start": ev["start"],
@@ -289,10 +330,14 @@ async def build_agenda() -> Dict[str, Any]:
             "location": ev["location"],
             "online": bool(ev["hangout_link"]),
             "attendees": ev["attendees"],
+            # Alleen voor vandaag berekend — dit vergt per deelnemer een
+            # databasequery, en "morgen 6 afspraken" heeft geen per-afspraak
+            # detail nodig, alleen de telling hieronder.
+            "watch_for": _watch_for(ev["attendees"]) if is_today and not ev["declined"] else None,
             "declined": ev["declined"],
             "date": s.date().isoformat(),
         }
-        (today if row["date"] == today_str else upcoming).append(row)
+        (today if is_today else upcoming).append(row)
 
     # Per dag tellen — "morgen 6 afspraken" is de waarschuwing die telt.
     by_day: Dict[str, Dict[str, Any]] = {}

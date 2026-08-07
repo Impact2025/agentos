@@ -72,13 +72,15 @@
 
   <!-- Vandaag — de assistent-view: dag, mailbox, stand van zaken, snelle acties -->
   <section id="view-today" hidden class="space-y-stack-lg">
-    <div class="space-y-stack-sm">
-      <div class="flex items-center gap-2">
-        <span class="status-dot pulse"></span>
-        <span class="font-label-caps text-label-caps text-primary uppercase" id="today-sub">Je dag</span>
+    <div class="flex items-end justify-between gap-3">
+      <div class="space-y-1">
+        <h2 class="font-display-lg-mobile text-display-lg-mobile" id="today-greeting">Vandaag</h2>
+        <p class="font-body-md text-body-md text-on-surface-variant" id="today-stamp"></p>
       </div>
-      <h2 class="font-display-lg-mobile text-display-lg-mobile" id="today-greeting">Vandaag</h2>
-      <p class="font-body-md text-body-md text-on-surface-variant" id="today-stamp"></p>
+      <div class="flex items-center gap-1.5 shrink-0 pb-1.5">
+        <span class="status-dot pulse"></span>
+        <span class="font-body-md text-[12px] text-on-surface-variant" id="today-sub">Je dag</span>
+      </div>
     </div>
     <div id="today-body" class="space-y-stack-md"></div>
   </section>

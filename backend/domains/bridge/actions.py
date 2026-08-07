@@ -64,6 +64,29 @@ async def _mail_edit(item_id: str, payload: Dict) -> Tuple[bool, str]:
     return True, "Bewerking opgeslagen (blijft ter review staan)"
 
 
+async def _personal_mail_send(item_id: str, payload: Dict) -> Tuple[bool, str]:
+    """Verstuurt het (evt. bewerkte) concept via Vincents eigen postvak.
+
+    Ánders dan _mail_send (helpdesk, projectmailboxen): dit gaat via Graph als
+    Vincent zelf (send_reply, Mail.Send-scope), niet via een projectmailbox."""
+    from ..outlook import service as outlook
+    body = (payload.get("text") or "").strip()
+    if not body:
+        return False, "Geen concepttekst — versturen geweigerd"
+    try:
+        result = await outlook.send_reply(item_id, outlook.text_to_html(body))
+    except Exception as e:  # noqa: BLE001
+        return False, f"Versturen mislukt: {str(e)[:250]}"
+    return (True, "Verstuurd") if result.get("success") else (
+        False, result.get("error") or "Versturen mislukt")
+
+
+async def _personal_mail_reject(item_id: str, payload: Dict) -> Tuple[bool, str]:
+    from ..outlook import service as outlook
+    outlook.dismiss_suggested_reply(item_id)
+    return True, "Concept afgewezen"
+
+
 async def _outreach_approve(item_id: str, payload: Dict) -> Tuple[bool, str]:
     # Bewust via de routerfunctie: die bevat de volledige verzendketen
     # (adres-validatie, Outlook-check, funnel-tijdstempel, uitkomst-kaart).
@@ -227,6 +250,8 @@ _HANDLERS = {
     ("mail", "send"): _mail_send,
     ("mail", "reject"): _mail_reject,
     ("mail", "edit"): _mail_edit,
+    ("personal_mail", "send"): _personal_mail_send,
+    ("personal_mail", "reject"): _personal_mail_reject,
     ("outreach", "approve"): _outreach_approve,
     ("outreach", "reject"): _outreach_reject,
     ("calendar", "approve"): _calendar_approve,
@@ -237,7 +262,7 @@ _HANDLERS = {
 # hoorde er vanaf het begin bij te staan (build_inbox produceert die kaarten)
 # maar ontbrak — een scheduler-fout was daardoor het enige item op de telefoon
 # waarvan zelfs 'Wegklikken' een fout gaf.
-_DISMISSABLE = {"content", "mail", "outreach", "calendar", "goal", "task",
+_DISMISSABLE = {"content", "mail", "personal_mail", "outreach", "calendar", "goal", "task",
                 "error", "vacancies", "leads", "linkbuilding", "scheduler"}
 
 

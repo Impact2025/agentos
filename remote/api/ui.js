@@ -19,6 +19,7 @@ import {
 const ALLOWED = {
   content: ['approve', 'reject', 'dismiss'],
   mail: ['send', 'edit', 'reject', 'dismiss'],
+  personal_mail: ['send', 'reject', 'dismiss'],
   outreach: ['approve', 'reject', 'dismiss'],
   calendar: ['approve', 'reject', 'dismiss'],
   goal: ['dismiss'], task: ['dismiss'], error: ['dismiss'],

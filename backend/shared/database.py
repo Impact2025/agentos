@@ -575,6 +575,12 @@ def _migrate(conn) -> None:
             ("to_email",    "ALTER TABLE outlook_emails ADD COLUMN to_email TEXT DEFAULT ''"),
             ("is_replied",  "ALTER TABLE outlook_emails ADD COLUMN is_replied INTEGER DEFAULT 0"),
             ("reply_hint",  "ALTER TABLE outlook_emails ADD COLUMN reply_hint TEXT DEFAULT ''"),
+            # Vooraf gegenereerd conceptantwoord voor de top-urgente mails
+            # (bridge/context.py, ensure_suggested_replies) — eenmalig gezet,
+            # niet opnieuw gegenereerd zolang de mail als urgent geldt.
+            ("suggested_reply",           "ALTER TABLE outlook_emails ADD COLUMN suggested_reply TEXT DEFAULT ''"),
+            ("suggested_reply_at",        "ALTER TABLE outlook_emails ADD COLUMN suggested_reply_at TEXT DEFAULT ''"),
+            ("suggested_reply_dismissed", "ALTER TABLE outlook_emails ADD COLUMN suggested_reply_dismissed INTEGER DEFAULT 0"),
         ):
             if col not in oe_cols:
                 conn.execute(ddl)
