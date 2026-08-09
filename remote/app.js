@@ -1235,9 +1235,30 @@
     </div>`;
   }
 
-  function agendaPanel(a) {
-    if (!a || a.status !== 'ok') return a ? sectionOff('event_busy', 'Agenda', a) : '';
-    const ev = (e) => `<li class="flex gap-3 items-baseline ${e.declined ? 'opacity-40 line-through' : ''}">
+  // Generieke variant van het detail-sheet voor volledige overzichten (Postvak,
+  // Agenda) die geen item uit `items` zijn en dus geen goedkeuren/afwijzen-rij
+  // nodig hebben — alleen een titel, sluitknop en inhoud. Retourneert de kaart
+  // zodat de aanroeper er zelf click-handlers op kan binden.
+  function openSheet(eyebrow, title, bodyHtml) {
+    $('detail-card').innerHTML = `
+      <div class="sheet-grabber" aria-hidden="true"></div>
+      <div class="flex justify-between items-start gap-3">
+        <div>
+          <p class="font-label-caps text-label-caps text-primary uppercase mb-1">${esc(eyebrow)}</p>
+          <h2 id="detail-title" class="font-headline-sm text-headline-sm">${esc(title)}</h2>
+        </div>
+        <button id="detail-close" class="tap-target text-on-surface-variant hover:text-primary shrink-0" aria-label="Sluiten">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="mt-3 space-y-3">${bodyHtml}</div>`;
+    showDetail();
+    $('detail-close').onclick = closeDetail;
+    return $('detail-card');
+  }
+
+  function agendaEventRow(e) {
+    return `<li class="flex gap-3 items-baseline ${e.declined ? 'opacity-40 line-through' : ''}">
       <span class="font-body-md text-[12px] text-primary stat-num w-12 shrink-0">${esc(e.time)}</span>
       <div class="min-w-0">
         <p class="font-body-md text-[13px] text-on-surface leading-snug truncate">${esc(e.summary)}</p>
@@ -1247,35 +1268,57 @@
         ${e.watch_for ? `<p class="font-body-md text-[12px] text-warn italic mt-1 leading-snug">⚠ ${esc(e.watch_for)}</p>` : ''}
       </div>
     </li>`;
+  }
+
+  // Gedeeld door de compacte kaart op Vandaag (daysLimit 6, ingeklapt) en het
+  // volledige Agenda-scherm dat opent zodra je de kaart tikt (daysLimit 14,
+  // altijd open) — twee weergaven van dezelfde waarheid, niet twee sjablonen.
+  function agendaBodyHtml(a, { daysLimit = 6, collapseDays = true } = {}) {
     const free = (a.free_today || []).map((g) => `${g.start}–${g.end}`).join(' · ');
-    return `<div class="glass-panel rounded-xl p-4 space-y-3">
-      <div class="card-head">
-        <div class="card-head-icon"><span class="material-symbols-outlined">calendar_month</span></div>
-        <div class="min-w-0 flex-1">
-          <p class="card-head-title">Agenda</p>
-          <p class="card-head-meta">${(a.today || []).length} afspra${(a.today || []).length === 1 ? 'ak' : 'ken'} vandaag</p>
-        </div>
-      </div>
+    const daysList = `<ul class="${collapseDays ? 'mt-2' : ''} space-y-1.5">${a.days.slice(1, daysLimit).map((d) => `
+          <li class="flex justify-between gap-3 font-body-md text-[12px]">
+            <span class="text-on-surface-variant truncate">${esc(d.date)} · ${esc((d.titles || []).join(', '))}</span>
+            <span class="stat-num ${d.count >= 6 ? 'text-warn' : 'text-on-surface-variant/60'} shrink-0">${d.count}</span>
+          </li>`).join('')}</ul>`;
+    return `
       ${a.unreachable && a.unreachable.length ? `<p class="font-body-md text-[12px] text-error">⚠ Niet alle agenda's leesbaar (${esc(a.unreachable.map((u) => u.id).join(', '))}) — dit overzicht is mogelijk onvolledig.</p>` : ''}
       ${a.next ? `<div class="rounded-lg p-3" style="background:rgba(142,213,255,0.07); border:1px solid rgba(142,213,255,0.18)">
         <p class="font-body-md text-[11px] font-semibold uppercase tracking-wide text-primary">Hierna · ${esc(a.next.time)}</p>
         <p class="font-body-lg text-[15px] text-on-surface mt-1">${esc(a.next.summary)}</p>
         ${a.next.location || a.next.online ? `<p class="font-body-md text-[12px] text-on-surface-variant mt-0.5">${a.next.online ? 'online' : esc(a.next.location)}</p>` : ''}
       </div>` : ''}
-      ${(a.today || []).length ? `<ul class="space-y-2">${a.today.map(ev).join('')}</ul>`
+      ${(a.today || []).length ? `<ul class="space-y-2">${a.today.map(agendaEventRow).join('')}</ul>`
         : '<p class="font-body-md text-[13px] text-on-surface-variant">Geen afspraken vandaag.</p>'}
       <p class="font-body-md text-[12px] text-on-surface-variant/70 pt-2 divider-line">
         ${free ? `Nog vrij: <span class="text-on-surface">${esc(free)}</span>` : 'Geen vrij blok van 45+ min meer vandaag.'}
       </p>
-      ${(a.days || []).length > 1 ? `<details class="pt-1">
-        <summary class="font-body-md text-[12px] text-on-surface-variant cursor-pointer">Komende dagen</summary>
-        <ul class="mt-2 space-y-1">${a.days.slice(1, 6).map((d) => `
-          <li class="flex justify-between gap-3 font-body-md text-[12px]">
-            <span class="text-on-surface-variant truncate">${esc(d.date)} · ${esc((d.titles || []).join(', '))}</span>
-            <span class="stat-num ${d.count >= 6 ? 'text-warn' : 'text-on-surface-variant/60'} shrink-0">${d.count}</span>
-          </li>`).join('')}</ul>
-      </details>` : ''}
+      ${(a.days || []).length > 1
+        ? (collapseDays
+          ? `<details class="pt-1"><summary class="font-body-md text-[12px] text-on-surface-variant cursor-pointer">Komende dagen</summary>${daysList}</details>`
+          : `<div class="pt-1"><p class="font-body-md text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant mb-2">Komende dagen</p>${daysList}</div>`)
+        : ''}`;
+  }
+
+  function agendaPanel(a) {
+    if (!a || a.status !== 'ok') return a ? sectionOff('event_busy', 'Agenda', a) : '';
+    return `<div class="glass-panel rounded-xl p-4 space-y-3">
+      <button class="card-head card-head-btn" data-open-agenda-sheet="1">
+        <div class="card-head-icon"><span class="material-symbols-outlined">calendar_month</span></div>
+        <div class="min-w-0 flex-1">
+          <p class="card-head-title">Agenda</p>
+          <p class="card-head-meta">${(a.today || []).length} afspra${(a.today || []).length === 1 ? 'ak' : 'ken'} vandaag</p>
+        </div>
+        <span class="material-symbols-outlined text-on-surface-variant/50 text-[20px] shrink-0">chevron_right</span>
+      </button>
+      ${agendaBodyHtml(a, { daysLimit: 6, collapseDays: true })}
     </div>`;
+  }
+
+  function openAgendaSheet() {
+    const a = contextCache && contextCache.agenda;
+    if (!a || a.status !== 'ok') { toast('Agenda nog niet beschikbaar', '', 'schedule'); return; }
+    openSheet('Agenda', `${(a.today || []).length} afspra${(a.today || []).length === 1 ? 'ak' : 'ken'} vandaag`,
+      agendaBodyHtml(a, { daysLimit: 14, collapseDays: false }));
   }
 
   // Een leeg urgent-blok is niet hetzelfde als een rustige mailbox. Urgentie
@@ -1302,23 +1345,16 @@
     </div>`;
   }
 
-  function mailPanel(m) {
-    if (!m || m.status !== 'ok') return m ? sectionOff('mail', 'Postvak', m) : '';
+  // Gedeeld door de compacte kaart op Vandaag en het volledige Postvak-scherm
+  // dat opent zodra je de kaart tikt.
+  function mailBodyHtml(m) {
     const w = m.week || {};
     const old = m.oldest_open;
     // Eén getal voor beide soorten concept (helpdesk + je eigen postvak), want
     // op deze plek is de vraag "ligt er iets klaar om te versturen?" — welke
     // molen het schreef is een detail voor de detailkaart, niet voor de tegel.
     const drafts = (m.helpdesk_pending || 0) + (m.personal_drafts || 0);
-    return `<div class="glass-panel rounded-xl p-4 space-y-3">
-      <div class="card-head">
-        <div class="card-head-icon"><span class="material-symbols-outlined">mail</span></div>
-        <div class="min-w-0 flex-1">
-          <p class="card-head-title">Postvak</p>
-          <p class="card-head-meta">${m.backlog} openstaand</p>
-        </div>
-        <button class="font-body-md text-[12px] font-medium text-primary rounded-lg px-2.5 py-1.5 shrink-0" style="border:1px solid rgba(142,213,255,0.3)" data-cmd="mail_sync">Ophalen</button>
-      </div>
+    return `
       <div class="grid grid-cols-3 gap-2 text-center pt-1">
         <div><p class="text-[22px] stat-num ${m.backlog >= 15 ? 'text-error' : 'text-on-surface'}">${m.backlog}</p><p class="font-body-md text-[10.5px] text-on-surface-variant mt-0.5">Open</p></div>
         <div><p class="text-[22px] stat-num text-on-surface">${w.reply_rate == null ? '–' : `${w.reply_rate}%`}</p><p class="font-body-md text-[10.5px] text-on-surface-variant mt-0.5">Beantwoord 7d</p></div>
@@ -1330,8 +1366,39 @@
       ${triageNote(m)}
       ${old ? `<p class="font-body-md text-[12px] ${old.days >= 3 ? 'text-warn' : 'text-on-surface-variant'}">
         Oudste open: <span class="text-on-surface">${esc(old.from)}</span> — ${esc(old.subject)} (${old.days ?? '?'} d)</p>` : ''}
-      ${sortedInboxBlock(m.sorted)}
+      ${sortedInboxBlock(m.sorted)}`;
+  }
+
+  function mailPanel(m) {
+    if (!m || m.status !== 'ok') return m ? sectionOff('mail', 'Postvak', m) : '';
+    return `<div class="glass-panel rounded-xl p-4 space-y-3">
+      <div class="card-head">
+        <button class="card-head card-head-btn flex-1 min-w-0" data-open-mail-sheet="1">
+          <div class="card-head-icon"><span class="material-symbols-outlined">mail</span></div>
+          <div class="min-w-0 flex-1">
+            <p class="card-head-title">Postvak</p>
+            <p class="card-head-meta">${m.backlog} openstaand</p>
+          </div>
+          <span class="material-symbols-outlined text-on-surface-variant/50 text-[20px] shrink-0">chevron_right</span>
+        </button>
+        <button class="font-body-md text-[12px] font-medium text-primary rounded-lg px-2.5 py-1.5 shrink-0" style="border:1px solid rgba(142,213,255,0.3)" data-cmd="mail_sync">Ophalen</button>
+      </div>
+      ${mailBodyHtml(m)}
     </div>`;
+  }
+
+  function openMailSheet() {
+    const m = contextCache && contextCache.mail;
+    if (!m || m.status !== 'ok') { toast('Postvak nog niet beschikbaar', '', 'schedule'); return; }
+    const card = openSheet('Postvak', `${m.backlog ?? 0} openstaand`, mailBodyHtml(m));
+    card.querySelectorAll('[data-open-mail]').forEach((row) => {
+      row.onclick = () => {
+        const it = items.find((i) => i.dismiss_kind === 'personal_mail'
+          && String(i.item_id) === String(row.dataset.openMail));
+        if (it) { closeDetail(); setTimeout(() => openDetail(it), 300); }
+        else toast('Concept nog niet gesynchroniseerd — probeer zo opnieuw', '', 'schedule');
+      };
+    });
   }
 
   // Kai-stijl groepering: dezelfde triage (urgent/actie/wacht/info) als het
@@ -1458,6 +1525,10 @@
       if (goto) {
         goto.onclick = () => { inboxFilter = 'mail'; show('inbox'); renderItems(); };
       }
+      const mailSheetBtn = el.querySelector('[data-open-mail-sheet]');
+      if (mailSheetBtn) mailSheetBtn.onclick = () => openMailSheet();
+      const agendaSheetBtn = el.querySelector('[data-open-agenda-sheet]');
+      if (agendaSheetBtn) agendaSheetBtn.onclick = () => openAgendaSheet();
       el.querySelectorAll('[data-open-mail]').forEach((row) => {
         row.onclick = () => {
           const it = items.find((i) => i.dismiss_kind === 'personal_mail'
@@ -1567,8 +1638,8 @@
     const el = $('chat-messages');
     chatHistory.forEach((m, i) => { m.idx = i; });
     el.innerHTML = chatHistory.map((m) => m.role === 'user'
-      ? `<div class="flex justify-end fade-up"><div class="bg-primary/15 border border-primary/20 rounded-xl rounded-br-sm px-3 py-2 max-w-[85%] font-body-md text-body-md">${esc(m.content)}</div></div>`
-      : `<div class="flex justify-start fade-up"><div class="bg-surface-container-lowest/60 border border-white/5 rounded-xl rounded-bl-sm px-3 py-2 max-w-[85%] font-body-md text-body-md text-on-surface-variant">${mdLite(m.content)}${effectsHtml(m)}</div></div>`).join('')
+      ? `<div class="flex justify-end fade-up"><div class="chat-msg me">${esc(m.content)}</div></div>`
+      : `<div class="flex justify-start fade-up"><div class="chat-msg iris">${mdLite(m.content)}${effectsHtml(m)}</div></div>`).join('')
       + (pending ? '<div class="flex justify-start"><div class="px-3 py-2 text-primary font-label-caps text-label-caps animate-pulse">IRIS DENKT NA…</div></div>' : '');
     el.querySelectorAll('[data-prop]').forEach((btn) => {
       btn.onclick = async () => {

@@ -9,6 +9,7 @@ center_focus_strong
 check
 check_circle
 check_small
+chevron_right
 close
 cloud_off
 cloud_upload

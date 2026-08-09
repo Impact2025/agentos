@@ -37,6 +37,12 @@ body {
   padding-top: env(safe-area-inset-top, 0px);
   padding-left: max(20px, env(safe-area-inset-left, 0px));
   padding-right: max(20px, env(safe-area-inset-right, 0px));
+  box-shadow: 0 1px 0 rgba(255,255,255,0.05), 0 12px 24px -16px rgba(0,0,0,0.55);
+}
+#topbar .material-symbols-outlined.text-primary {
+  background: rgba(142, 213, 255, 0.12);
+  border-radius: 8px;
+  padding: 4px;
 }
 #main {
   padding-top: calc(96px + env(safe-area-inset-top, 0px));
@@ -71,18 +77,23 @@ body.sheet-open {
   width: 100%;
   overflow: hidden;
 }
-/* Vlak in plaats van "glas": één dunne lijn, geen gloed, geen inset-highlight.
-   Zoveel identieke kaarten kregen vroeger allemaal dezelfde schaduw+gloed —
-   dat maakt een pagina drukker, niet rijker. Rust komt van herhaling zonder
-   decoratie, niet van decoratie die zich herhaalt. */
+/* Elke kaart deelt dezelfde vorm, maar een vlak oppervlak zonder enige diepte
+   las als een lijst in een spreadsheet, niet als een app. Een zeer lichte
+   verticale gradient + een zachte schaduw geven de kaart een rand met de
+   achtergrond zonder er "glazig" over te doen — het effect moet je voelen,
+   niet zien flitsen. */
 .glass-panel, .glass-card {
-  background: var(--surface-1);
+  background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0) 40%), var(--surface-1);
   border: 1px solid var(--surface-1-line);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset, 0 8px 20px -12px rgba(0,0,0,0.45);
 }
 .glass-panel:focus-within {
   border-color: rgba(142, 213, 255, 0.35);
 }
-.iris-glow, .active-glow { box-shadow: none; }
+/* Primaire call-to-action-knoppen mogen wél een klein beetje gloeien — dat is
+   het enige gloed-gebruik in de app, gereserveerd voor "dit is de belangrijke
+   knop", niet uitgesmeerd over elke kaart. */
+.iris-glow, .active-glow { box-shadow: 0 4px 16px -4px rgba(142, 213, 255, 0.35); }
 
 .status-dot {
   width: 6px; height: 6px; border-radius: 50%;
@@ -230,15 +241,17 @@ body.sheet-open {
 /* ── Sync-status pill (header-left) ────────────────────────────────────── */
 #sync-pill {
   display: inline-flex; align-items: center; gap: 6px;
-  font-family: 'JetBrains Mono', monospace; font-size: 11px;
-  padding: 3px 9px; border-radius: 9999px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px; font-weight: 500;
+  padding: 4px 10px 4px 8px; border-radius: 9999px;
   color: var(--on-surface-variant);
-  transition: color 0.3s;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: color 0.3s, background 0.3s, border-color 0.3s;
 }
-#sync-pill.fresh { color: var(--ok); }
+#sync-pill.fresh { color: var(--ok); background: rgba(74, 222, 128, 0.09); border-color: rgba(74, 222, 128, 0.18); }
 #sync-pill.recent { color: var(--on-surface-variant); }
-#sync-pill.stale { color: var(--warn); }
-#sync-pill.dead { color: var(--err); }
+#sync-pill.stale { color: var(--warn); background: rgba(251, 191, 36, 0.09); border-color: rgba(251, 191, 36, 0.18); }
+#sync-pill.dead { color: var(--err); background: rgba(255, 156, 146, 0.09); border-color: rgba(255, 156, 146, 0.18); }
 #sync-pill .dot { width:6px; height:6px; border-radius:50%; background: currentColor; }
 #sync-pill.stale .dot, #sync-pill.dead .dot { animation: blink 1.4s infinite; }
 @keyframes blink { 50% { opacity: 0.25; } }
@@ -270,18 +283,20 @@ body.sheet-open {
 .no-scrollbar { scrollbar-width: none; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 12px; border-radius: 9999px;
+  padding: 7px 13px; border-radius: 9999px;
   border: 1px solid var(--surface-1-line);
-  background: transparent;
+  background: rgba(255, 255, 255, 0.02);
   color: var(--on-surface-variant);
   font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500;
-  transition: color 0.2s, border-color 0.2s, background 0.2s;
+  transition: color 0.2s, border-color 0.2s, background 0.2s, transform 0.12s var(--ease);
 }
 .chip:hover { color: var(--on-surface); border-color: rgba(255, 255, 255, 0.2); }
+.chip:active { transform: scale(0.96); }
 .chip-on {
   color: var(--iris-blue);
-  border-color: rgba(142, 213, 255, 0.35);
-  background: rgba(142, 213, 255, 0.08);
+  border-color: rgba(142, 213, 255, 0.4);
+  background: rgba(142, 213, 255, 0.1);
+  box-shadow: 0 2px 10px -4px rgba(142, 213, 255, 0.3);
 }
 .chip-count {
   font-family: 'JetBrains Mono', monospace; font-size: 11px;
@@ -336,20 +351,52 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
  * kop-vorm: icoon in een gekleurd vlakje + titel, zodat een sectie in één
  * oogopslag te herkennen is zonder op de kleine mono-caps labels te vertrouwen.
  */
-.card-head { display: flex; align-items: center; gap: 10px; }
-/* Vroeger een gekleurd rondje per sectie (mail=blauw, waarschuwing=amber, …) —
-   dat is tien kleurvlakken op één scherm. De kleurcodering blijft (JS zet
-   `color` inline), maar het vlak eromheen niet: alleen het icoon spreekt nu. */
+.card-head { display: flex; align-items: center; gap: 12px; }
+/* Een rondje per sectie in tien losse kleuren was druk; helemaal geen vlak
+   was te vlak — zonder anker las elke kop hetzelfde en verdween de app in
+   een muur van grijze tekst. Het compromis: één rustige, getinte badge als
+   basis (dezelfde vorm overal, dus geen regenboog), en JS' eigen inline
+   `background`/`color` — voor de écht semantische gevallen (rood = vraagt
+   aandacht, groen = gaat goed) — mag daar gewoon overheen. Vroeger stond hier
+   `!important`, wat die inline kleuren juist blokkeerde: de urgente en
+   goedgekeurde kaarten kregen daardoor allebei hetzelfde neutrale blauw. */
 .card-head-icon {
-  width: 30px; height: 30px; flex: none;
+  width: 34px; height: 34px; flex: none;
   display: flex; align-items: center; justify-content: center;
-  background: transparent !important; color: var(--iris-blue);
+  border-radius: 10px;
+  background: rgba(142, 213, 255, 0.10);
+  color: var(--iris-blue);
 }
-.card-head-icon .material-symbols-outlined { font-size: 20px; }
-.card-head-title { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 15px; color: var(--on-surface); }
+.card-head-icon .material-symbols-outlined { font-size: 19px; }
+.card-head-title { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 15.5px; color: var(--on-surface); letter-spacing: -0.005em; }
 .card-head-meta { font-family: 'Inter', sans-serif; font-size: 12px; color: var(--on-surface-variant); }
 
-.stat-num { font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: -0.01em; }
+/* Een sectiekop die naar een eigen scherm leidt (Postvak, Agenda) moet zich
+   als knop gedragen, niet als een <div> die toevallig een pijltje heeft. */
+.card-head-btn {
+  background: transparent; border: 0; padding: 0; width: 100%; text-align: left;
+  cursor: pointer; transition: opacity 0.15s var(--ease);
+}
+.card-head-btn:hover { opacity: 0.85; }
+.card-head-btn:active { opacity: 0.7; }
+
+.stat-num { font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: -0.02em; }
+
+/* ── Vandaag-hero: begroeting + besluit-telling ────────────────────────────
+ * Was twee losse regels platte tekst — visueel niet te onderscheiden van elke
+ * andere paragraaf op het scherm, terwijl dit de eerste zin is die iemand
+ * leest. Een dunne accentbalk + een chip voor het aantal geven het de
+ * aandacht van een openingszin in plaats van een logregel. */
+#today-greeting { position: relative; padding-left: 14px; }
+#today-greeting::before {
+  content: ''; position: absolute; left: 0; top: 4px; bottom: 4px; width: 3px;
+  border-radius: 9999px;
+  background: linear-gradient(180deg, var(--iris-blue), rgba(142,213,255,0.15));
+}
+#today-sub {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding-left: 14px;
+}
 
 .sev-pill {
   display: inline-flex; align-items: center; font-family: 'Inter', sans-serif;
@@ -367,8 +414,77 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .quick-card {
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--surface-1-line);
-  transition: background 0.15s var(--ease), border-color 0.15s var(--ease), transform 0.12s var(--ease);
+  border-radius: 0.75rem;
+  transition: background 0.15s var(--ease), border-color 0.15s var(--ease), transform 0.12s var(--ease), box-shadow 0.15s var(--ease);
 }
-.quick-card:hover { background: rgba(255, 255, 255, 0.045); border-color: rgba(142, 213, 255, 0.28); }
+.quick-card:hover {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: rgba(142, 213, 255, 0.28);
+  box-shadow: 0 6px 16px -8px rgba(142, 213, 255, 0.25);
+}
 .quick-card:active { transform: scale(0.98); }
 .quick-card:disabled { opacity: 0.5; }
+
+/* ── Bottom-nav: actieve tab meer body dan een kleurwissel ─────────────────
+ * `.nav-active` gaf alleen de tekstkleur en een platte tint mee, waardoor de
+ * balk oogde als vijf gelijke knoppen met één toevallig blauwer label. */
+#bottomnav { padding-top: 10px; }
+.nav-btn {
+  padding: 6px 4px;
+  border-radius: 12px;
+  transition: color 0.2s, background 0.2s, transform 0.15s var(--ease);
+}
+.nav-btn.nav-active {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px -6px rgba(142, 213, 255, 0.4);
+}
+.nav-btn .material-symbols-outlined { font-size: 22px; }
+.nav-btn .font-label-caps { font-weight: 600; }
+
+/* ── Chat-panel (Vandaag) ──────────────────────────────────────────────── */
+.chat-panel {
+  border-color: rgba(142, 213, 255, 0.14);
+  background: linear-gradient(180deg, rgba(142,213,255,0.05), rgba(255,255,255,0) 50%), var(--surface-1);
+}
+.chat-panel #chat-messages:empty { display: none; }
+
+/* ── Chat-composer (Vandaag) ────────────────────────────────────────────── */
+.chat-composer {
+  background: rgba(2, 6, 23, 0.6);
+  border: 1px solid var(--surface-1-line);
+  border-radius: 9999px;
+  padding: 5px 5px 5px 16px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.chat-composer:focus-within {
+  border-color: rgba(142, 213, 255, 0.4);
+  box-shadow: 0 0 0 3px rgba(142, 213, 255, 0.12);
+}
+.chat-composer input {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: var(--on-surface); font-family: 'Inter', sans-serif; font-size: 14px;
+  padding: 8px 0;
+}
+.chat-composer input::placeholder { color: rgba(167, 177, 185, 0.45); }
+.chat-composer button {
+  width: 38px; height: 38px; flex: none; border-radius: 9999px;
+  background: var(--iris-blue); color: #00354a;
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity 0.15s, transform 0.12s var(--ease);
+}
+.chat-composer button:hover { opacity: 0.9; }
+.chat-composer button:active { transform: scale(0.92); }
+.chat-composer button:disabled { opacity: 0.4; }
+.chat-composer .material-symbols-outlined { font-size: 19px; }
+
+/* Chatbubbels: Iris links (neutraal), jij rechts (accent) — zonder dit oogde
+   het gesprek als een lijst identieke paragrafen zonder afzender. */
+.chat-msg { max-width: 88%; padding: 9px 13px; border-radius: 14px; font-size: 13.5px; line-height: 1.5; }
+.chat-msg.me {
+  margin-left: auto; background: rgba(142, 213, 255, 0.14); color: var(--on-surface);
+  border-bottom-right-radius: 4px;
+}
+.chat-msg.iris {
+  background: rgba(255, 255, 255, 0.04); color: var(--on-surface-variant);
+  border-bottom-left-radius: 4px;
+}

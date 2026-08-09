@@ -75,20 +75,24 @@
     </div>
 
     <!-- Cloud-Iris chat -->
-    <div class="glass-panel rounded-xl p-4 flex flex-col gap-3">
+    <div class="glass-panel rounded-xl p-4 flex flex-col gap-3 chat-panel">
+      <div class="card-head">
+        <div class="card-head-icon"><span class="material-symbols-outlined">auto_awesome</span></div>
+        <div class="min-w-0 flex-1">
+          <p class="card-head-title">Vraag het Iris</p>
+          <p class="card-head-meta">Publiceren, mailen en boeken blijft jouw tik</p>
+        </div>
+      </div>
       <div id="chat-messages" class="space-y-3 max-h-[45dvh] overflow-y-auto custom-scrollbar"></div>
-      <form id="chat-form" class="flex gap-2">
-        <input id="chat-input" placeholder="Vraag me iets, of zeg wat ik moet doen…" autocomplete="off"
-          class="flex-1 bg-[#020617] border-none rounded-lg p-3 text-on-surface font-body-md focus:ring-2 focus:ring-primary/50 placeholder:text-on-surface-variant/40"/>
-        <button type="submit" id="chat-send"
-          class="bg-primary text-on-primary px-4 rounded-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all">
+      <form id="chat-form" class="flex gap-2 items-center chat-composer">
+        <input id="chat-input" placeholder="Vraag me iets, of zeg wat ik moet doen…" autocomplete="off"/>
+        <button type="submit" id="chat-send" aria-label="Versturen">
           <span class="material-symbols-outlined">send</span>
         </button>
       </form>
-      <p class="font-body-md text-[11px] text-on-surface-variant/60">Ik mag werk starten, maar publiceren, mailen en boeken blijft jouw tik.</p>
     </div>
 
-    <p class="font-body-md text-body-md text-on-surface-variant" id="today-stamp"></p>
+    <p class="font-label-caps text-[10px] text-on-surface-variant/50 uppercase tracking-wide" id="today-stamp"></p>
     <div id="today-body" class="space-y-stack-md"></div>
   </section>
 
