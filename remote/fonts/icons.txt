@@ -1,7 +1,6 @@
 alternate_email
 analytics
 article
-assignment
 auto_awesome
 bolt
 calendar_month
@@ -13,7 +12,6 @@ check_small
 close
 cloud_off
 cloud_upload
-database
 devices
 edit_document
 edit_note
@@ -21,10 +19,12 @@ error
 event_busy
 expand_more
 flag
+fyi
 group_add
 hub
 inbox
 info
+insights
 link
 location_on
 lock_open

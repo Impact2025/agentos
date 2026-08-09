@@ -1330,17 +1330,43 @@
       ${triageNote(m)}
       ${old ? `<p class="font-body-md text-[12px] ${old.days >= 3 ? 'text-warn' : 'text-on-surface-variant'}">
         Oudste open: <span class="text-on-surface">${esc(old.from)}</span> — ${esc(old.subject)} (${old.days ?? '?'} d)</p>` : ''}
-      ${(m.urgent || []).length ? `<div class="pt-2 divider-line">
-        <p class="font-body-md text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant mb-2 pt-2">Urgent volgens triage</p>
-        <ul class="space-y-2">${m.urgent.slice(0, 5).map((u) => `
-          <li class="${u.suggested_reply ? 'cursor-pointer' : ''}" ${u.suggested_reply ? `data-open-mail="${esc(u.id)}"` : ''}>
-            <div class="flex items-center gap-2">
-              <p class="font-body-md text-[13px] text-on-surface leading-snug truncate flex-1">${esc(u.subject || '(geen onderwerp)')}</p>
-              ${u.suggested_reply ? `<span class="font-body-md text-[10px] font-semibold text-primary bg-primary/10 rounded-full px-2 py-0.5 shrink-0">Concept klaar</span>` : ''}
-            </div>
-            <p class="font-body-md text-[12px] text-on-surface-variant/70 truncate">${esc(u.from_name || u.from_email)} · ${esc(u.ai_action || u.triage_label || '')}</p>
-          </li>`).join('')}</ul>
-      </div>` : ''}
+      ${sortedInboxBlock(m.sorted)}
+    </div>`;
+  }
+
+  // Kai-stijl groepering: dezelfde triage (urgent/actie/wacht/info) als het
+  // 'urgent'-blok hierboven gebruikte, nu gepresenteerd als wat de mail van
+  // jou nodig heeft in plaats van hoe hoog hij scoorde. Eén pill-stijl per
+  // bucket zodat een blik op de kleur al zegt wat de actie is.
+  const _SORT_PILL = {
+    needs_reply: { label: 'Reageren', cls: 'text-primary bg-primary/10' },
+    waiting: { label: 'Wacht op hen', cls: 'text-on-surface-variant border border-white/15' },
+    fyi: { label: 'Ter info', cls: 'text-on-surface-variant border border-white/15' },
+  };
+  const _SORT_TITLE = { needs_reply: 'Reageren', waiting: 'Wacht op hen', fyi: 'Ter info' };
+
+  function sortedInboxBlock(sorted) {
+    if (!sorted) return '';
+    const order = ['needs_reply', 'waiting', 'fyi'];
+    const nonEmpty = order.filter((k) => (sorted[k] || []).length);
+    if (!nonEmpty.length) return '';
+    return `<div class="pt-2 divider-line space-y-3 pt-2">
+      ${nonEmpty.map((key) => {
+        const pill = _SORT_PILL[key];
+        const items = sorted[key];
+        return `<div>
+          <p class="font-body-md text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant mb-2">${_SORT_TITLE[key]}</p>
+          <ul class="space-y-2">${items.map((u) => `
+            <li class="${u.suggested_reply ? 'cursor-pointer' : ''}" ${u.suggested_reply ? `data-open-mail="${esc(u.id)}"` : ''}>
+              <div class="flex items-center gap-2">
+                <p class="font-body-md text-[13px] text-on-surface leading-snug truncate flex-1">${esc(u.subject || '(geen onderwerp)')}</p>
+                <span class="font-body-md text-[10px] font-semibold rounded-full px-2 py-0.5 shrink-0 ${pill.cls}">${pill.label}</span>
+              </div>
+              <p class="font-body-md text-[12px] text-on-surface-variant/70 truncate">${esc(u.from_name || u.from_email)} · ${esc(u.ai_summary || u.ai_action || '')}</p>
+            </li>`).join('')}</ul>
+        </div>`;
+      }).join('')}
+      ${sorted.untriaged ? `<p class="font-body-md text-[11px] text-on-surface-variant/60">+ ${sorted.untriaged} nog niet getrieerd</p>` : ''}
     </div>`;
   }
 

@@ -53,16 +53,13 @@
   <!-- Login -->
   <section id="view-login" hidden>
     <div class="glass-panel rounded-xl p-6 mt-10 space-y-4">
-      <div class="flex items-center gap-2">
-        <span class="status-dot pulse"></span>
-        <span class="font-label-caps text-label-caps text-primary uppercase tracking-widest">Secure Access</span>
-      </div>
       <h2 class="font-display-lg-mobile text-display-lg-mobile">Inloggen</h2>
+      <p class="font-body-md text-body-md text-on-surface-variant -mt-2">Alleen jij komt hier binnen.</p>
       <form id="login-form" class="space-y-4">
         <input type="password" id="login-pw" placeholder="Wachtwoord" autocomplete="current-password"
           class="w-full bg-[#020617] border-none rounded-lg p-4 text-on-surface font-body-lg focus:ring-2 focus:ring-primary/50 placeholder:text-on-surface-variant/40"/>
         <button type="submit"
-          class="w-full bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm flex items-center justify-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-[0_0_15px_rgba(142,213,255,0.3)]">
+          class="w-full bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm flex items-center justify-center gap-2 hover:opacity-90 active:scale-95 transition-all">
           <span class="material-symbols-outlined">lock_open</span> Inloggen
         </button>
         <p id="login-error" class="font-body-md text-body-md text-error"></p>
@@ -70,29 +67,36 @@
     </div>
   </section>
 
-  <!-- Vandaag — de assistent-view: dag, mailbox, stand van zaken, snelle acties -->
+  <!-- Vandaag — chat-first: het gesprek met Iris staat vooraan, je dag erna -->
   <section id="view-today" hidden class="space-y-stack-lg">
-    <div class="flex items-end justify-between gap-3">
-      <div class="space-y-1">
-        <h2 class="font-display-lg-mobile text-display-lg-mobile" id="today-greeting">Vandaag</h2>
-        <p class="font-body-md text-body-md text-on-surface-variant" id="today-stamp"></p>
-      </div>
-      <div class="flex items-center gap-1.5 shrink-0 pb-1.5">
-        <span class="status-dot pulse"></span>
-        <span class="font-body-md text-[12px] text-on-surface-variant" id="today-sub">Je dag</span>
-      </div>
+    <div class="space-y-1">
+      <h2 class="font-display-lg-mobile text-display-lg-mobile" id="today-greeting">Vandaag</h2>
+      <p class="font-body-md text-body-md text-on-surface-variant" id="today-sub">Je dag</p>
     </div>
+
+    <!-- Cloud-Iris chat -->
+    <div class="glass-panel rounded-xl p-4 flex flex-col gap-3">
+      <div id="chat-messages" class="space-y-3 max-h-[45dvh] overflow-y-auto custom-scrollbar"></div>
+      <form id="chat-form" class="flex gap-2">
+        <input id="chat-input" placeholder="Vraag me iets, of zeg wat ik moet doen…" autocomplete="off"
+          class="flex-1 bg-[#020617] border-none rounded-lg p-3 text-on-surface font-body-md focus:ring-2 focus:ring-primary/50 placeholder:text-on-surface-variant/40"/>
+        <button type="submit" id="chat-send"
+          class="bg-primary text-on-primary px-4 rounded-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all">
+          <span class="material-symbols-outlined">send</span>
+        </button>
+      </form>
+      <p class="font-body-md text-[11px] text-on-surface-variant/60">Ik mag werk starten, maar publiceren, mailen en boeken blijft jouw tik.</p>
+    </div>
+
+    <p class="font-body-md text-body-md text-on-surface-variant" id="today-stamp"></p>
     <div id="today-body" class="space-y-stack-md"></div>
   </section>
 
   <!-- Actiecentrum -->
   <section id="view-inbox" hidden class="space-y-stack-lg">
     <div class="space-y-stack-sm">
-      <div class="flex items-center gap-2">
-        <span class="status-dot pulse"></span>
-        <span class="font-label-caps text-label-caps text-primary uppercase" id="inbox-sub">Besluiten in de wachtrij</span>
-      </div>
-      <h2 class="font-display-lg-mobile text-display-lg-mobile">Actiecentrum</h2>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile">Besluiten</h2>
+      <p class="font-body-md text-body-md text-on-surface-variant" id="inbox-sub">Besluiten in de wachtrij</p>
       <p class="font-body-md text-body-md text-on-surface-variant" id="sync-info"></p>
     </div>
     <div id="inbox-filters" class="flex gap-2 overflow-x-auto no-scrollbar -mx-container-padding px-container-padding"></div>
@@ -102,57 +106,26 @@
   <!-- Briefings -->
   <section id="view-briefing" hidden class="space-y-stack-lg">
     <div class="space-y-stack-sm">
-      <div class="flex items-center gap-2">
-        <span class="status-dot pulse"></span>
-        <span class="font-label-caps text-label-caps text-primary uppercase">Agent Iris</span>
-      </div>
-      <h2 class="font-display-lg-mobile text-display-lg-mobile">Briefings &amp; Analyse</h2>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile">Cijfers</h2>
+      <p class="font-body-md text-body-md text-on-surface-variant">Hoe je projecten ervoor staan, volgens Iris.</p>
     </div>
     <div id="briefing" class="space-y-stack-md"></div>
-
-    <!-- Cloud-Iris chat -->
-    <div class="glass-panel rounded-xl p-4 flex flex-col gap-3">
-      <div class="flex items-center justify-between">
-        <span class="font-label-caps text-label-caps text-primary uppercase">Vraag Iris</span>
-        <div class="flex items-center gap-2">
-          <span class="status-dot pulse"></span>
-          <span class="font-label-caps text-label-caps text-on-surface-variant">Cloud · Snapshot</span>
-        </div>
-      </div>
-      <div id="chat-messages" class="space-y-3 max-h-[45dvh] overflow-y-auto custom-scrollbar"></div>
-      <form id="chat-form" class="flex gap-2">
-        <input id="chat-input" placeholder="Vraag Iris iets over je cijfers of besluiten…" autocomplete="off"
-          class="flex-1 bg-[#020617] border-none rounded-lg p-3 text-on-surface font-body-md focus:ring-2 focus:ring-primary/50 placeholder:text-on-surface-variant/40"/>
-        <button type="submit" id="chat-send"
-          class="bg-primary text-on-primary px-4 rounded-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all shadow-[0_0_15px_rgba(142,213,255,0.3)]">
-          <span class="material-symbols-outlined">send</span>
-        </button>
-      </form>
-      <p class="font-label-caps text-[10px] text-on-surface-variant/60">Iris mag werk starten — dat landt achter de review-gate. Publiceren, mailen en boeken blijft jouw tik.</p>
-    </div>
   </section>
 
   <!-- Notities -->
   <section id="view-note" hidden class="space-y-stack-lg">
     <div class="space-y-stack-sm">
-      <span class="font-label-caps text-label-caps text-primary tracking-widest uppercase">Contextual Engine</span>
-      <h2 class="font-display-lg-mobile text-display-lg-mobile">Notities &amp; Gedachten</h2>
-      <p class="font-body-md text-body-md text-on-surface-variant">Vang vluchtige ideeën op voor AgentOS. Elke notitie landt bij de volgende sync in je vault.</p>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile">Notities</h2>
+      <p class="font-body-md text-body-md text-on-surface-variant">Vang vluchtige ideeën op. Elke notitie landt bij de volgende sync in je vault.</p>
     </div>
     <div class="glass-panel rounded-xl p-4 flex flex-col gap-4">
-      <div class="flex items-center justify-between">
-        <label class="font-label-caps text-label-caps text-on-surface-variant">Nieuwe instructie of gedachte</label>
-        <div class="flex items-center gap-2">
-          <span class="status-dot pulse"></span>
-          <span class="font-label-caps text-label-caps text-primary">Live Context</span>
-        </div>
-      </div>
+      <label class="font-label-caps text-label-caps text-on-surface-variant">Nieuwe instructie of gedachte</label>
       <textarea id="note-text" rows="5" placeholder="Typ hier je 'thought-dump'..."
         class="w-full bg-[#020617] border-none rounded-lg p-4 text-on-surface font-body-lg focus:ring-2 focus:ring-primary/50 placeholder:text-on-surface-variant/40"></textarea>
       <div class="flex justify-between items-center">
         <span class="font-label-caps text-label-caps text-on-surface-variant/60" id="charCount">0 tekens</span>
         <button id="saveBtn"
-          class="bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm flex items-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-[0_0_15px_rgba(142,213,255,0.3)]">
+          class="bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm flex items-center gap-2 hover:opacity-90 active:scale-95 transition-all">
           <span class="material-symbols-outlined">cloud_upload</span> Opslaan voor sync
         </button>
       </div>
@@ -173,13 +146,12 @@
   <!-- Systeem -->
   <section id="view-system" hidden class="space-y-stack-lg">
     <div class="space-y-stack-sm">
-      <span class="font-label-caps text-label-caps text-primary uppercase">Network Infrastructure</span>
-      <h2 class="font-display-lg-mobile text-display-lg-mobile">Systeemstatus</h2>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile">Systeem</h2>
     </div>
     <div id="system-status"></div>
     <div class="space-y-stack-md">
       <div class="flex items-center justify-between">
-        <h3 class="font-label-caps text-label-caps text-outline">KLAARGEZETTE BESLUITEN (OUTBOX)</h3>
+        <h3 class="font-label-caps text-label-caps text-outline">KLAARGEZETTE BESLUITEN</h3>
         <span class="font-label-caps text-label-caps text-primary px-2 py-0.5 border border-primary/30 rounded" id="outbox-count"></span>
       </div>
       <div id="outbox-list" class="space-y-unit"></div>
@@ -204,24 +176,20 @@
       </div>
       <p class="font-body-md text-body-md text-on-surface-variant mb-4">Krijg een push-melding zodra er een nieuw besluit klaarstaat of een besluit onderweg mislukt.</p>
       <button id="notifBtn"
-        class="w-full bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm flex items-center justify-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-[0_0_15px_rgba(142,213,255,0.3)]">
+        class="w-full bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm flex items-center justify-center gap-2 hover:opacity-90 active:scale-95 transition-all">
         <span class="material-symbols-outlined">notifications</span> Meldingen inschakelen
       </button>
       <p id="notif-status" class="font-body-md text-body-md text-on-surface-variant mt-3"></p>
     </div>
-    <div class="glass-panel rounded-xl p-6 overflow-hidden relative">
-      <div class="absolute -right-4 -bottom-4 opacity-10"><span class="material-symbols-outlined text-[120px]">database</span></div>
-      <div class="relative z-10">
-        <div class="flex items-center gap-2 mb-3">
-          <span class="material-symbols-outlined text-primary">security</span>
-          <h3 class="font-headline-sm text-headline-sm">Beveiliging &amp; Opslag</h3>
-        </div>
-        <p class="font-body-lg text-body-lg text-on-surface-variant leading-relaxed">
-          Besluiten en previews staan in <span class="text-white font-medium">Neon Postgres</span>; uitvoering gebeurt
-          uitsluitend lokaal door AgentOS, achter de bestaande review-gates. Pull-model: je machine belt zelf naar buiten.
-        </p>
-        <button id="logoutBtn" class="mt-4 text-on-surface-variant font-label-caps text-label-caps hover:text-primary transition-colors">UITLOGGEN</button>
+    <div class="glass-panel rounded-xl p-6">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="material-symbols-outlined text-primary">security</span>
+        <h3 class="font-headline-sm text-headline-sm">Beveiliging</h3>
       </div>
+      <p class="font-body-lg text-body-lg text-on-surface-variant leading-relaxed">
+        Uitvoeren gebeurt altijd lokaal, achter dezelfde goedkeuring als in de app zelf. Deze cloud stelt alleen voor.
+      </p>
+      <button id="logoutBtn" class="mt-4 text-on-surface-variant font-label-caps text-label-caps hover:text-primary transition-colors">UITLOGGEN</button>
     </div>
   </section>
 </main>
@@ -245,8 +213,8 @@
     <span class="font-label-caps text-[10px] mt-1">Besluiten</span>
   </button>
   <button class="nav-btn flex flex-col items-center justify-center transition-all active:scale-90 duration-200" data-view="briefing">
-    <span class="material-symbols-outlined">assignment</span>
-    <span class="font-label-caps text-[10px] mt-1">Briefings</span>
+    <span class="material-symbols-outlined">insights</span>
+    <span class="font-label-caps text-[10px] mt-1">Cijfers</span>
   </button>
   <button class="nav-btn flex flex-col items-center justify-center transition-all active:scale-90 duration-200" data-view="note">
     <span class="material-symbols-outlined">edit_note</span>

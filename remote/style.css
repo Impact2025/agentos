@@ -71,22 +71,26 @@ body.sheet-open {
   width: 100%;
   overflow: hidden;
 }
+/* Vlak in plaats van "glas": één dunne lijn, geen gloed, geen inset-highlight.
+   Zoveel identieke kaarten kregen vroeger allemaal dezelfde schaduw+gloed —
+   dat maakt een pagina drukker, niet rijker. Rust komt van herhaling zonder
+   decoratie, niet van decoratie die zich herhaalt. */
 .glass-panel, .glass-card {
   background: var(--surface-1);
   border: 1px solid var(--surface-1-line);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 10px 24px -14px rgba(0, 0, 0, 0.55);
 }
 .glass-panel:focus-within {
-  border-color: rgba(142, 213, 255, 0.4);
+  border-color: rgba(142, 213, 255, 0.35);
 }
-.iris-glow { box-shadow: 0 0 15px rgba(142, 213, 255, 0.2); }
-.active-glow { box-shadow: 0 0 15px rgba(142, 213, 255, 0.3); }
+.iris-glow, .active-glow { box-shadow: none; }
 
 .status-dot {
-  width: 7px; height: 7px; border-radius: 50%;
+  width: 6px; height: 6px; border-radius: 50%;
   background-color: var(--iris-blue); display: inline-block;
 }
-.pulse { animation: pulse-glow 2s infinite; }
+/* Pulse blijft gereserveerd voor écht live signalen (sync-pill); decoratieve
+   kloppende stipjes die niets aanduiden zijn eruit gehaald in index.html. */
+.pulse { animation: pulse-glow 2.4s infinite; }
 .status-dot.offline { background-color: var(--err); }
 /* Waarschuwing bij een bevroren lijst: valt op zonder de kaarten te verdringen. */
 .stale-note {
@@ -109,14 +113,13 @@ body.sheet-open {
 }
 
 /* Actieve tab in de bottom-nav (JS zet .nav-active) */
-.nav-btn { color: #bdc8d1; }
+.nav-btn { color: #8b959c; }
 .nav-btn:hover { color: var(--iris-blue); }
 .nav-btn.nav-active {
   color: var(--iris-blue);
-  background: rgba(56, 189, 248, 0.2);
+  background: rgba(142, 213, 255, 0.1);
   border-radius: 0.75rem;
   padding: 4px 16px;
-  box-shadow: 0 0 15px rgba(142, 213, 255, 0.3);
 }
 .nav-btn.nav-active .material-symbols-outlined {
   font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
@@ -209,12 +212,12 @@ body.sheet-open {
 .toast {
   pointer-events: auto;
   display: flex; align-items: center; gap: 10px;
-  background: rgba(29,32,34,0.92); backdrop-filter: blur(14px);
-  border: 1px solid rgba(255,255,255,0.12);
+  background: var(--surface-1);
+  border: 1px solid rgba(255,255,255,0.1);
   border-left: 3px solid var(--iris-blue);
   border-radius: 0.75rem; padding: 12px 14px;
   font-size: 13px; color: var(--on-surface);
-  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
   animation: toastIn 0.32s var(--ease) both;
 }
 .toast.ok { border-left-color: var(--ok); }
@@ -228,15 +231,15 @@ body.sheet-open {
 #sync-pill {
   display: inline-flex; align-items: center; gap: 6px;
   font-family: 'JetBrains Mono', monospace; font-size: 11px;
-  padding: 4px 10px; border-radius: 9999px;
-  border: 1px solid rgba(255,255,255,0.1);
-  transition: color 0.3s, border-color 0.3s, background 0.3s;
+  padding: 3px 9px; border-radius: 9999px;
+  color: var(--on-surface-variant);
+  transition: color 0.3s;
 }
-#sync-pill.fresh { color: var(--ok); border-color: rgba(74,222,128,0.35); background: rgba(74,222,128,0.08); }
-#sync-pill.recent { color: var(--iris-blue); border-color: rgba(142,213,255,0.35); background: rgba(142,213,255,0.08); }
-#sync-pill.stale { color: var(--warn); border-color: rgba(251,191,36,0.35); background: rgba(251,191,36,0.08); }
-#sync-pill.dead { color: var(--err); border-color: rgba(255,180,171,0.35); background: rgba(255,180,171,0.08); }
-#sync-pill .dot { width:7px; height:7px; border-radius:50%; background: currentColor; }
+#sync-pill.fresh { color: var(--ok); }
+#sync-pill.recent { color: var(--on-surface-variant); }
+#sync-pill.stale { color: var(--warn); }
+#sync-pill.dead { color: var(--err); }
+#sync-pill .dot { width:6px; height:6px; border-radius:50%; background: currentColor; }
 #sync-pill.stale .dot, #sync-pill.dead .dot { animation: blink 1.4s infinite; }
 @keyframes blink { 50% { opacity: 0.25; } }
 
@@ -256,11 +259,11 @@ body.sheet-open {
 #ptr .material-symbols-outlined { font-size: 26px; }
 #ptr.spinning .material-symbols-outlined { animation: spin 0.8s linear infinite; }
 
-/* Card hover-lift op desktop */
+/* Card hover op desktop: alleen de rand reageert, geen lift/schaduw. */
 @media (hover:hover) {
-  .item:hover { transform: translateY(-2px); border-color: rgba(142,213,255,0.4); box-shadow: 0 8px 30px rgba(0,0,0,0.35); }
+  .item:hover { border-color: rgba(142,213,255,0.35); }
 }
-.item { transition: transform 0.18s var(--ease), border-color 0.2s, box-shadow 0.2s; }
+.item { transition: border-color 0.2s; }
 
 /* ── Filter-chips (Actiecentrum) ───────────────────────────────────────── */
 .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -268,24 +271,24 @@ body.sheet-open {
 .chip {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 12px; border-radius: 9999px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--surface-1-line);
+  background: transparent;
   color: var(--on-surface-variant);
   font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500;
   transition: color 0.2s, border-color 0.2s, background 0.2s;
 }
-.chip:hover { color: var(--iris-blue); border-color: rgba(142, 213, 255, 0.3); }
+.chip:hover { color: var(--on-surface); border-color: rgba(255, 255, 255, 0.2); }
 .chip-on {
   color: var(--iris-blue);
-  border-color: rgba(142, 213, 255, 0.45);
-  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(142, 213, 255, 0.35);
+  background: rgba(142, 213, 255, 0.08);
 }
 .chip-count {
   font-family: 'JetBrains Mono', monospace; font-size: 11px;
-  background: rgba(255, 255, 255, 0.08); border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.06); border-radius: 9999px;
   padding: 0 6px; min-width: 20px; text-align: center;
 }
-.chip-on .chip-count { background: rgba(142, 213, 255, 0.18); }
+.chip-on .chip-count { background: rgba(142, 213, 255, 0.16); }
 
 /* ── Markdown-blokken (Iris' analyse) ──────────────────────────────────── */
 .markdown { font-size: 14px; line-height: 1.6; color: var(--on-surface-variant); }
@@ -334,12 +337,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
  * oogopslag te herkennen is zonder op de kleine mono-caps labels te vertrouwen.
  */
 .card-head { display: flex; align-items: center; gap: 10px; }
+/* Vroeger een gekleurd rondje per sectie (mail=blauw, waarschuwing=amber, …) —
+   dat is tien kleurvlakken op één scherm. De kleurcodering blijft (JS zet
+   `color` inline), maar het vlak eromheen niet: alleen het icoon spreekt nu. */
 .card-head-icon {
-  width: 30px; height: 30px; border-radius: 9px; flex: none;
+  width: 30px; height: 30px; flex: none;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(142, 213, 255, 0.12); color: var(--iris-blue);
+  background: transparent !important; color: var(--iris-blue);
 }
-.card-head-icon .material-symbols-outlined { font-size: 18px; }
+.card-head-icon .material-symbols-outlined { font-size: 20px; }
 .card-head-title { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 15px; color: var(--on-surface); }
 .card-head-meta { font-family: 'Inter', sans-serif; font-size: 12px; color: var(--on-surface-variant); }
 
@@ -350,9 +356,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 9999px;
   white-space: nowrap;
 }
-.sev-hoog   { background: rgba(255, 156, 146, 0.14); color: var(--err); }
-.sev-midden { background: rgba(251, 191, 36, 0.14);  color: var(--warn); }
-.sev-laag   { background: rgba(255, 255, 255, 0.06); color: var(--on-surface-variant); }
+.sev-hoog   { background: rgba(255, 156, 146, 0.12); color: var(--err); }
+.sev-midden { background: rgba(251, 191, 36, 0.12);  color: var(--warn); }
+.sev-laag   { background: transparent; color: var(--on-surface-variant); }
 
 .divider-line { border-top: 1px solid rgba(255, 255, 255, 0.06); }
 
