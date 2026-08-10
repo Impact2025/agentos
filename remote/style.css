@@ -488,3 +488,149 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   background: rgba(255, 255, 255, 0.04); color: var(--on-surface-variant);
   border-bottom-left-radius: 4px;
 }
+
+/* ── Postvak ──────────────────────────────────────────────────────────────
+ * Herzien op 10 aug 2026. De oude weergave zette drie grote cijfers bovenaan
+ * (waarvan "121 open" het grootste was — een getal dat geen enkele handeling
+ * hier verandert), gevolgd door een rode alinea en een lijst waarin élke regel
+ * het label van zijn eigen sectiekop herhaalde als een pil die eruitzag als
+ * een knop. Wat er nu staat volgt één regel: de vorm van een regel vertelt wat
+ * je ermee kunt. Afzender + tijd bovenaan (zo scan je een postvak), onderwerp
+ * eronder, en alleen een regel met conceptantwoord krijgt een aanwijzing.
+ */
+.mail-head { display: flex; align-items: center; gap: 8px; padding: 16px 16px 12px; }
+.mail-head-main {
+  display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;
+  background: transparent; border: 0; padding: 0; cursor: pointer;
+  transition: opacity 0.15s var(--ease);
+}
+.mail-head-main:hover { opacity: 0.85; }
+.mail-head-main:active { opacity: 0.7; }
+.mail-head-btn {
+  flex: none; font-size: 12px; font-weight: 500; color: var(--iris-blue);
+  border: 1px solid rgba(142, 213, 255, 0.28); border-radius: 9px;
+  padding: 7px 11px; background: transparent; cursor: pointer;
+  transition: background 0.15s var(--ease);
+}
+.mail-head-btn:hover { background: rgba(142, 213, 255, 0.08); }
+
+/* Regels raken elkaar via een haarlijn in plaats van via witruimte: dat leest
+   als één lijst, niet als losse kaartjes, en scheelt verticale ruimte op een
+   scherm waar dertig regels op passen moeten. */
+.mail-list { list-style: none; margin: 0; padding: 0; }
+.mail-row {
+  display: flex; gap: 11px; align-items: flex-start;
+  padding: 10px 8px; margin: 0 -8px; border-radius: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.mail-list > .mail-row:first-child { border-top: 0; }
+.mail-row.is-tapbaar { cursor: pointer; transition: background 0.15s var(--ease); }
+.mail-row.is-tapbaar:hover { background: rgba(255, 255, 255, 0.035); }
+.mail-row.is-tapbaar:active { background: rgba(255, 255, 255, 0.06); }
+.mail-row.is-tapbaar:focus-visible { outline: 2px solid var(--iris-blue); outline-offset: 1px; }
+
+.mail-avatar {
+  flex: none; width: 30px; height: 30px; border-radius: 9999px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.01em;
+  color: var(--on-surface); margin-top: 1px;
+}
+.mail-row-top { display: flex; align-items: baseline; gap: 8px; }
+.mail-from {
+  font-size: 12.5px; color: var(--on-surface-variant);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0;
+}
+/* Ongelezen is een eigenschap van de afzenderregel, niet van de hele regel:
+   een lijst waarin de helft vetgedrukt staat leest als een waarschuwing. */
+.mail-from.is-ongelezen { color: var(--on-surface); font-weight: 600; }
+.mail-time {
+  flex: none; font-size: 11px; color: var(--on-surface-variant);
+  opacity: 0.6; font-variant-numeric: tabular-nums;
+}
+.mail-subject {
+  font-size: 13.5px; color: var(--on-surface); line-height: 1.35; margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mail-summary {
+  font-size: 12px; color: var(--on-surface-variant); opacity: 0.72;
+  line-height: 1.35; margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* De enige aanwijzing in de lijst, en hij betekent iets concreets: hier ligt
+   een conceptantwoord klaar. Vandaar een pen en geen chevron — een chevron
+   betekent "er is meer", dit betekent "je kunt hier iets versturen". */
+.mail-draft-hint {
+  flex: none; width: 26px; height: 26px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(142, 213, 255, 0.12); color: var(--iris-blue); margin-top: 2px;
+}
+.mail-draft-hint .material-symbols-outlined { font-size: 16px; }
+
+.mail-sectie + .mail-sectie { margin-top: 18px; }
+.mail-sectie-kop {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--on-surface-variant); opacity: 0.75; margin-bottom: 6px;
+}
+details.mail-sectie > summary.mail-sectie-kop { cursor: pointer; }
+.mail-sectie-num {
+  font-variant-numeric: tabular-nums; letter-spacing: 0;
+  background: rgba(255, 255, 255, 0.06); border-radius: 9999px; padding: 1px 7px;
+}
+
+/* Concepten: het enige in dit scherm dat met één tik de deur uit kan, dus de
+   enige regel die als primaire actie is vormgegeven. */
+.mail-cta {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 11px 12px; border-radius: 11px; cursor: pointer;
+  background: rgba(142, 213, 255, 0.09); border: 1px solid rgba(142, 213, 255, 0.24);
+  color: var(--iris-blue); font-size: 13px; font-weight: 500;
+  transition: background 0.15s var(--ease);
+}
+.mail-cta:hover { background: rgba(142, 213, 255, 0.14); }
+.mail-cta .material-symbols-outlined { font-size: 18px; }
+
+.mail-open-all {
+  display: flex; align-items: center; gap: 6px; width: 100%; justify-content: center;
+  padding: 9px; border-radius: 10px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.03); border: 1px solid var(--surface-1-line);
+  color: var(--on-surface-variant); font-size: 12.5px; font-weight: 500;
+  transition: background 0.15s var(--ease);
+}
+.mail-open-all:hover { background: rgba(255, 255, 255, 0.06); color: var(--on-surface); }
+.mail-open-all .material-symbols-outlined { font-size: 17px; opacity: 0.6; }
+.mail-open-all-count {
+  font-variant-numeric: tabular-nums; font-size: 11px;
+  background: rgba(255, 255, 255, 0.07); border-radius: 9999px; padding: 1px 7px;
+}
+
+/* De cijfers blijven, maar als bijschrift onder de zin die ze samenvat. */
+.mail-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--on-surface-variant);
+}
+.mail-meta b { font-weight: 600; color: var(--on-surface); font-variant-numeric: tabular-nums; }
+.mail-meta i { font-style: normal; opacity: 0.35; }
+.mail-meta .is-warn, .mail-meta .is-warn b { color: var(--warn); }
+
+/* Waarschuwing over de triage: de kop moet opvallen, de uitleg eronder hoeft
+   niet elke keer meegelezen te worden. */
+.mail-note { border-radius: 11px; padding: 10px 12px; }
+.mail-note.is-warn { background: rgba(251, 191, 36, 0.09); border: 1px solid rgba(251, 191, 36, 0.22); }
+.mail-note.is-err { background: rgba(255, 156, 146, 0.09); border: 1px solid rgba(255, 156, 146, 0.24); }
+.mail-note > summary {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  font-size: 12.5px; line-height: 1.35;
+}
+.mail-note.is-warn > summary { color: var(--warn); }
+.mail-note.is-err > summary { color: var(--err); }
+.mail-note > summary .material-symbols-outlined { font-size: 16px; flex: none; }
+.mail-note > p {
+  font-size: 11.5px; line-height: 1.45; color: var(--on-surface-variant);
+  margin-top: 7px; padding-left: 24px;
+}
+.mail-note-caret { transition: transform 0.2s var(--ease); opacity: 0.6; }
+details[open] > summary .mail-note-caret { transform: rotate(180deg); }
+
+.mail-leeg, .mail-voet { font-size: 12px; color: var(--on-surface-variant); opacity: 0.7; }
+.mail-voet { padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.05); }

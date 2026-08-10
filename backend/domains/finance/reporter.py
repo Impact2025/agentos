@@ -17,6 +17,8 @@ from ...shared.config import OBSIDIAN_VAULT_PATH
 from ...domains.chat import service as memory_service
 from ...shared.agent_runner import run_agent
 from ...shared.email_service import send_report, is_configured as email_configured
+from ...shared.failures import describe_exception, note_success, should_escalate
+from ...shared.outcomes import log_outcome
 from .prompts import FINANCE_DAILY_SYSTEM, FINANCE_WEEKLY_SYSTEM
 
 # Het rapport leunt op meerdere tool-rondes; geef de agent ruimte per beurt.
@@ -74,17 +76,42 @@ async def _run_report(
     email_subject: str,
 ) -> dict:
     print(f"[Finance] Start {kind}-rapport…")
+    # Een mislukt rapport was tot 2 aug 2026 alleen een print() plus een
+    # dict met success=False: de scheduler-job slaagde, er kwam geen kaart, en
+    # een rapport dat weken niet meer verscheen was nergens te zien. Dat is
+    # precies het patroon van het dode Meta-token. Nu loopt het via
+    # failures.py — een nachtelijke blip escaleert niet, een structurele storing
+    # meteen — en elke geslaagde run sluit de reeks weer.
+    faalsleutel = f"finance_report:{kind}"
     try:
         analysis = await _agent_complete(system, prompt)
         print(f"[Finance] {kind}-analyse gereed ({len(analysis)} tekens)")
     except Exception as e:
-        msg = f"{kind}-analyse mislukt: {e}"
+        msg = f"{kind}-analyse mislukt: {describe_exception(e)}"
         print(f"[Finance] {msg}")
+        if should_escalate(faalsleutel, e):
+            log_outcome(
+                "Finance Expert", f"{kind}rapport", msg,
+                next_step="Controleer de LLM-gateway (OpenModel-credits/quota) en draai het "
+                          f"rapport opnieuw via GET /api/finance/{'daily' if kind == 'dag' else 'weekly'}-report.",
+                status="error",
+            )
         return {"success": False, "error": msg}
 
     if not analysis:
         print(f"[Finance] {kind}-rapport leeg — overgeslagen")
+        # Een leeg antwoord is geen uitzondering maar wél een mislukking: er is
+        # vandaag geen rapport, en dat mag niet als geslaagde run doorgaan.
+        if should_escalate(faalsleutel, RuntimeError("leeg rapport")):
+            log_outcome(
+                "Finance Expert", f"{kind}rapport",
+                f"Het {kind}rapport kwam meerdere keren leeg terug uit de agent-loop.",
+                next_step="Controleer of de tools (get_market_data / fetch_financial_news) nog "
+                          "antwoorden en of de gateway niet op quota staat.",
+                status="error",
+            )
         return {"success": False, "error": "leeg rapport"}
+    note_success(faalsleutel)
 
     results: dict = {"success": True, "kind": kind}
 
@@ -117,6 +144,19 @@ async def _run_report(
         print("[Finance] SMTP niet geconfigureerd, e-mail overgeslagen")
 
     print(f"[Finance] {kind}-rapport voltooid")
+    # Uitkomstkaart mét artefact: een run die "klaar" claimt hoort aanwijsbaar
+    # iets te hebben opgeleverd (CLAUDE.md). Zonder vault is de chat-sessie het
+    # artefact — nooit een lege verwijzing.
+    artefact = results.get("obsidian_note") or (
+        f"/chat/{results['session_id']}" if results.get("session_id") else ""
+    )
+    log_outcome(
+        "Finance Expert", f"{kind}rapport",
+        f"{kind.capitalize()}rapport gegenereerd ({len(analysis)} tekens)"
+        + (" en gemaild" if results.get("email_sent") else ""),
+        artifact=artefact,
+        next_step="Lees het rapport; concrete posities lopen via de Beursmeester-voorstellen.",
+    )
     return results
 
 

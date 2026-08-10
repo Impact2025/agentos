@@ -1321,10 +1321,80 @@
       agendaBodyHtml(a, { daysLimit: 14, collapseDays: false }));
   }
 
+  // ── Postvak ───────────────────────────────────────────────────────────────
+  // Twee weergaven van dezelfde waarheid, bewust ongelijk: de kaart op Vandaag
+  // is een sámenvatting (wat wacht er op mijn antwoord — hooguit drie regels),
+  // het Postvak-scherm is de werkplek (alles, gegroepeerd). Tot 10 aug 2026
+  // renderden beide exact dezelfde HTML, dus stond de vólle inbox midden in het
+  // dagoverzicht: drie grote cijfers, een rode alinea en vijftien regels met op
+  // élke regel het label van de sectie erboven ("REAGEREN" boven zeven pillen
+  // "Reageren"). Dat pilletje leek bovendien een knop terwijl alleen regels mét
+  // conceptantwoord iets doen — een aanwijzing die vaker liegt dan klopt.
+
+  function relTime(v) {
+    if (!v) return '';
+    const t = new Date(v).getTime();
+    if (Number.isNaN(t)) return '';
+    const min = Math.round((Date.now() - t) / 60000);
+    if (min < 1) return 'nu';
+    if (min < 60) return `${min}m`;
+    const u = Math.round(min / 60);
+    if (u < 24) return `${u}u`;
+    const d = Math.round(u / 24);
+    if (d === 1) return 'gisteren';
+    if (d < 8) return `${d}d`;
+    return new Date(t).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' });
+  }
+
+  // Een avatar met initialen doet hier échte navigatie-arbeid: een postvak
+  // scan je op afzender, niet op onderwerp. De kleur komt uit de naam zodat
+  // dezelfde afzender altijd dezelfde tint krijgt — herkenning zonder tekst.
+  const _AVATAR_TINTS = [
+    'rgba(142,213,255,0.16)', 'rgba(167,181,255,0.16)', 'rgba(134,239,172,0.14)',
+    'rgba(251,191,36,0.14)', 'rgba(244,164,196,0.14)', 'rgba(153,246,228,0.13)',
+  ];
+  function initials(name, email) {
+    const src = (name || '').trim() || (email || '').split('@')[0].replace(/[._-]+/g, ' ');
+    const parts = src.split(/\s+/).filter(Boolean);
+    if (!parts.length) return '?';
+    const first = parts[0][0] || '';
+    const last = parts.length > 1 ? parts[parts.length - 1][0] : '';
+    return (first + last).toUpperCase();
+  }
+  function avatarTint(seed) {
+    let h = 0;
+    for (const ch of String(seed || '')) h = (h * 31 + ch.charCodeAt(0)) % 997;
+    return _AVATAR_TINTS[h % _AVATAR_TINTS.length];
+  }
+
+  // Eén regel in het postvak. `tapbaar` is niet cosmetisch: alleen een mail met
+  // conceptantwoord kan iets openen, en dus krijgt alleen díé regel een
+  // aanwijzing (chevron + hover). De rest is tekst en ziet er ook zo uit.
+  function mailRow(u, { compact = false } = {}) {
+    const who = u.from_name || u.from_email || 'Onbekend';
+    const tapbaar = !!u.suggested_reply;
+    const ongelezen = u.is_read === 0 || u.is_read === false;
+    const samenvatting = u.ai_summary || u.ai_action || '';
+    return `<li class="mail-row${tapbaar ? ' is-tapbaar' : ''}"${tapbaar ? ` data-open-mail="${esc(u.id)}" role="button" tabindex="0"` : ''}>
+      <span class="mail-avatar" style="background:${avatarTint(who)}">${esc(initials(u.from_name, u.from_email))}</span>
+      <div class="min-w-0 flex-1">
+        <div class="mail-row-top">
+          <span class="mail-from${ongelezen ? ' is-ongelezen' : ''}">${esc(who)}</span>
+          <span class="mail-time">${esc(relTime(u.received_at))}</span>
+        </div>
+        <p class="mail-subject">${esc(u.subject || '(geen onderwerp)')}</p>
+        ${!compact && samenvatting ? `<p class="mail-summary">${esc(samenvatting)}</p>` : ''}
+      </div>
+      ${tapbaar ? `<span class="mail-draft-hint"><span class="material-symbols-outlined">edit_note</span></span>` : ''}
+    </li>`;
+  }
+
   // Een leeg urgent-blok is niet hetzelfde als een rustige mailbox. Urgentie
   // én conceptantwoorden hangen allebei aan de triage; draait die niet, dan is
   // "0 urgent" honger en geen rust. Zwijgen daarover is precies hoe 68
   // ongetrieerde mails er als een opgeruimd postvak uitzagen (7 aug 2026).
+  // De uitleg zit sinds 10 aug 2026 in een <details>: de waarschuwing moet
+  // opvallen, de alinea eronder hoeft niet elke keer meegelezen te worden.
   function triageNote(m) {
     const n = m.untriaged || 0;
     if (!n) return '';
@@ -1332,109 +1402,138 @@
     // Onder de 10 zonder blokkade is dit gewoon werk in uitvoering: de
     // volgende sync trieert ze. Melden zou dan ruis zijn.
     if (n < 10 && !blocked) return '';
-    return `<div class="rounded-lg p-3 flex items-start gap-2" style="background:${blocked ? 'rgba(255,156,146,0.10)' : 'rgba(251,191,36,0.10)'}; border:1px solid ${blocked ? 'rgba(255,156,146,0.25)' : 'rgba(251,191,36,0.25)'}">
-      <span class="material-symbols-outlined text-[16px] mt-0.5" style="color:var(--${blocked ? 'err' : 'warn'})">${blocked ? 'error' : 'schedule'}</span>
-      <div class="min-w-0">
-        <p class="font-body-md text-[12px] leading-snug" style="color:var(--${blocked ? 'err' : 'warn'})">
-          ${n} mail(s) nog niet door de triage${blocked ? ' — LLM staat op pauze (quota/budget op)' : ''}.</p>
-        <p class="font-body-md text-[11px] text-on-surface-variant/70 leading-snug mt-0.5">
-          ${blocked
-            ? 'Zolang dat zo is komt er geen urgentie-oordeel en geen conceptantwoord — een leeg "urgent" betekent hier niet "niets aan de hand".'
-            : 'Urgentie en conceptantwoorden volgen zodra ze getrieerd zijn.'}</p>
-      </div>
-    </div>`;
+    return `<details class="mail-note ${blocked ? 'is-err' : 'is-warn'}">
+      <summary>
+        <span class="material-symbols-outlined">${blocked ? 'error' : 'schedule'}</span>
+        <span class="flex-1 min-w-0">${n} mail${n === 1 ? '' : 's'} nog niet getrieerd${blocked ? ' — AI staat op pauze' : ''}</span>
+        <span class="material-symbols-outlined mail-note-caret">expand_more</span>
+      </summary>
+      <p>${blocked
+        ? 'Zolang dat zo is komt er geen urgentie-oordeel en geen conceptantwoord — een leeg "urgent" betekent hier niet "niets aan de hand".'
+        : 'Urgentie en conceptantwoorden volgen zodra ze getrieerd zijn.'}</p>
+    </details>`;
   }
 
-  // Gedeeld door de compacte kaart op Vandaag en het volledige Postvak-scherm
-  // dat opent zodra je de kaart tikt.
-  function mailBodyHtml(m) {
+  const _SORT_TITLE = {
+    needs_reply: 'Wacht op jouw antwoord',
+    waiting: 'Wacht op hen',
+    fyi: 'Ter info',
+  };
+
+  // Concepten zijn het enige in dit scherm dat met één tik de deur uit kan.
+  // Een tegel met "0" erin is geen informatie maar ruis, dus bij nul verdwijnt
+  // de regel in plaats van dat hij grijs blijft staan.
+  function draftsCta(m) {
+    const n = (m.helpdesk_pending || 0) + (m.personal_drafts || 0);
+    if (!n) return '';
+    return `<button class="mail-cta" data-goto-mail="1">
+      <span class="material-symbols-outlined">drafts</span>
+      <span class="flex-1 text-left">${n} concept${n === 1 ? '' : 'en'} ${n === 1 ? 'ligt' : 'liggen'} klaar om te versturen</span>
+      <span class="material-symbols-outlined">chevron_right</span>
+    </button>`;
+  }
+
+  // De koptekst zegt wat er van jóu wordt gevraagd, niet hoe groot de stapel
+  // is. "121 open" was het grootste getal op het scherm terwijl geen enkele
+  // handeling dat getal verandert; het aantal dat op een antwoord wacht wél.
+  function mailLead(m) {
+    const n = ((m.sorted || {}).needs_reply || []).length;
+    if (n) return `${n} ${n === 1 ? 'mail wacht' : 'mails wachten'} op jouw antwoord`;
+    if (m.untriaged) return 'Nog niets beoordeeld — de triage moet eerst draaien';
+    return 'Niets wacht op jouw antwoord';
+  }
+
+  // De cijfers blijven staan, maar als kleine context onder de zin die ze
+  // samenvat — niet als drie tegels die de helft van het scherm opeisen.
+  function mailMeta(m) {
     const w = m.week || {};
     const old = m.oldest_open;
-    // Eén getal voor beide soorten concept (helpdesk + je eigen postvak), want
-    // op deze plek is de vraag "ligt er iets klaar om te versturen?" — welke
-    // molen het schreef is een detail voor de detailkaart, niet voor de tegel.
-    const drafts = (m.helpdesk_pending || 0) + (m.personal_drafts || 0);
-    return `
-      <div class="grid grid-cols-3 gap-2 text-center pt-1">
-        <div><p class="text-[22px] stat-num ${m.backlog >= 15 ? 'text-error' : 'text-on-surface'}">${m.backlog}</p><p class="font-body-md text-[10.5px] text-on-surface-variant mt-0.5">Open</p></div>
-        <div><p class="text-[22px] stat-num text-on-surface">${w.reply_rate == null ? '–' : `${w.reply_rate}%`}</p><p class="font-body-md text-[10.5px] text-on-surface-variant mt-0.5">Beantwoord 7d</p></div>
-        <button ${drafts ? 'data-goto-mail="1"' : 'disabled'} class="rounded-lg -m-1 p-1 ${drafts ? 'hover:bg-white/5 active:scale-[0.97] transition-all' : ''}">
-          <p class="text-[22px] stat-num ${drafts ? 'text-primary' : 'text-on-surface'}">${drafts}</p>
-          <p class="font-body-md text-[10.5px] ${drafts ? 'text-primary' : 'text-on-surface-variant'} mt-0.5">Concepten${drafts ? ' ›' : ''}</p>
-        </button>
-      </div>
-      ${triageNote(m)}
-      ${old ? `<p class="font-body-md text-[12px] ${old.days >= 3 ? 'text-warn' : 'text-on-surface-variant'}">
-        Oudste open: <span class="text-on-surface">${esc(old.from)}</span> — ${esc(old.subject)} (${old.days ?? '?'} d)</p>` : ''}
-      ${sortedInboxBlock(m.sorted)}`;
+    const bits = [`<span><b>${m.backlog}</b> open</span>`];
+    if (w.reply_rate != null) bits.push(`<span><b>${w.reply_rate}%</b> beantwoord (7d)</span>`);
+    if (old && old.days != null) {
+      bits.push(`<span class="${old.days >= 3 ? 'is-warn' : ''}">oudste <b>${old.days}d</b></span>`);
+    }
+    return `<p class="mail-meta">${bits.join('<i>·</i>')}</p>`;
   }
 
+  // Vandaag: samenvatting. Hooguit drie regels, compact (zonder AI-samenvatting)
+  // en met één uitgang naar het volledige scherm.
   function mailPanel(m) {
     if (!m || m.status !== 'ok') return m ? sectionOff('mail', 'Postvak', m) : '';
-    return `<div class="glass-panel rounded-xl p-4 space-y-3">
-      <div class="card-head">
-        <button class="card-head card-head-btn flex-1 min-w-0" data-open-mail-sheet="1">
+    const top = ((m.sorted || {}).needs_reply || []).slice(0, 3);
+    return `<div class="glass-panel rounded-xl overflow-hidden">
+      <div class="mail-head">
+        <button class="mail-head-main" data-open-mail-sheet="1">
           <div class="card-head-icon"><span class="material-symbols-outlined">mail</span></div>
-          <div class="min-w-0 flex-1">
+          <div class="min-w-0 flex-1 text-left">
             <p class="card-head-title">Postvak</p>
-            <p class="card-head-meta">${m.backlog} openstaand</p>
+            <p class="card-head-meta">${esc(mailLead(m))}</p>
           </div>
-          <span class="material-symbols-outlined text-on-surface-variant/50 text-[20px] shrink-0">chevron_right</span>
         </button>
-        <button class="font-body-md text-[12px] font-medium text-primary rounded-lg px-2.5 py-1.5 shrink-0" style="border:1px solid rgba(142,213,255,0.3)" data-cmd="mail_sync">Ophalen</button>
+        <button class="mail-head-btn" data-cmd="mail_sync">Ophalen</button>
       </div>
-      ${mailBodyHtml(m)}
+      <div class="px-4 pb-4 space-y-3">
+        ${draftsCta(m)}
+        ${triageNote(m)}
+        ${top.length ? `<ul class="mail-list">${top.map((u) => mailRow(u, { compact: true })).join('')}</ul>` : ''}
+        <button class="mail-open-all" data-open-mail-sheet="1">
+          Postvak openen<span class="mail-open-all-count">${m.backlog}</span>
+          <span class="material-symbols-outlined">chevron_right</span>
+        </button>
+      </div>
     </div>`;
+  }
+
+  // Het scherm: alles, gegroepeerd naar wat het van je vraagt. 'Ter info' staat
+  // ingeklapt — dat is per definitie de bak waar je niets mee hoeft.
+  function mailScreenHtml(m) {
+    const sorted = m.sorted || {};
+    const secties = ['needs_reply', 'waiting', 'fyi'].filter((k) => (sorted[k] || []).length);
+    return `
+      ${draftsCta(m)}
+      ${triageNote(m)}
+      ${mailMeta(m)}
+      ${secties.length ? secties.map((key) => {
+        const rows = sorted[key];
+        const lijst = `<ul class="mail-list">${rows.map((u) => mailRow(u)).join('')}</ul>`;
+        if (key === 'fyi') {
+          return `<details class="mail-sectie">
+            <summary class="mail-sectie-kop"><span class="flex-1 text-left">${_SORT_TITLE[key]}</span>
+              <span class="mail-sectie-num">${rows.length}</span>
+              <span class="material-symbols-outlined mail-note-caret">expand_more</span></summary>
+            ${lijst}</details>`;
+        }
+        return `<section class="mail-sectie">
+          <p class="mail-sectie-kop"><span class="flex-1">${_SORT_TITLE[key]}</span>
+            <span class="mail-sectie-num">${rows.length}</span></p>
+          ${lijst}</section>`;
+      }).join('') : `<p class="mail-leeg">Geen beoordeelde mail in het postvak.</p>`}
+      ${sorted.untriaged ? `<p class="mail-voet">+ ${sorted.untriaged} nog niet getrieerd — die verschijnen zodra de triage draait.</p>` : ''}`;
   }
 
   function openMailSheet() {
     const m = contextCache && contextCache.mail;
     if (!m || m.status !== 'ok') { toast('Postvak nog niet beschikbaar', '', 'schedule'); return; }
-    const card = openSheet('Postvak', `${m.backlog ?? 0} openstaand`, mailBodyHtml(m));
-    card.querySelectorAll('[data-open-mail]').forEach((row) => {
-      row.onclick = () => {
-        const it = items.find((i) => i.dismiss_kind === 'personal_mail'
-          && String(i.item_id) === String(row.dataset.openMail));
-        if (it) { closeDetail(); setTimeout(() => openDetail(it), 300); }
-        else toast('Concept nog niet gesynchroniseerd — probeer zo opnieuw', '', 'schedule');
-      };
-    });
+    const card = openSheet('Postvak', mailLead(m), mailScreenHtml(m));
+    bindMailRows(card, true);
+    const goto = card.querySelector('[data-goto-mail]');
+    if (goto) goto.onclick = () => { closeDetail(); inboxFilter = 'mail'; show('inbox'); renderItems(); };
   }
 
-  // Kai-stijl groepering: dezelfde triage (urgent/actie/wacht/info) als het
-  // 'urgent'-blok hierboven gebruikte, nu gepresenteerd als wat de mail van
-  // jou nodig heeft in plaats van hoe hoog hij scoorde. Eén pill-stijl per
-  // bucket zodat een blik op de kleur al zegt wat de actie is.
-  const _SORT_PILL = {
-    needs_reply: { label: 'Reageren', cls: 'text-primary bg-primary/10' },
-    waiting: { label: 'Wacht op hen', cls: 'text-on-surface-variant border border-white/15' },
-    fyi: { label: 'Ter info', cls: 'text-on-surface-variant border border-white/15' },
-  };
-  const _SORT_TITLE = { needs_reply: 'Reageren', waiting: 'Wacht op hen', fyi: 'Ter info' };
-
-  function sortedInboxBlock(sorted) {
-    if (!sorted) return '';
-    const order = ['needs_reply', 'waiting', 'fyi'];
-    const nonEmpty = order.filter((k) => (sorted[k] || []).length);
-    if (!nonEmpty.length) return '';
-    return `<div class="pt-2 divider-line space-y-3 pt-2">
-      ${nonEmpty.map((key) => {
-        const pill = _SORT_PILL[key];
-        const items = sorted[key];
-        return `<div>
-          <p class="font-body-md text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant mb-2">${_SORT_TITLE[key]}</p>
-          <ul class="space-y-2">${items.map((u) => `
-            <li class="${u.suggested_reply ? 'cursor-pointer' : ''}" ${u.suggested_reply ? `data-open-mail="${esc(u.id)}"` : ''}>
-              <div class="flex items-center gap-2">
-                <p class="font-body-md text-[13px] text-on-surface leading-snug truncate flex-1">${esc(u.subject || '(geen onderwerp)')}</p>
-                <span class="font-body-md text-[10px] font-semibold rounded-full px-2 py-0.5 shrink-0 ${pill.cls}">${pill.label}</span>
-              </div>
-              <p class="font-body-md text-[12px] text-on-surface-variant/70 truncate">${esc(u.from_name || u.from_email)} · ${esc(u.ai_summary || u.ai_action || '')}</p>
-            </li>`).join('')}</ul>
-        </div>`;
-      }).join('')}
-      ${sorted.untriaged ? `<p class="font-body-md text-[11px] text-on-surface-variant/60">+ ${sorted.untriaged} nog niet getrieerd</p>` : ''}
-    </div>`;
+  // Eén bindfunctie voor kaart én scherm: twee plekken die dezelfde regel
+  // anders openen is precies hoe ze uit elkaar gaan lopen.
+  function bindMailRows(root, viaSheet) {
+    root.querySelectorAll('[data-open-mail]').forEach((row) => {
+      const open = () => {
+        const it = items.find((i) => i.dismiss_kind === 'personal_mail'
+          && String(i.item_id) === String(row.dataset.openMail));
+        if (!it) { toast('Concept nog niet gesynchroniseerd — probeer zo opnieuw', '', 'schedule'); return; }
+        if (viaSheet) { closeDetail(); setTimeout(() => openDetail(it), 300); }
+        else openDetail(it);
+      };
+      row.onclick = open;
+      row.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
+    });
   }
 
   // Snelle acties: alles wat hier staat landt achter een review-gate. Bewust
@@ -1525,18 +1624,10 @@
       if (goto) {
         goto.onclick = () => { inboxFilter = 'mail'; show('inbox'); renderItems(); };
       }
-      const mailSheetBtn = el.querySelector('[data-open-mail-sheet]');
-      if (mailSheetBtn) mailSheetBtn.onclick = () => openMailSheet();
+      el.querySelectorAll('[data-open-mail-sheet]').forEach((b) => { b.onclick = () => openMailSheet(); });
       const agendaSheetBtn = el.querySelector('[data-open-agenda-sheet]');
       if (agendaSheetBtn) agendaSheetBtn.onclick = () => openAgendaSheet();
-      el.querySelectorAll('[data-open-mail]').forEach((row) => {
-        row.onclick = () => {
-          const it = items.find((i) => i.dismiss_kind === 'personal_mail'
-            && String(i.item_id) === String(row.dataset.openMail));
-          if (it) openDetail(it);
-          else toast('Concept nog niet gesynchroniseerd — probeer zo opnieuw', '', 'schedule');
-        };
-      });
+      bindMailRows(el, false);
     } catch (e) {
       if (e.message === 'login') return;
       el.innerHTML = `<div class="glass-panel rounded-xl p-6 text-error font-body-md">

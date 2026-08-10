@@ -34,6 +34,15 @@ MAX_POSITION = 20.0
 DEFAULT_MIN_IMPRESSIONS = 20
 DEFAULT_LIMIT = 25
 
+# "Laaghangend fruit" uit Goldie's pijler 1: zoekwoorden met veel impressies
+# maar weinig klikken (lage CTR) zijn de grootste content-kans — Google toont
+# de site al, maar de snippet/pagina zet de impressie niet om. Bij CTR onder
+# deze benchmark krijgt de kans een boost; bij CTR op/bovel benchmark blijft de
+# score ongewijzigd (geen straf, zodat goede near-winners niet wegvallen).
+BENCHMARK_CTR = 2.0       # % CTR waarop een striking-distance-kans "normaal" klikt
+CTR_BOOST_PER_PT = 0.25   # elke procentpunt CTR onder de benchmark → +0.25 factor
+CTR_BOOST_MAX = 1.6       # bovengrens van de CTR-boost-factor
+
 _POSITION_SPAN = (MAX_POSITION + 1) - MIN_POSITION  # 17
 
 
@@ -51,16 +60,35 @@ def _strip_json_fences(raw: str) -> str:
     return raw.strip()
 
 
-def _opportunity_score(impressions: int, position: float) -> float:
+def _opportunity_score(impressions: int, position: float,
+                       ctr: Optional[float] = None) -> float:
     """Kansscore: veel impressies dichtbij pagina 1 = grootste hefboom.
 
     proximity = 1.0 bij positie 4, daalt naar ~0.06 bij positie 20. Buiten de
     striking-distance-band is de score 0 (geen kans of al goed/te ver weg).
+
+    CTR-factor (Goldie pijler 1): een kans met veel impressies maar een
+    abnormaal lage CTR is een grotere content-kans — Google toont de site al,
+    de pagina/snippet zet de vertoning niet om in klikken. CTR op of boven
+    `BENCHMARK_CTR` verandert de score niet; elke procentpunt eronder tikt de
+    factor op (geplafonneerd op `CTR_BOOST_MAX`). Ontbrekende CTR → factor 1.0,
+    dus achterwaarts compatibel.
+
+    Let op: dit getal bepaalt alléén welke gemeten kansen de scan haalt en in
+    welke volgorde ze de tabel in gaan. De volgorde die de UI en de
+    contentmotor zien komt uit `potential.sort_key` — dat rekent in verwachte
+    klikken en is dus wél vergelijkbaar met de speculatieve kansen, die hier
+    per definitie nooit langskomen (zij hebben geen impressies).
     """
     if position < MIN_POSITION or position > MAX_POSITION:
         return 0.0
     proximity = (MAX_POSITION + 1 - position) / _POSITION_SPAN
-    return round(impressions * proximity, 1)
+    score = impressions * proximity
+    if ctr is not None:
+        ctr_factor = 1.0 + max(0.0, BENCHMARK_CTR - ctr) * CTR_BOOST_PER_PT
+        ctr_factor = min(ctr_factor, CTR_BOOST_MAX)
+        score *= ctr_factor
+    return round(score, 1)
 
 
 def find_opportunities(
@@ -70,7 +98,7 @@ def find_opportunities(
     for r in rows:
         if r["impressions"] < min_impressions:
             continue
-        score = _opportunity_score(r["impressions"], r["position"])
+        score = _opportunity_score(r["impressions"], r["position"], r.get("ctr"))
         if score <= 0:
             continue
         scored.append({**r, "opportunity_score": score})
@@ -341,10 +369,21 @@ def cold_start_opportunities(site: Dict, count: int = 8) -> List[Dict]:
         print(f"[demand] Cold-start keyword-onderzoek mislukt: {e}")
         return []
 
+    # Zelfde poort als de trend-brug (`trends.py`): een kans die de gate niet
+    # doorstaat (kannibaal, ruis, of — sinds 9 aug 2026 — vormt geen echte
+    # zoekopdracht) mag ook via deze tweede aanmaakroute niet ontstaan. Zonder
+    # dit zou een toekomstige LLM-brainstorm alsnog een Engelse of afgekapte
+    # "query" kunnen opleveren die er via cold-start omheen glipt.
+    from . import opportunity_quality as quality
+    coverage = quality.site_coverage(site)
+
     created: List[Dict] = []
     for item in items[:count]:
         query = (item.get("query") or "").strip() if isinstance(item, dict) else ""
         if not query or query.lower() in existing:
+            continue
+        oordeel = quality.assess({"query": query}, coverage, site)
+        if oordeel.get("filter_reason"):
             continue
         existing.add(query.lower())
         created.append(create_manual_opportunity(
@@ -455,11 +494,34 @@ def list_opportunities(site_id: Optional[str] = None, status: Optional[str] = No
             "ORDER BY opportunity_score DESC, impressions DESC",
             params,
         ).fetchall()
-    return [dict(r) for r in rows]
+    # De SQL-volgorde is alleen een stabiele voorsortering; het échte oordeel
+    # valt in `potential`. Zonder deze stap wint de vaste cold-start-score (60)
+    # het van elke gemeten kans, want die scoort op zijn eigen schaal 3-20 —
+    # en dan pakt `select_topic` structureel het bedachte zoekwoord eerst.
+    from . import potential
+    return potential.annotate([dict(r) for r in rows])
 
 
-def _published_job_for_query(site_id: str, query: str) -> Optional[Dict]:
-    """Zoek de meest recente gepubliceerd-live content_job voor een query.
+def _fetch_published_jobs(site_id: str) -> list:
+    """De gepubliceerde content_jobs van een site, één keer opgehaald.
+
+    `_published_job_for_query` deed deze query vroeger zelf, per opportunity
+    aangeroepen — bij 38 kansen dus 38 keer dezelfde tabel scannen (~4-5s per
+    site, gemeten 9 aug 2026 toen de Control Room deze functie voor alle
+    projecten tegelijk ging aanroepen). `list_opportunities_truth` haalt de
+    rijen nu één keer op en geeft ze door aan elke matchpoging."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT id, title, keyword, status, slug, publish_result "
+            "FROM content_jobs WHERE site_id = ? AND status = 'published' "
+            "ORDER BY created_at DESC",
+            (site_id,),
+        ).fetchall()
+
+
+def _match_published_job(rows: list, query: str) -> Optional[Dict]:
+    """Zoek in reeds opgehaalde gepubliceerd-live content_jobs naar een match
+    voor `query`.
 
     `content_jobs` is de canonieke bron van wat er écht op de site live staat
     (status='published' + een site-URL in publish_result). Als die er is,
@@ -468,18 +530,17 @@ def _published_job_for_query(site_id: str, query: str) -> Optional[Dict]:
     """
     if not query:
         return None
-    q = (query or "").strip().lower()
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT id, title, keyword, status, slug, publish_result "
-            "FROM content_jobs WHERE site_id = ? AND status = 'published' "
-            "ORDER BY created_at DESC",
-            (site_id,),
-        ).fetchall()
+    from . import opportunity_quality as quality
     for r in rows:
-        kw = (r["keyword"] or "").strip().lower()
-        # Match op exacte query, of keyword dat de query bevat/erdoor bevat wordt
-        if kw and (kw == q or q.startswith(kw) or kw.startswith(q) or q in kw or kw in q):
+        # Matchen via `opportunity_quality`, niet via substring. De oude
+        # substring-test ("kw in q or q in kw") noemde 'levensverhaal laten
+        # schrijven kosten' gepubliceerd zodra 'levensverhaal laten schrijven'
+        # live stond — een échte andere zoekintentie die zijn eigen pagina
+        # verdient, stil weggeschreven als 'al gedaan' (2 aug 2026). Twee
+        # verschillende antwoorden op dezelfde vraag is precies hoe zulke
+        # fouten ontstaan; er is er nu nog één.
+        if quality.is_same_topic(query, r["keyword"] or "", r["title"] or "",
+                                 r["slug"] or ""):
             pr = r["publish_result"]
             url = None
             if pr:
@@ -498,18 +559,41 @@ def _published_job_for_query(site_id: str, query: str) -> Optional[Dict]:
     return None
 
 
-def list_opportunities_truth(site_id: Optional[str] = None,
-                             status: Optional[str] = None) -> List[Dict]:
-    """Als `list_opportunities`, maar corrigeert de status naar de WAARHEID.
+def _published_job_for_query(site_id: str, query: str) -> Optional[Dict]:
+    """Enkelvoudige match — voor aanroepers die niet al over meerdere
+    opportunities lopen (dus geen baat hebben bij het zelf cachen van
+    `_fetch_published_jobs`). `list_opportunities_truth` gebruikt deze niet
+    meer (zie de docstring bij `_fetch_published_jobs`)."""
+    return _match_published_job(_fetch_published_jobs(site_id), query)
 
-    Een opportunity telt pas als 'published' als er daadwerkelijk een live
-    artikel (content_job, status='published' + URL) aan hangt. Zo wordt de
-    "Open (n)"-telling en de kaart-status nooit meer vertekend door een
-    mislukte/ontbrekende terugkoppeling uit de schrijfpipeline.
+
+def list_opportunities_truth(site_id: Optional[str] = None,
+                             status: Optional[str] = None,
+                             include_filtered: bool = False) -> List[Dict]:
+    """Als `list_opportunities`, maar corrigeert de status naar de WAARHEID
+    en houdt alles tegen wat geen échte kans (meer) is.
+
+    Twee lagen:
+
+    1. Statuswaarheid. Een opportunity telt pas als 'published' als er
+       daadwerkelijk een live artikel (content_job, status='published' + URL)
+       aan hangt. Zo wordt de "Open (n)"-telling nooit meer vertekend door een
+       mislukte terugkoppeling uit de schrijfpipeline.
+    2. Kwaliteitsgate (`opportunity_quality`). Elke kans krijgt een
+       `filter_reason`: al live, ligt in de Wachtrij, kannibaliseert bestaande
+       content, navigatiezoekopdracht, andere taal, of te vaag. Alleen kansen
+       zónder reden komen door de 'new'/'open'-filters heen — dat is wat het
+       Kansen-paneel toont en wat `select_topic` mag oppakken.
+
+    Niets verdwijnt: `status='uitgefilterd'` (of `include_filtered=True`) geeft
+    juist de afgekeurde kansen mét het bewijs waarom. Een filter dat je niet
+    kunt controleren is niet te vertrouwen.
     """
-    kansen = list_opportunities(site_id=site_id, status=status)
+    kansen = list_opportunities(site_id=site_id,
+                                status=None if status == "uitgefilterd" else status)
     if not site_id:
         return kansen
+    published_rows = _fetch_published_jobs(site_id)
     for opp in kansen:
         has_live_flag = bool(opp.get("live_url"))
         if opp.get("status") == "published":
@@ -520,7 +604,7 @@ def list_opportunities_truth(site_id: Optional[str] = None,
                 continue
             # Geen live_url: check of er wél een gepubliceerd artikel is dat
             # we alsnog kunnen koppelen.
-            job = _published_job_for_query(site_id, opp.get("query", ""))
+            job = _match_published_job(published_rows, opp.get("query", ""))
             if job:
                 opp["live_url"] = job["live_url"]
                 opp["content_job_id"] = job["content_job_id"]
@@ -531,21 +615,76 @@ def list_opportunities_truth(site_id: Optional[str] = None,
         else:
             # Niet-published volgens de vlag: upgrade als er wél een live
             # artikel voor deze query bestaat (de pipeline-sync kan gemist zijn).
-            job = _published_job_for_query(site_id, opp.get("query", ""))
+            job = _match_published_job(published_rows, opp.get("query", ""))
             if job:
                 opp["status"] = "published"
                 opp["live_url"] = job["live_url"]
                 opp["content_job_id"] = job["content_job_id"]
                 opp["published_at"] = opp.get("published_at") or _now()
+    # Kwaliteitsgate: markeer dubbelen, kannibalen en ruis (en corrigeer de
+    # status waar het oordeel harder is dan de vlag — een kans waarvoor een
+    # concept in de Wachtrij ligt is 'in behandeling', geen nieuwe kans).
+    _annotate_quality(site_id, kansen)
+
     # Als er expliciet op een status gefilterd werd, filter opnieuw op de
     # *gecorrigeerde* status — anders blijft een kans die we net naar
     # 'published' hebben gezet tellen in een 'in_progress'-query (en omgekeerd).
+    if status == "uitgefilterd":
+        # Precies wat er uit de Nieuw/Open-lijst is gewied: kannibalen en ruis.
+        # Kansen die 'al live' of 'in de Wachtrij' bleken hebben een eerlijke
+        # status gekregen en staan gewoon in hun eigen bak — die hier ook nog
+        # eens tonen maakt de telling dubbel.
+        return [o for o in kansen
+                if o.get("filter_reason") and o["status"] == "new"]
     if status:
         if status == "open":
             kansen = [o for o in kansen if o["status"] in ("new", "in_progress")]
         else:
             kansen = [o for o in kansen if o["status"] == status]
+    if not include_filtered and status in ("new", "open"):
+        # Alleen wat zich nog steeds als níeuw werk aanbiedt hoeft gewied te
+        # worden. 'al-live' en 'in-wachtrij' hebben hierboven al een eerlijke
+        # status gekregen en horen in de Open-lijst thuis; wat blijft staan op
+        # 'new' mét een reden is kannibalisatie of ruis.
+        kansen = [o for o in kansen
+                  if not (o.get("filter_reason") and o["status"] == "new")]
     return kansen
+
+
+def _annotate_quality(site_id: str, kansen: List[Dict]) -> None:
+    """Voeg het kwaliteitsoordeel toe en laat het de status corrigeren.
+
+    Best-effort: gaat de gate stuk (bv. onbereikbare sitemap), dan blijft de
+    lijst gewoon zichtbaar zonder oordeel — een kapotte filter mag het
+    Kansen-paneel nooit leegtrekken, want "geen kansen" leest als "niets te
+    doen" en dat is een gevaarlijker leugen dan een dubbele kans.
+    """
+    if not kansen:
+        return
+    try:
+        from . import opportunity_quality as quality
+        from . import sites as sites_service
+        site = sites_service.get_site(site_id)
+        if not site:
+            return
+        quality.annotate(kansen, site)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[demand] Kwaliteitsgate overgeslagen voor %s: %s",
+                       site_id, str(e)[:200])
+        return
+    for opp in kansen:
+        reason = opp.get("filter_reason")
+        if reason == "al-live" and opp["status"] != "published":
+            opp["status"] = "published"
+            opp["live_url"] = opp.get("live_url") or opp.get("filter_url")
+            opp["content_job_id"] = opp.get("content_job_id") or opp.get("filter_job_id")
+        elif reason == "in-wachtrij" and opp["status"] == "new":
+            # Er ligt al een concept: dit is werk in uitvoering, geen vrij
+            # zoekwoord. Vóór 2 aug 2026 bestond deze uitkomst niet en bood het
+            # paneel 'consultant sociaal domein' aan terwijl het artikel al een
+            # dag in de Wachtrij lag.
+            opp["status"] = "in_progress"
+            opp["content_job_id"] = opp.get("content_job_id") or opp.get("filter_job_id")
 
 
 def reconcile_opportunities(site_id: Optional[str] = None) -> Dict[str, int]:
@@ -599,18 +738,21 @@ def _all_site_ids() -> List[Dict]:
 
 def _has_open_job(site_id: str, query: str) -> bool:
     """Loopt er nog werk voor dit zoekwoord? (wachtrij of verbeterronde)"""
-    q = (query or "").strip().lower()
-    if not q:
+    if not (query or "").strip():
         return False
+    from . import opportunity_quality as quality
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT keyword FROM content_jobs WHERE site_id = ? AND status IN "
-            "('pending_review', 'needs_work', 'approved', 'publish_failed')",
+            "SELECT keyword, title, slug FROM content_jobs WHERE site_id = ? "
+            "AND status IN ('pending_review', 'needs_work', 'approved', 'publish_failed')",
             (site_id,),
         ).fetchall()
     for r in rows:
-        kw = (r["keyword"] or "").strip().lower()
-        if kw and (kw == q or q in kw or kw in q):
+        # Ook op titel/slug vergelijken: jobs uit de goal-engine hebben een leeg
+        # keyword-veld en matchten daardoor nooit — dan geeft de reconciliatie
+        # een zoekwoord vrij waarvoor het artikel al in de Wachtrij ligt.
+        if quality.is_same_topic(query, r["keyword"] or "", r["title"] or "",
+                                 r["slug"] or ""):
             return True
     return False
 

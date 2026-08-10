@@ -14,6 +14,7 @@ close
 cloud_off
 cloud_upload
 devices
+drafts
 edit_document
 edit_note
 error
