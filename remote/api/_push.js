@@ -1,17 +1,18 @@
-// Web-push-helper: stuur een melding naar alle geregistreerde apparaten.
-// Zonder VAPID-keys in de env doet dit stil niets (meldingen zijn optioneel).
-// Verlopen abonnementen (404/410 van de push-dienst) worden opgeruimd.
+// Web-push-helper: stuur een melding naar de geregistreerde apparaten van één
+// tenant. Zonder VAPID-keys in de env doet dit stil niets (meldingen zijn
+// optioneel). Verlopen abonnementen (404/410 van de push-dienst) worden
+// opgeruimd.
 import webpush from 'web-push';
 import { sql } from './_lib.js';
 
-export async function pushToAll(payload) {
+export async function pushToAll(tenant, payload) {
   const pub = process.env.VAPID_PUBLIC_KEY || '';
   const priv = process.env.VAPID_PRIVATE_KEY || '';
   if (!pub || !priv) return 0;
   webpush.setVapidDetails(
     process.env.VAPID_SUBJECT || 'mailto:v.munster@weareimpact.nl', pub, priv);
 
-  const subs = await sql`SELECT id, endpoint, p256dh, auth FROM push_subscriptions`;
+  const subs = await sql`SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE tenant = ${tenant}`;
   let sent = 0;
   for (const s of subs) {
     try {

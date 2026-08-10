@@ -107,9 +107,9 @@ const TOOLS = [
 
 // ── Tool-uitvoering (leest Neon, schrijft hooguit een commando) ─────────────
 
-async function runTool(name, input, effects) {
+async function runTool(name, input, effects, tenant) {
   if (name === 'lees_context') {
-    const rows = await sql`SELECT payload, generated_at FROM context_snapshot WHERE id = 1`;
+    const rows = await sql`SELECT payload, generated_at FROM context_snapshot WHERE tenant = ${tenant}`;
     const snap = rows[0];
     if (!snap || !snap.payload) return 'Geen contextsnapshot beschikbaar — de machine heeft nog niet gesynct.';
     const section = snap.payload[input.sectie];
@@ -121,10 +121,10 @@ async function runTool(name, input, effects) {
     const soort = input.soort || null;
     const rows = soort
       ? await sql`SELECT key, dismiss_kind, title, project, summary, created_at, detail
-                  FROM sync_items WHERE status='active' AND dismiss_kind=${soort}
+                  FROM sync_items WHERE tenant=${tenant} AND status='active' AND dismiss_kind=${soort}
                   ORDER BY updated_at DESC LIMIT 25`
       : await sql`SELECT key, dismiss_kind, title, project, summary, created_at, detail
-                  FROM sync_items WHERE status='active' ORDER BY updated_at DESC LIMIT 25`;
+                  FROM sync_items WHERE tenant=${tenant} AND status='active' ORDER BY updated_at DESC LIMIT 25`;
     if (!rows.length) return 'Geen open besluiten.';
     const shaped = rows.map((r) => ({
       item_key: r.key, soort: r.dismiss_kind, titel: r.title, project: r.project,
@@ -136,7 +136,8 @@ async function runTool(name, input, effects) {
   }
 
   if (name === 'lees_briefing') {
-    const rows = await sql`SELECT payload, generated_at FROM briefings ORDER BY generated_at DESC LIMIT 1`;
+    const rows = await sql`SELECT payload, generated_at FROM briefings
+                            WHERE tenant=${tenant} ORDER BY generated_at DESC LIMIT 1`;
     if (!rows.length) return 'Nog geen briefing gesynct.';
     const p = rows[0].payload || {};
     return JSON.stringify({
@@ -155,9 +156,9 @@ async function runTool(name, input, effects) {
     if (input.site) payload.site = String(input.site);
     if (input.count !== undefined) payload.count = input.count;
     const rows = await sql`
-      INSERT INTO decisions (item_key, item_kind, item_id, action, payload)
-      VALUES (${`cmd:${action}`}, 'command', ${action}, ${action}, ${JSON.stringify(payload)}::jsonb)
-      ON CONFLICT (item_key) WHERE status = 'pending' DO NOTHING
+      INSERT INTO decisions (tenant, item_key, item_kind, item_id, action, payload)
+      VALUES (${tenant}, ${`cmd:${action}`}, 'command', ${action}, ${action}, ${JSON.stringify(payload)}::jsonb)
+      ON CONFLICT (tenant, item_key) WHERE status = 'pending' DO NOTHING
       RETURNING id`;
     effects.commands.push({ action, label: COMMANDS[action], queued: rows.length > 0 });
     return rows.length
@@ -166,7 +167,8 @@ async function runTool(name, input, effects) {
   }
 
   if (name === 'stel_besluit_voor') {
-    const item = (await sql`SELECT key, title, dismiss_kind FROM sync_items WHERE key = ${input.item_key}`)[0];
+    const item = (await sql`SELECT key, title, dismiss_kind FROM sync_items
+                             WHERE tenant = ${tenant} AND key = ${input.item_key}`)[0];
     if (!item) return `Item '${input.item_key}' bestaat niet (meer).`;
     effects.proposals.push({
       item_key: item.key, kind: item.dismiss_kind, title: item.title,
@@ -324,7 +326,8 @@ function systemPrompt(snapshotAt, pulse, openCount) {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
-  if (!(await requireSession(req, res))) return;
+  const tenant = await requireSession(req, res);
+  if (!tenant) return;
 
   const provider = pickProvider();
   if (!provider) {
@@ -343,8 +346,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const snap = (await sql`SELECT payload, generated_at FROM context_snapshot WHERE id = 1`)[0];
-    const openCount = (await sql`SELECT count(*)::int AS c FROM sync_items WHERE status='active'`)[0].c;
+    const snap = (await sql`SELECT payload, generated_at FROM context_snapshot WHERE tenant = ${tenant}`)[0];
+    const openCount = (await sql`SELECT count(*)::int AS c FROM sync_items WHERE tenant=${tenant} AND status='active'`)[0].c;
     const system = systemPrompt(
       snap ? String(snap.generated_at).slice(0, 16) : null,
       snap?.payload?.pulse || null,
@@ -372,7 +375,7 @@ export default async function handler(req, res) {
       for (const call of step.toolCalls) {
         let out;
         try {
-          out = await runTool(call.name, call.input || {}, effects);
+          out = await runTool(call.name, call.input || {}, effects, tenant);
         } catch (e) {
           console.error('tool error', call.name, e);
           out = `Tool '${call.name}' faalde: ${String(e).slice(0, 200)}`;

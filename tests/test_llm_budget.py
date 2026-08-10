@@ -44,5 +44,11 @@ def test_content_improver_skips_when_budget_exceeded(monkeypatch):
 def test_budget_not_exceeded_allows_run(monkeypatch):
     monkeypatch.setattr(outcomes, "daily_llm_tokens", lambda: 10)
     monkeypatch.setattr("backend.shared.config.DAILY_TOKEN_BUDGET", 1_000_000)
+    # llm_budget_exceeded() kijkt óók naar een gedeelde quota-marker in de
+    # database (een recente 403 van de provider, over de hele testsuite/het
+    # hele proces heen) — zonder deze mock faalt deze test elke keer dat er
+    # kort daarvoor ergens écht een 403 viel, wat niets zegt over de eigenlijke
+    # dagbudget-logica die hier getest wordt.
+    monkeypatch.setattr(outcomes, "llm_quota_backoff_active", lambda: False)
     # Mag geen exception gooien
     outcomes.require_llm_budget("test")

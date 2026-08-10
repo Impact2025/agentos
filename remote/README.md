@@ -22,8 +22,10 @@ pc uit, dan stapelen besluiten zich op en voert de eerstvolgende sync ze uit.
 2. Kopieer de connection string (postgres://…) → dit wordt `DATABASE_URL`.
 3. Schema toepassen: zet `DATABASE_URL` in `remote/.env.dev.local` en draai
    `node migrate.mjs`. (Of plak `schema.sql` in de Neon SQL-editor.) Alles is
-   `IF NOT EXISTS`, dus herhalen is veilig — draai het opnieuw na een update om
-   nieuwe tabellen zoals `sessions` en `login_attempts` erbij te krijgen.
+   `IF NOT EXISTS`/idempotent, dus herhalen is veilig — draai het opnieuw na
+   een update om nieuwe tabellen/kolommen erbij te krijgen. Sinds 10 aug 2026
+   is dit schema **multi-tenant**: een bestaande installatie migreert
+   automatisch naar tenant `weareimpact` (zie de ALTER-blokken in `schema.sql`).
 
 ### 2. GitHub + Vercel (hosting)
 1. Zorg dat deze repo (of alleen de map `remote/`) op GitHub staat.
@@ -34,8 +36,9 @@ pc uit, dan stapelen besluiten zich op en voert de eerstvolgende sync ze uit.
    | Naam | Waarde |
    |---|---|
    | `DATABASE_URL` | de Neon-connection-string |
-   | `BRIDGE_TOKEN` | lang random geheim, bv. `openssl rand -hex 32` |
-   | `APP_PASSWORD` | het wachtwoord waarmee jij inlogt op je telefoon — **minimaal 16 tekens**, zie hieronder |
+   | `IP_PEPPER` | lang random geheim voor de brute-force-rem, bv. `openssl rand -hex 32` (niet per klant — één waarde voor de hele deploy) |
+   | `BASE_DOMAIN` | jouw eigen domein zonder subdomein, bv. `domein.nl` — bepaalt welk subdomein bij welke klant hoort (`nicole.domein.nl` → tenant `nicole`). Leeg = iedereen praat met `DEFAULT_TENANT` (de huidige `*.vercel.app`-situatie) |
+   | `DEFAULT_TENANT` | welke tenant-slug geldt als er geen `BASE_DOMAIN`-match is, default `weareimpact` |
    | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | voor push-meldingen: `npx web-push generate-vapid-keys` (optioneel — zonder keys geen meldingen, verder werkt alles) |
    | `VAPID_SUBJECT` | `mailto:v.munster@weareimpact.nl` |
    | **LLM voor cloud-Iris** | Kies één provider — cloud-Iris kiest OpenRouter als die key er staat, anders OpenModel. Zonder een van beide werkt alles behalve de Iris-chat. |
@@ -43,23 +46,73 @@ pc uit, dan stapelen besluiten zich op en voert de eerstvolgende sync ze uit.
    | `OPENROUTER_MODEL` | optioneel, default `anthropic/claude-sonnet-4-5` (of je lokale `CLAUDE_VIA_OPENROUTER`) |
    | `OPENMODEL_API_KEY` | alternatief voor OpenRouter: de OpenModel-gateway (Anthropic-formaat) |
    | `OPENMODEL_SMART_MODEL` | model bij OpenModel, bv. `claude-sonnet-4-6`. Zonder valt ze terug op het bulkmodel — dommere Iris |
-5. Deploy → noteer de URL (bv. `https://iris-remote.vercel.app`).
 
-### 3. Lokaal (AgentOS `.env`)
+   `BRIDGE_TOKEN` en `APP_PASSWORD` staan **niet** meer als globale env var —
+   die zijn per klant en leven als gehashte kolommen in de `tenants`-tabel
+   (zie "Meerdere klanten" hieronder). Elke bestaande deploy moet dus éénmalig
+   een tenant-rij krijgen, ook voor de eerste/enige klant.
+5. Deploy → noteer de URL (bv. `https://agentos-pearl-tau.vercel.app`).
+
+### 3. Een klant provisioneren (eenmalig per klant, ook de eerste)
 ```
-BRIDGE_REMOTE_URL=https://iris-remote.vercel.app
-BRIDGE_TOKEN=<zelfde token als in Vercel>
+cd remote
+node scripts/add-tenant.mjs weareimpact "Agent OS"
+```
+Het script vraagt een wachtwoord (min. 16 tekens, getypt = gemaskeerd) en
+print daarna éénmalig een `BRIDGE_TOKEN` — die staat daarna alleen nog gehasht
+in de database, dus bewaar 'm meteen. Opnieuw draaien voor dezelfde slug
+roteert wachtwoord én token (de oude worden dan ongeldig).
+
+### 4. Lokaal (AgentOS `.env`, per instance)
+```
+BRIDGE_REMOTE_URL=https://agentos-pearl-tau.vercel.app
+BRIDGE_TOKEN=<token uit add-tenant.mjs voor déze klant>
 BRIDGE_SYNC_MINUTES=3
 ```
-Herstart AgentOS (`agentos_service.cmd`). De scheduler-job `bridge_sync` draait
-dan elke 3 minuten; handmatig testen: `POST /api/bridge/sync-now`, status via
-`GET /api/bridge/status`.
+Herstart AgentOS (`agentos_service.cmd`, of `agentos_service_<klant>.cmd`). De
+scheduler-job `bridge_sync` draait dan elke 3 minuten; handmatig testen:
+`POST /api/bridge/sync-now`, status via `GET /api/bridge/status`. Alle klanten
+delen dezelfde `BRIDGE_REMOTE_URL` — het `BRIDGE_TOKEN` bepaalt welke tenant.
 
-### 4. Telefoon
-Open de Vercel-URL, log in, en kies "Zet op beginscherm" — dan gedraagt het
-zich als app (donker Iris-thema, bottom-nav). Meldingen aanzetten: tab
-*Systeem* → "Meldingen inschakelen". Op iPhone werkt web-push alléén vanuit de
+### 5. Telefoon
+Open de klant-specifieke URL (met `BASE_DOMAIN`: `https://<slug>.<domein>`;
+zonder: de Vercel-URL werkt voor `DEFAULT_TENANT`), log in met het wachtwoord
+uit stap 3, en kies "Zet op beginscherm" — dan gedraagt het zich als app
+(donker Iris-thema, bottom-nav). Meldingen aanzetten: tab *Systeem* →
+"Meldingen inschakelen". Op iPhone werkt web-push alléén vanuit de
 op-het-beginscherm-gezette app (iOS 16.4+), niet vanuit Safari zelf.
+
+## Meerdere klanten (multi-tenant)
+
+Eén Vercel-deploy + één Neon-database bedient meerdere klanten. Wat een
+klant scheidt van de rest:
+
+- **Eigen rij in `tenants`** (`slug`, weergavenaam, gehasht wachtwoord, gehasht
+  `BRIDGE_TOKEN`) — aangemaakt via `node scripts/add-tenant.mjs <slug> "<naam>"`.
+- **Eigen subdomein** (`nicole.domein.nl`) bepaalt voor de brówser welke tenant
+  een verzoek hoort te zien (`_lib.js:tenantFromHost`). Zonder `BASE_DOMAIN`
+  gezet in Vercel valt alles terug op `DEFAULT_TENANT` — handig zolang er nog
+  geen eigen domein aan hangt, maar dan is er dus maar één klant bereikbaar.
+- **Eigen `BRIDGE_TOKEN`** bepaalt voor de lokale AgentOS-machine welke tenant
+  ze pushen/pullen (`_lib.js:resolveBridgeTenant`) — dat gaat via de hash van
+  het token, niet via het subdomein, want alle instances praten met dezelfde
+  `BRIDGE_REMOTE_URL`.
+- Elke tabel (`sync_items`, `decisions`, `briefings`, `context_snapshot`,
+  `notes`, `sessions`, `push_subscriptions`) draagt een `tenant`-kolom en elke
+  query filtert erop — geen enkele klant kan andermans data zien, ook niet per
+  ongeluk via een gedeelde primary key (die zijn allemaal `(tenant, ...)`
+  geworden).
+
+**Wildcard-domein instellen in Vercel** (Vincent, handmatig — vergt toegang tot
+je Vercel-project en DNS die ik hier niet heb):
+1. Vercel-project → *Settings → Domains* → voeg `*.domein.nl` toe (of losse
+   subdomeinen per klant, als je liever geen wildcard wilt).
+2. Zet bij je DNS-provider een `CNAME *.domein.nl → cname.vercel-dns.com`
+   (Vercel toont de exacte waarde).
+3. Zet `BASE_DOMAIN=domein.nl` in de Vercel-environment-variables en redeploy.
+4. Vanaf dan opent `<slug>.domein.nl` automatisch de juiste tenant — er is geen
+   per-subdomein Vercel-configuratie nodig, dat loopt allemaal via de ene
+   wildcard plus de `tenants`-tabel.
 
 ## Wat er verder in zit
 - **Vandaag** (startscherm): je agenda van vandaag met het eerstvolgende blok en
@@ -98,10 +151,11 @@ Graph en Google Agenda bevragen.
 Achter dit ene wachtwoord zitten "publiceren" en "mail versturen", op een adres
 dat iedereen kan bereiken. Daar is de voordeur naar gebouwd:
 
-- **`APP_PASSWORD` moet ≥ 16 tekens zijn.** Is hij korter, dan weigert de app te
-  starten met een 503 in plaats van hem stilzwijgend te accepteren — een korte
-  code is hier het zwakste punt van het hele systeem en geen enkele rem daarna
-  maakt dat goed. Genereer er een met `openssl rand -base64 24`.
+- **Elk tenant-wachtwoord moet ≥ 16 tekens zijn** (`scripts/add-tenant.mjs`
+  weigert kortere) — een korte code is hier het zwakste punt van het hele
+  systeem en geen enkele rem daarna maakt dat goed. Wachtwoorden staan nooit
+  in platte tekst in Neon: `password_hash` is scrypt (traag, gezouten), niet
+  sha256 — dat laatste is voor hoge-entropie tokens, niet voor mensentekst.
 - **Brute-force-rem** (`login_attempts`): vijf misslagen gratis, daarna
   verdubbelt de wachttijd per poging tot een uur. Per IP, gepepperd gehasht —
   genoeg om te tellen, niets om te lekken. De teller staat in de database, want
@@ -114,8 +168,13 @@ dat iedereen kan bereiken. Daar is de voordeur naar gebouwd:
 - **Content-Security-Policy met `script-src 'self'`**: er draait geen enkel
   script van derden op de pagina die publicaties goedkeurt. Dat kan sinds
   Tailwind en de fonts lokaal staan (zie *Assets* hieronder).
-- Geen secrets in Neon; alleen werkdata (previews + besluiten). Opgeruimd na 14 dagen.
-- Twee gescheiden sloten: bearer-token voor de bridge, sessiecookie voor de UI.
+- Geen secrets in Neon in leesbare vorm — wachtwoorden en bridge-tokens staan
+  alleen als hash, verder alleen werkdata (previews + besluiten). Opgeruimd na 14 dagen.
+- Twee gescheiden sloten: bearer-token → tenant voor de bridge, sessiecookie
+  (tenant-gebonden, geverifieerd tegen het subdomein) voor de UI.
+- **Elke tabel is tenant-gescoped** — twee klanten delen dezelfde database maar
+  nooit een rij; elke query filtert op `tenant`, en de unieke sleutels zijn
+  allemaal `(tenant, ...)` in plaats van globaal.
 - De cloud kan nooit iets publiceren of versturen: een besluit is niets anders
   dan dezelfde lokale knop, later ingedrukt — inclusief kwaliteitsgate,
   adres-validatie en conflict-checks.

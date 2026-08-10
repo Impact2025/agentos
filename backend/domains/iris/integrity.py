@@ -1,0 +1,3128 @@
+"""De waarheidsaudit — Iris zoekt wat stíl kapot is.
+
+`selfheal.py` is de tegenhanger van dit bestand: die ruimt op wat **luid**
+faalt (een exception, een non-200, een rode kaart). Dit bestand zoekt het
+tegenovergestelde en veel gevaarlijkere geval: een systeem dat succes meldt
+terwijl het effect nooit heeft plaatsgevonden.
+
+Aanleiding is niet één incident maar een patroon. Tien fouten uit één ronde
+(1-2 aug 2026), allemaal dezelfde soort:
+
+  - `json_ld: ok` op FAQ-markup die Google niet als FAQPage leest
+  - 62 kansen op 'in_progress' die niemand meer oppakte, terwijl de tabel vol stond
+  - 51 lessen met 2 voorspellings-koppelingen: de leerlus was gebouwd, maar draaide leeg
+  - 'gepubliceerd' op een slug met een '&' erin — een harde 404
+  - twee artikelen live op hetzelfde zoekwoord, beide "geslaagd"
+  - een paginatitel als organisatienaam, waardoor de funnel-conversie niets mat
+
+Geen van deze tien wierp ooit een exception. Ze zijn alle tien gevonden doordat
+een mens toevallig ging kijken. CLAUDE.md zegt al *"activiteit is geen effect"*,
+en tóch leert de codebase die regel elke maand op een nieuwe plek opnieuw —
+precies omdat er niets is dat er structureel op tóetst.
+
+Dat is wat hier staat. Een **invariant** is een uitspraak die het systeem
+impliciet over zichzelf doet ("wat 'published' heet, staat live"). Elke
+invariant hieronder codeert een storing die écht is voorgekomen; het veld
+`incident` vertelt welke. Ze draaien dagelijks vóór de briefing, en Iris krijgt
+de uitkomst in haar prompt zodat stille schade zwaarder weegt dan de volgende
+optimalisatie.
+
+**De regel voor wie hier later iets aan toevoegt:** een stille storing die je
+repareert, repareer je twee keer — één keer in de code, en één keer als
+invariant hier. Anders is de volgende variant ervan weer twaalf dagen onzichtbaar.
+
+Escalatie volgt dezelfde filosofie als `shared/failures.py`: niet alles is een
+inbox-item.
+
+  - `blokkerend` — er staat nú iets verkeerds naar buiten (een 404 live, twee
+    artikelen die elkaar kannibaliseren). Meteen een kaart: wachten maakt het
+    niet beter, en elke dag telt mee in de zoekresultaten.
+  - `stil` — een mechanisme dat hoort te werken doet niets. Pas een kaart na
+    `_STIL_ESCALATIE_DAGEN`, want een mechanisme dat morgen vanzelf weer aanslaat
+    (de weekscan draait maandag) is geen storing maar een moment in de cyclus.
+  - `hygiene` — voorraadvervuiling. Nooit een kaart; telt mee in de briefing en
+    in de cijfers. Een rode kaart voor 2513 oude radarsignalen is ruis, geen alarm.
+
+Bevindingen leven in `integrity_findings` met een levensloop (first_seen /
+last_seen / resolved_at). Dat is bewust geen momentopname: het verschil tussen
+"dit is vandaag stuk" en "dit staat al drie weken open" bepaalt de urgentie, en
+een bevinding die verdwijnt sluit zichzelf mét bewijs — zo blijft er geen rode
+kaart staan voor iets dat allang gerepareerd is.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+import sqlite3
+import uuid
+from datetime import datetime, timedelta
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
+
+from ...shared.database import get_conn
+from ...shared.outcomes import log_outcome
+
+logger = logging.getLogger(__name__)
+
+# ── Ernst-klassen ──────────────────────────────────────────────────────────
+BLOKKEREND = "blokkerend"   # er staat nu iets verkeerds naar buiten
+STIL = "stil"               # een mechanisme dat hoort te werken, doet niets
+HYGIENE = "hygiene"         # voorraadvervuiling; telt, maar alarmeert niet
+
+# Hoeveel dagen een 'stil'-bevinding open mag staan vóór er een kaart komt.
+# Drie dagen dekt een weekend plus de maandagse weekscan: mechanismen die
+# cyclisch aanslaan krijgen zo de kans om zichzelf te corrigeren.
+_STIL_ESCALATIE_DAGEN = 3
+
+# Vanaf hier is een openstaande bevinding geen bevinding meer maar een besluit
+# om er niets aan te doen. De kaarttekst zegt dat dan ook.
+_VERGRIJSD_DAGEN = 14
+
+# Per invariant maximaal zoveel gevallen tonen. Een invariant die 2000 rijen
+# vindt is een cijfer, geen lijst; de volledige telling blijft wél bewaard.
+_MAX_GEVALLEN_PER_INVARIANT = 25
+
+
+class Bevinding(NamedTuple):
+    """Eén concreet geval dat een invariant schendt.
+
+    `subject` moet stabiel zijn over runs heen (een job-id, een URL, een
+    lead-id) — daarop wordt herkend of dit dezelfde bevinding is als gisteren.
+    Een subject dat per run verschilt (een timestamp, een teller) maakt van elke
+    ronde een nieuwe bevinding en van de levensloop een leugen.
+    """
+    subject: str
+    detail: str
+    project: str = ""
+
+
+class Invariant(NamedTuple):
+    key: str
+    titel: str
+    incident: str          # de échte storing die dit codeert (datum + wat er misging)
+    severity: str
+    stap: str              # de concrete stap voor een mens
+    check: Callable[[], List[Bevinding]]
+
+
+# ── Hulpjes ────────────────────────────────────────────────────────────────
+
+def _live_url(publish_result: str) -> str:
+    """Haal de gepubliceerde URL uit `content_jobs.publish_result`.
+
+    Twee vormen in het veld, allebei echt voorkomend: het platte
+    {"success": true, "url": ...} van de directe publisher, en het genestelde
+    {"site": {...}, "gsc": {...}} van de volledige pipeline. Een derde vorm
+    (geen JSON) hoort niet te bestaan maar mag deze functie niet laten vallen.
+    """
+    if not publish_result:
+        return ""
+    try:
+        data = json.loads(publish_result)
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    url = data.get("url") or ""
+    if not url and isinstance(data.get("site"), dict):
+        url = data["site"].get("url") or ""
+    return str(url or "").strip()
+
+
+def _pad_van_url(url: str) -> str:
+    """Het laatste pad-segment van een URL — dát is wat een router moet matchen."""
+    if not url:
+        return ""
+    zonder_query = url.split("?", 1)[0].split("#", 1)[0]
+    return zonder_query.rstrip("/").rsplit("/", 1)[-1]
+
+
+# Wat een URL-pad onherstelbaar breekt: alles buiten de tekens die elke router
+# ongemoeid doorlaat. Bewust ruimer dan een strikte slug-vorm: een dubbel koppelteken
+# ('…-in--4') is lelijk maar geen 404, en een audit die dáárop alarm slaat leert
+# de lezer om alarm te negeren.
+_PAD_BREEKT = re.compile(r"[^a-z0-9._~-]")
+
+LEEFT = "leeft"        # opgehaald en het rendert echt
+WEG = "weg"            # 404, of een catch-all schil (zachte 404)
+ONBEKEND = "onbekend"  # niet te bereiken — geen bewijs, in geen van beide richtingen
+
+# Eén antwoord per URL per proces. De audit draait dagelijks over enkele
+# tientallen URL's; zonder cache zou elke invariant die dezelfde pagina raakt
+# opnieuw het net op.
+_STATUS_CACHE: Dict[str, str] = {}
+
+
+def _pagina_status(url: str) -> str:
+    """Staat deze pagina er nog écht? Dezelfde regel als `_verify_live`.
+
+    Waarom dit er moest komen (2 aug 2026): `_check_afgewezen_maar_live` beweerde
+    in zijn eigen docstring dat hij "niet twee velden maar twee wérelden"
+    vergelijkt, maar keek uitsluitend naar `content_jobs.publish_result` — een
+    bewering van het systeem over zijn eigen verleden. Van de negen gemelde
+    pagina's bleken er bij nameting vier keihard 404 te geven en één alleen de
+    SPA-schil terug te sturen. De kaart vroeg dus om negen pagina's offline te
+    halen waarvan er vijf al weg waren, en kon per definitie nooit dichtgaan:
+    aan een pagina die er niet meer is valt niets te repareren. Een audit die
+    over de buitenwereld oordeelt zonder de buitenwereld te raadplegen, is
+    precies de faalmodus waar dit bestand tegen bestaat.
+
+    HTTP 200 is niet genoeg: een SPA serveert voor élke onbekende route dezelfde
+    schil met status 200. Vergelijk daarom met een URL die gegarandeerd niet
+    bestaat — lijken de antwoorden op elkaar, dan rendert de pagina niet.
+    """
+    if not url:
+        return ONBEKEND
+    if url in _STATUS_CACHE:
+        return _STATUS_CACHE[url]
+    import httpx
+
+    uitkomst = ONBEKEND
+    try:
+        headers = {"User-Agent": "AgentOS-waarheidsaudit"}
+        with httpx.Client(timeout=15, follow_redirects=True, headers=headers) as client:
+            resp = client.get(url)
+            if resp.status_code == 404 or resp.status_code == 410:
+                uitkomst = WEG
+            elif resp.status_code != 200:
+                # 5xx of een blokkade zegt niets over het bestaan van de pagina.
+                uitkomst = ONBEKEND
+            else:
+                basis, _, _ = url.rstrip("/").rpartition("/")
+                probe_url = f"{basis}/agentos-bestaat-niet-{uuid.uuid4().hex[:12]}"
+                try:
+                    probe = client.get(probe_url)
+                except Exception:  # noqa: BLE001
+                    uitkomst = LEEFT  # geen vergelijking mogelijk; 200 blijft 200
+                else:
+                    if probe.status_code != 200:
+                        uitkomst = LEEFT  # de site geeft nette 404's, dus de 200 is echt
+                    else:
+                        a, b = len(resp.text), len(probe.text)
+                        gelijk = bool(a) and abs(a - b) <= max(200, a * 0.02)
+                        uitkomst = WEG if gelijk else LEEFT
+    except Exception as e:  # noqa: BLE001
+        # Onbereikbaar ≠ offline. Een DNS-fout of timeout mag geen bevinding
+        # sluiten (dan verdwijnt een echt probleem bij de eerste netwerkhik) en
+        # ook geen bevinding verzinnen.
+        logger.debug("[waarheidsaudit] status van %s onbeslist: %s", url, e)
+        uitkomst = ONBEKEND
+    _STATUS_CACHE[url] = uitkomst
+    return uitkomst
+
+
+def _project_van_site(site_id: str) -> str:
+    if not site_id:
+        return ""
+    try:
+        with get_conn() as conn:
+            row = conn.execute("SELECT name FROM sites WHERE id = ?", (site_id,)).fetchone()
+        return (row["name"] if row else "") or ""
+    except Exception:  # noqa: BLE001 — een audit mag nooit op een naam struikelen
+        return ""
+
+
+# ── De invarianten ─────────────────────────────────────────────────────────
+#
+# Elke check is een gewone functie die een lijst bevindingen teruggeeft. Ze
+# importeren hun domein lokaal: de audit mag geen importcykel introduceren, en
+# een kapot domein mag de rest van de audit niet meeslepen (zie `run_audit`).
+
+def _check_interne_taakopdracht_live() -> List[Bevinding]:
+    from ..publish.content_pipeline import is_internal_document
+    uit: List[Bevinding] = []
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, site_id, title, publish_result FROM content_jobs "
+            "WHERE status = 'published'"
+        ).fetchall()
+    for r in rijen:
+        reden = is_internal_document(r["title"] or "", "")
+        if reden:
+            url = _live_url(r["publish_result"] or "")
+            uit.append(Bevinding(
+                subject=url or f"job:{r['id']}",
+                detail=f"'{(r['title'] or '')[:70]}' staat gepubliceerd maar {reden}",
+                project=_project_van_site(r["site_id"]),
+            ))
+    return uit
+
+
+def _check_slug_onveilig() -> List[Bevinding]:
+    """Toetst het gepubliceerde pad, niet de boekhoudkolom.
+
+    De eerste versie las `content_jobs.slug` en meldde negen blokkerende
+    gevallen met de tekst "de pagina geeft vrijwel zeker 404". Acht daarvan
+    stonden gewoon live: de publisher slugificeert bij het publiceren, dus de
+    URL was netjes ('…-casestudy-anton-127-projecten') terwijl de kolom de ruwe
+    titel had bewaard ('…-casestudy-anton-(12'). De voorgeschreven stap —
+    opnieuw publiceren + 301 — zou acht gezonde artikelen hebben gedupliceerd.
+
+    Wat er live staat is het pad in `publish_result`. Is er geen URL, dan is dat
+    geen slug-probleem maar een bewijs-probleem, en dat is `publicatie_onbewezen`.
+    De afwijkende kolom zelf is niet onschuldig maar ook niet blokkerend; die
+    heeft nu een eigen invariant (`slug_kolom_wijkt_af_van_url`).
+    """
+    uit: List[Bevinding] = []
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, site_id, title, slug, publish_result FROM content_jobs "
+            "WHERE status = 'published'"
+        ).fetchall()
+    for r in rijen:
+        pad = _pad_van_url(_live_url(r["publish_result"] or ""))
+        if not pad:
+            continue
+        stuk = sorted(set(_PAD_BREEKT.findall(pad)))
+        if not stuk:
+            continue
+        uit.append(Bevinding(
+            subject=f"job:{r['id']}",
+            detail=(f"gepubliceerde URL eindigt op '{pad[:60]}' — de tekens "
+                    f"{' '.join(repr(t) for t in stuk)} overleven geen route-matching, "
+                    f"dus deze pagina geeft vrijwel zeker 404 "
+                    f"(artikel: '{(r['title'] or '')[:50]}')"),
+            project=_project_van_site(r["site_id"]),
+        ))
+    return uit
+
+
+def _check_slug_kolom_wijkt_af() -> List[Bevinding]:
+    """De opgeslagen slug is niet wat er live staat.
+
+    Onschuldig voor de bezoeker — de URL werkt — maar het is een stille leugen
+    in de boekhouding, en die kostte op 2 aug 2026 acht valse blokkerende
+    alarmen omdat `slug_onveilig` deze kolom las in plaats van de URL. Elke
+    andere lezer van `content_jobs.slug` (dedupe, sitemap, interne links) loopt
+    hetzelfde risico. Hygiëne: melden in de cijfers, nooit als kaart.
+    """
+    uit: List[Bevinding] = []
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, site_id, title, slug, publish_result FROM content_jobs "
+            "WHERE status = 'published' AND COALESCE(slug, '') != ''"
+        ).fetchall()
+    for r in rijen:
+        pad = _pad_van_url(_live_url(r["publish_result"] or ""))
+        if not pad or pad == (r["slug"] or ""):
+            continue
+        uit.append(Bevinding(
+            subject=f"job:{r['id']}",
+            detail=(f"kolom slug = '{(r['slug'] or '')[:45]}' maar de live URL eindigt "
+                    f"op '{pad[:45]}' — wie de kolom leest, leest niet de wereld "
+                    f"(artikel: '{(r['title'] or '')[:40]}')"),
+            project=_project_van_site(r["site_id"]),
+        ))
+    return uit
+
+
+def _check_zoekwoord_kannibalisatie() -> List[Bevinding]:
+    from ..publish.content_pipeline import _keyword_key
+    per_site: Dict[str, Dict[str, List]] = {}
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, site_id, title, keyword, publish_result FROM content_jobs "
+            "WHERE status = 'published' AND COALESCE(keyword, '') != ''"
+        ).fetchall()
+    for r in rijen:
+        sleutel = _keyword_key(r["keyword"])
+        if not sleutel:
+            continue
+        per_site.setdefault(r["site_id"] or "", {}).setdefault(sleutel, []).append(r)
+
+    uit: List[Bevinding] = []
+    for site_id, per_kw in per_site.items():
+        for sleutel, jobs in per_kw.items():
+            if len(jobs) < 2:
+                continue
+            titels = " | ".join((j["title"] or "")[:45] for j in jobs[:3])
+            uit.append(Bevinding(
+                # Sleutel op site+zoekwoord, niet op de job-ids: verdwijnt er één
+                # artikel, dan is dít geval opgelost en niet "een ander geval".
+                subject=f"{site_id}::{sleutel[:80]}",
+                detail=(f"{len(jobs)} artikelen live op één zoekwoord "
+                        f"'{(jobs[0]['keyword'] or '')[:50]}' — ze kannibaliseren "
+                        f"elkaar: {titels}"),
+                project=_project_van_site(site_id),
+            ))
+    return uit
+
+
+def _canonieke_pagina(url: str) -> str:
+    """Eén sleutel per échte pagina.
+
+    Drie vormen van dezelfde pagina die in `gsc_history` naast elkaar staan en
+    die zonder deze stap als 'kannibalisatie' zouden tellen: met en zonder
+    `www.`, met en zonder afsluitende slash, en met een querystring
+    (`?page=1`). Google indexeert ze los, maar het is één document — en een
+    invariant die een site aanrekent dat hij onder twee hostnamen bekend staat,
+    meldt het verkeerde probleem met de verkeerde stap eronder.
+    """
+    if not url:
+        return ""
+    kaal = url.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    kaal = re.sub(r"^https?://", "", kaal, flags=re.I).lower()
+    return re.sub(r"^www\.", "", kaal)
+
+
+def _is_indexpagina(url: str) -> bool:
+    """Is dit een sectie-/overzichtspagina in plaats van een artikel?
+
+    `/blog` en `/kennisbank` vertonen op de onderwerpen van hun eigen artikelen
+    — dat hóórt zo en is geen kannibalisatie. Zelfde vuistregel als
+    `external_content.fetch_live_sitemap_slugs` (een artikelslug heeft
+    koppeltekens of is lang), zodat "is dit een artikel?" één antwoord heeft.
+    """
+    pad = _canonieke_pagina(url)
+    if "/" not in pad:
+        return True  # de homepage; die vertoont op alles en concurreert met niets
+    laatste = pad.rsplit("/", 1)[-1]
+    return not laatste or ("-" not in laatste and len(laatste) < 8)
+
+
+def _check_cluster_kannibalisatie() -> List[Bevinding]:
+    """Meerdere eigen pagina's die bij Google op hetzelfde zoekwoord vertonen.
+
+    De wereld-versie van `zoekwoord_kannibalisatie`. Die toets leest
+    `content_jobs.keyword` — een bewering van het systeem over zijn eigen werk,
+    en dus blind voor alles wat buiten Agent OS om is gepubliceerd. Bij Bewaard
+    voor Jou stonden 102 pagina's live waarvan er acht op 'levensverhaal
+    vastleggen' vertoonden; `content_jobs` kende er daarvan twee, dus de
+    bestaande toets zweeg terwijl de site zichzelf op zijn kernzoekwoord
+    beconcurreerde en op positie 25 bleef staan.
+
+    `gsc_history` is hier de tweede wereld: welke pagina op welk zoekwoord
+    vertoont is een waarneming, geen administratie.
+    """
+    from ..seo.opportunity_quality import squash, tokens
+
+    per_cluster: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    with get_conn() as conn:
+        # Merknaam per site: op je eigen naam hóórt de hele site te verschijnen.
+        # 'bijeen komen' haalde anders /functies en /sign-in binnen als
+        # "kannibalen" — twee pagina's die precies doen wat ze moeten doen.
+        merk = {
+            r["id"]: squash((r["base_url"] or "").split("//")[-1].split("/")[0]
+                            .replace("www.", "").split(".")[0])
+            for r in conn.execute("SELECT id, base_url FROM sites").fetchall()
+        }
+        rijen = conn.execute(
+            "SELECT h.site_id, h.page_url, h.top_query, h.impressions, h.position "
+            "FROM gsc_history h JOIN ("
+            "  SELECT site_id, page_url, MAX(date) AS d FROM gsc_history"
+            "  WHERE scope = 'page' GROUP BY site_id, page_url"
+            ") l ON l.site_id = h.site_id AND l.page_url = h.page_url AND l.d = h.date "
+            "WHERE h.scope = 'page' AND COALESCE(h.top_query, '') != ''"
+        ).fetchall()
+
+    for r in rijen:
+        query = (r["top_query"] or "").strip()
+        # Merk- en navigatiequeries overslaan: op 'bijeen' hóórt de hele site te
+        # verschijnen, en dat als kannibalisatie melden is precies het soort
+        # onterechte rode kaart dat een lezer leert de audit te negeren.
+        if len(tokens(query)) < 2:
+            continue
+        eigen_merk = merk.get(r["site_id"] or "")
+        if eigen_merk and len(eigen_merk) >= 4 and eigen_merk in squash(query):
+            continue
+        if _is_indexpagina(r["page_url"] or ""):
+            continue
+        sleutel = (r["site_id"] or "", squash(query))
+        if not sleutel[1]:
+            continue
+        cluster = per_cluster.setdefault(sleutel, {"query": query, "paginas": {}})
+        pad = _canonieke_pagina(r["page_url"] or "")
+        if not pad:
+            continue
+        try:
+            positie = float(r["position"] or 0)
+        except (TypeError, ValueError):
+            positie = 0.0
+        bestaand = cluster["paginas"].get(pad)
+        # Dezelfde pagina onder twee hostnamen: houd de best rankende variant.
+        if bestaand is None or (positie and positie < bestaand[0]):
+            cluster["paginas"][pad] = (positie, int(r["impressions"] or 0))
+
+    uit: List[Bevinding] = []
+    for (site_id, sleutel), cluster in per_cluster.items():
+        paginas = cluster["paginas"]
+        if len(paginas) < 2:
+            continue
+        gesorteerd = sorted(paginas.items(), key=lambda kv: kv[1][0] or 999)
+        beste = gesorteerd[0]
+        namen = ", ".join("/" + p.split("/", 1)[-1][:40] for p, _ in gesorteerd[:3])
+        uit.append(Bevinding(
+            # Site + zoekwoord, niet de pagina's: verdwijnt er één, dan is dít
+            # geval opgelost en niet "een ander geval".
+            subject=f"{site_id}::{sleutel[:80]}",
+            detail=(f"{len(paginas)} eigen pagina's vertonen op "
+                    f"'{cluster['query'][:50]}' — ze verdelen de autoriteit; "
+                    f"de beste staat op positie {beste[1][0]:.1f}".replace(".", ",")
+                    + f". Betrokken: {namen}"),
+            project=_project_van_site(site_id),
+        ))
+    return uit
+
+
+def _check_sitemap_dubbele_pagina() -> List[Bevinding]:
+    """Twee live pagina's op dezelfde site die over hetzelfde onderwerp gaan —
+    gevonden in de sitemap zelf, zonder GSC, LLM of profiel nodig.
+
+    De derde wereld naast `zoekwoord_kannibalisatie` (leest `content_jobs`) en
+    `cluster_kannibalisatie` (leest `gsc_history`): die laatste ziet alleen
+    duplicaten die al vertoningen krijgen, dus een dubbele pagina waar nog
+    niemand op zocht blijft daarin onzichtbaar. Aanleiding (7 aug 2026): zeven
+    zulke paren op steentjebijsteentje.nl (vijf een letterlijke '-2'-kopie) en
+    bewaardvoorjou.nl, gevonden via `fetch_live_sitemap_slugs` +
+    `is_same_topic` — dezelfde twee bouwstenen als de Kansen-gate, want twee
+    antwoorden op "is dit dezelfde pagina?" is precies hoe dit soort gaten
+    ontstaat. Op dat moment stonden er 12 blokkerende
+    `cluster_kannibalisatie`-bevindingen open en geen daarvan dekte dit.
+    """
+    from ..seo.external_content import fetch_live_sitemap_slugs
+    from ..seo.opportunity_quality import is_same_topic
+
+    uit: List[Bevinding] = []
+    with get_conn() as conn:
+        sites = [dict(r) for r in conn.execute(
+            "SELECT id, name, base_url FROM sites WHERE COALESCE(base_url, '') != ''"
+        ).fetchall()]
+
+    for site in sites:
+        try:
+            slugs = [x["slug"] for x in fetch_live_sitemap_slugs(site) if x.get("slug")]
+        except Exception:  # noqa: BLE001 — één trage/dode sitemap mag de rest niet blokkeren
+            logger.debug("[waarheidsaudit] sitemap ophalen mislukt voor %s", site.get("name"))
+            continue
+        gezien: set = set()
+        for i, a in enumerate(slugs):
+            if a in gezien:
+                continue
+            for b in slugs[i + 1:]:
+                if b in gezien or a == b:
+                    continue
+                if is_same_topic(a.replace("-", " "), b):
+                    gezien.add(b)
+                    uit.append(Bevinding(
+                        subject=f"{site['id']}::{a[:60]}",
+                        detail=(f"Twee live pagina's lijken over hetzelfde onderwerp te gaan: "
+                                f"/{a[:50]} en /{b[:50]}. Kies er één, haal de andere offline "
+                                f"met een 301 ernaartoe."),
+                        project=site.get("name") or "",
+                    ))
+                    break
+    return uit
+
+
+def _check_publicatie_onbewezen() -> List[Bevinding]:
+    uit: List[Bevinding] = []
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, site_id, title, publish_result FROM content_jobs "
+            "WHERE status = 'published'"
+        ).fetchall()
+    for r in rijen:
+        if not _live_url(r["publish_result"] or ""):
+            uit.append(Bevinding(
+                subject=f"job:{r['id']}",
+                detail=(f"'{(r['title'] or '')[:60]}' heet 'published' maar er is geen "
+                        f"URL vastgelegd — er is geen bewijs dat er iets live staat"),
+                project=_project_van_site(r["site_id"]),
+            ))
+    return uit
+
+
+def _check_afgewezen_maar_live() -> List[Bevinding]:
+    """De database zegt 'afgewezen', het web zegt 'gepubliceerd'.
+
+    Ontdekt op 2 aug 2026 door deze audit zelf, en meteen de scherpste toets van
+    de set: hij vergelijkt niet twee velden maar twee wérelden. Negen pagina's
+    stonden live terwijl hun job op `rejected` stond — waaronder 'Agent OS
+    end-to-end publicatietest' op ictusgo.nl, de site van een klant.
+
+    Zo ontstaat het: een job wordt gepubliceerd, iemand wijst hem daarna in de
+    Wachtrij af, en de afwijzing verandert alleen de rij in de database. Er is
+    geen stap die de pagina ook echt offline haalt. Daarna kijkt niemand er ooit
+    nog naar, want in élk overzicht is de job keurig 'rejected' — hij verdwijnt
+    uit de wachtrij, uit de tellingen, uit het zicht.
+
+    De eerste versie stopte bij de URL in `publish_result` en redeneerde: staat
+    daar iets, dan is er ooit gepubliceerd, en dat spreekt de status tegen. Dat
+    is een bewering van het systeem over zijn eigen verleden — precies het soort
+    bewijs dat dit bestand wantrouwt. Bij nameting op 2 aug 2026 gaven vier van
+    de negen gemelde pagina's een harde 404 en gaf er één alleen de SPA-schil
+    terug; ze wáren dus allang offline gehaald. De kaart vroeg om werk dat al
+    gedaan was en kon nooit meer dichtgaan, want de bevinding hing aan een veld
+    dat nooit meer verandert. Sindsdien halen we het net wél op (`_pagina_status`).
+
+    Onbereikbaar is geen vrijspraak: bij een timeout of DNS-fout blijft de
+    bevinding staan, mét die onzekerheid in de tekst. Anders sluit één
+    netwerkhik een pagina die wél degelijk live staat.
+    """
+    uit: List[Bevinding] = []
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, site_id, title, status, publish_result FROM content_jobs "
+            "WHERE status IN ('rejected', 'stuck', 'needs_work') "
+            "AND COALESCE(publish_result, '') != ''"
+        ).fetchall()
+    for r in rijen:
+        url = _live_url(r["publish_result"] or "")
+        if not url:
+            continue
+        status = _pagina_status(url)
+        if status == WEG:
+            continue  # de wereld klopt inmiddels met de database
+        twijfel = ("" if status == LEEFT else
+                   " (pagina was nu niet te bereiken — controleer zelf of hij nog leeft)")
+        uit.append(Bevinding(
+            subject=url,
+            detail=(f"'{(r['title'] or '')[:55]}' staat in de database op "
+                    f"'{r['status']}' maar staat nog live op {url} — "
+                    f"afwijzen haalt een pagina niet offline{twijfel}"),
+            project=_project_van_site(r["site_id"]),
+        ))
+    return uit
+
+
+def _check_kans_vastgelopen() -> List[Bevinding]:
+    """Kansen die uitgedeeld zijn maar nergens meer toe leiden.
+
+    Dit is de invariant-vorm van `seo/engine.reconcile_opportunities`: die
+    functie rúimt op, deze controleert of het opruimen ook echt gebeurt. Draait
+    de weekscan niet (of faalt de reconciliatie stil), dan zie je het hier —
+    niet pas als de contentmotor is drooggevallen.
+    """
+    from ..seo import engine as seo_engine
+    uit: List[Bevinding] = []
+    with get_conn() as conn:
+        sites = [r["id"] for r in conn.execute("SELECT id FROM sites")]
+    for site_id in sites:
+        for opp in seo_engine.list_opportunities(site_id=site_id, status="in_progress"):
+            query = opp.get("query", "")
+            if seo_engine._published_job_for_query(site_id, query):
+                continue
+            if seo_engine._has_open_job(site_id, query):
+                continue
+            uit.append(Bevinding(
+                subject=f"opp:{opp['id']}",
+                detail=(f"zoekwoord '{query[:60]}' staat op 'in_progress' zonder lopend "
+                        f"werk en zonder live artikel — het is verbruikt zonder resultaat"),
+                project=_project_van_site(site_id),
+            ))
+    return uit
+
+
+# Onder dit aantal gepubliceerde artikelen zegt 'geen eigen bewijs' niets over
+# de site: dan is er simpelweg nog nauwelijks gepubliceerd.
+_BEWIJS_MIN_ARTIKELEN = 3
+# Zoveel gemeten artikelen moeten er zijn vóór 'de haak wordt niet gebruikt'
+# een uitspraak is in plaats van een toevalstreffer.
+_BEWIJS_MIN_GEMETEN = 3
+
+
+def _check_artikel_zonder_eigen_bewijs() -> List[Bevinding]:
+    """Publiceren we iets dat alleen wíj kunnen schrijven?
+
+    De kennisbank-haak bestaat sinds de Goldie-pipeline: `_make_outline` eist
+    dat één sectie de casestudy als bewijs gebruikt en `seo/knowledge.py` matcht
+    er deterministisch één. Alleen stond de tabel leeg — 4 casestudies op één van
+    de twaalf sites (5 aug 2026) — en dan valt die eis stilzwijgend weg. Het
+    resultaat is een artikel dat elke concurrent met hetzelfde model ook krijgt,
+    en de kwaliteitsgate ziet daar niets van: die meet vorm, en generiek scoort
+    probleemloos 84.
+
+    Eén bevinding per site, niet per artikel: de vraag "waar ontbreekt
+    bewijsmateriaal?" wordt per site beantwoord en per site opgelost. De twee
+    redenen blijven bewust gescheiden, want ze wijzen naar verschillende mensen —
+    een lege kennisbank is werk voor Vincent, een ongebruikte kennisbank is een
+    gat in de schrijfketen.
+    """
+    uit: List[Bevinding] = []
+    with get_conn() as conn:
+        sites = conn.execute(
+            "SELECT s.id, s.name, COUNT(j.id) AS artikelen "
+            "FROM sites s JOIN content_jobs j ON j.site_id = s.id "
+            "WHERE j.status = 'published' GROUP BY s.id, s.name"
+        ).fetchall()
+        for site in sites:
+            if site["artikelen"] < _BEWIJS_MIN_ARTIKELEN:
+                continue
+            cases = conn.execute(
+                "SELECT COUNT(*) AS n FROM case_studies "
+                "WHERE site_id = ? AND status = 'active'", (site["id"],)
+            ).fetchone()["n"]
+            project = _project_van_site(site["id"])
+            if not cases:
+                uit.append(Bevinding(
+                    subject=f"bewijs:{site['id']}",
+                    detail=(f"{site['artikelen']} artikelen live op "
+                            f"{site['name'] or site['id']} en nul casestudies in de "
+                            f"kennisbank — elk van die artikelen is reproduceerbare "
+                            f"AI-tekst zonder eigen bewijs"),
+                    project=project,
+                ))
+                continue
+            # De site hééft bewijsmateriaal: gebruikt de schrijfketen het ook?
+            # Alleen artikelen mét een oordeel tellen mee — 'niet gemeten' mag
+            # nooit als 'geen bewijs' worden gelezen.
+            gemeten = mislukt = 0
+            for rij in conn.execute(
+                "SELECT qc_report FROM content_jobs WHERE site_id = ? "
+                "AND status = 'published' AND COALESCE(qc_report, '') != ''",
+                (site["id"],),
+            ):
+                try:
+                    oordeel = (json.loads(rij["qc_report"]) or {}).get("eigen_bewijs")
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(oordeel, dict):
+                    continue
+                gemeten += 1
+                mislukt += int(not oordeel.get("pass"))
+            if gemeten >= _BEWIJS_MIN_GEMETEN and mislukt * 2 > gemeten:
+                uit.append(Bevinding(
+                    subject=f"bewijs-ongebruikt:{site['id']}",
+                    detail=(f"{mislukt} van {gemeten} gemeten artikelen op "
+                            f"{site['name'] or site['id']} verwerkte de gekoppelde "
+                            f"casestudy niet — het bewijsmateriaal ligt er wel, maar "
+                            f"komt niet in de tekst terecht"),
+                    project=project,
+                ))
+    return uit
+
+
+def _check_contentleerlus_zonder_lessen() -> List[Bevinding]:
+    """De contentleerlus draait wekelijks, meldt 'ok' en levert nul lessen.
+
+    Gemeten op 5 aug 2026: `agent_lessons` bevatte 2 rijen, allebei van de
+    beursagent; de job `content_learning_eval` draaide 3 augustus en bracht
+    niets voort. Dat kán kloppen (te weinig gerijpte artikelen om een verschil
+    te meten), maar niemand kan het verschil zien tussen "nog niets te leren" en
+    "de meting werkt niet" — en precies dat onderscheid is de reden dat deze
+    invarianten bestaan. De bevinding draagt daarom de gemeten oorzaak mee.
+
+    Eén bevinding, geen lijst: dit is een uitspraak over het mechanisme.
+    """
+    with get_conn() as conn:
+        lessen = conn.execute(
+            "SELECT COUNT(*) AS n FROM agent_lessons WHERE agent = 'content'"
+        ).fetchone()["n"]
+        if lessen:
+            return []
+        run = conn.execute(
+            "SELECT last_ok_at FROM scheduler_runs WHERE job_id = 'content_learning_eval'"
+        ).fetchone()
+    # Nooit geslaagd? Dan is dit geen stille leerlus maar een kapotte job, en
+    # daar gaat `job_nooit_geslaagd` over — twee kaarten voor één storing is
+    # precies wat het Actiecentrum onbruikbaar maakt.
+    if not run or not (run["last_ok_at"] or ""):
+        return []
+
+    from ..publish import content_learning
+    try:
+        stats = content_learning.cohort_stats()
+    except Exception as e:
+        oorzaak = f"de cohortmeting zelf faalt ({str(e)[:80]})"
+        kleinste = None
+    else:
+        tellingen = [w["n"] for dim in stats.values() for w in dim.values()]
+        kleinste = min(tellingen) if tellingen else 0
+        gemeten = max(
+            (sum(w["n"] for w in dim.values()) for dim in stats.values()), default=0)
+        if kleinste >= content_learning.MIN_ARTICLES_PER_VALUE:
+            oorzaak = (f"{gemeten} gerijpte artikelen zijn wél gemeten, maar geen enkel "
+                       f"vormverschil haalt de les-drempel")
+        else:
+            oorzaak = (f"maar {gemeten} gepubliceerde artikelen zijn gerijpt én meetbaar "
+                       f"(kleinste cohort {kleinste}, nodig "
+                       f"{content_learning.MIN_ARTICLES_PER_VALUE}) — er valt nog niets "
+                       f"te concluderen, en dat zegt de job nergens")
+    return [Bevinding(
+        subject="agent_lessons:content",
+        detail=(f"de contentleerlus draaide voor het laatst op "
+                f"{(run['last_ok_at'] or '')[:10]} en heeft nog nooit een les "
+                f"vastgelegd: {oorzaak}"),
+        project="Content",
+    )]
+
+
+def _check_leerlus_leeg() -> List[Bevinding]:
+    """Draait Iris' leer-lus, of staat hij alleen in de architectuur?
+
+    Op 27 jul 2026 waren er 51 actieve lessen en 2 koppelingen aan een
+    voorspelling: geen enkele les won of verloor ooit vertrouwen. De code was
+    er, de tabel was er, en de briefing zei elke dag netjes "geleerd". Zulke
+    stilte is per definitie onzichtbaar — daarom telt hij hier.
+
+    Eén bevinding, geen 51: dit is een uitspraak over het mechanisme.
+    """
+    with get_conn() as conn:
+        rij = conn.execute(
+            "SELECT COUNT(*) AS n, "
+            "       SUM(CASE WHEN predictions_made > 0 THEN 1 ELSE 0 END) AS gekoppeld "
+            "FROM iris_lessons WHERE active = 1"
+        ).fetchone()
+    totaal = rij["n"] or 0
+    gekoppeld = rij["gekoppeld"] or 0
+    # Onder de tien lessen zegt het aandeel niets: dan is 'nog geen koppeling'
+    # gewoon een jonge leerlus, geen kapotte.
+    if totaal < 10:
+        return []
+    aandeel = gekoppeld / totaal
+    if aandeel >= 0.2:
+        return []
+    return [Bevinding(
+        subject="iris_lessons",
+        detail=(f"{gekoppeld} van {totaal} actieve lessen is ooit aan een voorspelling "
+                f"gekoppeld ({aandeel * 100:.0f}%) — zonder koppeling wint of verliest "
+                f"een les nooit vertrouwen en leert de lus dus niets"),
+        project="Iris",
+    )]
+
+
+def _check_triage_remedie_zonder_effect() -> List[Bevinding]:
+    """Een 'bekende remedie' die nog nooit iets heeft opgelost.
+
+    6 aug 2026: op de audit-kaart 'Meerdere eigen pagina's vertonen bij Google op
+    één zoekwoord' koos de triage-LLM een contentronde. Die leverde niets op —
+    en werd tóch als de bekende aanpak voor die handtekening vastgelegd, want
+    `_remember` schrijft de keuze weg vóórdat het resultaat bekend is. Elke
+    volgende klik op "Analyseer & fix" zou hem dan zonder LLM herhalen: een
+    remedie die per constructie niets kan doen, ingesleten als beleid, met
+    telkens een nette melding eronder.
+
+    `_verleer_bij_aanhoudend_falen` zet zo'n remedie na drie vruchteloze
+    pogingen op inactief. Deze toets is de tegenproef: blijft er tóch één actief
+    staan met alleen mislukkingen, dan werkt die rem niet — en dan zegt de knop
+    weer iets wat niet waar is.
+
+    Bewust alleen de agent-acties uit de triage-whitelist. `selfheal` deelt deze
+    tabel maar schrijft `probe`/`network_check`, en dáár is drie keer mislukken
+    geen storing: die ronde stopt er zelf mee (`_MAX_POGINGEN`) en de kaart
+    blijft gewoon staan. Beide meemelden zou dit een teller van mislukte
+    probes maken in plaats van een uitspraak over ingesleten beleid.
+    """
+    from .triage import _ALLOWED_REMEDIES
+
+    agent_acties = sorted(_ALLOWED_REMEDIES - {"human_step"})
+    with get_conn() as conn:
+        try:
+            rijen = conn.execute(
+                "SELECT signature, sample_action, remedy_type, attempts, project "
+                "FROM iris_error_fixes WHERE active = 1 AND successes = 0 "
+                f"AND attempts >= 3 AND remedy_type IN ({','.join('?' * len(agent_acties))})",
+                agent_acties,
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+    return [Bevinding(
+        subject=f"fix:{r['signature'][:80]}",
+        detail=(f"remedie '{r['remedy_type']}' voor '{(r['sample_action'] or '?')}' "
+                f"draaide {r['attempts']}× zonder één succes en geldt nog steeds als "
+                f"de bekende aanpak — elke klik herhaalt hem zonder nieuwe diagnose"),
+        project=r["project"] or "Iris",
+    ) for r in rijen]
+
+
+def _check_voorspelling_niet_afgerekend() -> List[Bevinding]:
+    """Voorspellingen waarvan de horizon ruim verstreken is en die nog open staan.
+
+    `evaluate_due` hoort ze af te rekenen bij elke briefing. Staan ze er dagen
+    later nog, dan draait de afrekening niet — en een voorspelling die nooit
+    wordt afgerekend is geen voorspelling maar een wens.
+    """
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, project, metric, due_date, statement FROM iris_predictions "
+            "WHERE status = 'open' AND due_date < date('now', '-2 day')"
+        ).fetchall()
+    return [Bevinding(
+        subject=f"pred:{r['id']}",
+        detail=(f"voorspelling over {r['metric']} ({r['project']}) liep af op "
+                f"{r['due_date']} en is nooit afgerekend: "
+                f"'{(r['statement'] or '')[:60]}'"),
+        project="Iris",
+    ) for r in rijen]
+
+
+# Acties waarvan een uitkomstkaart een artefact hóórt te hebben. Bewust een
+# witte lijst: veel acties zijn puur informatief ('dagbriefing', 'iris_actie')
+# en een artefact eisen zou van deze invariant een ruisgenerator maken.
+_ARTEFACT_PLICHTIG = (
+    "publiceren", "publicatie", "artikel", "content_run", "seo_refresh",
+    "outreach", "linkbuilding",
+)
+
+
+def _check_uitkomst_zonder_artefact() -> List[Bevinding]:
+    """CLAUDE.md: "elke taak/run die 'klaar' claimt hoort een artefact-link te
+    hebben". Deze invariant is die regel, uitvoerbaar gemaakt.
+
+    Een geslaagde publicatie zonder URL is precies de vorm die 78 doelen in juli
+    als 'voltooid' liet afsluiten op louter concepten.
+    """
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, project, action, detail, created_at FROM activity_log "
+            "WHERE status = 'ok' AND COALESCE(artifact, '') = '' "
+            "AND created_at >= datetime('now', '-7 day')"
+        ).fetchall()
+    uit: List[Bevinding] = []
+    for r in rijen:
+        actie = (r["action"] or "").lower()
+        if not any(p in actie for p in _ARTEFACT_PLICHTIG):
+            continue
+        uit.append(Bevinding(
+            subject=f"log:{r['id']}",
+            detail=(f"'{r['action']}' meldde succes zonder artefact-link "
+                    f"({(r['detail'] or '')[:60]}) — er is niets aanwijsbaars opgeleverd"),
+            project=r["project"] or "",
+        ))
+    return uit
+
+
+def _check_radar_signaal_verlopen() -> List[Bevinding]:
+    with get_conn() as conn:
+        rij = conn.execute(
+            "SELECT COUNT(*) AS n FROM radar_signals "
+            "WHERE status = 'new' AND created_at < datetime('now', '-21 day')"
+        ).fetchone()
+    n = rij["n"] or 0
+    if n < 50:
+        return []
+    return [Bevinding(
+        subject="radar_signals:verlopen",
+        detail=(f"{n} radarsignalen staan langer dan 21 dagen op 'new' — een trend van "
+                f"drie weken oud valt niemand meer aan; ze verdringen alleen de verse"),
+        project="Systeem",
+    )]
+
+
+def _check_lead_geen_organisatie() -> List[Bevinding]:
+    """Rommel in de voorraad maakt de acquisitieformule onmeetbaar.
+
+    Deze invariant draait dezelfde zeef als `prospecting/validate.py` over de
+    leads die er al ín staan. Zo bewijst hij tegelijk dat de zeef aan de
+    voorkant werkt: nieuwe rommel hoort hier niet meer bij te komen.
+    """
+    from ..prospecting import validate
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, org_name, website FROM leads "
+            "WHERE status IN ('new', 'enriched', 'valid', 'outreach_review')"
+        ).fetchall()
+    uit: List[Bevinding] = []
+    for r in rijen:
+        geschikt, reden = validate.looks_like_organisation(
+            r["org_name"] or "", r["website"] or "", "")
+        if not geschikt:
+            uit.append(Bevinding(
+                subject=f"lead:{r['id']}",
+                detail=(f"'{(r['org_name'] or '')[:55]}' staat in de actieve voorraad maar "
+                        f"is geen organisatie ({reden}) — het vertekent de conversieratio's"),
+                project="Acquisitie",
+            ))
+    return uit
+
+
+def _check_bulk_in_behandeling() -> List[Bevinding]:
+    """Nieuwsbrieven die tóch als vraag of afspraak zijn geclassificeerd.
+
+    De gate uit 1 aug 2026 hoort dit onmogelijk te maken. Deze invariant is het
+    bewijs dat hij het ook echt doet — en de alarmbel als er een route omheen
+    ontstaat (zoals de Graph-flow die de headers niet opvroeg).
+
+    Bewust alleen berichten waar op dít moment iets voor klaarstaat: een concept
+    of een afspraakvoorstel dat op goedkeuring wacht. Een nieuwsbrief die drie
+    weken geleden verkeerd is geclassificeerd en waarvan het concept allang is
+    afgewezen, is geschiedenis — die opdreunen maakt van de audit een archief in
+    plaats van een alarm. Er staan er 47 van in de database (2 aug 2026); geen
+    ervan vraagt nog iets van een mens.
+    """
+    from ..mail import bulk
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT i.id, i.from_addr, i.subject, i.body_text, i.classified "
+            "FROM mail_inbox i "
+            "WHERE i.classified IN ('question', 'appointment') AND ("
+            "  EXISTS (SELECT 1 FROM mail_reply r "
+            "          WHERE r.inbox_id = i.id AND r.status = 'pending_review') "
+            "  OR EXISTS (SELECT 1 FROM calendar_proposals p "
+            "             WHERE p.inbox_id = i.id AND p.status = 'pending_review'))"
+        ).fetchall()
+    uit: List[Bevinding] = []
+    for r in rijen:
+        reden = bulk.bulk_reason(None, r["from_addr"] or "", r["subject"] or "",
+                                 r["body_text"] or "")
+        if reden:
+            uit.append(Bevinding(
+                subject=f"mail:{r['id']}",
+                detail=(f"er wacht iets op goedkeuring voor '{(r['subject'] or '')[:45]}' "
+                        f"van {(r['from_addr'] or '')[:35]}, maar dat is bulk ({reden}) — "
+                        f"daar hoort niets voor klaar te staan"),
+                project="Mail",
+            ))
+    return uit
+
+
+def _check_outreach_voorraad_onbenut() -> List[Bevinding]:
+    """Er staan mailbare leads klaar, maar er gaat niets de review in.
+
+    2 aug 2026: de outreach-batch meldde "geen bruikbare leads — funnel-invoer is
+    op" terwijl er zeven direct mailbare leads in voorraad stonden. De oorzaak was
+    een `LIMIT` vóór de zeef in `select_batch_leads`: de eerste acht rijen waren
+    generieke `info@`-adressen die de zeef weigert, en met count=5 kwam er nooit
+    één concept uit. Omdat alle leads dezelfde score hadden was de volgorde iedere
+    dag identiek — de funnel stond weken droog met een gevulde voorraad.
+
+    De toets kijkt naar het gat zelf, niet naar de oorzaak: mailbare voorraad ja,
+    concepten in review nee, en de batch heeft recent wél gedraaid. Elke andere
+    route naar dezelfde stilstand valt er dus ook onder.
+
+    Eén bevinding, geen zeven: dit is een uitspraak over het mechanisme.
+    """
+    from ..prospecting.outreach import count_mailable_leads
+    with get_conn() as conn:
+        in_review = conn.execute(
+            "SELECT COUNT(*) AS n FROM leads WHERE status = 'outreach_review'"
+        ).fetchone()["n"] or 0
+        recent_gedraaid = conn.execute(
+            "SELECT COUNT(*) AS n FROM activity_log "
+            "WHERE action IN ('outreach_batch', 'iris_actie') "
+            "AND detail LIKE '%utreach-batch%' "
+            "AND created_at >= datetime('now', '-3 day')"
+        ).fetchone()["n"] or 0
+    if in_review or not recent_gedraaid:
+        return []
+    mailbaar = count_mailable_leads()
+    if mailbaar < 1:
+        return []
+    return [Bevinding(
+        subject="outreach:voorraad_onbenut",
+        detail=(f"{mailbaar} mailbare lead(s) in voorraad, 0 concepten in review, "
+                f"terwijl de outreach-batch de afgelopen dagen wél draaide — de "
+                f"selectie levert niets op wat de voorraad wel toestaat"),
+        project="Acquisitie",
+    )]
+
+
+def _check_publicatiefout_zonder_kaart() -> List[Bevinding]:
+    """Een artikel dat de gate passeerde en tóch niet live staat, zonder alarm.
+
+    24 jul – 2 aug 2026: `publicatie_mislukt` werd met de standaard status 'ok'
+    gelogd. De uitkomstkaart bestond, maar een 'ok'-kaart is een logregel en geen
+    inbox-item, dus Ictusgo's 404 kwam drie ochtenden terug als 'les' in Iris'
+    briefing zonder één keer als beslissing op het scherm te staan.
+
+    Deze toets kijkt naar de jobs, niet naar de logregels: staat er een job op
+    `publish_failed` zonder openstaande error-kaart, dan wacht er goedgekeurd werk
+    dat niemand ziet — ongeacht via welke route het daar terechtkwam.
+    """
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT j.id, j.site_id, j.title, j.error FROM content_jobs j "
+            "WHERE j.status = 'publish_failed' "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM activity_log a WHERE a.status = 'error' "
+            "  AND a.detail LIKE '%' || j.title || '%')"
+        ).fetchall()
+    return [Bevinding(
+        subject=f"job:{r['id']}",
+        detail=(f"'{(r['title'] or '')[:55]}' is goedgekeurd maar niet gepubliceerd "
+                f"({(r['error'] or 'reden onbekend')[:50]}) zonder dat er een "
+                f"fout-kaart voor openstaat — niemand krijgt dit te zien"),
+        project=_project_van_site(r["site_id"]),
+    ) for r in rijen]
+
+
+_BLIJFT_LIGGEN_DAGEN = 14
+
+
+def _check_bevinding_blijft_liggen() -> List[Bevinding]:
+    """Een blokkerende bevinding die al weken openstaat.
+
+    De audit over zichzelf. Aanleiding (4 aug 2026): een meting over alle
+    projecten telde 82 openstaande bevindingen, waarvan 54 blokkerend of stil —
+    sommige al twee weken oud — terwijl `grep` over de codebase **nul**
+    reparatiepaden opleverde. Elke invariant die erbij kwam produceerde een
+    kaart en verder niets; zelfherstel raakt ze niet aan omdat `waarheidsaudit`
+    in `_MENSELIJK_BESLUIT` staat, en dat is terecht zolang er geen remedie ís.
+
+    Het gevolg is de faalmodus die dit hele bestand bestrijdt, één verdieping
+    hoger: het systeem meldde trouw wat er stuk was, en dat melden veranderde
+    niets. 'Blokkerend' betekent per definitie dat er nú iets verkeerds naar
+    buiten staat; blijft zo'n bevinding twee weken staan, dan is óf de remedie
+    er niet, óf hij werkt niet, óf niemand ziet de kaart. Alle drie zijn een
+    storing in de keten — niet in de site.
+
+    Bewust `stil` en niet `blokkerend`: de onderliggende bevindingen schreeuwen
+    al, en een rode kaart bovenop een rode kaart is precies de dubbele melding
+    die `stilstand_dubbel_gemeld` verbiedt. Eén bevinding per invariant, niet
+    per geval.
+    """
+    grens = (datetime.now() - timedelta(days=_BLIJFT_LIGGEN_DAGEN)).isoformat()
+    uit: List[Bevinding] = []
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT invariant, COUNT(*) AS n, MIN(first_seen) AS oudste "
+            "FROM integrity_findings WHERE resolved_at IS NULL AND severity = ? "
+            "AND first_seen < ? GROUP BY invariant",
+            (BLOKKEREND, grens),
+        ).fetchall()
+    for r in rijen:
+        dagen = _dagen_sinds(r["oudste"])
+        uit.append(Bevinding(
+            subject=f"blijft-liggen:{r['invariant']}",
+            detail=(f"{r['n']} blokkerende bevinding(en) van '{r['invariant']}' staan al "
+                    f"{dagen} dagen open. Blokkerend betekent dat er nú iets verkeerds naar "
+                    "buiten staat — twee weken later is dat geen bevinding meer maar een "
+                    "toestand. Óf er is geen remedie, óf de remedie werkt niet, óf niemand "
+                    "ziet de kaart."),
+            project="Waarheidsaudit",
+        ))
+    return uit
+
+
+def _dagen_sinds(tijdstip: str) -> int:
+    try:
+        return max(0, (datetime.now() - datetime.fromisoformat(tijdstip)).days)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _check_indexnow_keyfile() -> List[Bevinding]:
+    """Staat het IndexNow-keybestand écht op de site-root?
+
+    Zonder dat bestand negeren Bing, Yandex, Seznam en Naver élke aanmelding —
+    stilletjes, met een HTTP 403 die alleen in `publish_result` belandde. Dit is
+    dezelfde soort toets als `afgewezen_maar_live`: hij vergelijkt niet twee
+    velden maar twee werelden. De sleutel staat in `sites.indexnow_key`; of hij
+    ook bereikbaar is, weet alleen het web.
+
+    En hier geldt de SPA-les dubbel: twee sites gaven op het keybestand netjes
+    HTTP 200 terug met hun eigen HTML-schil erin. Wie op de statuscode toetst,
+    noemt die twee gezond. De inhoud is de toets — het bestand hoort exact de
+    key te bevatten en niets anders.
+    """
+    import httpx
+
+    uit: List[Bevinding] = []
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, name, base_url, indexnow_key FROM sites "
+            "WHERE COALESCE(indexnow_key, '') != '' AND COALESCE(base_url, '') != ''"
+        ).fetchall()
+    for r in rijen:
+        key = (r["indexnow_key"] or "").strip()
+        key_url = f"{(r['base_url'] or '').rstrip('/')}/{key}.txt"
+        try:
+            headers = {"User-Agent": "AgentOS-waarheidsaudit"}
+            with httpx.Client(timeout=15, follow_redirects=True, headers=headers) as client:
+                resp = client.get(key_url)
+        except Exception:
+            # Onbereikbaar is geen vrijspraak, maar ook geen bewijs van schuld:
+            # we melden niets liever dan een netwerkhik als storing te boeken.
+            continue
+        inhoud = (resp.text or "").strip()
+        if resp.status_code == 200 and inhoud == key:
+            continue
+        if inhoud[:15].lower().startswith(("<!doctype", "<html")):
+            reden = ("de site serveert hier zijn HTML-schil in plaats van het "
+                     "keybestand (catch-all route, HTTP 200 bewijst dus niets)")
+        elif resp.status_code != 200:
+            reden = f"HTTP {resp.status_code}"
+        else:
+            reden = f"het bestand bevat iets anders dan de key ({inhoud[:40]!r})"
+        uit.append(Bevinding(
+            subject=f"indexnow:{r['id']}",
+            detail=(f"IndexNow-keybestand niet bruikbaar op {key_url}: {reden}. "
+                    "Bing, Yandex, Seznam en Naver negeren daardoor elke aanmelding "
+                    "van nieuwe artikelen voor deze site."),
+            project=r["name"] or "",
+        ))
+    return uit
+
+
+def _check_publicatiekanaal_dood() -> List[Bevinding]:
+    """Niet één artikel is stuk — het kanaal van een hele site is stuk.
+
+    3 aug 2026: het Actiecentrum stond vol met 25 kaarten 'Publiceren mislukt',
+    twaalf ervan van Ictusgo, elk met een eigen titel en een eigen knop
+    'Opnieuw publiceren'. Elke kaart was op zichzelf juist: `_verify_live` had
+    netjes een 404 vastgesteld. Wat er nergens stond, was de enige zin die ertoe
+    deed: *op ictusgo.nl rendert geen enkel gepubliceerd artikel*. De oorzaak was
+    één regel in de site (`@neondatabase/serverless` geeft een timestamp terug
+    als `Date`, en `.slice(0, 10)` daarop gooit; de `catch` eromheen maakte van
+    die fout een lege lijst, dus een bestaand artikel werd een 404). Alle 22
+    artikelen sinds 17 juli stonden gewoon in de database van de site.
+
+    Twaalf keer 'Opnieuw publiceren' zou twaalf keer opnieuw zijn mislukt, want
+    de publicatie was nooit het probleem: de API antwoordde elke keer keurig
+    `201 created`. Dat is de les die deze toets codeert — **de bevestiging van
+    de ontvanger bewijst niets over wat de bezoeker ziet.**
+
+    Vandaar de vorm: één bevinding per site, niet per artikel. Slaagt géén
+    enkele recente publicatie van een site de live-controle en falen er minstens
+    drie, dan is de diagnose 'de ontvangende site' en niet 'dit artikel', en
+    hoort er één kaart te staan die dát zegt. Staat er wél iets live van
+    dezelfde site, dan is het per-artikel-probleem het echte probleem en zwijgt
+    deze toets — daar zijn `publicatiefout_zonder_kaart` en de gewone
+    fout-kaarten voor.
+
+    `ONBEKEND` telt niet mee als bewijs in beide richtingen: een site die
+    tijdens de audit onbereikbaar is, mag hier geen kanaal-storing worden en mag
+    er ook geen wegpoetsen.
+    """
+    from collections import defaultdict
+
+    grens = (datetime.now() - timedelta(days=45)).isoformat()
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, site_id, title, status, publish_result FROM content_jobs "
+            "WHERE status IN ('published', 'publish_failed') "
+            "AND COALESCE(publish_result, '') != '' "
+            # NULLIF eerst: `reviewed_at` heeft DEFAULT '' in het schema, dus
+            # een kale COALESCE levert een lege string op en die is kleiner dan
+            # élke datum — de hele toets zou stil niets vinden.
+            "AND COALESCE(NULLIF(reviewed_at, ''), created_at) >= ? "
+            "ORDER BY COALESCE(NULLIF(reviewed_at, ''), created_at) DESC",
+            (grens,),
+        ).fetchall()
+
+    per_site: Dict[str, List] = defaultdict(list)
+    for r in rijen:
+        if _live_url(r["publish_result"] or ""):
+            per_site[r["site_id"] or ""].append(r)
+
+    uit: List[Bevinding] = []
+    for site_id, jobs in per_site.items():
+        dood: List[str] = []
+        leeft = 0
+        for r in jobs[:25]:  # recentste eerst; verder terug voegt niets toe
+            status = _pagina_status(_live_url(r["publish_result"] or ""))
+            if status == WEG:
+                dood.append(str(r["title"] or "")[:45])
+            elif status == LEEFT:
+                leeft += 1
+        if leeft or len(dood) < 3:
+            continue
+        voorbeeld = ", ".join(f"'{t}'" for t in dood[:3])
+        uit.append(Bevinding(
+            subject=f"site:{site_id}",
+            detail=(f"{len(dood)} gepubliceerde artikelen geven allemaal een 404 en er "
+                    f"staat er géén van deze site live ({voorbeeld}) — dit is geen "
+                    f"artikelprobleem maar een defect in de ontvangende site; opnieuw "
+                    f"publiceren lost niets op, de publicatie-API meldde elke keer succes"),
+            project=_project_van_site(site_id),
+        ))
+    return uit
+
+
+def _check_trefkans_gevleid() -> List[Bevinding]:
+    """Meet de trefkans alleen de makkelijke gevallen?
+
+    2 aug 2026: de briefing meldde 42,9% trefkans. Van de 23 afgerekende
+    voorspellingen stonden er 9 op 'unclear', waarvan 5 het patroon "nauwelijks
+    bewogen (0 → 0)" hadden bij een voorspelling die een expliciete drempel noemde
+    ("krijgt 1 click"). Die stilstanden waren missers, maar `_judge` legde de
+    ruisdrempel vóór de doeltoets en telde ze niet mee. De echte trefkans was 26%.
+
+    Een leerlus die zijn eigen misgrepen wegstreept als 'onbeslist' leert niets en
+    meldt tegelijk dat het goed gaat — de gevaarlijkste combinatie die er is.
+    Daarom telt niet de trefkans zelf maar het aandeel onbesliste uitslagen: dat
+    is de knop waarmee een score gevleid kan worden.
+    """
+    with get_conn() as conn:
+        rij = conn.execute(
+            "SELECT COUNT(*) AS beoordeeld, "
+            "       SUM(CASE WHEN status = 'unclear' THEN 1 ELSE 0 END) AS onbeslist "
+            "FROM iris_predictions WHERE status IN ('correct', 'wrong', 'unclear')"
+        ).fetchone()
+    beoordeeld = rij["beoordeeld"] or 0
+    onbeslist = rij["onbeslist"] or 0
+    # Onder de tien uitslagen zegt een aandeel niets.
+    if beoordeeld < 10:
+        return []
+    aandeel = onbeslist / beoordeeld
+    if aandeel < 0.35:
+        return []
+    return [Bevinding(
+        subject="iris_predictions:onbeslist",
+        detail=(f"{onbeslist} van {beoordeeld} afgerekende voorspellingen staat op "
+                f"'unclear' ({aandeel * 100:.0f}%) — bij dit aandeel meet de "
+                f"trefkans vooral welke gevallen buiten de telling vallen"),
+        project="Iris",
+    )]
+
+
+def _check_radar_watch_dood() -> List[Bevinding]:
+    """Een bron die we blijven bevragen en die nooit iets oplevert.
+
+    3 aug 2026: twaalf van de twintig RSS-feeds in de watchlist hadden sinds hun
+    aanmaak geen enkel signaal opgeleverd, en negen `site:`-watches evenmin.
+    Niets meldde dat — `last_scanned_at` werd alleen bijgewerkt als er íets werd
+    opgeslagen, dus een dode feed en een rustige feed zagen er identiek uit. De
+    scan bleef ze elke vier uur bevragen.
+
+    Pas ná `_MIN_SCANS` pogingen is "levert niets op" een uitspraak in plaats van
+    een momentopname; een feed die vorige week is toegevoegd verdient het
+    voordeel van de twijfel.
+    """
+    _MIN_SCANS = 5
+    with get_conn() as conn:
+        try:
+            rijen = conn.execute(
+                "SELECT project, label, type, value, scan_count FROM radar_watchlist "
+                "WHERE active = 1 AND COALESCE(scan_count, 0) >= ? "
+                "AND COALESCE(signal_count, 0) = 0 ORDER BY scan_count DESC",
+                (_MIN_SCANS,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []  # radar nog nooit gebruikt op deze installatie
+    return [Bevinding(
+        subject=f"watch:{r['project']}:{r['value'][:60]}",
+        detail=(f"{r['type']} '{r['label'][:50]}' van {r['project']} is {r['scan_count']}× "
+                f"bevraagd en leverde nog nooit één signaal op — de bron is dood of "
+                f"het adres klopt niet"),
+        project="Mission Radar",
+    ) for r in rijen]
+
+
+def _check_radar_trendbrug_stil() -> List[Bevinding]:
+    """De trend-brug staat stil terwijl er signalen liggen.
+
+    3 aug 2026: de brug had sinds 27 juli geen enkele kans meer opgeleverd,
+    terwijl de radar dagelijks honderden signalen binnenhaalde. Oorzaak was geen
+    storing maar uitputting: het zoekwoord kwam uit de watchlist in plaats van
+    uit het signaal, en na één conversie was elk watchlist-woord door de
+    dedupe voor altijd verbruikt. Alle 38 kansen die de brug ooit maakte waren
+    lettérlijk een watchlist-regel. Zo'n module faalt niet — hij is klaar, en
+    dat is onzichtbaar.
+
+    Deze toets meet precies dat gat: kandidaten wél, opbrengst niet.
+    """
+    from ..seo.trends import TREND_MIN_SIGNAL_SCORE, TREND_MIN_MATCH
+    _STIL_DAGEN = 10
+    with get_conn() as conn:
+        try:
+            kandidaten = conn.execute(
+                "SELECT COUNT(*) AS n FROM radar_signals WHERE status = 'new' "
+                "AND signal_score >= ? AND COALESCE(filter_reason, '') = '' "
+                "AND ai_match_score >= ?",
+                (TREND_MIN_SIGNAL_SCORE, TREND_MIN_MATCH),
+            ).fetchone()["n"]
+        except sqlite3.OperationalError:
+            return []
+        if kandidaten < 5:
+            return []  # geen aanbod, dus ook geen verwachting
+        gemaakt = conn.execute(
+            "SELECT COUNT(*) AS n FROM opportunities WHERE rationale LIKE 'Radarsignaal%' "
+            "AND scanned_at > datetime('now', ?)", (f"-{_STIL_DAGEN} days",),
+        ).fetchone()["n"]
+    if gemaakt:
+        return []
+    return [Bevinding(
+        subject="trendbrug:stil",
+        detail=(f"{kandidaten} radarsignalen halen de trend-drempel, maar de brug zette "
+                f"er in {_STIL_DAGEN} dagen nul om in een content-kans — de koppeling "
+                f"levert niets meer terwijl de scan gewoon doordraait"),
+        project="Mission Radar",
+    )]
+
+
+def _check_stilstand_dubbel_gemeld() -> List[Bevinding]:
+    """Eén stilstand, twee kaarten in dezelfde inbox.
+
+    2 aug 2026: het Actiecentrum toonde 'biweekly_content' en
+    'linkbuilding_weekly' allebei dubbel — één keer als 'gemiste_runs'-kaart uit
+    `activity_log` (knop: "Analyseer & fix") en één keer als scheduler-gat uit
+    `scheduler_gaps` (knop: "Nu alsnog draaien"). Zelfde tekst, letterlijk;
+    alleen de knop die het werk terughaalt zat op de tweede.
+
+    Twee meldwegen naar dezelfde beslissing is hoe een inbox onleesbaar wordt:
+    je leert dat items dubbel staan, en dan lees je ze niet meer. De
+    activity_log-weg is weggehaald (`shared/downtime.py`); deze toets bewaakt
+    dat er niet ongemerkt een derde bij komt.
+    """
+    with get_conn() as conn:
+        try:
+            open_jobs = {
+                r["job_id"] for r in conn.execute(
+                    "SELECT DISTINCT job_id FROM scheduler_gaps "
+                    "WHERE recovered_at IS NULL AND cost != ''")
+            }
+        except sqlite3.OperationalError:
+            return []
+        if not open_jobs:
+            return []
+        # Bewust níet op actie 'gemiste_runs' gefilterd. Die naam was de vórige
+        # tweede meldweg; een toets die alleen dié naam kent, is blind voor de
+        # volgende. Elke foutkaart die met '<job_id>|' begint claimt iets over
+        # een geplande taak, en dat is genoeg om op te vergelijken.
+        kaarten = conn.execute(
+            "SELECT id, project, action, detail, created_at FROM activity_log "
+            "WHERE status = 'error' AND created_at > datetime('now', '-3 day')"
+        ).fetchall()
+        # Dezelfde resolver als het Actiecentrum, niet een eigen oordeel: de
+        # vraag is "staat dit dubbel op het scherm", en die vraag hoort maar één
+        # antwoord te hebben. De rijen van vóór de fix staan nog in het logboek
+        # maar bereiken de inbox niet meer — dat is historie, geen dubbeling.
+        from . import metrics as _metrics
+        kaarten = [k for k in kaarten if not _metrics._error_resolved(conn, dict(k))]
+    uit: List[Bevinding] = []
+    for k in kaarten:
+        job_id = (k["detail"] or "").split("|")[0].strip()
+        if job_id and job_id in open_jobs:
+            uit.append(Bevinding(
+                subject=f"dubbel:{job_id}",
+                detail=(f"stilstand van '{job_id}' staat zowel als losse foutkaart "
+                        f"('{k['action']}') in het Actiecentrum als in `scheduler_gaps` "
+                        f"— twee kaarten voor één beslissing, en alleen de tweede "
+                        f"heeft de inhaalknop"),
+                project="Scheduler",
+            ))
+    return uit
+
+
+def _check_agenda_horizon() -> List[Bevinding]:
+    from ..calendar.agent import _MAX_HORIZON_DAGEN
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, title, proposed_start FROM calendar_proposals "
+            "WHERE status = 'pending_review' AND proposed_start > "
+            "      datetime('now', ?)",
+            (f"+{_MAX_HORIZON_DAGEN} day",),
+        ).fetchall()
+    return [Bevinding(
+        subject=f"voorstel:{r['id']}",
+        detail=(f"afspraakvoorstel '{(r['title'] or '')[:45]}' staat op "
+                f"{(r['proposed_start'] or '')[:10]} — verder weg dan "
+                f"{_MAX_HORIZON_DAGEN} dagen is vrijwel zeker een misparse"),
+        project="Agenda",
+    ) for r in rijen]
+
+
+def _check_metatitel_afgekapt() -> List[Bevinding]:
+    """De meta-titel die live gaat, is midden in een woord afgekapt.
+
+    2 aug 2026: 47 van 103 artikelen droegen een titel die op exact 60 tekens
+    was afgesneden — 'Bedrijfsuitje Hoofddorp Schiphol - Jouw teambeleving in
+    de l' — waarvan er 15 al gepubliceerd waren. Google toont die titel zoals
+    hij is. De harde `[:60]` stond op vier plekken tegelijk: de review-preview
+    en de drie publicatieroutes. Voor slugs was exact deze les al geleerd (zie
+    `slugify_title`, 25 jul 2026), maar de meta-titel had de fix nooit gekregen.
+
+    Twee varianten tellen mee omdat ze dezelfde wortel hebben: de titel bevat
+    de instructie-echo van het model ('(54 tekens)'), of een HTML-entiteit die
+    in een <title> niets te zoeken heeft.
+
+    De toets draait op wat er wéggeschreven wordt, niet op wat er in de body
+    staat: dat is precies het verschil dat deze storing zo lang verborgen hield.
+
+    En sinds 4 aug 2026 op wat er écht staat. De eerste versie reconstrueerde de
+    gepubliceerde titel als `volledig[:60]` — een aanname over het verleden, niet
+    een waarneming. Bij nameting van de zes WeAreImpact-bevindingen bleken er
+    drie kerngezond: hun titel was korter dan 60 tekens of viel toevallig op een
+    woordgrens, en de site had ze allang correct staan. Dat is exact de fout die
+    `afgewezen_maar_live` twee dagen eerder maakte, in hetzelfde bestand: wie
+    over de buitenwereld oordeelt, moet de buitenwereld raadplegen. Een audit
+    met 50% vals-positieven leert de lezer om de audit weg te klikken.
+    """
+    from ..publish.content_pipeline import meta_title_for
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, site_id, title, status, blog_html, publish_result FROM content_jobs "
+            "WHERE status = 'published' AND blog_html IS NOT NULL "
+            "AND LENGTH(blog_html) > 80"
+        ).fetchall()
+    gevonden: List[Bevinding] = []
+    for r in rijen:
+        volledig = _volledige_titel(r["blog_html"])
+        if not volledig:
+            continue
+        correct = meta_title_for(volledig)
+        url = _live_url(r["publish_result"] or "")
+        gepubliceerd = _live_metatitel(url)
+        if gepubliceerd is None:
+            # Onbereikbaar of geen URL: geen bewijs in beide richtingen. Niets
+            # melden is hier juist — een netwerkhik is geen kapotte titel.
+            continue
+        kaal = _zonder_merkstaart(gepubliceerd)
+        if kaal == correct or gepubliceerd == correct:
+            continue
+        # Alleen áfkapping telt, niet elk verschil. De titel in de body kan
+        # sinds publicatie zijn herschreven — dan staat er live iets ánders,
+        # niet iets kapots. Een eerdere versie meldde die gevallen wél en
+        # leverde daarmee 'Checklist: 10 essentiële stappen voor een
+        # programmamanager' op als storing, terwijl die titel kerngezond is.
+        #
+        # Twee vormen tellen, en alleen die twee:
+        #
+        #  (a) Afkapping — wat live staat is het begín van de volledige titel
+        #      en houdt te vroeg op. Vergelijken doen we met `volledig` en niet
+        #      met `correct`: de afgekapte versie is juist *langer* dan de
+        #      correcte (60 harde tekens tegenover een nette woordgrens op 54),
+        #      dus tegen `correct` afzetten laat precies het geval vallen waar
+        #      deze invariant voor bestaat.
+        #
+        #  (b) Vervuiling — de titel overleeft onze eigen normalisator niet:
+        #      een instructie-echo van het model ('(54 tekens)') of een
+        #      HTML-entiteit die in een <title> niets te zoeken heeft ('&amp;').
+        #      Geen afkapping, wel onleesbaar in de zoekresultaten.
+        #
+        # Alles daarbuiten is een titel die ná publicatie is herschreven: live
+        # staat iets ánders, niet iets kapots.
+        afgekapt = volledig.startswith(kaal) and len(kaal) < len(volledig)
+        vervuild = meta_title_for(kaal) != kaal
+        if not (afgekapt or vervuild):
+            continue
+        gevonden.append(Bevinding(
+            subject=f"metatitel:{r['id']}",
+            detail=(f"live <title> is {kaal[:70]!r}; "
+                    f"hoort {correct[:70]!r} te zijn"),
+            project=_project_van_site(r["site_id"]),
+        ))
+    return gevonden
+
+
+def _zonder_merkstaart(titel: str) -> str:
+    """De titel zonder het sjabloon dat de site er zelf achter plakt.
+
+    Elke site doet dit anders: WeAreImpact gebruikt ' | WeAreImpact', Bijeen
+    ' — Bijeen'. Dat is geen afwijking maar opmaak, en meevergelijken zou van
+    élke titel een bevinding maken.
+    """
+    for scheider in (" | ", " — ", " – ", " · ", " - "):
+        if scheider in titel:
+            return titel.rsplit(scheider, 1)[0].strip()
+    return titel.strip()
+
+
+_METATITEL_CACHE: Dict[str, Optional[str]] = {}
+
+
+def _live_metatitel(url: str) -> Optional[str]:
+    """De <title> zoals Google hem ziet, of None als we het niet konden vaststellen.
+
+    None is bewust géén lege string: "we weten het niet" en "er staat niets"
+    leiden tot tegengestelde conclusies, en dat verschil wegpoetsen is hoe deze
+    toets aan vals-positieven kwam.
+    """
+    if not url:
+        return None
+    if url in _METATITEL_CACHE:
+        return _METATITEL_CACHE[url]
+    import html as _html
+
+    import httpx
+
+    uitkomst: Optional[str] = None
+    try:
+        headers = {"User-Agent": "AgentOS-waarheidsaudit"}
+        with httpx.Client(timeout=15, follow_redirects=True, headers=headers) as client:
+            resp = client.get(url)
+        if resp.status_code == 200:
+            m = re.search(r"<title[^>]*>(.*?)</title>", resp.text, re.S | re.I)
+            if m:
+                uitkomst = _html.unescape(m.group(1)).strip()
+    except Exception:  # noqa: BLE001
+        uitkomst = None
+    _METATITEL_CACHE[url] = uitkomst
+    return uitkomst
+
+
+def _volledige_titel(html_body: str) -> str:
+    """De titel vóór elke inkorting — de maatstaf waartegen we de live waarde leggen."""
+    from ..publish.content_pipeline import (_strip_meta_and_suggestions,
+                                            _extract_title)
+    try:
+        cleaned, meta_title, _ = _strip_meta_and_suggestions(html_body or "")
+        return (meta_title or _extract_title(cleaned, fallback="")).strip()
+    except Exception:  # noqa: BLE001 — een audit struikelt niet over één body
+        return ""
+
+
+def _check_kwaliteitsscore_is_stopregel() -> List[Bevinding]:
+    """De kwaliteitsscores klonteren op één waarde vlak boven de gate.
+
+    2 aug 2026: van 76 artikelen in de Wachtrij stonden er 39 op exact 82 en
+    4 op exact 80 — meer dan de helft van de voorraad op twee getallen. Dat is
+    geen verdeling van artikelkwaliteit; dat is de vingerafdruk van een lus die
+    stopt zodra hij één keer boven de grens meet. De reviewer varieert 65-92 op
+    identieke invoer (CLAUDE.md punt 6), dus "de eerste meting die de gate
+    haalt" selecteert op mázzel: het opgeslagen cijfer zegt wanneer de lus stopte,
+    niet hoe goed het stuk is. Vervolgens publiceert `approve_and_publish` op
+    precies dat cijfer.
+
+    Niets hieraan gooit ooit een fout. Het is de zuiverste vorm van wat deze
+    audit zoekt: een getal dat overtuigend genoeg oogt om nooit gecontroleerd te
+    worden. De toets meet de klontering zelf en niet de oorzaak — elke andere
+    route naar een score die een stopmoment codeert valt er ook onder.
+
+    `stil` en niet `blokkerend`: er staat niets verkeerds naar buiten. Wat er
+    stukis, is dat het cijfer waarop besloten wordt geen meting is.
+    """
+    from ...shared.config import CONTENT_MIN_SCORE
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT seo_score AS score, COUNT(*) AS n FROM content_jobs "
+            "WHERE status = 'pending_review' AND seo_score IS NOT NULL "
+            "GROUP BY seo_score"
+        ).fetchall()
+    totaal = sum(r["n"] for r in rijen)
+    # Onder de 20 artikelen is klontering ruis: drie stukken op 82 kan toeval zijn.
+    if totaal < 20:
+        return []
+    for r in rijen:
+        score = float(r["score"] or 0)
+        # Alleen vlak bóven de gate is verdacht. Klontering op 95 zou betekenen
+        # dat de artikelen echt goed zijn; klontering op gate+2 betekent dat de
+        # lus daar afsloeg.
+        if not (CONTENT_MIN_SCORE <= score <= CONTENT_MIN_SCORE + 4):
+            continue
+        if r["n"] / totaal < 0.4:
+            continue
+        return [Bevinding(
+            subject="content:score_is_stopregel",
+            detail=(f"{r['n']} van {totaal} artikelen in de Wachtrij staan op exact "
+                    f"{score:.0f} (gate {CONTENT_MIN_SCORE}) — de score codeert het "
+                    f"stopmoment van de verbeter-lus, niet de kwaliteit, terwijl "
+                    f"publiceren wél op dat cijfer besluit"),
+            project="Content",
+        )]
+    return []
+
+
+# ── Beursmeester (domains/invest) ──────────────────────────────────────────
+#
+# Bij beleggen is "succes gemeld zonder effect" niet duur maar heel duur, en de
+# vertekeningen zijn de klassiekers uit het vak: een stop die alleen op papier
+# staat, een rendement zonder de verliezers erin, een besluit op een koers van
+# vorige week. Ze zijn hier vanaf dag één ingebouwd, niet nadat ze een keer
+# geld hebben gekost — dat is het enige domein waarin dat mocht.
+
+def _check_stilstand_ouder_dan_de_job() -> List[Bevinding]:
+    """Gemiste vuurmomenten van vóórdat de job bestond.
+
+    Een nieuw toegevoegde JobSpec heeft de vuurmomenten van vorige week niet
+    gemist — hij was er niet. Zonder ondergrens rekent de stilstand-teller het
+    hele trigger-verleden aan hem toe, mét de kostenzin en de knop eronder.
+    Dat is geen ruis maar een onwaarheid: het systeem beweert dat er werk
+    verloren ging dat nooit heeft bestaan.
+    """
+    try:
+        with get_conn() as conn:
+            rijen = conn.execute(
+                "SELECT g.job_id, g.label, g.scheduled_for, r.first_seen_at "
+                "FROM scheduler_gaps g JOIN scheduler_runs r ON r.job_id = g.job_id "
+                "WHERE g.recovered_at IS NULL AND r.first_seen_at IS NOT NULL "
+                "AND g.scheduled_for < r.first_seen_at"
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [Bevinding(
+        subject=f"gap:{r['job_id']}:{r['scheduled_for'][:10]}",
+        detail=(f"'{r['label']}' staat als gemist op {r['scheduled_for'][:10]}, "
+                f"maar bestaat pas sinds {(r['first_seen_at'] or '')[:10]}"),
+        project="Scheduler",
+    ) for r in rijen]
+
+
+def _check_positie_zonder_stop() -> List[Bevinding]:
+    """Een open positie zonder stop is een positie zonder bodem.
+
+    De risicomodule wéigert een voorstel zonder stop, dus dit kan alleen
+    ontstaan buiten de normale route om (handmatige rij, migratie, een
+    gedeeltelijke sluiting die de stop wiste). Precies daarom staat de toets er:
+    de bescherming die je denkt te hebben, is de gevaarlijkste die ontbreekt.
+    """
+    try:
+        with get_conn() as conn:
+            rijen = conn.execute(
+                "SELECT id, symbol, qty, avg_price, opened_on FROM invest_positions "
+                "WHERE status = 'open' AND (stop IS NULL OR stop <= 0)"
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [Bevinding(
+        subject=f"positie:{r['id']}",
+        detail=(f"{r['symbol']}: {r['qty']:g} stuks vanaf {r['opened_on']} "
+                f"(kostprijs {r['avg_price']:g}) zonder stop"),
+        project="Beursmeester",
+    ) for r in rijen]
+
+
+def _check_koers_verouderd() -> List[Bevinding]:
+    """Voorstellen die op een koers rusten die niet meer actueel is.
+
+    Een these van vorige week leest precies zo overtuigend als een van vandaag;
+    dat is het probleem. De houdbaarheid verschilt per instrument (crypto
+    handelt in het weekend, een ETF niet) en komt uit `invest/universe.py`.
+    """
+    try:
+        from ..invest import history as invest_history
+        from ..invest import service as invest_service
+        open_voorstellen = invest_service.open_voorstellen()
+    except Exception:
+        return []
+    bevindingen = []
+    for v in open_voorstellen:
+        if invest_history.is_verouderd(v["symbol"]):
+            laatste = invest_history.laatste_slot(v["symbol"])
+            bevindingen.append(Bevinding(
+                subject=f"voorstel:{v['id']}",
+                detail=(f"{v['side']} {v['symbol']} rust op de koers van {v['ref_date']}; "
+                        f"laatst bekende handelsdag is {laatste[0] if laatste else 'geen'}"),
+                project="Beursmeester",
+            ))
+    return bevindingen
+
+
+def _check_kas_wijkt_af_van_grootboek() -> List[Bevinding]:
+    """Twee werelden vergelijken, niet twee velden.
+
+    De kaspositie hóórt exact te volgen uit het startkapitaal min alle fills en
+    kosten. Wijkt hij af, dan is er cash bewogen buiten het grootboek om — een
+    handmatige UPDATE, een half afgebroken order, een bug. In `paper`-stand is
+    het grootboek de enige buitenwereld die er is; in `alpaca_paper` of `live`
+    wordt dit de vergelijking met wat de broker zégt te hebben. Dit is dezelfde
+    toets als `afgewezen_maar_live`, één laag dieper.
+    """
+    try:
+        with get_conn() as conn:
+            portefeuilles = conn.execute(
+                "SELECT id, cash, start_capital FROM invest_portfolio").fetchall()
+            bevindingen = []
+            for pf in portefeuilles:
+                rij = conn.execute(
+                    "SELECT COALESCE(SUM(CASE WHEN side = 'buy' THEN -(qty * price) "
+                    "ELSE (qty * price) END), 0) AS netto, COALESCE(SUM(fee), 0) AS kosten "
+                    "FROM invest_trades WHERE portfolio_id = ?", (pf["id"],)
+                ).fetchone()
+                # Let op: dit klopt alleen zolang alles in de basisvaluta staat.
+                # Zodra er in vreemde valuta wordt gehandeld, hoort hier de
+                # omrekening bij — tot die tijd is een afwijking óók een signaal
+                # dát er buiten EUR is gehandeld.
+                verwacht = pf["start_capital"] + rij["netto"] - rij["kosten"]
+                afwijking = abs(verwacht - pf["cash"])
+                if afwijking > 1.0:
+                    bevindingen.append(Bevinding(
+                        subject=f"kas:{pf['id']}",
+                        detail=(f"kas staat op {pf['cash']:.2f}, het grootboek zegt "
+                                f"{verwacht:.2f} (verschil {afwijking:.2f})"),
+                        project="Beursmeester",
+                    ))
+            return bevindingen
+    except sqlite3.OperationalError:
+        return []
+
+
+def _check_belegging_niet_afgerekend() -> List[Bevinding]:
+    """Beleggingsvoorspellingen waarvan de horizon verstreek zonder oordeel.
+
+    De generieke toets hierboven kijkt naar `iris_predictions`; deze naar
+    `agent_predictions`. Zonder afrekening bouwt de agent een trackrecord op
+    dat alleen uit open posities bestaat — en dat is per definitie vleiend,
+    want de verliezers zijn precies de posities die je zou willen sluiten.
+    """
+    try:
+        with get_conn() as conn:
+            rijen = conn.execute(
+                "SELECT id, context, metric, due_date, statement FROM agent_predictions "
+                "WHERE agent = 'invest' AND status = 'open' AND due_date < date('now', '-2 day')"
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [Bevinding(
+        subject=f"invest-pred:{r['id']}",
+        detail=(f"voorspelling over {r['context']} liep af op {r['due_date']} "
+                f"en is nooit afgerekend: '{(r['statement'] or '')[:60]}'"),
+        project="Beursmeester",
+    ) for r in rijen]
+
+
+def _check_rendement_zonder_benchmark() -> List[Bevinding]:
+    """Een rendementscijfer zonder vergelijking is geen cijfer.
+
+    +4% klinkt goed tot je weet dat de index +9% deed. Ontbreekt de
+    vastgelegde startkoers van de benchmark, dan kan het dashboard wél een
+    rendement tonen en niet of het ergens goed voor was — en dan wint "we doen
+    iets" van "het werkt".
+    """
+    try:
+        with get_conn() as conn:
+            rijen = conn.execute(
+                "SELECT id, name, benchmark_symbol FROM invest_portfolio "
+                "WHERE benchmark_start_price IS NULL"
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [Bevinding(
+        subject=f"benchmark:{r['id']}",
+        detail=(f"portefeuille '{r['name']}' heeft geen vastgelegde startkoers voor "
+                f"{r['benchmark_symbol']}; rendement is niet te vergelijken"),
+        project="Beursmeester",
+    ) for r in rijen]
+
+
+def _check_datafeed_stil() -> List[Bevinding]:
+    """Koershistorie die niet meer wordt bijgewerkt.
+
+    Dit is de stille variant van een kapotte datafeed: er komt geen fout, de
+    tabel is niet leeg, en elke berekening blijft antwoorden — op de cijfers van
+    vorige week. Alleen de verhandelbare instrumenten tellen; een macro-reeks
+    die hapert is vervelend, geen storing.
+    """
+    try:
+        from ..invest import history as invest_history
+        verouderd = invest_history.verouderde_symbolen()
+    except Exception:
+        return []
+    return [Bevinding(
+        subject=f"feed:{v['symbol']}",
+        detail=(f"laatste koers is van {v['laatste_dag'] or 'nooit'}"
+                + (f" ({v['dagen_oud']} dagen oud)" if v.get("dagen_oud") is not None else "")),
+        project="Beursmeester",
+    ) for v in verouderd]
+
+
+def _check_navreeks_incompleet() -> List[Bevinding]:
+    """Handelsdagen zonder NAV-punt in de koerslijn van de portefeuille.
+
+    `portfolio.leg_nav_vast` slaat een dag met een onvolledige NAV bewust over —
+    één verkeerd punt vervuilt de reeks die later het bewijsmateriaal is. Die
+    keuze klopt, maar hij is stil: er komt alleen een `logger.warning`, en
+    daarna rekent élke afgeleide maat (terugval, volatiliteit, rendement per
+    risico) door over de overgebleven dagen. Juist de dagen die ontbreken zijn
+    de dagen waarop iets niet klopte, dus valt het resultaat stelselmatig te
+    gunstig uit — precies de vorm van een trackrecord dat zichzelf mooi rekent.
+
+    Het dashboard weigert bij gaten een cijfer te tonen; deze invariant zorgt
+    dat iemand ook hoort dát de reeks lek is in plaats van alleen te zien dat er
+    een streepje staat.
+    """
+    try:
+        from ..invest import analytics as invest_analytics
+        lijn = invest_analytics.koerslijn()
+    except Exception:
+        return []
+    if not lijn.get("punten") or not lijn.get("gaten"):
+        return []
+    dagen = lijn["gaten_dagen"] or []
+    return [Bevinding(
+        subject="navreeks",
+        detail=(f"{lijn['gaten']} handelsdag(en) tussen {lijn['vanaf']} en {lijn['tot']} "
+                f"hebben geen NAV-punt"
+                + (f" (laatste: {', '.join(dagen[-3:])})" if dagen else "")),
+        project="Beursmeester",
+    )]
+
+
+def _check_weekrapport_niet_vastgelegd() -> List[Bevinding]:
+    """De weekrun slaagde, maar er staat geen weekbeeld in de database.
+
+    Dit is de invariant-vorm van de fout die dit hele mechanisme veroorzaakte:
+    het weekrapport meldde jarenlang succes terwijl de bevindingen alleen in een
+    mail en een Obsidian-notitie landden. `scheduler_runs` zei 'ok', de mailbox
+    zei 'ok', en toch kon geen enkele agent het rapport lezen. Slaagt de job
+    zonder rij in `weekly_insights`, dan is dat opnieuw gebeurd — via een lege
+    GSC-koppeling, een uitzondering in de opslag of een site zonder property.
+    """
+    try:
+        from ..seo import gsc as gsc_api
+        if not gsc_api.is_configured():
+            return []   # geen koppeling = niets te beweren
+    except Exception:  # noqa: BLE001
+        return []
+    try:
+        with get_conn() as conn:
+            run = conn.execute(
+                "SELECT last_ok_at FROM scheduler_runs WHERE job_id = 'weekly_ga_report'"
+            ).fetchone()
+            if not run or not run["last_ok_at"]:
+                return []   # nog nooit geslaagd: dat meldt de scheduler zelf al
+            laatste = conn.execute(
+                "SELECT week_label, created_at FROM weekly_insights "
+                "ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+    except sqlite3.OperationalError:
+        return []
+
+    ok_dag = (run["last_ok_at"] or "")[:10]
+    if not laatste:
+        return [Bevinding(
+            subject="weekrapport:geen-vastlegging",
+            detail=f"weekrun slaagde op {ok_dag}, maar `weekly_insights` is leeg — "
+                   "het rapport ging alleen naar de mail",
+            project="Agent OS",
+        )]
+    # De vastlegging hoort niet ouder te zijn dan de laatste geslaagde run.
+    if (laatste["created_at"] or "")[:10] < ok_dag:
+        return [Bevinding(
+            subject="weekrapport:vastlegging-verouderd",
+            detail=f"weekrun slaagde op {ok_dag}, maar het laatst vastgelegde weekbeeld "
+                   f"is {laatste['week_label']} van {(laatste['created_at'] or '')[:10]}",
+            project="Agent OS",
+        )]
+    return []
+
+
+def _check_weekkans_blijft_liggen() -> List[Bevinding]:
+    """Dezelfde quick win staat al weken in het rapport en beweegt niet.
+
+    Een advies dat zich woordelijk herhaalt zonder dat er iets verandert, is
+    geen advies meer maar behang. Dit is de enige toets die kan aantonen dat het
+    weekrapport wél gelezen wordt: verdwijnt een kans na verloop van tijd uit de
+    lijst — opgepakt of bewust afgevoerd — dan doet het rapport zijn werk.
+    """
+    try:
+        from ..analytics import insights
+        blijvers = insights.stale_quick_wins()
+    except Exception:  # noqa: BLE001
+        return []
+    return [Bevinding(
+        subject=f"weekkans:{b['site_id']}:{(b['query'] or '').lower()}",
+        detail=(f"'{b['query']}' staat {b['weken']} weken op rij als quick win"
+                + (f" (positie {b['positie']}, onveranderd)" if b.get("positie") else "")),
+        project=b.get("project") or "",
+    ) for b in blijvers]
+
+
+def _check_voorstel_zonder_backtest() -> List[Bevinding]:
+    """Voorstellen die de gate haalden zonder bewijsstuk.
+
+    De validatie weigert ze, dus dit hoort niet voor te kunnen komen. Staat er
+    tóch een, dan is er een route langs de validatie ontstaan — en dan is de
+    backtest-eis een regel in een document geworden in plaats van een toets.
+    """
+    try:
+        with get_conn() as conn:
+            rijen = conn.execute(
+                "SELECT id, symbol, status, created_at FROM invest_proposals "
+                "WHERE status IN ('pending_review', 'filled') "
+                "AND (backtest_ref IS NULL OR backtest_ref = '')"
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [Bevinding(
+        subject=f"backtest:{r['id']}",
+        detail=f"{r['symbol']} ({r['status']}, {(r['created_at'] or '')[:10]}) zonder backtest-artefact",
+        project="Beursmeester",
+    ) for r in rijen]
+
+
+def _check_effect_meervoudig_geclaimd() -> List[Bevinding]:
+    """Eén Wachtrij-job, meerdere taken die hem als eigen resultaat opvoeren.
+
+    De spiegelbeeldige vorm van 'activiteit is geen effect': hier is er wél een
+    effect, maar het wordt meervoudig opgeëist. `_stage_to_wachtrij` pakte per
+    publisher-taak de nieuwste content-taak van het doel, zonder te onthouden
+    wat er al gestaged was — een doel met "Publiceer artikel 1 t/m 19" leverde
+    daardoor 19 taken op die stuk voor stuk "ECHTE ACTIE UITGEVOERD" meldden
+    voor hetzelfde artikel. De voortgangstelling, de dashboard-demping en Iris'
+    uitvoer-pijler steunen allemaal op dat aantal.
+    """
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT goal_id, id, title, result FROM goal_tasks "
+            "WHERE status = 'completed' AND skill = 'publisher' "
+            "AND COALESCE(result, '') LIKE '%job `%'"
+        ).fetchall()
+    per_job: dict = {}
+    for r in rijen:
+        m = re.search(r"job `([^`]+)`", r["result"] or "")
+        if m:
+            per_job.setdefault((r["goal_id"], m.group(1)), []).append(r["title"] or "")
+    uit: List[Bevinding] = []
+    for (goal_id, job_id), titels in per_job.items():
+        if len(titels) < 2:
+            continue
+        uit.append(Bevinding(
+            subject=f"job:{job_id}",
+            detail=(f"{len(titels)} voltooide publisher-taken claimen dezelfde "
+                    f"Wachtrij-job {job_id[:8]} als eigen resultaat "
+                    f"({', '.join(t[:28] for t in titels[:3])}…) — het doel telt "
+                    f"{len(titels)} publicaties waar er één is"),
+            project=_project_van_goal(goal_id),
+        ))
+    return uit
+
+
+def _check_uitvoertaak_zonder_uitvoering() -> List[Bevinding]:
+    """Voltooide publisher/outreach-taken zonder spoor van de échte actie.
+
+    Deze twee skills staan in `_CONCEPT_ONLY_SKILLS`: ze vereisen een extern
+    systeem dat de goal-engine niet heeft. Een publisher-taak hoort een job-id
+    achter te laten, een outreach-taak een lead of een concept. Blijft er alleen
+    proza over, dan is de taak 'voltooid' op een tekst óver het werk — precies
+    de vorm waarin "GSC-data ophalen" als "# Instructie: GSC-data exporteren"
+    binnenkwam (4 aug 2026: 127 van 1143 voltooide taken openden met plan- of
+    instructietaal). Sinds die datum eindigen zulke taken op `failed`; deze
+    toets bewijst dat, en vangt elke nieuwe route die de regel omzeilt.
+    """
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT t.id, t.goal_id, t.title, t.skill, t.result "
+            "FROM goal_tasks t WHERE t.status = 'completed' "
+            "AND t.skill IN ('publisher', 'outreach') "
+            "AND t.updated_at >= datetime('now', '-30 day')"
+        ).fetchall()
+    uit: List[Bevinding] = []
+    for r in rijen:
+        resultaat = r["result"] or ""
+        # Bewijs van de echte actie: een Wachtrij-job of een aantoonbaar
+        # weggeschreven concept. Bewust géén trefwoordenjacht op de tekst —
+        # "checklist" in een artikeltitel is geen bewijs van iets (dezelfde
+        # valkuil als de eerste versie van `slug_onveilig`, die de kolom las in
+        # plaats van de wereld).
+        if re.search(r"job `[^`]+`", resultaat) or "outreach_review" in resultaat:
+            continue
+        uit.append(Bevinding(
+            subject=f"taak:{r['id']}",
+            detail=(f"'{(r['title'] or '')[:50]}' ({r['skill']}) staat op voltooid, maar het "
+                    f"resultaat bevat geen job-id of concept — er is niets aanwijsbaars "
+                    f"de wereld in gegaan"),
+            project=_project_van_goal(r["goal_id"]),
+        ))
+    return uit
+
+
+def _check_zelfde_actiepunt_opnieuw() -> List[Bevinding]:
+    """Hetzelfde doel keer op keer opnieuw aangemaakt.
+
+    'Actiepunt: Verbeter de CTR van WeAreImpact…' werd tussen 15 en 17 juli 2026
+    zeven keer aangemaakt en strandde zeven keer op 'partial': de dashboard-alert
+    dempt bewust niet op 'partial' (het werk ís niet gedaan), dus kwam de knop
+    terug, en elke klik maakte een nieuw doel in plaats van naar de vastloper te
+    wijzen. Over de hele tabel: 28 Actiepunt-doelen, 14 unieke titels. Elke
+    herhaling kost LLM-budget en zet een extra 'partial' in de statistiek.
+    """
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT project, title, COUNT(*) AS n, "
+            "       SUM(status IN ('partial', 'failed')) AS mislukt "
+            "FROM goals WHERE created_at >= datetime('now', '-30 day') "
+            "GROUP BY project, title HAVING n >= 3"
+        ).fetchall()
+    return [Bevinding(
+        subject=f"doel:{(r['project'] or '')}:{(r['title'] or '')[:60]}",
+        detail=(f"'{(r['title'] or '')[:55]}' is {r['n']}× aangemaakt in 30 dagen "
+                f"({r['mislukt'] or 0}× gestrand) — hetzelfde werk opnieuw starten is "
+                f"geen actie"),
+        project=r["project"] or "",
+    ) for r in rijen]
+
+
+def _check_plan_dubbel_uitgevoerd() -> List[Bevinding]:
+    """Dezelfde taak staat twee keer onder één doel — en is twee keer gedraaid.
+
+    4 aug 2026: vijf doelen droegen hun volledige planning dubbel (vier fases
+    twee keer, elke taak twee keer, allemaal met een eigen uitvoering erachter);
+    57 taakruns zijn zo twee keer betaald. Het viel niet op omdat `task_count`
+    de plánwaarde bewaart: het doel meldde "26/14" en dat las als een
+    telfout in de weergave, niet als werk dat dubbel is gedaan.
+    """
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT t.goal_id, g.title, g.project, COUNT(*) AS extra "
+            "FROM (SELECT goal_id, title, COUNT(*) AS n FROM goal_tasks "
+            "      GROUP BY goal_id, title HAVING n > 1) t "
+            "JOIN goals g ON g.id = t.goal_id "
+            "GROUP BY t.goal_id"
+        ).fetchall()
+    return [Bevinding(
+        subject=f"goal:{r['goal_id']}",
+        detail=(f"'{(r['title'] or '')[:50]}' draagt {r['extra']} dubbele taak/taken — "
+                f"de planning is tweemaal weggeschreven en dus tweemaal uitgevoerd"),
+        project=r["project"] or "",
+    ) for r in rijen]
+
+
+# Een taak die zó lang niet draaide terwijl de scheduler wél leeft, is stuk.
+# Ruim genomen: de radarscan draait elke 4 uur, het weekrapport één keer per
+# week. Zeven dagen is voor beide onmiskenbaar.
+_STIL_NA_DAGEN = 7
+
+
+def _check_job_stil_terwijl_de_rest_draait() -> List[Bevinding]:
+    """Een scheduler-job die niet meer vuurt terwijl de rest gewoon doorloopt.
+
+    4 aug 2026: `radar_sky_scan` (elke 4 uur) draaide voor het laatst op 24 juli,
+    elf dagen eerder — terwijl bridge_sync, calendar_sync en goal_autoheal die
+    ochtend nog vuurden. Geen enkele bestaande toets zag dat: `scheduler_gaps`
+    meldt alleen jobs met een gevulde `gap_cost` (radar veroudert per dag en
+    hoort dus níét gemeld te worden als gemiste run), en de escalatie 'nog nooit
+    geslaagd' vergt een lege `last_ok_at` — die was gevuld. Precies daartussen
+    valt het geval dat het meeste kost: een job die ooit werkte en stilletjes
+    ophield. Deze toets vergelijkt de job met zijn buren in plaats van met een
+    absolute klok, want een machine die een week uit stond is geen storing.
+    """
+    with get_conn() as conn:
+        try:
+            rijen = conn.execute(
+                "SELECT job_id, last_run_at, last_ok_at FROM scheduler_runs "
+                "WHERE COALESCE(last_run_at, '') != ''"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+    if len(rijen) < 3:
+        return []  # verse installatie: te weinig buren om iets mee te vergelijken
+    # Tijdstempels lopen door elkaar heen: sommige jobs schrijven met tijdzone,
+    # oudere rijen zonder. Naïef vergelijken gooit een TypeError en dan zwijgt
+    # de toets — precies de blinde toets die de audit hoort te vinden.
+    def _tijd(waarde: str) -> Optional[datetime]:
+        try:
+            d = datetime.fromisoformat(waarde)
+        except (TypeError, ValueError):
+            return None
+        return d.replace(tzinfo=None) if d.tzinfo else d
+
+    momenten = [(r, _tijd(r["last_run_at"] or "")) for r in rijen]
+    momenten = [(r, d) for r, d in momenten if d is not None]
+    if len(momenten) < 3:
+        return []
+    nieuwste = max(d for _, d in momenten)
+    grens = nieuwste - timedelta(days=_STIL_NA_DAGEN)
+    uit: List[Bevinding] = []
+    for r, gedraaid in momenten:
+        if gedraaid >= grens:
+            continue
+        # `__baseline__` is de nulmeting van een verse installatie
+        # (`scheduler._BASELINE_ID`), geen taak — die hoort per definitie oud te
+        # zijn en als bevinding zou hij de kaart voor altijd openhouden.
+        if r["job_id"] == "__baseline__":
+            continue
+        dagen = (nieuwste - gedraaid).days
+        uit.append(Bevinding(
+            subject=f"job:{r['job_id']}",
+            detail=(f"'{r['job_id']}' draaide voor het laatst {dagen} dagen vóór de "
+                    f"jongste scheduler-run ({(r['last_run_at'] or '')[:16]}) — de "
+                    f"scheduler leeft, deze taak niet"),
+            project="Systeem",
+        ))
+    return uit
+
+
+def _check_doel_voltooid_zonder_taken() -> List[Bevinding]:
+    """Een doel dat nooit een taak kreeg, heeft niets gedaan.
+
+    4 aug 2026: twee doelen van Bewaard voor Jou staan op 'completed' met nul
+    fases en nul taken — 'SEO-blitz: gap-keyword content + kennisbank-herstel'
+    (8 jul) en 'Open het enige draft-doel van Bewaardvoorjou' (30 jun). Er is
+    niets gepland en niets uitgevoerd; het doel telt niettemin mee als afgerond
+    werk én dempt in die hoedanigheid de dashboard-alerts (`_goal_addresses`
+    slaat juist `partial` en `failed` over, niet `completed`).
+
+    Alleen 'completed' telt hier. Een lopend of gestrand doel zonder taken is
+    werk in uitvoering of een mislukte planning — dat is iets anders dan een
+    valse voltooiing, en het als hetzelfde melden maakt de kaart onleesbaar.
+    """
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, title, project, created_at FROM goals g "
+            "WHERE g.status = 'completed' "
+            "AND NOT EXISTS (SELECT 1 FROM goal_tasks t WHERE t.goal_id = g.id)"
+        ).fetchall()
+    return [Bevinding(
+        subject=f"goal:{r['id']}",
+        detail=(f"'{(r['title'] or '')[:52]}' ({(r['created_at'] or '')[:10]}) staat op "
+                f"voltooid zonder ook maar één taak — er is niets gepland en niets "
+                f"uitgevoerd, en het dempt wél de alerts"),
+        project=r["project"] or "",
+    ) for r in rijen]
+
+
+def _project_van_goal(goal_id: str) -> str:
+    try:
+        with get_conn() as conn:
+            r = conn.execute("SELECT project FROM goals WHERE id = ?", (goal_id,)).fetchone()
+        return (r["project"] or "") if r else ""
+    except Exception:
+        return ""
+
+
+# ── Het register ───────────────────────────────────────────────────────────
+#
+# Dit is de institutionele herinnering van het systeem: elke regel is een
+# storing die geld of vertrouwen heeft gekost, omgezet in een dagelijkse toets.
+
+INVARIANTEN: List[Invariant] = [
+    Invariant(
+        key="interne_taakopdracht_live",
+        titel="Interne taakopdracht staat gepubliceerd",
+        incident="23 jul 2026: 'Schrijf meta-titel & -description voor Pagina 2' ging "
+                 "live op bewaardvoorjou.nl via een reparatiescript dat de gate omzeilde.",
+        severity=BLOKKEREND,
+        stap="Haal deze pagina offline in het CMS en zet een 301 naar een relevant artikel.",
+        check=_check_interne_taakopdracht_live,
+    ),
+    Invariant(
+        key="slug_onveilig",
+        titel="Gepubliceerde URL bevat tekens die 404 geven",
+        incident="24 jul 2026: slugs met '&', '+' en '(' gingen live; de oude slugify "
+                 "gebruikte een zwarte lijst, dus elk niet-bedacht teken werd een 404. "
+                 "2 aug 2026: de toets las de kolom `slug` in plaats van de "
+                 "gepubliceerde URL en meldde daardoor acht gezonde pagina's als 404.",
+        severity=BLOKKEREND,
+        stap="Publiceer het artikel opnieuw (de slug wordt nu correct gegenereerd) en "
+             "zet een 301 van de oude URL.",
+        check=_check_slug_onveilig,
+    ),
+    Invariant(
+        key="slug_kolom_wijkt_af_van_url",
+        titel="Opgeslagen slug is niet het pad dat live staat",
+        incident="2 aug 2026: `content_jobs.slug` hield de ruwe titel vast terwijl de "
+                 "publisher een nette slug maakte. Acht valse blokkerende alarmen, en "
+                 "elke andere lezer van die kolom (dedupe, sitemap) leest hetzelfde mis.",
+        severity=HYGIENE,
+        stap="Geen directe actie: de URL werkt. Structureel hoort de publisher de "
+             "gebruikte slug terug te schrijven naar de job.",
+        check=_check_slug_kolom_wijkt_af,
+    ),
+    Invariant(
+        key="zoekwoord_kannibalisatie",
+        titel="Twee of meer live artikelen op hetzelfde zoekwoord",
+        incident="23 jul 2026: twee artikelen over 'beste partners voor AI-oplossingen' "
+                 "gingen allebei live op weareimpact.nl; de slug-dedupe zag ze niet "
+                 "omdat de titels verschilden.",
+        severity=BLOKKEREND,
+        stap="Kies het sterkste artikel, haal de andere offline en zet er een 301 naartoe.",
+        check=_check_zoekwoord_kannibalisatie,
+    ),
+    Invariant(
+        key="cluster_kannibalisatie",
+        titel="Meerdere eigen pagina's vertonen bij Google op één zoekwoord",
+        incident="3 aug 2026: Bewaard voor Jou had 102 pagina's live en kreeg acht "
+                 "'nieuwe' kansen aangeboden, terwijl acht eigen pagina's al op "
+                 "'levensverhaal vastleggen' vertoonden — samen goed voor positie "
+                 "25 en 15 klikken in 28 dagen. `zoekwoord_kannibalisatie` zweeg: "
+                 "die leest `content_jobs.keyword` en kende maar twee van die acht, "
+                 "want de rest was buiten Agent OS om gepubliceerd.",
+        severity=BLOKKEREND,
+        stap="Kies per zoekwoord één hoofdpagina, laat de andere daarheen linken of "
+             "voeg ze samen met een 301 — en schrijf er géén nieuw artikel bij.",
+        check=_check_cluster_kannibalisatie,
+    ),
+    Invariant(
+        key="sitemap_dubbele_pagina",
+        titel="Twee live pagina's over hetzelfde onderwerp, buiten GSC om gevonden",
+        incident="7 aug 2026: zeven paren dubbele pagina's op steentjebijsteentje.nl "
+                 "(vijf een letterlijke '-2'-kopie) en bewaardvoorjou.nl — geen van de "
+                 "12 op dat moment openstaande cluster_kannibalisatie-bevindingen dekte "
+                 "ze, want die toets leest gsc_history en ziet dus alleen duplicaten "
+                 "die al vertoningen krijgen.",
+        severity=BLOKKEREND,
+        stap="Kies per paar één versie, haal de andere offline en zet een 301 naar de blijver.",
+        check=_check_sitemap_dubbele_pagina,
+    ),
+    Invariant(
+        key="weekrapport_niet_vastgelegd",
+        titel="Weekrapport draaide, maar legde geen weekbeeld vast",
+        incident="4 aug 2026: het weekrapport berekende elke maandag per project de "
+                 "28-daagse zoekprestaties mét quick wins en CTR-gaten, en stuurde dat "
+                 "naar de mail, Obsidian en een chat-sessie — drie plekken waar alleen "
+                 "een mens kijkt. Geen agent kon het lezen, dus stuurde de beste "
+                 "analyse van het systeem nul beslissingen aan en leerde Iris er niets "
+                 "van. De job meldde al die tijd 'ok'.",
+        severity=STIL,
+        stap="Draai het weekrapport opnieuw (POST /api/analytics/weekly-report) en kijk "
+             "in de log waarom er geen rijen in `weekly_insights` landden — meestal een "
+             "site zonder gsc_property of een GSC-koppeling die geen data teruggeeft.",
+        check=_check_weekrapport_niet_vastgelegd,
+    ),
+    Invariant(
+        key="weekkans_blijft_liggen",
+        titel="Dezelfde quick win staat al weken onopgepakt in het weekrapport",
+        incident="4 aug 2026: ingevoerd samen met de vastlegging van het weekrapport. "
+                 "Zonder deze toets is niet te zien of het rapport iets verandert — en "
+                 "een advies dat zich week na week herhaalt terwijl de positie "
+                 "stilstaat, is precies hoe 'activiteit is geen effect' er bij een "
+                 "analyse uitziet.",
+        severity=STIL,
+        stap="Pak de kans op (artikel verversen of title/meta herschrijven) óf voer hem "
+             "bewust af — maar laat hem niet elke maandag opnieuw aanbieden.",
+        check=_check_weekkans_blijft_liggen,
+    ),
+    Invariant(
+        key="artikel_zonder_eigen_bewijs",
+        titel="Artikelen zonder eigen bewijs (information gain)",
+        incident="5 aug 2026: `case_studies` bevatte 4 rijen, alle vier op één van de "
+                 "twaalf sites; van de 138 artikelen met een QC-rapport hadden er 7 een "
+                 "écht gekoppelde casestudy. De haak bestond al sinds de "
+                 "Goldie-pipeline — `_make_outline` eist een bewijs-sectie — maar viel "
+                 "stilzwijgend weg op een lege kennisbank. Ruwweg 95% van 102 "
+                 "gepubliceerde artikelen is daardoor reproduceerbare AI-tekst, en de "
+                 "kwaliteitsgate zag er niets van: die meet vorm, en generiek scoort 84.",
+        severity=STIL,
+        stap="Voeg per site 2-3 echte klantresultaten toe onder Kennisbank → Casestudies "
+             "(cijfers, aanpak, uitkomst). Staan ze er wél en worden ze niet gebruikt, "
+             "kijk dan in `qc_report.eigen_bewijs` van een recent artikel.",
+        check=_check_artikel_zonder_eigen_bewijs,
+    ),
+    Invariant(
+        key="contentleerlus_zonder_lessen",
+        titel="Contentleerlus draait wekelijks en leert niets",
+        incident="5 aug 2026: `agent_lessons` bevatte 2 rijen, allebei van de "
+                 "beursagent. `content_learning_eval` draaide 3 augustus, meldde 'ok' "
+                 "en leverde nul contentlessen — hetzelfde patroon als het weekrapport "
+                 "dat alleen naar de mail ging: een schakel die slaagt en niets "
+                 "voortbrengt. Zonder deze toets is 'nog niets te leren' niet te "
+                 "onderscheiden van 'de meting werkt niet'.",
+        severity=STIL,
+        stap="Kijk in de detailtekst wat de gemeten oorzaak is. Te kleine cohorten = "
+             "wachten op rijping (niets doen). Wél genoeg artikelen en toch niets: "
+             "draai `run_content_learning_eval()` handmatig en controleer of de "
+             "page-snapshots in `gsc_history` de slugs van de artikelen dekken.",
+        check=_check_contentleerlus_zonder_lessen,
+    ),
+    Invariant(
+        key="publicatie_onbewezen",
+        titel="'Published' zonder vastgelegde URL",
+        incident="25 jul 2026: 78 doelen sloten af als 'voltooid' op louter "
+                 "concept-publicaties; dashboard-alerts werden erdoor gedempt.",
+        severity=BLOKKEREND,
+        stap="Controleer of dit artikel écht live staat; zo niet, zet de job terug op "
+             "'pending_review' zodat hij opnieuw door de publicatieroute gaat.",
+        check=_check_publicatie_onbewezen,
+    ),
+    Invariant(
+        key="afgewezen_maar_live",
+        titel="Afgewezen in de database, live op het web",
+        incident="2 aug 2026: negen pagina's stonden op 'rejected' terwijl ze gewoon "
+                 "live waren, waaronder 'Agent OS end-to-end publicatietest' op de site "
+                 "van een klant. Afwijzen verandert alleen de rij, niet de wereld. "
+                 "Diezelfde dag bleek de toets zélf de wereld niet te raadplegen: vijf "
+                 "van de negen waren al offline en de kaart kon nooit dichtgaan.",
+        severity=BLOKKEREND,
+        stap="Haal deze pagina's offline in het CMS. Structureel: een afwijzing ná "
+             "publicatie hoort een depublicatie in gang te zetten, niet alleen een "
+             "statuswijziging.",
+        check=_check_afgewezen_maar_live,
+    ),
+    Invariant(
+        key="bevinding_blijft_liggen",
+        titel="Blokkerende bevindingen staan al weken open",
+        incident="4 aug 2026: 82 openstaande bevindingen over alle projecten, waarvan "
+                 "54 blokkerend of stil, sommige twee weken oud — en géén enkel "
+                 "reparatiepad in de codebase voor de drie grootste "
+                 "(`metatitel_afgekapt`, `cluster_kannibalisatie`, "
+                 "`afgewezen_maar_live`). Het systeem meldde trouw wat er stuk was en "
+                 "dat melden veranderde niets; elke nieuwe invariant werd een to-do "
+                 "voor een mens in plaats van werk voor een agent.",
+        severity=STIL,
+        stap="Kies per invariant: bouw een remedie (zie `publish/repair.py` en "
+             "POST /api/iris/integrity/repair/{invariant}), of los de gevallen "
+             "handmatig op. Blijft een blokkerende bevinding weken staan zonder dat "
+             "één van beide gebeurt, dan is de kaart zelf het probleem geworden.",
+        check=_check_bevinding_blijft_liggen,
+    ),
+    Invariant(
+        key="indexnow_keyfile_ontbreekt",
+        titel="IndexNow-aanmeldingen worden genegeerd (keybestand onbereikbaar)",
+        incident="4 aug 2026: 28 publicaties droegen `indexnow: {status: fout, "
+                 "status_code: 403}` in hun publish_result en verder nergens — geen "
+                 "kaart, geen logregel die iemand las. Bij nameting was het keybestand "
+                 "op 7 van de 10 sites onbereikbaar: 5× een harde 404 en 2× de "
+                 "HTML-schil van de site met HTTP 200 erboven. Bing, Yandex, Seznam en "
+                 "Naver hebben daardoor maandenlang geen enkele URL doorgekregen, "
+                 "terwijl de Wachtrij bij elke goedkeuring 'aangemeld' meldde.",
+        severity=BLOKKEREND,
+        stap="Plaats het keybestand op de site-root met exact de key als inhoud. Voor "
+             "Netlify-sites deployt Agent OS het mee (publiceer één artikel); een "
+             "extern gehoste site moet het bestand zelf serveren — let erop dat de "
+             "catch-all route van een SPA het niet opslokt.",
+        check=_check_indexnow_keyfile,
+    ),
+    Invariant(
+        key="publicatiekanaal_dood",
+        titel="Geen enkel artikel van deze site staat live",
+        incident="17 jul – 3 aug 2026: alle 22 artikelen die Agent OS naar ictusgo.nl "
+                 "publiceerde gaven 404. De publicatie-API antwoordde elke keer '201 "
+                 "created' en de artikelen stonden gewoon in de database van de site; "
+                 "de site zelf viel over een Date die hij als string behandelde en "
+                 "slikte die fout in als 'artikel bestaat niet'. Het Actiecentrum "
+                 "toonde 12 losse kaarten met de knop 'Opnieuw publiceren' — twaalf "
+                 "keer een remedie voor iets dat niet kapot was.",
+        severity=BLOKKEREND,
+        stap="Publiceer niet opnieuw — dat lukte al. Controleer de ontvangende site "
+             "zelf: haalt hij de artikelen wél uit zijn database op, en slikt hij "
+             "daarbij fouten in als 'niet gevonden'? Kijk in de runtime-logs van de "
+             "site, niet in die van Agent OS.",
+        check=_check_publicatiekanaal_dood,
+    ),
+    Invariant(
+        key="publicatiefout_zonder_kaart",
+        titel="Goedgekeurd artikel niet live, zonder alarm",
+        incident="24 jul – 2 aug 2026: 'publicatie_mislukt' werd met status 'ok' gelogd. "
+                 "Ictusgo's 404 kwam drie ochtenden terug als 'les' in Iris' briefing "
+                 "zonder één keer als beslissing in het Actiecentrum te staan.",
+        severity=BLOKKEREND,
+        stap="Bekijk de fout in de Wachtrij en publiceer opnieuw; blijft het misgaan, "
+             "dan zit het defect in de publicatieroute van deze site.",
+        check=_check_publicatiefout_zonder_kaart,
+    ),
+    Invariant(
+        key="metatitel_afgekapt",
+        titel="Live meta-titel is midden in een woord afgekapt",
+        incident="2 aug 2026: 47 van 103 artikelen droegen een op exact 60 tekens "
+                 "afgesneden meta-titel ('... Jouw teambeleving in de l'), 15 daarvan "
+                 "al gepubliceerd. De harde [:60] stond op vier plekken; voor slugs was "
+                 "die les al geleerd, voor de meta-titel niet.",
+        severity=BLOKKEREND,
+        stap="Publiceer deze artikelen opnieuw — de titel wordt nu op een woordgrens "
+             "geknipt. Google toont tot die tijd de afgekapte versie.",
+        check=_check_metatitel_afgekapt,
+    ),
+    Invariant(
+        key="kwaliteitsscore_is_stopregel",
+        titel="Kwaliteitsscores klonteren op de gate",
+        incident="2 aug 2026: 39 van 76 Wachtrij-artikelen stonden op exact 82 en 4 op "
+                 "exact 80. De verbeter-lus stopt bij de eerste meting boven de gate, en "
+                 "de reviewer varieert 65-92 op identieke invoer — het cijfer waarop "
+                 "gepubliceerd wordt, zegt dus wanneer de lus stopte.",
+        severity=STIL,
+        stap="Draai de opschoonronde (POST /api/content-queue/upgrade-all) — die meet "
+             "twee keer onafhankelijk en bewaart de laagste, zodat de score een "
+             "ondergrens wordt in plaats van een hoogtepunt.",
+        check=_check_kwaliteitsscore_is_stopregel,
+    ),
+    Invariant(
+        key="outreach_voorraad_onbenut",
+        titel="Mailbare leads in voorraad, niets in review",
+        incident="2 aug 2026: de batch meldde 'funnel-invoer is op' terwijl er zeven "
+                 "mailbare leads stonden. `select_batch_leads` kapte af op `count` "
+                 "vóór de adres-zeef, en de acht generieke info@-adressen bovenaan "
+                 "blokkeerden het venster elke dag opnieuw.",
+        severity=STIL,
+        stap="Draai POST /api/leads/outreach-batch handmatig en lees wat er uitkomt; "
+             "komt er niets, dan zeeft de selectie de voorraad weg.",
+        check=_check_outreach_voorraad_onbenut,
+    ),
+    Invariant(
+        key="trefkans_gevleid",
+        titel="Te veel voorspellingen eindigen 'onbeslist'",
+        incident="2 aug 2026: 9 van 23 uitslagen op 'unclear', waarvan 5 stilstanden bij "
+                 "een voorspelling mét drempel. De gemelde trefkans van 42,9% was in "
+                 "werkelijkheid 26%.",
+        severity=STIL,
+        stap="Controleer `_judge` in iris/predictions.py: komt de ruisdrempel vóór de "
+             "doeltoets? Een gemiste drempel is een misser, geen onbeslist geval.",
+        check=_check_trefkans_gevleid,
+    ),
+    Invariant(
+        key="kans_vastgelopen",
+        titel="Zoekwoord verbruikt zonder resultaat",
+        incident="27 jul 2026: 62 kansen op 'in_progress' tegen 11 gepubliceerd — de "
+                 "contentmotor droogde op met een volle tabel.",
+        severity=STIL,
+        stap="Draai de reconciliatie (POST /api/seo/reconcile of de weekscan van maandag); "
+             "blijft het staan, dan loopt de reconciliatie zelf vast.",
+        check=_check_kans_vastgelopen,
+    ),
+    Invariant(
+        key="leerlus_leeg",
+        titel="Iris' lessen raken niet aan voorspellingen gekoppeld",
+        incident="27 jul 2026: 51 actieve lessen, 2 koppelingen. De leerlus was gebouwd "
+                 "maar draaide leeg; confidence bleef overal op de startwaarde 0,50.",
+        severity=STIL,
+        stap="Controleer `_match_lesson` in iris/service.py: parafraseert het model zó "
+             "sterk dat zelfs de tolerante match onder de drempel blijft?",
+        check=_check_leerlus_leeg,
+    ),
+    Invariant(
+        key="triage_remedie_zonder_effect",
+        titel="'Analyseer & fix' herhaalt een remedie die nog nooit iets oploste",
+        incident="6 aug 2026: op de audit-kaart over cluster-kannibalisatie koos de "
+                 "triage-LLM een contentronde — precies wat die invariant verbiedt. Er "
+                 "kwam niets uit ('Geen uitvoering opgeleverd'), maar de keuze stond al "
+                 "vast in `iris_error_fixes` en zou bij elke volgende klik zonder LLM "
+                 "worden herhaald.",
+        severity=STIL,
+        stap="Zet de remedie op inactief (`UPDATE iris_error_fixes SET active = 0`) en "
+             "klik opnieuw op 'Analyseer & fix' — dan stelt Iris een nieuwe diagnose. "
+             "Blijft hij terugkomen, dan werkt `_verleer_bij_aanhoudend_falen` niet.",
+        check=_check_triage_remedie_zonder_effect,
+    ),
+    Invariant(
+        key="voorspelling_niet_afgerekend",
+        titel="Verstreken voorspelling nooit afgerekend",
+        incident="Structureel risico: een voorspelling die niet wordt afgerekend levert "
+                 "geen bewijs, en dan meet de trefkans alleen de makkelijke gevallen.",
+        severity=STIL,
+        stap="Controleer of `evaluate_due` draait aan het begin van de briefing en of de "
+             "metriek voor dit project meetbaar is.",
+        check=_check_voorspelling_niet_afgerekend,
+    ),
+    Invariant(
+        key="uitkomst_zonder_artefact",
+        titel="Succes gemeld zonder aanwijsbaar resultaat",
+        incident="CLAUDE.md-regel, uitvoerbaar gemaakt: 'elke taak/run die klaar claimt "
+                 "hoort een artefact-link te hebben'. Zonder toets is het een goed voornemen.",
+        severity=STIL,
+        stap="Zoek de aanroeper op en geef `log_outcome` een artifact mee — of laat de "
+             "actie eerlijk falen als er niets is opgeleverd.",
+        check=_check_uitkomst_zonder_artefact,
+    ),
+    Invariant(
+        key="radar_signaal_verlopen",
+        titel="Radarsignalen verlopen niet",
+        incident="27 jul 2026: 2411 van 2656 signalen stonden nog op 'new'; oude trends "
+                 "verdrongen de verse.",
+        severity=HYGIENE,
+        stap="De radar-scan ruimt sinds 2 aug zelf op; blijft dit staan, dan draait "
+             "`prune_stale_signals` niet.",
+        check=_check_radar_signaal_verlopen,
+    ),
+    Invariant(
+        key="lead_geen_organisatie",
+        titel="Geen-organisatie in de actieve leadvoorraad",
+        incident="27 jul 2026: 60% van de voorraad was een paginatitel van een artikel of "
+                 "vacature; de conversieratio's van de acquisitieformule maten niets.",
+        severity=HYGIENE,
+        stap="Draai POST /api/leads/cleanup-unmailable, of zet deze leads handmatig op 'lost'.",
+        check=_check_lead_geen_organisatie,
+    ),
+    Invariant(
+        key="bulk_in_behandeling",
+        titel="Nieuwsbrief behandeld als vraag of afspraak",
+        incident="1 aug 2026: vijf concept-antwoorden op nieuwsbrieven, plus een "
+                 "afspraakvoorstel voor 30 mei 2027 uit een marketingmail.",
+        severity=HYGIENE,
+        stap="Controleer of de mailroute de headers meegeeft aan `classify` — de "
+             "Graph-flow vroeg internetMessageHeaders eerder niet op.",
+        check=_check_bulk_in_behandeling,
+    ),
+    Invariant(
+        key="agenda_horizon",
+        titel="Afspraakvoorstel buiten de geloofwaardige horizon",
+        incident="1 aug 2026: een datum uit een lopende zin in een nieuwsbrief werd een "
+                 "voorstel tien maanden vooruit.",
+        severity=HYGIENE,
+        stap="Wijs het voorstel af; de parser heeft een zin gelezen die geen afspraak was.",
+        check=_check_agenda_horizon,
+    ),
+    Invariant(
+        key="stilstand_dubbel_gemeld",
+        titel="Eén gemiste taak, twee kaarten in het Actiecentrum",
+        incident="2 aug 2026: 'biweekly_content' en 'linkbuilding_weekly' stonden dubbel "
+                 "in de inbox — dezelfde zin via `activity_log` én via `scheduler_gaps`, "
+                 "waarbij alleen de tweede de knop had die het werk terughaalt.",
+        severity=STIL,
+        stap="Er is één meldweg te veel. De inbox hoort per beslissing één kaart te "
+             "tonen; verwijder de dubbele bron in plaats van de kaart weg te klikken.",
+        check=_check_stilstand_dubbel_gemeld,
+    ),
+    Invariant(
+        key="stilstand_ouder_dan_de_job",
+        titel="Gemiste run van vóórdat de taak bestond",
+        incident="3 aug 2026: bij het toevoegen van 'invest_daily_cycle' verscheen "
+                 "meteen de kaart \"draaide 9× tussen 21-07 en 31-07 niet — stops en "
+                 "koersdoelen van de open posities zijn niet getoetst\". Er waren op "
+                 "21 juli geen posities, geen stops en geen job; de stilstand-teller "
+                 "rekende het hele trigger-verleden toe aan een job van gisteren. Een "
+                 "zelfverzekerde zin met een knop eronder over werk dat nooit bestond.",
+        severity=STIL,
+        stap="Verwijder deze gaten uit `scheduler_gaps`; ze horen niet te kunnen "
+             "ontstaan sinds `scheduler_runs.first_seen_at` de ondergrens vormt.",
+        check=_check_stilstand_ouder_dan_de_job,
+    ),
+
+    # ── Mission Radar ─────────────────────────────────────────────────────
+    Invariant(
+        key="radar_watch_dood",
+        titel="Radarbron levert al scans lang niets op",
+        incident="3 aug 2026: twaalf van de twintig RSS-feeds en negen site-watches "
+                 "hadden sinds hun aanmaak geen enkel signaal opgeleverd. Niets meldde "
+                 "dat, want een dode bron en een rustige bron zagen er identiek uit — "
+                 "`last_scanned_at` werd alleen gezet als er íets werd opgeslagen.",
+        severity=STIL,
+        stap="Controleer het adres van deze bron in de Radar-tab, of zet hem uit — "
+             "elke scan kost tijd en levert hier aantoonbaar niets op.",
+        check=_check_radar_watch_dood,
+    ),
+    Invariant(
+        key="radar_trendbrug_stil",
+        titel="Trend-brug zet geen signalen meer om in kansen",
+        incident="3 aug 2026: de brug leverde sinds 27 juli nul kansen terwijl er "
+                 "dagelijks honderden signalen binnenkwamen. Het zoekwoord kwam uit de "
+                 "watchlist in plaats van uit het signaal, dus na één conversie was elk "
+                 "watchlist-woord door de dedupe voor altijd verbruikt. Alle 38 kansen "
+                 "die de brug ooit maakte waren letterlijk een watchlist-regel.",
+        severity=STIL,
+        stap="Draai POST /api/demand/trend-sync en lees de uitkomst. Levert hij nog "
+             "steeds niets, dan zit het gat tussen signaal en zoekwoord.",
+        check=_check_radar_trendbrug_stil,
+    ),
+
+    # ── Beursmeester ──────────────────────────────────────────────────────
+    Invariant(
+        key="positie_zonder_stop",
+        titel="Open positie zonder stop",
+        incident="2 aug 2026, bij de bouw: de risicomodule weigert een voorstel zonder "
+                 "stop, maar elke rij die buiten die route ontstaat (migratie, handmatige "
+                 "correctie, halve sluiting) zou onbeschermd meelopen zonder dat iets "
+                 "erover klaagt. De bescherming die je denkt te hebben is de gevaarlijkste "
+                 "die ontbreekt.",
+        severity=BLOKKEREND,
+        stap="Zet alsnog een stop op deze positie, of sluit hem. Zolang hij openstaat, "
+             "is er geen bodem onder het verlies.",
+        check=_check_positie_zonder_stop,
+    ),
+    Invariant(
+        key="koers_verouderd",
+        titel="Beleggingsvoorstel rust op een verouderde koers",
+        incident="2 aug 2026, bij de bouw: een these van vorige week leest precies zo "
+                 "overtuigend als een van vandaag. Dezelfde fout als 'HTTP 200 bewijst "
+                 "niets bij een SPA' — het antwoord ziet er goed uit, de werkelijkheid "
+                 "erachter is veranderd.",
+        severity=BLOKKEREND,
+        stap="Wijs het voorstel af en laat de ronde opnieuw draaien op verse koersen "
+             "(POST /api/invest/sync-history, daarna POST /api/invest/run).",
+        check=_check_koers_verouderd,
+    ),
+    Invariant(
+        key="kas_wijkt_af_van_grootboek",
+        titel="Kaspositie klopt niet met het grootboek",
+        incident="2 aug 2026, bij de bouw: geleerd van 'afgewezen_maar_live'. Een saldo "
+                 "is een bewering van het systeem over zichzelf; het grootboek is de "
+                 "enige onafhankelijke bron. Wijken ze af, dan is er geld bewogen buiten "
+                 "elke geregistreerde order om.",
+        severity=BLOKKEREND,
+        stap="Zoek de ontbrekende of dubbele fill in invest_trades. Corrigeer het "
+             "grootboek, niet het saldo — het saldo is de afgeleide.",
+        check=_check_kas_wijkt_af_van_grootboek,
+    ),
+    Invariant(
+        key="belegging_niet_afgerekend",
+        titel="Beleggingsvoorspelling voorbij de horizon, nooit beoordeeld",
+        incident="2 aug 2026, bij de bouw: variant op de leerlus die leegdraaide (51 "
+                 "lessen, 2 koppelingen). Zonder afrekening bestaat het trackrecord "
+                 "alleen uit lopende posities, en dat is per definitie vleiend — de "
+                 "verliezers zijn precies wat je zou willen sluiten.",
+        severity=STIL,
+        stap="Draai de beursronde (POST /api/invest/run); die rekent openstaande "
+             "voorspellingen af vóórdat hij nieuwe maakt.",
+        check=_check_belegging_niet_afgerekend,
+    ),
+    Invariant(
+        key="rendement_zonder_benchmark",
+        titel="Rendement zonder vergelijkbare benchmark",
+        incident="2 aug 2026, bij de bouw: het bestaande finance-dagrapport adviseerde "
+                 "een €10.000-portefeuille zonder ooit te meten of het iets opleverde. "
+                 "+4% klinkt goed tot je weet dat de index +9% deed.",
+        severity=STIL,
+        stap="Zorg dat er koershistorie is voor de benchmark; de startkoers wordt dan "
+             "bij de eerstvolgende ronde alsnog vastgelegd op de startdatum.",
+        check=_check_rendement_zonder_benchmark,
+    ),
+    Invariant(
+        key="datafeed_stil",
+        titel="Koershistorie wordt niet meer bijgewerkt",
+        incident="2 aug 2026, bij de bouw: dezelfde vorm als het Meta-token dat twaalf "
+                 "dagen dood was. Er komt geen fout, de tabel is niet leeg, en elke "
+                 "berekening blijft antwoorden — op de cijfers van vorige week.",
+        severity=STIL,
+        stap="Draai POST /api/invest/sync-history en kijk welke tickers falen; een "
+             "hernoemd symbool hoort uit invest/universe.py te verdwijnen.",
+        check=_check_datafeed_stil,
+    ),
+    Invariant(
+        key="navreeks_incompleet",
+        titel="Gaten in de koerslijn van de portefeuille",
+        incident="4 aug 2026, bij de bouw van het Beursmeester-dashboard: een dag met een "
+                 "onwaardeerbare positie wordt niet vastgelegd (terecht), maar alléén als "
+                 "logregel gemeld. Elke risicomaat rekent daarna door over de dagen die "
+                 "wél goed gingen — en valt dus stelselmatig te gunstig uit, zonder dat "
+                 "iemand ziet dat de reeks lek is.",
+        severity=STIL,
+        stap="Kijk waarom de NAV op die dagen onvolledig was (meestal een ontbrekende "
+             "wisselkoers of koers) en draai POST /api/invest/sync-history; de gaten in "
+             "het verleden vullen zich niet vanzelf.",
+        check=_check_navreeks_incompleet,
+    ),
+    Invariant(
+        key="voorstel_zonder_backtest",
+        titel="Beleggingsvoorstel zonder bewijsstuk",
+        incident="2 aug 2026, bij de bouw: de eis dat een idee eerst getoetst wordt, is "
+                 "alleen echt zolang iets hem handhaaft. Zonder deze toets zou de "
+                 "backtest-eis stilletjes een regel in een document worden — precies "
+                 "wat er met 'activiteit is geen effect' tien keer is gebeurd.",
+        severity=HYGIENE,
+        stap="Zoek de route die de validatie in analyst.valideer() omzeilt; het voorstel "
+             "zelf is niet per se fout, de weg ernaartoe wel.",
+        check=_check_voorstel_zonder_backtest,
+    ),
+    Invariant(
+        key="effect_meervoudig_geclaimd",
+        titel="Eén publicatie, meerdere taken die hem opeisen",
+        incident="4 aug 2026: `_stage_to_wachtrij` pakte per publisher-taak de nieuwste "
+                 "content-taak zonder bij te houden wat al gestaged was. Gemeten: 21 "
+                 "voltooide taken claimden 6 Wachtrij-jobs, en één artikel stond 19× in "
+                 "de Wachtrij. De voortgangstelling en de alert-demping steunen op dat "
+                 "aantal, dus telde het doel negentien publicaties waar er één was.",
+        severity=STIL,
+        stap="Open het doel en kijk welke publisher-taken hetzelfde artikel opvoeren; "
+             "verwijder de dubbele Wachtrij-jobs vóór ze afzonderlijk goedgekeurd worden.",
+        check=_check_effect_meervoudig_geclaimd,
+    ),
+    Invariant(
+        key="uitvoertaak_zonder_uitvoering",
+        titel="Uitvoertaak voltooid zonder spoor van uitvoering",
+        incident="4 aug 2026: 127 van 1143 voltooide goal-taken openden met plan- of "
+                 "instructietaal — 'GSC-data ophalen via hermes-analytics' leverde "
+                 "'# Instructie: GSC-data exporteren voor bewaardvoorjou.nl via …' op en "
+                 "gold als uitgevoerd. `_find_alternative` zette een gefaalde taak alsnog "
+                 "op 'completed' met LLM-proza; de anti-fabricatieregel schreef dat plan "
+                 "bewust voor, de fout zat in de boekhouding eromheen.",
+        severity=STIL,
+        stap="Voer deze stap handmatig uit of laat de taak vervallen — een publisher- of "
+             "outreach-taak zonder job-id heeft niets de wereld in gestuurd.",
+        check=_check_uitvoertaak_zonder_uitvoering,
+    ),
+    Invariant(
+        key="zelfde_actiepunt_opnieuw",
+        titel="Hetzelfde doel keer op keer opnieuw aangemaakt",
+        incident="15-17 jul 2026: 'Actiepunt: Verbeter de CTR van WeAreImpact' werd zeven "
+                 "keer aangemaakt en strandde zeven keer op 'partial'. De alert dempt "
+                 "terecht niet op 'partial', maar de knop eronder maakte elke klik een "
+                 "nieuw doel in plaats van naar de vastloper te wijzen. Over de hele "
+                 "tabel: 28 Actiepunt-doelen, 14 unieke titels.",
+        severity=HYGIENE,
+        stap="Open de oudste poging en zoek waaróm hij strandde; verwijder de dubbele "
+             "doelen daarna, anders vertekenen ze de uitvoer-pijler.",
+        check=_check_zelfde_actiepunt_opnieuw,
+    ),
+    Invariant(
+        key="plan_dubbel_uitgevoerd",
+        titel="Doelplanning tweemaal weggeschreven en uitgevoerd",
+        incident="4 aug 2026: vijf doelen droegen hun volledige planning dubbel — vier "
+                 "fases twee keer, elke taak twee keer, elk met een eigen uitvoering. "
+                 "57 taakruns zijn zo twee keer betaald. Onzichtbaar omdat `task_count` "
+                 "de plánwaarde bewaart: het doel meldde '26/14', wat als telfout in de "
+                 "weergave las in plaats van als dubbel gedaan werk.",
+        severity=STIL,
+        stap="Open het doel en verwijder de tweede fasereeks; zoek daarna de route die "
+             "de planning tweemaal wegschrijft (confirm/start achter elkaar aangeroepen).",
+        check=_check_plan_dubbel_uitgevoerd,
+    ),
+    Invariant(
+        key="job_stil_terwijl_de_rest_draait",
+        titel="Scheduler-taak vuurt niet meer terwijl de rest doorloopt",
+        incident="4 aug 2026: `radar_sky_scan` (elke 4 uur) draaide voor het laatst op "
+                 "24 juli — elf dagen eerder — terwijl bridge_sync, calendar_sync en "
+                 "goal_autoheal diezelfde ochtend nog vuurden. Geen bestaande toets zag "
+                 "het: `scheduler_gaps` meldt alleen jobs met een gevulde `gap_cost` "
+                 "(radar veroudert per dag en hoort níét als gemiste run gemeld), en "
+                 "'nog nooit geslaagd' vergt een lege `last_ok_at` — die was gevuld. "
+                 "Daartussen valt het duurste geval: een taak die ooit werkte en "
+                 "stilletjes ophield.",
+        severity=STIL,
+        stap="Kijk of de job nog in `_SPECS` staat en of zijn trigger nog inplant; een "
+             "IntervalTrigger die bij een uitzondering wegvalt komt na een herstart terug.",
+        check=_check_job_stil_terwijl_de_rest_draait,
+    ),
+    Invariant(
+        key="doel_voltooid_zonder_taken",
+        titel="Doel voltooid zonder ook maar één taak",
+        incident="4 aug 2026: twee doelen van Bewaard voor Jou staan op 'completed' met "
+                 "nul fases en nul taken ('SEO-blitz: gap-keyword content + "
+                 "kennisbank-herstel', 8 jul). Er is niets gepland en niets uitgevoerd, "
+                 "en tóch telt het als afgerond werk — inclusief het dempen van de "
+                 "dashboard-alerts, want `_goal_addresses` slaat alleen 'partial' en "
+                 "'failed' over.",
+        severity=STIL,
+        stap="Zet het doel terug op 'draft' en laat het opnieuw plannen, of verwijder "
+             "het — zolang het op 'completed' staat verbergt het de alert die het zou "
+             "moeten oplossen.",
+        check=_check_doel_voltooid_zonder_taken,
+    ),
+]
+
+
+def invariant(key: str) -> Optional[Invariant]:
+    return next((i for i in INVARIANTEN if i.key == key), None)
+
+
+# ── De ronde ───────────────────────────────────────────────────────────────
+
+def _upsert(conn, inv: Invariant, b: Bevinding) -> bool:
+    """Werk een bevinding bij of maak hem aan. True = dit is nieuw."""
+    bestaand = conn.execute(
+        "SELECT id, resolved_at FROM integrity_findings "
+        "WHERE invariant = ? AND subject = ?",
+        (inv.key, b.subject),
+    ).fetchone()
+    if bestaand and not bestaand["resolved_at"]:
+        conn.execute(
+            "UPDATE integrity_findings SET last_seen = datetime('now'), detail = ? "
+            "WHERE id = ?",
+            (b.detail, bestaand["id"]),
+        )
+        return False
+    if bestaand:
+        # Teruggekeerd na herstel: dezelfde rij heropenen zou de geschiedenis
+        # ('dit was drie weken weg') uitwissen. Een nieuwe rij, dus zichtbaar
+        # als terugval.
+        conn.execute("DELETE FROM integrity_findings WHERE id = ?", (bestaand["id"],))
+    conn.execute(
+        "INSERT INTO integrity_findings "
+        "(id, invariant, subject, project, detail, severity, first_seen, last_seen) "
+        "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+        (str(uuid.uuid4()), inv.key, b.subject, b.project, b.detail, inv.severity),
+    )
+    return True
+
+
+def _sluit_verdwenen(conn, inv_key: str, huidige: List[str]) -> List[Dict[str, Any]]:
+    """Bevindingen die deze ronde niet meer voorkomen: opgelost.
+
+    Dit is het bewijs-mechanisme. Een bevinding sluit niet omdat iemand zegt dat
+    het gefikst is, maar omdat de toets hem niet meer vindt.
+    """
+    rijen = conn.execute(
+        "SELECT id, subject, detail, project, escalated_id, first_seen "
+        "FROM integrity_findings WHERE invariant = ? AND resolved_at IS NULL",
+        (inv_key,),
+    ).fetchall()
+    gesloten = []
+    for r in rijen:
+        if r["subject"] in huidige:
+            continue
+        conn.execute(
+            "UPDATE integrity_findings SET resolved_at = datetime('now') WHERE id = ?",
+            (r["id"],),
+        )
+        gesloten.append(dict(r))
+    return gesloten
+
+
+def _escaleer(inv: Invariant, rijen: List[Dict[str, Any]], dagen_open: int) -> str:
+    """Eén kaart voor deze invariant — niet één per geval.
+
+    Negen dode pagina's zijn negen keer hetzelfde besluit ("ruim deze klasse
+    op"), geen negen besluiten. Het Actiecentrum is een inbox van beslissingen,
+    geen bugtracker; `selfheal` hanteert dezelfde regel als het duplicaten
+    opvouwt. De volledige lijst staat op /api/iris/integrity.
+    """
+    # Eén project noemen als ze allemaal bij hetzelfde horen; anders 'Systeem'.
+    projecten = {r.get("project") or "" for r in rijen} - {""}
+    project = projecten.pop() if len(projecten) == 1 else "Systeem"
+    return log_outcome(
+        project=project,
+        action="waarheidsaudit",
+        detail=_kaarttekst(inv, rijen),
+        artifact="/api/iris/integrity",
+        next_step=_stap_met_ouderdom(inv, dagen_open),
+        status="error",
+    )
+
+
+def _kaarttekst(inv: Invariant, rijen: List[Dict[str, Any]]) -> str:
+    voorbeelden = "; ".join(r["detail"][:90] for r in rijen[:3])
+    meer = f" (+{len(rijen) - 3} meer)" if len(rijen) > 3 else ""
+    return f"{inv.titel} — {len(rijen)} geval(len): {voorbeelden}{meer}"
+
+
+def _ververs_kaart(kaart_id: Optional[str], inv: Invariant,
+                   open_rijen: List[Dict[str, Any]], dagen_open: int) -> None:
+    """Laat een openstaande kaart zeggen wat er nú nog open staat.
+
+    De kaart gaat over de klasse en blijft dus staan zolang er één geval over
+    is — maar zijn tekst was een momentopname van de dag dat hij ontstond. Zakt
+    het aantal van negen naar vier omdat er vijf pagina's offline zijn gehaald,
+    dan hoort dat op de kaart te staan; anders vraagt hij om werk dat al gedaan
+    is, en dat is precies hoe een inbox zijn geloofwaardigheid verliest.
+    """
+    if not kaart_id or not open_rijen:
+        return
+    tekst = _kaarttekst(inv, open_rijen)
+    stap = _stap_met_ouderdom(inv, dagen_open)
+    with get_conn() as conn:
+        rij = conn.execute("SELECT detail, next_step FROM activity_log WHERE id = ?",
+                           (kaart_id,)).fetchone()
+        if not rij or (rij["detail"] == tekst and rij["next_step"] == stap):
+            return
+        conn.execute("UPDATE activity_log SET detail = ?, next_step = ? WHERE id = ?",
+                     (tekst, stap, kaart_id))
+
+
+def _stap_met_ouderdom(inv: Invariant, dagen_open: int) -> str:
+    if dagen_open < _VERGRIJSD_DAGEN:
+        return inv.stap
+    return (f"[staat al {dagen_open} dagen open] {inv.stap} "
+            f"Los het op óf wijs de bevinding af — een kaart die blijft staan, "
+            f"leest niemand nog.")
+
+
+def _sluit_kaarten(resultaat: Dict[str, Any]) -> None:
+    """Sluit kaarten waarvan élke onderliggende bevinding is opgelost.
+
+    Zolang er nog één geval openstaat blijft de kaart staan: hij gaat over de
+    klasse, niet over het individuele geval. Pas als de toets er geen enkele
+    meer vindt, is de klasse aantoonbaar weg — en dán mag de kaart dicht, met
+    een uitkomstkaart die vertelt wat er is opgelost.
+    """
+    with get_conn() as conn:
+        kaarten = [dict(r) for r in conn.execute(
+            "SELECT escalated_id, invariant, COUNT(*) AS opgelost "
+            "FROM integrity_findings "
+            "WHERE escalated_id IS NOT NULL AND resolved_at IS NOT NULL "
+            "GROUP BY escalated_id, invariant"
+        )]
+    for k in kaarten:
+        with get_conn() as conn:
+            nog_open = conn.execute(
+                "SELECT COUNT(*) FROM integrity_findings "
+                "WHERE escalated_id = ? AND resolved_at IS NULL",
+                (k["escalated_id"],),
+            ).fetchone()[0]
+            al_gesloten = conn.execute(
+                "SELECT 1 FROM inbox_dismissals WHERE kind = 'error' AND ref_id = ?",
+                (k["escalated_id"],),
+            ).fetchone()
+        if nog_open or al_gesloten:
+            continue
+        inv = invariant(k["invariant"])
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO inbox_dismissals (kind, ref_id, dismissed_at) "
+                "VALUES ('error', ?, datetime('now'))",
+                (k["escalated_id"],),
+            )
+        log_outcome(
+            project="Systeem", action="waarheidsaudit",
+            detail=(f"Opgelost: {inv.titel if inv else k['invariant']} — "
+                    f"{k['opgelost']} geval(len) weg, de toets vindt er geen meer"),
+            artifact="/api/iris/integrity",
+            status="ok",
+        )
+        resultaat["kaarten_gesloten"] = resultaat.get("kaarten_gesloten", 0) + 1
+
+
+def _dagen_sinds(iso: str) -> int:
+    if not iso:
+        return 0
+    with get_conn() as conn:
+        rij = conn.execute(
+            "SELECT CAST(julianday('now') - julianday(?) AS INTEGER) AS d", (iso,)
+        ).fetchone()
+    return int(rij["d"] or 0)
+
+
+def run_audit(*, source: str = "scheduler") -> Dict[str, Any]:
+    """Draai alle invarianten, werk de levensloop bij, escaleer wat moet.
+
+    Een invariant die zélf stukgaat mag de audit niet platleggen — dan zou één
+    kapotte check alle andere onzichtbaar maken, en dat is exact het probleem
+    dat dit bestand bestrijdt. Hij wordt geteld als 'mislukt' en gemeld.
+    """
+    resultaat: Dict[str, Any] = {
+        "source": source, "nieuw": 0, "opgelost": 0, "open": 0,
+        "geescaleerd": 0, "kaarten_gesloten": 0, "mislukt": [], "per_invariant": {},
+    }
+
+    for inv in INVARIANTEN:
+        try:
+            bevindingen = inv.check() or []
+        except sqlite3.OperationalError as e:
+            # "no such table" op een verse installatie betekent: dit domein is
+            # nog nooit gebruikt, dus er valt niets te toetsen. Dát is geen
+            # storing. Elke ándere SQL-fout wél — een kolom die niet meer
+            # bestaat maakt een invariant blind, en een blinde toets die zwijgt
+            # is precies waar dit bestand tegen bestaat.
+            if "no such table" in str(e).lower():
+                logger.debug("[waarheidsaudit] '%s' overgeslagen: %s", inv.key, e)
+                continue
+            logger.exception("[waarheidsaudit] Invariant '%s' faalde", inv.key)
+            resultaat["mislukt"].append({"invariant": inv.key, "fout": f"OperationalError: {e}"})
+            continue
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[waarheidsaudit] Invariant '%s' faalde", inv.key)
+            resultaat["mislukt"].append({"invariant": inv.key, "fout": f"{type(e).__name__}: {e}"})
+            continue
+
+        subjects = [b.subject for b in bevindingen]
+        with get_conn() as conn:
+            for b in bevindingen[:_MAX_GEVALLEN_PER_INVARIANT]:
+                if _upsert(conn, inv, b):
+                    resultaat["nieuw"] += 1
+            gesloten = _sluit_verdwenen(conn, inv.key, subjects)
+
+        resultaat["opgelost"] += len(gesloten)
+
+        resultaat["per_invariant"][inv.key] = {
+            "titel": inv.titel, "severity": inv.severity,
+            "gevonden": len(bevindingen), "getoond": min(len(bevindingen),
+                                                         _MAX_GEVALLEN_PER_INVARIANT),
+        }
+
+    # Escalatie in één pas over alles wat openstaat, gegroepeerd per invariant:
+    # zo geldt dezelfde regel voor elke invariant, kan een check hem niet per
+    # ongeluk overslaan, en wordt één klasse nooit meer dan één kaart.
+    for inv in INVARIANTEN:
+        if inv.severity == HYGIENE:
+            continue
+        with get_conn() as conn:
+            open_rijen = [dict(r) for r in conn.execute(
+                "SELECT * FROM integrity_findings "
+                "WHERE invariant = ? AND resolved_at IS NULL ORDER BY first_seen",
+                (inv.key,),
+            )]
+        if not open_rijen:
+            continue
+        nieuw = [r for r in open_rijen if not r["escalated_id"]]
+        # Staat er al een kaart voor deze klasse? Hang de nieuwe gevallen daar
+        # onder in plaats van een tweede kaart te maken voor hetzelfde probleem.
+        bestaand = next((r["escalated_id"] for r in open_rijen if r["escalated_id"]), None)
+        dagen = _dagen_sinds(open_rijen[0]["first_seen"])
+        if not nieuw:
+            # Alles wat openstaat hangt al aan een kaart — maar die kaart is
+            # geschreven op de dag dat hij ontstond en telt sindsdien mee wat er
+            # tóen open stond. Op 2 aug 2026 bleef 'afgewezen_maar_live' om negen
+            # pagina's vragen nadat er vijf waren opgelost. Een kaart die om werk
+            # vraagt dat al gedaan is, leert de lezer om kaarten te wantrouwen.
+            _ververs_kaart(bestaand, inv, open_rijen, dagen)
+            continue
+
+        if bestaand is None and inv.severity == STIL and dagen < _STIL_ESCALATIE_DAGEN:
+            # Een mechanisme dat morgen vanzelf weer aanslaat (de weekscan draait
+            # maandag) is geen storing maar een moment in de cyclus.
+            continue
+
+        kaart_id = bestaand or _escaleer(inv, open_rijen, dagen)
+        with get_conn() as conn:
+            for r in nieuw:
+                conn.execute(
+                    "UPDATE integrity_findings SET escalated_id = ? WHERE id = ?",
+                    (kaart_id, r["id"]))
+        if bestaand is None:
+            resultaat["geescaleerd"] += 1
+
+    _sluit_kaarten(resultaat)
+
+    with get_conn() as conn:
+        resultaat["open"] = conn.execute(
+            "SELECT COUNT(*) FROM integrity_findings WHERE resolved_at IS NULL"
+        ).fetchone()[0]
+
+    if resultaat["mislukt"]:
+        log_outcome(
+            project="Systeem", action="waarheidsaudit",
+            detail=(f"{len(resultaat['mislukt'])} invariant(en) konden niet draaien: "
+                    + ", ".join(m["invariant"] for m in resultaat["mislukt"])),
+            artifact="/api/iris/integrity",
+            next_step="Een toets die zelf stuk is, meet niets — bekijk de fout in logs/agentos.log.",
+            status="error",
+        )
+
+    logger.info("[waarheidsaudit] %d nieuw, %d opgelost, %d open, %d geëscaleerd",
+                resultaat["nieuw"], resultaat["opgelost"], resultaat["open"],
+                resultaat["geescaleerd"])
+    return resultaat
+
+
+# ── Uitlezen ───────────────────────────────────────────────────────────────
+
+def open_findings(severity: str = "", limit: int = 200) -> List[Dict[str, Any]]:
+    sql = ("SELECT * FROM integrity_findings WHERE resolved_at IS NULL")
+    params: List[Any] = []
+    if severity:
+        sql += " AND severity = ?"
+        params.append(severity)
+    sql += " ORDER BY CASE severity WHEN 'blokkerend' THEN 0 WHEN 'stil' THEN 1 " \
+           "ELSE 2 END, first_seen LIMIT ?"
+    params.append(limit)
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(sql, params)]
+
+
+def audit_summary() -> Dict[str, Any]:
+    """Compacte stand voor de UI en voor Iris' prompt."""
+    with get_conn() as conn:
+        per = [dict(r) for r in conn.execute(
+            "SELECT invariant, severity, COUNT(*) AS n, MIN(first_seen) AS oudste "
+            "FROM integrity_findings WHERE resolved_at IS NULL "
+            "GROUP BY invariant, severity"
+        )]
+        opgelost_7d = conn.execute(
+            "SELECT COUNT(*) FROM integrity_findings "
+            "WHERE resolved_at >= datetime('now', '-7 day')"
+        ).fetchone()[0]
+    for p in per:
+        inv = invariant(p["invariant"])
+        p["titel"] = inv.titel if inv else p["invariant"]
+        p["dagen_open"] = _dagen_sinds(p["oudste"])
+    per.sort(key=lambda p: ({BLOKKEREND: 0, STIL: 1}.get(p["severity"], 2),
+                            -p["dagen_open"]))
+    return {
+        "open_totaal": sum(p["n"] for p in per),
+        "blokkerend": sum(p["n"] for p in per if p["severity"] == BLOKKEREND),
+        "stil": sum(p["n"] for p in per if p["severity"] == STIL),
+        "hygiene": sum(p["n"] for p in per if p["severity"] == HYGIENE),
+        "opgelost_7d": opgelost_7d,
+        "per_invariant": per,
+        "invarianten_totaal": len(INVARIANTEN),
+    }
+
+
+def invariant_voor_kaart(kaart_id: str, detail: str = "") -> Optional[Invariant]:
+    """Welke invariant hoort bij deze `waarheidsaudit`-kaart in het Actiecentrum?
+
+    Nodig omdat de kaart zelf alleen tekst draagt: `action='waarheidsaudit'` en
+    een samenvatting. Wie er iets mee wil doen (de "Analyseer & fix"-knop, een
+    remedie) moet weten wélke toets hem maakte — en dat mag geen gok zijn.
+
+    De harde koppeling is `integrity_findings.escalated_id`: die wijst naar de
+    kaart die deze klasse escaleerde. Alleen als die weg is (opgeruimde
+    bevindingen, oude kaart) valt hij terug op de titel, want `_kaarttekst`
+    begint altijd met `inv.titel` — een terugval, geen tweede waarheid.
+    """
+    if kaart_id:
+        try:
+            with get_conn() as conn:
+                rij = conn.execute(
+                    "SELECT invariant FROM integrity_findings WHERE escalated_id = ? "
+                    "ORDER BY resolved_at IS NOT NULL, last_seen DESC LIMIT 1",
+                    (kaart_id,),
+                ).fetchone()
+            if rij and rij["invariant"]:
+                for inv in INVARIANTEN:
+                    if inv.key == rij["invariant"]:
+                        return inv
+        except sqlite3.OperationalError:
+            pass
+    tekst = (detail or "").strip().lower()
+    if tekst:
+        for inv in INVARIANTEN:
+            if tekst.startswith(inv.titel.lower()[:60]):
+                return inv
+    return None
+
+
+def prompt_block() -> str:
+    """Wat Iris in haar briefing te zien krijgt.
+
+    Bewust géén kale JSON-dump: de ernst-klasse en de leeftijd zijn de twee
+    dingen waar haar oordeel op moet steunen, en die moeten in woorden staan.
+    """
+    s = audit_summary()
+    if not s["open_totaal"]:
+        return (f"Waarheidsaudit: alle {s['invarianten_totaal']} invarianten schoon. "
+                f"({s['opgelost_7d']} bevinding(en) opgelost in de afgelopen 7 dagen.)")
+    regels = [
+        f"Waarheidsaudit over {s['invarianten_totaal']} invarianten — "
+        f"{s['open_totaal']} openstaande bevinding(en): "
+        f"{s['blokkerend']} blokkerend, {s['stil']} stil, {s['hygiene']} hygiëne.",
+        "",
+        "Een 'blokkerende' bevinding betekent dat er NU iets verkeerds naar buiten staat "
+        "(een dode URL, twee artikelen op één zoekwoord). Die weegt zwaarder dan welke "
+        "optimalisatie ook: eerst stoppen met schade doen, dan pas groeien. Een 'stille' "
+        "bevinding betekent dat een mechanisme dat hoort te werken niets doet — dat is "
+        "geen cosmetiek, want alle cijfers die erop steunen zijn dan onbetrouwbaar.",
+        "",
+    ]
+    for p in s["per_invariant"]:
+        leeftijd = f", oudste staat {p['dagen_open']} dag(en) open" if p["dagen_open"] else ""
+        regels.append(f"- [{p['severity']}] {p['titel']}: {p['n']} geval(len){leeftijd}")
+    return "\n".join(regels)
