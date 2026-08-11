@@ -46,22 +46,53 @@ def _cluster_sites(site_id: str) -> List[str]:
 
 
 def _published_articles(site_id: str, own_host: str) -> List[Dict]:
-    """Gepubliceerde artikelen van een zuster-site, als (url, title, slug)."""
+    """Gepubliceerde artikelen van een zuster-site, als (url, title).
+
+    Leest uit `published_pages` (gevuld bij Netlify/static-site publish) én uit
+    `content_jobs` (status='published', gevuld bij API-publish naar project-sites).
+    Veel sites publiceren via de API-route en hebben een lege `published_pages`-
+    tabel — zonder deze fallback ziet cross-site linking die artikelen nooit.
+    URL wordt gereconstrueerd als `{base_url}/blog/{slug}` wanneer de pagina
+    geen eigen url-veld heeft.
+    """
     with get_conn() as conn:
         conn.row_factory = __import__("sqlite3").Row
+        # 1) published_pages (expliciete url)
         rows = conn.execute(
-            """SELECT p.url, p.title, p.slug, s.base_url
+            """SELECT p.url, p.title, s.base_url
                FROM published_pages p
                JOIN sites s ON s.id = p.site_id
                WHERE p.site_id = ? AND p.url IS NOT NULL AND p.url != ''""",
             (site_id,),
         ).fetchall()
-    out = []
-    for r in rows:
-        url = (r["url"] or "").strip()
-        if not url or own_host in url.lower():
-            continue  # nooit naar jezelf
-        out.append({"url": url, "title": (r["title"] or "").strip()})
+        out = []
+        seen = set()
+        for r in rows:
+            url = (r["url"] or "").strip()
+            if url and own_host not in url.lower() and url not in seen:
+                seen.add(url)
+                out.append({"url": url, "title": (r["title"] or "").strip()})
+        if out:
+            return out
+        # 2) Fallback: content_jobs (status='published') — reconstrueer URL
+        rows = conn.execute(
+            """SELECT cj.slug, cj.title, s.base_url
+               FROM content_jobs cj
+               JOIN sites s ON s.id = cj.site_id
+               WHERE cj.site_id = ? AND cj.status = 'published'
+                 AND cj.slug IS NOT NULL AND cj.slug != ''""",
+            (site_id,),
+        ).fetchall()
+        for r in rows:
+            base = (r["base_url"] or "").rstrip("/")
+            slug = (r["slug"] or "").strip()
+            if not base or not slug:
+                continue
+            url = f"{base}/blog/{slug}"
+            if own_host in url.lower() or url in seen:
+                continue
+            seen.add(url)
+            out.append({"url": url, "title": (r["title"] or "").strip()})
     return out
 
 
