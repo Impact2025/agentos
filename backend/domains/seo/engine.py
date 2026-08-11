@@ -301,6 +301,11 @@ def scan_site(
     cold_started: List[Dict] = []
     if not saved and not list_opportunities(site_id=site["id"], status="new"):
         cold_started = cold_start_opportunities(site)
+        # Nog steeds niets? Dan ontbreekt waarschijnlijk het site-profiel (verse
+        # site). Seed dan baseline-kansen uit de site-naam + vraag-intenties,
+        # zodat de Kansen-tab niet leeg blijft en de contentmotor wel start.
+        if not cold_started:
+            cold_started = seed_baseline_opportunities(site)
         saved.extend(cold_started)
 
     return {
@@ -391,6 +396,61 @@ def cold_start_opportunities(site: Dict, count: int = 8) -> List[Dict]:
             angle=(item.get("angle") or "").strip(),
             rationale=(item.get("rationale") or "").strip(),
             action="nieuwe-content", opportunity_score=_COLD_START_SCORE,
+        ))
+    return created
+
+
+# Vraag-intenties die Goldie expliciet noemt als hoog-converterend voor nieuwe
+# sites (hoe/wat/waar/beste/ervaringen). Zonder profiel-onderzoek is dit de
+# minimal-viable fallback zodat de Kansen-tab van een jonge site niet leeg
+# blijft en de contentmotor niet drooglopen.
+_BASELINE_INTENTS = [
+    ("hoe", "hoe je {onderwerp} het beste aanpakt"),
+    ("wat", "wat is {onderwerp} precies"),
+    ("waar", "waar vind je {onderwerp} in Nederland"),
+    ("beste", "de beste {onderwerp} opties op een rij"),
+    ("ervaringen", "ervaringen met {onderwerp} van echte gebruikers"),
+    ("tips", "praktische tips voor {onderwerp}"),
+    ("voordelen", "de voordelen van {onderwerp} op een rij"),
+    ("kosten", "wat kost {onderwerp} en waar moet je op letten"),
+]
+
+
+def seed_baseline_opportunities(site: Dict, count: int = 8) -> List[Dict]:
+    """Laatste-redmiddel fallback voor sites zonder profiel én zonder GSC-data.
+
+    `cold_start_opportunities` vereist een site-profiel van >=40 chars; een
+    verse site zonder profiel levert daardoor niets op en de Kansen-tab blijft
+    leeg (de praktijk: 254 opportunities, maar slechts 18 met GSC-impressies).
+    Deze functie seedt baseline-kansen uit de site-naam + Goldie's vraag-intenties
+    zodat de contentmotor wél kan starten. Nooit een vervanger voor echt
+    keyword-onderzoek — wel de ontsnapping uit de lege-tab-limbo.
+    """
+    name = (site.get("name") or "").strip()
+    if not name:
+        return []
+    subject = name.split()[0].lower()  # eerste woord als onderwerp (bijv. "bewaardvoorjou")
+
+    with get_conn() as conn:
+        existing = {
+            r["query"].strip().lower()
+            for r in conn.execute(
+                "SELECT query FROM opportunities WHERE site_id = ?", (site["id"],)
+            ).fetchall()
+        }
+
+    created: List[Dict] = []
+    for intent, tmpl in _BASELINE_INTENTS[:count]:
+        query = tmpl.format(onderwerp=subject).strip()
+        if query.lower() in existing:
+            continue
+        existing.add(query.lower())
+        created.append(create_manual_opportunity(
+            site_id=site["id"], query=query,
+            angle=f"baseline-kans voor nieuwe site ({intent})",
+            rationale=f"Geen GSC-data en geen profiel — vraag-intentie '{intent}' "
+                      f"als minimale start voor de contentmotor.",
+            action="nieuwe-content", opportunity_score=50.0,
         ))
     return created
 

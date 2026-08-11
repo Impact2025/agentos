@@ -1681,6 +1681,20 @@
     return 'Goedenavond';
   }
 
+  // Iris opent het gesprek: bij de eerste keer dat Vandaag laadt, plaatst ze
+  // een welkomst-bubble (met de live besluit-count uit #today-sub). Zo voelt
+  // ze aanwezig vóórdat je iets typt — niet een leeg invoerveld.
+  let irisGreeted = false;
+  function irisGreet() {
+    if (irisGreeted) return;
+    irisGreeted = true;
+    const sub = ($('today-sub') && $('today-sub').textContent || '').trim();
+    const line = sub ? `${sub}. Waar wil je mee beginnen — of zal ik de belangrijkste even voor je op een rij zetten?`
+                     : 'Ik ben er. Waar wil je mee beginnen?';
+    chatHistory.push({ role: 'assistant', content: line, greeting: true });
+    renderChat();
+  }
+
   async function loadToday(token = loadToken) {
     const el = $('today-body');
     if (token === loadToken && !contextCache) el.innerHTML = skeletons(3);
@@ -1698,8 +1712,12 @@
       contextCache = ctx;
       const stamp = data.generated_at ? `Stand van ${fmtDate(data.generated_at)}` : '';
       $('today-stamp').textContent = stamp;
+      // Iris begroet zodra er context is (ze "ziet" je dag).
       const open = items.filter((i) => !i.decision_status || i.decision_status === 'failed').length;
       $('today-sub').textContent = open ? `${open} besluit(en) wachten op je` : 'Niets wacht op je';
+      // Iris begroet pas ná de count-update, zodat ze de juiste "N wachten op
+      // je" in haar welkomst zet.
+      irisGreet();
       // Dit ís de dag — agenda en postvak eerst, precies zo opent een
       // secretaresse het gesprek ook. Pulse (bredere signalen) erna, met
       // mail/agenda eruit gefilterd want die staan al concreet hierboven.
@@ -1833,8 +1851,11 @@
     chatHistory.forEach((m, i) => { m.idx = i; });
     el.innerHTML = chatHistory.map((m) => m.role === 'user'
       ? `<div class="flex justify-end fade-up"><div class="chat-msg me">${esc(m.content)}</div></div>`
-      : `<div class="flex justify-start fade-up"><div class="chat-msg iris">${mdLite(m.content)}${effectsHtml(m)}</div></div>`).join('')
-      + (pending ? '<div class="flex justify-start"><div class="px-3 py-2 text-primary font-label-caps text-label-caps animate-pulse">IRIS DENKT NA…</div></div>' : '');
+      : `<div class="flex justify-start fade-up"><div class="chat-msg iris${m.greeting ? ' is-greeting' : ''}">${mdLite(m.content)}${effectsHtml(m)}</div></div>`).join('')
+      // Levendige typing-indicator i.p.v. een statische "IRIS DENKT NA…" —
+      // drie stippen die stuiteren, zodat je ziet dat Iris écht aan het
+      // schrijven is (niet een vast label dat altijd aanstaat).
+      + (pending ? '<div class="flex justify-start fade-up"><div class="chat-msg iris"><div class="chat-typing"><span></span><span></span><span></span></div></div></div>' : '');
     el.querySelectorAll('[data-prop]').forEach((btn) => {
       btn.onclick = async () => {
         const [mi, pi] = btn.dataset.prop.split(':').map(Number);

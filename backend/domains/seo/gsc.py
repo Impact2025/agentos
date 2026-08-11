@@ -133,6 +133,43 @@ def submit_sitemap(site_url: str, sitemap_url: str) -> tuple[bool, str]:
         return False, detail
 
 
+def inspect_url(site_url: str, page_url: str) -> Dict:
+    """Vraag de Google URL Inspection API om de échte index-status van één pagina.
+
+    Sluit de indexering-loop: we pingen IndexNow/Google bij publish, maar tot nu
+    toe meten we niet of de pagina écht geïndexeerd is. Die terugkoppeling is
+    precies Goldie's "24u indexeren"-belofte — zonder meting blijft het een
+    schietgebed. Returns een dict met ten minste 'indexed' (bool), 'status'
+    (raw) en 'detail' (mensleesbaar / fout).
+
+    Bij een API-fout (quota, rechten) retourneren we een dict met indexed=False
+    en de fout in 'detail' — nooit een exception, zodat de scheduler-job niet
+    crasht op één mislukte inspectie.
+    """
+    result: Dict = {"indexed": False, "status": "unknown", "detail": "", "fetched_at": ""}
+    try:
+        from datetime import datetime
+        service = _get_service()
+        resp = service.urlInspection().index().inspect(
+            body={"inspectionUrl": page_url, "siteUrl": site_url}
+        ).execute()
+        inspection = (resp.get("inspectionResult") or {})
+        index_state = (
+            inspection.get("indexStatusResult") or {}
+        ).get("coverageState", "UNKNOWN")
+        result["status"] = index_state
+        # "Indexed" = daadwerkelijk in de index. "Discovered" telt niet als
+        # geïndexeerd (Google kent de URL wel maar toont hem niet in zoekresultaten).
+        result["indexed"] = index_state == "INDEXED" and not (
+            inspection.get("indexStatusResult") or {}
+        ).get("pageFetchState") == "PAGE_FETCH_STATE_ERROR"
+        result["detail"] = index_state
+        result["fetched_at"] = datetime.utcnow().isoformat() + "Z"
+    except Exception as e:  # noqa: BLE001
+        result["detail"] = f"inspectie mislukt: {str(e)[:200]}"
+    return result
+
+
 def fetch_daily_performance(site_url: str, days: int = 28, end_offset: int = 0) -> List[Dict]:
     """Dagelijkse prestaties (clicks, impressies, CTR, positie) voor trendlijnen."""
     rows = _query(site_url, ["date"], days, row_limit=days, end_offset=end_offset)

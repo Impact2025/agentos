@@ -7,6 +7,7 @@ from .financial_news import FinancialNewsTool
 from .market_data import MarketDataTool
 from .google_analytics import GoogleAnalyticsTool
 from .delegate import DelegateTool, DelegationStatusTool
+from .calendar_tool import CalendarCreateTool
 
 TOOLS = [
     ObsidianSearchTool(),
@@ -20,6 +21,7 @@ TOOLS = [
     GoogleAnalyticsTool(),
     DelegateTool(),
     DelegationStatusTool(),
+    CalendarCreateTool(),
 ]
 
 TOOL_MAP = {t.name: t for t in TOOLS}

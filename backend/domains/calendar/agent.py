@@ -447,6 +447,49 @@ def approve_proposal(proposal_id: int) -> Dict:
             from ...domains.calendar import service as cal
             if not cal.is_configured():
                 return {"ok": False, "error": "Google Agenda niet geconfigureerd"}
+            # Terugkerend blok? recur_weekday >= 0 markeert een wekelijkse reeks.
+            # recur_count telt hoeveel weken (bv. "de komende 6 weken op maandag");
+            # -1/0/1 = één losse afspraak. We boeken elke week apart in plaats van
+            # via één RRULE: dan verschijnt elk blok als een eigen event dat los
+            # verplaatst of verwijderd kan worden, en de titel/omschrijving blijft
+            # per week identiek.
+            recur_wd = r["recur_weekday"] if "recur_weekday" in r.keys() else -1
+            recur_n = r["recur_count"] if "recur_count" in r.keys() else -1
+            try:
+                recur_n = int(recur_n)
+            except (TypeError, ValueError):
+                recur_n = -1
+            if recur_wd is not None and int(recur_wd) >= 0 and recur_n > 1:
+                links, event_ids, errors = [], [], []
+                for i in range(recur_n):
+                    s_i = start + timedelta(days=7 * i)
+                    e_i = end + timedelta(days=7 * i)
+                    try:
+                        res_i = _run_async(cal.block_time(
+                            title=r["title"], start=s_i, end=e_i,
+                            description=r["rationale"],
+                        ))
+                        if res_i.get("event_id"):
+                            event_ids.append(res_i.get("event_id"))
+                        if res_i.get("html_link"):
+                            links.append(res_i.get("html_link"))
+                    except Exception as ex:  # noqa: BLE001
+                        log.warning("[agenda-agent] week %s van reeks mislukt: %s", i + 1, ex)
+                        errors.append(str(ex))
+                if not event_ids:
+                    return {"ok": False, "code": "booking_error",
+                            "error": f"Geen enkel blok geboekt: {errors[0] if errors else 'onbekende fout'}"}
+                conn.execute(
+                    "UPDATE calendar_proposals SET status='booked', booked_event_id=?, "
+                    "booked_link=?, decided_at=datetime('now') WHERE id=?",
+                    (",".join(event_ids), links[0] if links else None, proposal_id),
+                )
+                msg = f"{len(event_ids)} wekelijkse blokken geboekt"
+                if errors:
+                    msg += f" ({len(errors)} mislukt)"
+                return {"ok": True, "event_id": event_ids[0], "count": len(event_ids),
+                        "link": links[0] if links else None, "message": msg}
+            # Enkele afspraak.
             result = _run_async(cal.block_time(
                 title=r["title"],
                 start=start, end=end,

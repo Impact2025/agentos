@@ -434,7 +434,7 @@ def _is_allowed_internal(url: str, register: Optional[set]) -> bool:
     return True  # fallback: sitemap (minus blokkades)
 
 
-def _link_candidates(site: Dict) -> List[Dict[str, str]]:
+def _link_candidates(site: Dict, keyword: str = "", text: str = "") -> List[Dict[str, str]]:
     """Écht bestaande interne pagina's: eigen published_pages + live sitemap.
 
     Gefilterd door de canonieke allowlist: bekende 404-URLs worden permanent
@@ -442,6 +442,7 @@ def _link_candidates(site: Dict) -> List[Dict[str, str]]:
     worden uitsluitend die URLs toegelaten — zo werken interne links altijd."""
     from . import service as publish_service
     from ..seo import external_content
+    from .cross_site import cross_site_candidates
 
     register = _load_url_register(site)
     seen: set = set()
@@ -456,6 +457,15 @@ def _link_candidates(site: Dict) -> List[Dict[str, str]]:
             seen.add(url)
             slug = url.rstrip("/").rsplit("/", 1)[-1]
             candidates.append({"url": url, "title": slug.replace("-", " ")})
+
+    # Cross-site: relevante zuster-artikelen (PBN-veilig gefilterd in de module).
+    if keyword or text:
+        for c in cross_site_candidates(site, keyword, text):
+            url = c["url"].rstrip("/")
+            if url not in seen:
+                seen.add(url)
+                candidates.append(c)
+
     return candidates[:_MAX_LINK_CANDIDATES]
 
 
@@ -554,7 +564,7 @@ def strip_unvetted_internal_links(html: str, site: Dict,
 async def _link_pass(site: Dict, keyword: str, html_body: str,
                      ctas: Optional[List[str]] = None) -> Tuple[str, Dict]:
     report = {"internal_added": 0, "external_added": 0, "rejected": 0}
-    candidates = _link_candidates(site)
+    candidates = _link_candidates(site, keyword=keyword, text=html_body)
     own_host = urlparse((site.get("base_url") or "").strip()).netloc.lower().removeprefix("www.")
 
     # Eerst: links die de schrijf-/opmaakstap zelf heeft verzonnen eruit.

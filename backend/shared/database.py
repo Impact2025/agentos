@@ -750,6 +750,7 @@ def _migrate(conn) -> None:
         for col, ddl in (
             ("recur_weekday", "ALTER TABLE calendar_proposals ADD COLUMN recur_weekday INTEGER DEFAULT -1"),
             ("reminder_sent", "ALTER TABLE calendar_proposals ADD COLUMN reminder_sent INTEGER DEFAULT 0"),
+            ("recur_count", "ALTER TABLE calendar_proposals ADD COLUMN recur_count INTEGER DEFAULT -1"),
         ):
             if col not in cp_cols:
                 conn.execute(ddl)
@@ -854,9 +855,26 @@ def _migrate(conn) -> None:
         # Infographic (base64 PNG) per artikel: gaat bij goedkeuring mee de
         # pagina in (Google Afbeeldingen + AI Overviews citeren beeldbronnen).
         ("infographic_path", "ALTER TABLE content_jobs ADD COLUMN infographic_path TEXT DEFAULT ''"),
+        # Index-status terugkoppeling van de Google URL Inspection API: sluit de
+        # indexering-loop (we pingen bij publish, maar meten nu pas of de pagina
+        # écht geïndexeerd is). NULL/leeg = nog niet geïnspecteerd.
+        ("index_status", "ALTER TABLE content_jobs ADD COLUMN index_status TEXT DEFAULT ''"),
+        ("index_inspected_at", "ALTER TABLE content_jobs ADD COLUMN index_inspected_at TEXT DEFAULT ''"),
     ):
         if cj_cols and col not in cj_cols:
             conn.execute(ddl)
+
+    # Cross-site linkbuilding-clusters: welke sites mogen naar elkaar linken
+    # (Vincent's allowlist — nooit automatisch "alles naar alles", dat is de
+    # PBN-voetafdruk die Goldie waarschuwt te vermijden).
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS cross_site_clusters (
+               site_id TEXT NOT NULL,
+               peer_site_id TEXT NOT NULL,
+               created_at TEXT DEFAULT '',
+               PRIMARY KEY (site_id, peer_site_id)
+           )"""
+    )
 
     # Social publisher: quote-card afbeelding per gepubliceerde pagina (base64 PNG),
     # meegenomen in elke Netlify full-site-rebuild zodat Instagram een publieke
@@ -1590,6 +1608,14 @@ def _migrate(conn) -> None:
     if "conflict_checked" not in cp_cols:
         conn.execute("ALTER TABLE calendar_proposals ADD COLUMN "
                      "conflict_checked TEXT DEFAULT 'ok'")
+    # Terugkerende blokken (eindige reeks via de Iris agenda-tool): weekdag +
+    # aantal herhalingen. Idempotent — draait alleen als de kolom nog ontbreekt.
+    for col, ddl in (
+        ("recur_weekday", "ALTER TABLE calendar_proposals ADD COLUMN recur_weekday INTEGER DEFAULT -1"),
+        ("recur_count", "ALTER TABLE calendar_proposals ADD COLUMN recur_count INTEGER DEFAULT -1"),
+    ):
+        if col not in cp_cols:
+            conn.execute(ddl)
 
 
     # ── Google Agenda-cache (Fase 1: lezen + blokkeren) ────────────────────

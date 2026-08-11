@@ -313,11 +313,12 @@ async def _cmd_calendar_add(payload: Dict) -> Tuple[bool, str]:
             conflict_txt = "Niet op dubbele boeking gecontroleerd: agenda-check mislukte."
 
     recur = cmd.recur_weekday
+    recur_count = cmd.recur_count
     rationale = (
         f"Spraak/tekst-opdracht: \"{cmd.raw}\". "
         f"Voorgesteld: {cmd.start.strftime('%a %d-%m %H:%M')}–{cmd.end.strftime('%H:%M')} "
         f"({cmd.duration_min} min). Locatie: {'Online' if cmd.is_remote else (cmd.location or 'niet genoemd')}. "
-        + (f"Terugkerend: elke {_wd_nl(recur)}." if recur is not None else "")
+        + (f"Terugkerend: elke {_wd_nl(recur)}" + (f" ({recur_count} keer)" if recur_count else "") + "." if recur is not None else "")
         + (f" {conflict_txt}" if conflict_txt else " Geen conflict gevonden.")
     )
     # Titel: parse_command levert al '(wekelijks)' bij recursief; niet nog een
@@ -332,15 +333,16 @@ async def _cmd_calendar_add(payload: Dict) -> Tuple[bool, str]:
                (mailbox_id, inbox_id, from_addr, subject, title,
                 proposed_start, proposed_end, location, is_remote,
                 duration_min, travel_buffer_min, priority, conflict_note,
-                conflict_checked, rationale, recur_weekday, status, created_at)
+                conflict_checked, rationale, recur_weekday, recur_count, status, created_at)
                VALUES ('iris-command', 0, 'iris-command', ?, ?, ?, ?, ?, ?,
-                       ?, 0, 'normal', ?, ?, ?, ?, 'pending_review', datetime('now'))""",
+                       ?, 0, 'normal', ?, ?, ?, ?, ?, 'pending_review', datetime('now'))""",
             (text[:120], title,
              cmd.start.isoformat(), cmd.end.isoformat(),
              "Online" if cmd.is_remote else (cmd.location or ""),
              1 if cmd.is_remote else 0, cmd.duration_min,
              conflict_txt, cmd.conflict.get("status") if cmd.conflict else "ok",
-             rationale, recur if recur is not None else -1),
+             rationale, recur if recur is not None else -1,
+             recur_count if recur_count is not None else -1),
         )
         pid = cur.lastrowid
 
