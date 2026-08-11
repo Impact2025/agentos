@@ -1423,6 +1423,62 @@ def _check_agenda_horizon() -> List[Bevinding]:
     ) for r in rijen]
 
 
+def _check_afspraak_dubbel_geboekt() -> List[Bevinding]:
+    """Twee geboekte voorstellen die hetzelfde moment innemen.
+
+    De review-gate en de local-overlap-check in `agent.approve_proposal`
+    voorkomen dit sindsdien vooraf (11 aug 2026) — dit is het vangnet ervoor
+    en erachter: een handmatige boeking buiten de agent om, of een toekomstig
+    pad dat de nieuwe check per ongeluk overslaat, moet hier alsnog opduiken.
+    Zelfde vergelijking als de code-fix: bij een terugkerend blok telt alleen
+    weekdag + tijdstip-op-de-dag, want de opgeslagen datum is die van de
+    eerste week."""
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, title, proposed_start, proposed_end, recur_weekday, created_at "
+            "FROM calendar_proposals WHERE status='booked' ORDER BY created_at"
+        ).fetchall()
+    geparsed = []
+    for r in rijen:
+        try:
+            s = datetime.fromisoformat(r["proposed_start"])
+            e = datetime.fromisoformat(r["proposed_end"])
+        except (TypeError, ValueError):
+            continue
+        try:
+            wd = int(r["recur_weekday"]) if r["recur_weekday"] is not None else -1
+        except (TypeError, ValueError):
+            wd = -1
+        geparsed.append((r, s, e, wd if wd >= 0 else None))
+
+    uit: List[Bevinding] = []
+    gemeld: set = set()
+    for i, (ra, sa, ea, wda) in enumerate(geparsed):
+        for rb, sb, eb, wdb in geparsed[i + 1:]:
+            if wda is not None or wdb is not None:
+                eff_a = wda if wda is not None else sa.weekday()
+                eff_b = wdb if wdb is not None else sb.weekday()
+                if eff_a != eff_b:
+                    continue
+                overlapt = sa.time() < eb.time() and sb.time() < ea.time()
+            else:
+                overlapt = sa < eb and sb < ea
+            if not overlapt:
+                continue
+            paar = tuple(sorted((ra["id"], rb["id"])))
+            if paar in gemeld:
+                continue
+            gemeld.add(paar)
+            uit.append(Bevinding(
+                subject=f"voorstel:{paar[0]}+{paar[1]}",
+                detail=(f"voorstel #{ra['id']} '{(ra['title'] or '')[:35]}' en "
+                        f"#{rb['id']} '{(rb['title'] or '')[:35]}' zijn allebei "
+                        f"geboekt op hetzelfde moment ({(ra['proposed_start'] or '')[:16]})"),
+                project="Agenda",
+            ))
+    return uit
+
+
 def _check_metatitel_afgekapt() -> List[Bevinding]:
     """De meta-titel die live gaat, is midden in een woord afgekapt.
 
@@ -2701,6 +2757,24 @@ INVARIANTEN: List[Invariant] = [
         severity=HYGIENE,
         stap="Wijs het voorstel af; de parser heeft een zin gelezen die geen afspraak was.",
         check=_check_agenda_horizon,
+    ),
+    Invariant(
+        key="afspraak_dubbel_geboekt",
+        titel="Twee voorstellen geboekt op hetzelfde moment",
+        incident="11 aug 2026: 'blok alle dinsdagen tussen 09.00 en 10.00' werd twee "
+                 "minuten na elkaar ingediend en allebei goedgekeurd, 11 seconden na "
+                 "elkaar — een wekelijkse dinsdagblokkade staat sindsdien dubbel. "
+                 "Zelfde dag: twee afspraakvoorstellen uit mail (een outreach-afwijzing "
+                 "die door een CTA in de handtekening als 'appointment' classificeerde, "
+                 "en een reply met 'hebben we' erin) landden allebei op 10:00–10:30 en "
+                 "zijn allebei geboekt — de live freeBusy-check bij de tweede goedkeuring "
+                 "vond de eerste, net geboekte, afspraak kennelijk nog niet.",
+        severity=STIL,
+        stap="Verwijder één van de twee geboekte afspraken uit Google Calendar en wijs "
+             "het overbodige voorstel hier af. `agent.approve_proposal` toetst sinds "
+             "11 aug ook tegen onze eigen tabel (geen API-race meer) — komt dit tóch "
+             "terug, dan omzeilt iets die local-overlap-check.",
+        check=_check_afspraak_dubbel_geboekt,
     ),
     Invariant(
         key="stilstand_dubbel_gemeld",

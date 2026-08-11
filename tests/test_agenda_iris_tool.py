@@ -51,3 +51,24 @@ def test_enkele_afspraak_zonder_recur():
     assert row["title"] == "Tandarts"
     assert row["recur_weekday"] == -1
     assert row["recur_count"] == -1
+
+
+def test_dezelfde_opdracht_twee_keer_geeft_geen_dubbel_voorstel():
+    """Gemeten 11 aug 2026: 'blok alle dinsdagen tussen 09.00 en 10.00' twee
+    minuten na elkaar ingediend leverde twee losse voorstellen op, allebei
+    later goedgekeurd — een wekelijkse dinsdagblokkade stond dubbel geboekt."""
+    with get_conn() as conn:
+        voor = conn.execute("SELECT COUNT(*) FROM calendar_proposals").fetchone()[0]
+
+    text = "blok alle dinsdagen tussen 09.00 en 10.00"
+    decision = {"item_kind": "command", "action": "calendar_add",
+                "item_id": "calendar_add", "payload": {"text": text}}
+    ok1, msg1 = asyncio.run(bridge_actions.apply_decision(decision))
+    assert ok1, msg1
+    ok2, msg2 = asyncio.run(bridge_actions.apply_decision(decision))
+    assert not ok2
+    assert "bestaat al" in msg2
+
+    with get_conn() as conn:
+        na = conn.execute("SELECT COUNT(*) FROM calendar_proposals").fetchone()[0]
+    assert na - voor == 1

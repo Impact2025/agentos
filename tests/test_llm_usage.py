@@ -60,10 +60,19 @@ def test_llm_usage_summary_leeg(usage_clean):
     assert len(d["days"]) == 3
 
 
-def test_quota_backoff(conn, usage_clean, clean_tables):
+def test_quota_backoff(conn, usage_clean, clean_tables, monkeypatch):
     """Zelf-uitlijnende rem: een verse 403-quota-marker pauzeert autonome runs,
-    een verlopen marker niet meer."""
-    from backend.shared import outcomes
+    een verlopen marker niet meer.
+
+    `llm_budget_exceeded()` slaat de pauze bewust over als de actieve backend
+    lokaal/Ollama is (die kost geen cloud-quota, zie de docstring in
+    outcomes.py). Deze test gaat over de budget-/quota-logica zelf, niet over
+    welke backend toevallig in de lokale .env staat — zonder deze patch
+    faalde de test op elke machine met HERMES_LOCAL_URL/OLLAMA_BASE_URL
+    ingevuld, wat 'ambient config bepaalt of de test slaagt' als bug heeft
+    (gemeten 11 aug 2026)."""
+    from backend.shared import config as cfg, outcomes
+    monkeypatch.setattr(cfg, "hermes_backend", lambda: "openmodel")
 
     assert not outcomes.llm_quota_backoff_active()
     assert not outcomes.llm_budget_exceeded()

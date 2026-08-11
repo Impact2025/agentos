@@ -155,3 +155,60 @@ def test_ophaalgate_laat_een_echte_vraag_door():
     assert not _should_ignore(
         "jan@klant.nl", "Vraag over mijn bestelling",
         body="Hoi, wanneer wordt mijn bestelling geleverd?")
+
+
+# ── 6. Handtekening-CTA en losse 'hebben we' maken geen afspraak ───────────
+# Gemeten 10 aug 2026 (nlvoorelkaar.nl + kenniscentrumwwz.be): twee gewone
+# antwoordmails werden allebei een afspraakvoorstel, allebei goedgekeurd,
+# allebei geboekt op hetzelfde tijdslot vandaag 10:00-10:30.
+
+def test_boekingslink_in_handtekening_is_geen_afspraakverzoek():
+    """De footer-CTA '📆 Boek een afspraak in mijn agenda' bevat zowel
+    'afspraak' als 'agenda' — twee zwakke hints, samen genoeg voor
+    APPOINTMENT_HINTS >= 2 zónder deze knip. Dat is de afzenders eigen
+    boekingslink, geen verzoek aan ons."""
+    body = (
+        "Hoi Vincent,\n\nDank voor je mailtje. Helaas zijn we nog niet zover "
+        "dat we dit aanbieden. Willen we wel ooit, dus dan kom ik bij jou in "
+        "de lucht ok? Heel veel succes voor nu!\n\n"
+        "Met hartelijke groet,\n\nAnne van Roosmalen\nMarketing & impact\n"
+        "06 112 997 06\n\nBoek een afspraak in mijn agenda"
+    )
+    kind = classify.classify("Teamuitjes", body, "anne@nlvoorelkaar.nl")
+    assert kind != "appointment"
+
+
+def test_losse_hebben_we_is_geen_afspraakverzoek():
+    """'hebben we alvast een beter beeld van jullie vraag' is gewoon
+    toekomstige-tijd-Nederlands, geen verzoek om een moment af te spreken.
+    'wanneer hebben we' blijft wél een sterk signaal."""
+    kind = classify.classify(
+        "Re: Lesmateriaal over vrijwilligersbeheer aanvullen?",
+        "Dag Vincent, als je daar wat meer context over kunt geven, hebben "
+        "we alvast een beter beeld van jullie vraag.\n\nVriendelijke groeten, "
+        "Barbara",
+        "vrijwilligerswerk@kenniscentrumwwz.be")
+    assert kind != "appointment"
+
+    kind2 = classify.classify(
+        "Kennismaking", "Hoi, wanneer hebben we tijd voor een belletje?",
+        "astrid@zorgorganisatie.nl")
+    assert kind2 == "appointment"
+
+
+def test_geciteerde_afspraakzin_in_een_reply_telt_niet_mee():
+    """Een afspraak-signaal dat alleen in het geciteerde 'Van: ...'-blok van
+    een reply staat (onze eigen oude mail) is geen nieuw verzoek van de
+    afzender — zie ook agent._strip_quoted_history voor dezelfde knip bij
+    datum/tijd-extractie."""
+    body = (
+        "Dag Vincent,\n\nWe nemen jullie aanbod mee voor de toekomst.\n\n"
+        "Vriendelijke groeten,\nBarbara\n\n"
+        "Van: Vincent van Munster <v.munster@weareimpact.nl>\n"
+        "Verzonden: vrijdag 7 augustus 2026 08:53\n"
+        "Onderwerp: Lesmateriaal\n\n"
+        "Hallo, kunnen we een gesprek inplannen deze week?"
+    )
+    kind = classify.classify("Re: Lesmateriaal", body,
+                             "vrijwilligerswerk@kenniscentrumwwz.be")
+    assert kind != "appointment"

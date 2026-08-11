@@ -26,6 +26,23 @@ from backend.shared.database import get_conn
 TZ = ZoneInfo("Europe/Amsterdam")
 
 
+@pytest.fixture(autouse=True)
+def _schone_agenda_tabel():
+    """Elke test start met een lege calendar_proposals-tabel.
+
+    Nodig sinds de local-overlap-check in `approve_proposal` (11 aug 2026,
+    zie CLAUDE.md 13a): die vergelijkt een nieuw voorstel tegen ALLE al
+    geboekte voorstellen, dus zonder opruimen botst test B op de rij die
+    test A in dezelfde sessie-database achterliet (beide gebruiken vaak
+    dezelfde bevroren 'vrijdag'-fixture en identieke testtekst, dus identiek
+    tijdslot) — een test-isolatieprobleem dat er altijd al was, maar pas
+    zichtbaar werd zodra er een check kwam die écht over de hele tabel kijkt.
+    """
+    with get_conn() as c:
+        c.execute("DELETE FROM calendar_proposals")
+    yield
+
+
 @pytest.fixture
 def vrijdag(monkeypatch):
     """Bevries 'nu' op vrijdag 17 juli 2026, 12:00 (zomertijd)."""
@@ -316,6 +333,66 @@ def test_goedkeuren_mag_wel_na_geslaagde_check(vrijdag, mailbox, monkeypatch):
     res = A.approve_proposal(p["id"])
     assert res["ok"] is True
     assert _proposal(p["id"])["status"] == "booked"
+
+
+def test_lokale_overlap_blokkeert_dubbele_boeking(vrijdag, mailbox, monkeypatch):
+    """Twee losse voorstellen voor exact hetzelfde tijdslot: de tweede
+    goedkeuring mag niet boeken, ook al meldt de live freeBusy-check 'vrij'
+    (dezelfde race als 10 aug 2026 — de eerste boeking is net geschreven en
+    Google's freeBusy heeft dat nog niet bijgewerkt). De check hier vergelijkt
+    tegen onze eigen tabel, niet tegen Google, dus is er geen race."""
+    async def altijd_vrij(start, end):
+        return []
+    monkeypatch.setattr(svc, "is_configured", lambda: True)
+    monkeypatch.setattr(svc, "get_busy_times", altijd_vrij)
+
+    body = "Dinsdag 14:00 op kantoor?"
+    p1 = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak A", "a@b.nl", body)
+    p2 = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak B", "b@b.nl", body)
+
+    async def fake_block(**kw):
+        return {"event_id": "evt-eerste", "html_link": "https://cal/1"}
+    monkeypatch.setattr(svc, "block_time", fake_block)
+    res1 = A.approve_proposal(p1["id"])
+    assert res1["ok"] is True
+
+    res2 = A.approve_proposal(p2["id"])
+    assert res2["ok"] is False
+    assert res2["code"] == "conflict_found"
+    assert _proposal(p2["id"])["status"] == "pending_review"
+
+
+def test_open_terugkerend_blok_boekt_meerdere_weken(vrijdag, mailbox, monkeypatch):
+    """'blok alle dinsdagen' zonder genoemd aantal weken sloeg tot 11 aug 2026
+    op recur_count=-1, en de boekfunctie las -1 als 'dus één losse afspraak'
+    — het tegenovergestelde van de opdracht. Open/eindeloos moet net als een
+    expliciet aantal weken meerdere events boeken."""
+    from backend.domains.calendar.nl_command import _MAX_RECUR_COUNT
+    async def vrij(start, end):
+        return []
+    monkeypatch.setattr(svc, "is_configured", lambda: True)
+    monkeypatch.setattr(svc, "get_busy_times", vrij)
+
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO calendar_proposals (mailbox_id, inbox_id, from_addr, "
+            "subject, title, proposed_start, proposed_end, recur_weekday, "
+            "recur_count, status, conflict_checked, rationale, created_at) "
+            "VALUES ('iris-command', 0, 'iris-command', 'x', 'Dinsdagen (wekelijks)', "
+            "'2026-07-21T09:00:00+02:00', '2026-07-21T10:00:00+02:00', 1, -1, "
+            "'pending_review', 'ok', '', datetime('now'))")
+        pid = cur.lastrowid
+
+    geboekt = []
+    async def fake_block(**kw):
+        geboekt.append(kw["start"])
+        return {"event_id": f"evt{len(geboekt)}", "html_link": "https://cal/x"}
+    monkeypatch.setattr(svc, "block_time", fake_block)
+
+    res = A.approve_proposal(pid)
+    assert res["ok"] is True
+    assert res["count"] == _MAX_RECUR_COUNT
+    assert len(geboekt) == _MAX_RECUR_COUNT
 
 
 def test_freebusy_errors_veld_faalt_luid(monkeypatch):

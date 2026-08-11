@@ -19,6 +19,7 @@ Categorieën:
 import re
 
 from . import bulk as bulk_mod
+from ...shared.mail_text import strip_noise
 
 # ── Spam / scam / promo (harde signalen) ────────────────────────────────────
 # Dit zijn domein- en merkpatronen die bijna altijd ongewenst zijn. De
@@ -89,9 +90,15 @@ APPOINTMENT_HINTS = (
 # is het vrijwel zeker een afspraak-verzoek.
 APPOINTMENT_STRONG = (
     "kunnen we", "zullen we", "ik stel voor", "ik plan", "ik stel een gesprek voor",
-    "zou het lukken", "hebben we", "zullen we bellen", "een belafspraak",
+    "zou het lukken", "zullen we bellen", "een belafspraak",
     "een gesprek inplannen", "wanneer kunnen we", "wanneer hebben we",
 )
+# Losse "hebben we" (zonder 'wanneer' ervoor) stond hier ooit ook, maar is de
+# gewoonste Nederlandse toekomstige-tijd-constructie die er is — "hebben we
+# alvast een beter beeld van jullie vraag" is geen afspraakwens. Gemeten
+# 10 aug 2026: precies die zin in een gewone antwoordmail leverde een
+# afspraakvoorstel op. 'wanneer hebben we' blijft wél STRONG: dát vraagt
+# expliciet om een moment.
 # Een afspraak AFZEGGEN gebruikt dezelfde woorden ('afspraak', 'teams',
 # 'kennismaking') als een verzoek — zonder deze check wint 'afspraak' altijd
 # en maakt de agenda-agent een voorstel voor een moment dat juist niet
@@ -209,6 +216,14 @@ def classify(subject: str, body: str, from_addr: str = "", headers=None) -> str:
     b = (body or "").lower()
     frm = (from_addr or "").lower()
     dom = _sender_domain(from_addr)
+    # Afspraak- en afzeggingssignalen mogen alleen uit wat de afzender NU
+    # schrijft komen — niet uit een geciteerde oudere mail (bv. onze eigen
+    # outreach die in het antwoord wordt meegestuurd) en niet uit de
+    # handtekening/footer. Een boekingslink als "📆 Boek een afspraak in mijn
+    # agenda" onder een naam+functie is marketing-boilerplate van de
+    # afzender, geen verzoek aan ons (gemeten 10 aug 2026, nlvoorelkaar.nl:
+    # een simpele afwijzing werd zo een afspraakvoorstel).
+    b_clean = strip_noise(body or "").lower()
 
     # 0) Bulk wint van alles wat een antwoord of afspraak zou opleveren. Een
     #    mailing beantwoord je niet, hoe vriendelijk de vraagzin ook klinkt.
@@ -246,19 +261,21 @@ def classify(subject: str, body: str, from_addr: str = "", headers=None) -> str:
     marketing = bulk_mod.looks_like_marketing_sender(from_addr)
 
     # 4b) Afzegging/annulering wint van elk afspraak-signaal — zie CANCEL_HINTS.
-    if _count_words(s + " " + b, CANCEL_HINTS) >= 1:
+    if _count_words(s + " " + b_clean, CANCEL_HINTS) >= 1:
         return "other"
 
     # 5) Afspraak-verzoek → agenda-agent. Sterk signaal volstaat alleen;
     #    zwak signaal + dag/tijd-context ook. De zwakke routes gelden niet
     #    voor marketing-afzenders: die sturen geen afspraak-verzoeken, en zo
     #    werd een nieuwsbrief over Apple een voorstel voor 30 mei 2027.
-    if _count_words(s + " " + b, APPOINTMENT_STRONG) >= 1:
+    #    Op b_clean (geciteerde historie + handtekening eraf), anders wint
+    #    de CTA-regel in andermans footer het van de eigenlijke boodschap.
+    if _count_words(s + " " + b_clean, APPOINTMENT_STRONG) >= 1:
         return "appointment"
     if not marketing:
-        if _count_words(s + " " + b, APPOINTMENT_HINTS) >= 2:
+        if _count_words(s + " " + b_clean, APPOINTMENT_HINTS) >= 2:
             return "appointment"
-        if _count_words(s + " " + b, APPOINTMENT_HINTS) >= 1 and _has_time_context(s + " " + b):
+        if _count_words(s + " " + b_clean, APPOINTMENT_HINTS) >= 1 and _has_time_context(s + " " + b_clean):
             return "appointment"
 
     # 6) Échte vraag — pas ná alle bovenstaande filters, en vereis méér dan
