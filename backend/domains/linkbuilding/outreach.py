@@ -164,6 +164,64 @@ def _ensure_placement(prospect: Dict[str, Any]) -> None:
             )
 
 
+async def auto_approve_review_queue(site_id: str = "") -> Dict[str, Any]:
+    """Goldie-modus: stuur alle goedgekeurde concepten in één keer verstuurt.
+
+    Gebruikt exact dezelfde verstuur- en validatielogica als de handmatige
+    approve-knop (geldig e-mailadres + geldige Outlook-token). Alleen actief
+    wanneer LINKBUILD_AUTO_APPROVE aan staat. Verstuurt niets naar een adres
+    dat email_ok() afkeurt, en stopt netjes als de Outlook-sessie ongeldig is.
+    """
+    from ..outlook import service as outlook
+    from ...shared.config import LINKBUILD_AUTO_APPROVE
+
+    if not LINKBUILD_AUTO_APPROVE:
+        return {"sent": 0, "skipped": 0, "note": "auto-approve staat UIT (LINKBUILD_AUTO_APPROVE)"}
+    if not outlook.get_valid_token():
+        logger.warning("[linkbuilding] Auto-approve overgeslagen: geen geldige Outlook-sessie")
+        return {"sent": 0, "skipped": 0, "note": "geen geldige Outlook-sessie"}
+
+    where = "WHERE status = 'outreach_review'"
+    params: list = []
+    if site_id:
+        where += " AND site_id = ?"
+        params.append(site_id)
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM link_prospects {where} ORDER BY relevance_score DESC", params
+        ).fetchall()
+    prospects = [dict(r) for r in rows]
+
+    sent, skipped = 0, 0
+    for p in prospects:
+        target = (p.get("contact_email") or "").strip()
+        subject = (p.get("outreach_subject") or "").strip()
+        body = (p.get("outreach_draft") or "").strip()
+        ok, why = email_ok(target)
+        if not ok or not subject or not body:
+            skipped += 1
+            continue
+        result = await outlook.send_new_email(
+            to=target, subject=subject, body_html=body.replace("\n", "<br>"),
+        )
+        if not result.get("success"):
+            skipped += 1
+            logger.warning("[linkbuilding] Auto-approve versturen mislukt voor %s: %s",
+                           p["domain"], result.get("error", result))
+            continue
+        service.advance_prospect(p["id"], "contacted")
+        sent += 1
+        log_outcome(
+            "Linkbuilding", "link_outreach_sent",
+            f"Auto-verzonden link-outreach aan {p['domain']} ({target}): '{subject}'",
+            next_step="De monitor checkt dagelijks of de link geplaatst wordt; "
+                      "reply-detectie staat aan.",
+        )
+    if sent:
+        logger.info("[linkbuilding] Auto-approve: %d verstuurd, %d overgeslagen", sent, skipped)
+    return {"sent": sent, "skipped": skipped}
+
+
 async def prepare_linkbuilding_batch(count: int = 0, site_id: str = "") -> Dict[str, Any]:
     """Zet voor de beste linkkansen een outreach-concept klaar ter review.
 

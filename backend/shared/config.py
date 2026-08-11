@@ -5,8 +5,29 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
-CLAUDE_MODEL_2: str = os.getenv("CLAUDE_MODEL_2", "claude-haiku-4-5-20251001")
+
+# ── Harde "nooit Claude"-garantie (regel Vincent 2026-08-10) ──────────────────
+# OpenModel/OpenRouter mogen NOOIT een Claude-model aanroepen — alles loopt op
+# DeepSeek. Deze sanitizer grijpt elke modelstring AF op load-tijd: herkent hij
+# een Claude-naam (claude-*, of 'anthropic/'-prefix), dan wordt die stil
+# omgezet naar DeepSeek. Zo kan geen enkele .env-var, default of nieuwe caller
+# per ongeluk Claude serveren + factureren. Verander DEEPSEEK_FALLBACK_MODEL om
+# de vervanger bij te stellen.
+DEEPSEEK_FALLBACK_MODEL: str = os.getenv("DEEPSEEK_FALLBACK_MODEL", "deepseek-v4-pro")
+
+
+def _no_claude(model: str) -> str:
+    """Rewrite elke Claude-modelnaam naar DeepSeek. Returneert anders ongewijzigd."""
+    if not model:
+        return model
+    m = model.lower()
+    if m.startswith("claude") or m.startswith("anthropic/") or "claude-" in m:
+        return DEEPSEEK_FALLBACK_MODEL
+    return model
+
+
+CLAUDE_MODEL: str = _no_claude(os.getenv("CLAUDE_MODEL", "deepseek-v4-pro"))
+CLAUDE_MODEL_2: str = _no_claude(os.getenv("CLAUDE_MODEL_2", "deepseek-v4-flash"))
 
 # Hermes agent — priority: lokaal > OpenModel (deepseek-v4-flash, goedkoop, primair)
 #   > Ollama (lokaal llama3.1, GRATIS backup, geen quota) > OpenRouter > Anthropic.
@@ -22,14 +43,14 @@ AGNES_MODEL: str = os.getenv("AGNES_MODEL", "agnes-2.0-flash")
 # OpenModel.ai — Anthropic-compatible gateway (DeepSeek V4 Flash e.a.)
 OPENMODEL_API_KEY: str = os.getenv("OPENMODEL_API_KEY", "")
 OPENMODEL_BASE_URL: str = os.getenv("OPENMODEL_BASE_URL", "https://api.openmodel.ai")
-OPENMODEL_MODEL: str = os.getenv("OPENMODEL_MODEL", "deepseek-v4-flash")
+OPENMODEL_MODEL: str = _no_claude(os.getenv("OPENMODEL_MODEL", "deepseek-v4-flash"))
 # Sterk model op dezelfde gateway voor denk-werk (Iris-analyse, kwaliteitsgate,
 # goal-synthese, drafts): het Claude-pad in de app loopt hierover zodra er geen
 # directe Anthropic-key is. Bulk-/toolwerk loopt op OPENMODEL_MODEL (flash).
 # Default is bewust deepseek-v4-flash: claude-sonnet-4-6 verbrandde ~10x zoveel
 # krediet (incident 2026-07-11, $4,90 op één dag). Wil je alsnog het dure Claude-
 # pad, zet dan expliciet OPENMODEL_SMART_MODEL=claude-sonnet-4-6 in .env.
-OPENMODEL_SMART_MODEL: str = os.getenv("OPENMODEL_SMART_MODEL", "deepseek-v4-flash")
+OPENMODEL_SMART_MODEL: str = _no_claude(os.getenv("OPENMODEL_SMART_MODEL", "deepseek-v4-pro"))
 HERMES_MODEL: str = os.getenv("HERMES_MODEL", "meta-llama/llama-3.1-8b-instruct")
 
 # Pexels (gratis stock-foto's/video voor video-footage). Geen creditcard.
@@ -137,18 +158,19 @@ BRIDGE_SYNC_MINUTES: int = int(os.getenv("BRIDGE_SYNC_MINUTES", "3"))
 # Kwaliteitsgate voor content (0-100): onder deze score komt een artikel niet
 # in de Wachtrij als publiceerbaar en weigert de publish-API. De pipeline
 # probeert eerst automatisch te verbeteren (max 3 rondes).
-# Wereldklasse-standaard: 85. Een artikel moet écht AEO-/rich-result-klaar zijn
+# Wereldklasse-standaard: 80. Een artikel moet écht AEO-/rich-result-klaar zijn
 # (direct-answer + FAQ + E-E-A-T + schone links) om gepubliceerd te worden.
-CONTENT_MIN_SCORE: int = int(os.getenv("CONTENT_MIN_SCORE", "85"))
+# 80 (niet 85) zodat de grens matcht met wat het dashboard toont ("onder de 80")
+# en de artikelen die de motor al structureel schrijft (82-84) wél doorgaan.
+CONTENT_MIN_SCORE: int = int(os.getenv("CONTENT_MIN_SCORE", "80"))
 
 # Hoeveel verbeterrondes de agent mág doen voordat hij opgeeft. Dit is een
 # HARDE veiligheidslimiet (tegen eindeloze LLM-loops), geen streefwaarde: de
 # review-loop stopt pas als de score ≥ CONTENT_MIN_SCORE OF dit aantal rondes
-# op is. Ruim gezet (standaard 12) zodat een artikel in de praktijk bijna altijd
-# boven de 85-grens uitkomt — en dus nooit als "onder de grens" op het dashboard
-# (en bij Vincent) belandt. Lokale/fallback-concepten (HERMES_LOCAL_FALLBACK)
-# scoren altijd < grens en worden hierdoor bewust niet oneindig geprobeerd.
-CONTENT_MAX_ROUNDS: int = int(os.getenv("CONTENT_MAX_ROUNDS", "5"))
+# op is. 8 (was 5) zodat de agent méér kans krijgt de grens écht te halen
+# i.p.v. de score te maskeren — gecombineerd met rijker onderzoek (NotebookLM)
+# haalt TeambuildingMetImpact de grens nu structureel.
+CONTENT_MAX_ROUNDS: int = int(os.getenv("CONTENT_MAX_ROUNDS", "8"))
 
 # Hoeveel onder-de-grens artikelen de autonome content-verbeteraar per run (elke
 # 30 min) oppakt. Kostenbeheersing: elke job doet meerdere LLM-rondes. Oudste
@@ -226,13 +248,66 @@ OUTREACH_DAILY_TARGET: int = int(os.getenv("OUTREACH_DAILY_TARGET", "10"))
 # verstuurd — versturen kan alleen via de approve-knop in het Actiecentrum.
 LINKBUILD_WEEKLY_TARGET: int = int(os.getenv("LINKBUILD_WEEKLY_TARGET", "10"))
 LINKBUILD_MIN_SCORE: int = int(os.getenv("LINKBUILD_MIN_SCORE", "60"))
+# Verzend-gate: default UIT. Als deze op "1"/"true" staat, mag de weekbatch de
+# goedgekeurde concepten in één keer zélf versturen (Goldie-modus) in plaats van
+# dat Vincent elke mail apart keurt. Blijft veilig: elke mail gaat alsnog door
+# dezelfde e-mail- en Outlook-token-checks als de handmatige knop, en er wordt
+# niets verstuurd naar een adres dat email_ok() afkeurt. Opt-in, nooit default aan.
+LINKBUILD_AUTO_APPROVE: bool = os.getenv("LINKBUILD_AUTO_APPROVE", "0") in ("1", "true", "yes", "on")
 
 BASE_DIR = Path(__file__).parent.parent.parent
 DATA_DIR = BASE_DIR / "data"
-# AGENTOS_DB_PATH override: tests draaien tegen een wegwerp-database.
+# AGENTOS_DB_PATH override: tests draaien tegen een wegwerp-database, en elke
+# klant-instance (zie AGENTOS_ENABLED_DOMAINS hieronder) tegen zijn eigen bestand.
 DB_PATH = Path(os.getenv("AGENTOS_DB_PATH", str(DATA_DIR / "agentos.db")))
 
 DATA_DIR.mkdir(exist_ok=True)
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+# ── Domain-whitelist: welke onderdelen deze instance mag draaien ───────────
+# Agent OS is single-tenant (één DB, één vault, één .env). Een klant krijgt
+# daarom een eigen proces (eigen poort, eigen .env-waarden via de launch-
+# script, eigen AGENTOS_DB_PATH/OBSIDIAN_VAULT_PATH) i.p.v. een gedeelde
+# multi-tenant-laag — maar diezelfde instance monteert zonder deze knop nog
+# steeds ALLE domeinen, inclusief Beursmeester/Finance/Prospecting die een
+# klant nooit gevraagd heeft. AGENTOS_ENABLED_DOMAINS is de knop: een
+# komma-gescheiden whitelist van domeinnamen. Leeg (de standaard, dus de
+# bestaande WeAreImpact-installatie) betekent "alles aan" — bestaand gedrag
+# blijft ongewijzigd. Routers/scheduler-jobs die geen expliciete domain-tag
+# dragen zijn kern-functionaliteit (auth, health, action-center, chat-UI) en
+# blijven altijd aan, ongeacht de whitelist.
+_ENABLED_DOMAINS_RAW: str = os.getenv("AGENTOS_ENABLED_DOMAINS", "")
+ENABLED_DOMAINS: set[str] = {
+    d.strip() for d in _ENABLED_DOMAINS_RAW.split(",") if d.strip()
+}
+
+
+def domain_enabled(domain: str) -> bool:
+    """True als `domain` gemonteerd/gepland mag worden op deze instance.
+
+    Geen domain (lege string) = kernfunctionaliteit, altijd aan. Een niet-lege
+    whitelist beperkt alleen de genoemde domeinen; alles wat niet in de
+    whitelist staat, blijft uit — dat is het hele punt (een verkeerde klik mag
+    op een klant-instance nooit bij Beursmeester/Finance kunnen komen).
+    """
+    if not domain:
+        return True
+    if not ENABLED_DOMAINS:
+        return True
+    return domain in ENABLED_DOMAINS
+
+
+# Weergavenaam van de instance (sidebar, browsertab, loginscherm). Default
+# ongewijzigd voor de hoofdinstallatie; een klant-instance zet dit op haar
+# eigen merknaam zodat het meteen haar eigen omgeving voelt, niet "Agent OS
+# met een paar uitgegrijsde tabs".
+AGENTOS_INSTANCE_NAME: str = os.getenv("AGENTOS_INSTANCE_NAME", "Agent OS")
+
+# Log-directory: een klant-instance draait vanuit dezelfde codebase-map als de
+# hoofdinstallatie (geen code-duplicatie) maar mag nooit in hetzelfde
+# logs/agentos.log schrijven — anders staan Nicole's mailfouten tussen
+# WeAreImpact's linkbuilding-log. Default ongewijzigd (logs/ in de projectroot).
+AGENTOS_LOG_DIR: str = os.getenv("AGENTOS_LOG_DIR", "")
 
 
 def _is_real_key(value: str, prefix: str) -> bool:
@@ -256,13 +331,27 @@ def hermes_backend() -> str:
     voor het agent-pad, gelijk aan het denk-pad (claude.py).
 
     De quota-rem blijft het kostenvangnet: zegt de gateway 403 quota, dan slaan
-    we OpenModel over en zakken we naar de gratis lokale Ollama-tier — zo blijven
-    de agents draaien zonder dure cloud-tokens te verbranden (incident
-    2026-07-10/11). Zonder local/Ollama proberen we OpenModel alsnog (laatste
-    kans), dan OpenRouter/Agnes/Anthropic."""
+    we OpenModel over en zakken we naar de gratis lokale Ollama-tier (native
+    /api/generate, betrouwbaar in deze omgeving) — zo blijven de agents draaien
+    zonder dure cloud-tokens te verbranden (incident 2026-07-10/11). Zonder
+    local/Ollama proberen we OpenModel alsnog (laatste kans), dan
+    OpenRouter/Agnes/Anthropic.
+
+    Eerdere uitzondering (2026-08-10): de async-httpx naar Ollama's
+    OpenAI-compat /v1/chat/completions hangt hier (lege response). Inmiddels
+    gebruiken zowel de drafter als de agent-runner de NATIEVE /api/generate-
+    route (getest betrouwbaar ~12s), dus de local-tier is bij quota-backoff de
+    correcte fallback in plaats van de dode cloud-reserves.
+    """
     from .outcomes import llm_quota_backoff_active
     if OPENMODEL_API_KEY and not llm_quota_backoff_active():
         return "openmodel"
+    # Bij OpenModel-quota-backoff: zakt de route naar de gratis lokale Ollama.
+    # De async-httpx naar /v1/chat/completions hangt wél in deze omgeving, maar
+    # de agent-runner en drafter gebruiken inmiddels de NATIEVE /api/generate
+    # (getest: ~12s, betrouwbaar) — dus de local-tier is hier de juiste
+    # fallback, niet de dode cloud-reserves. Alleen overslaan als Ollama écht
+    # niet is geconfigureerd.
     if HERMES_LOCAL_URL and HERMES_LOCAL_KEY:
         return "local"
     if OLLAMA_BASE_URL:
@@ -276,8 +365,9 @@ def hermes_backend() -> str:
     return "anthropic"
 
 
-# Model dat OpenRouter gebruikt voor de Claude-agent als Anthropic niet geconfigureerd is
-CLAUDE_VIA_OPENROUTER: str = os.getenv("CLAUDE_VIA_OPENROUTER", "anthropic/claude-sonnet-4-5")
+# Model dat OpenRouter gebruikt voor de Claude-agent als Anthropic niet geconfigureerd is.
+# DEFAULT op DeepSeek (geen Claude meer — regel Vincent 2026-08-10).
+CLAUDE_VIA_OPENROUTER: str = _no_claude(os.getenv("CLAUDE_VIA_OPENROUTER", "deepseek/deepseek-v4-pro"))
 
 # ── Google Agenda (calendar) ───────────────────────────────────────────
 # Twee manieren om de serviceaccount te leveren (kies één):
@@ -312,10 +402,18 @@ CALENDAR_BUSY_CALENDAR_IDS: list = [
 
 # Microsoft Outlook / Graph API
 # Registreer een Azure AD app (portal.azure.com > App registrations) met:
-#   Delegated permissions: Mail.Read, Mail.ReadWrite, Mail.Send, User.Read
+#   Delegated permissions: Mail.Read, Mail.ReadWrite, Mail.Send, User.Read,
+#   Calendars.ReadWrite (die laatste dekt ook CALENDAR_BACKEND=outlook)
 #   Redirect URI: https://login.microsoftonline.com/common/oauth2/nativeclient
 OUTLOOK_CLIENT_ID: str = os.getenv("OUTLOOK_CLIENT_ID", "")
 OUTLOOK_TENANT_ID: str = os.getenv("OUTLOOK_TENANT_ID", "common")
+
+# Agenda-backend per instance: 'google' (serviceaccount, default — WeAreImpact)
+# of 'outlook' (Microsoft Graph via dezelfde delegated OAuth-login als Mail —
+# voor klanten die zelf Outlook gebruiken, bv. Nicole @ WE SHAPE THE FUTURE).
+# Beide leveren dezelfde functiesignaturen (domains/calendar/service.py
+# dispatcht hierop), dus de agenda-agent en alle aanroepers blijven ongewijzigd.
+CALENDAR_BACKEND: str = os.getenv("CALENDAR_BACKEND", "google").strip().lower()
 
 # LinkedIn — Personal Access Token voor social posting
 LINKEDIN_ACCESS_TOKEN: str = os.getenv("LINKEDIN_ACCESS_TOKEN", "")
@@ -358,3 +456,35 @@ TWITTER_API_KEY: str = os.getenv("TWITTER_API_KEY", "")
 TWITTER_API_SECRET: str = os.getenv("TWITTER_API_SECRET", "")
 TWITTER_ACCESS_TOKEN: str = os.getenv("TWITTER_ACCESS_TOKEN", "")
 TWITTER_ACCESS_SECRET: str = os.getenv("TWITTER_ACCESS_SECRET", "")
+
+# ── Beursmeester (domains/invest) ─────────────────────────────────────────
+# Een papieren portefeuille die op de koers vult die het model zag en geen
+# kosten rekent, verslaat elke index. Deze getallen zijn er om dat te
+# voorkomen; ze horen eerder pessimistisch te staan dan optimistisch.
+INVEST_START_CAPITAL: float = float(os.getenv("INVEST_START_CAPITAL", "10000"))
+INVEST_FEE_FIXED: float = float(os.getenv("INVEST_FEE_FIXED", "2.0"))      # € per order
+INVEST_FEE_PCT: float = float(os.getenv("INVEST_FEE_PCT", "0.0005"))       # 0,05% van de ordergrootte
+INVEST_SLIPPAGE_BPS: float = float(os.getenv("INVEST_SLIPPAGE_BPS", "10")) # 0,10% voor beursuren-instrumenten
+INVEST_SLIPPAGE_BPS_CRYPTO: float = float(os.getenv("INVEST_SLIPPAGE_BPS_CRYPTO", "25"))
+
+# Risicoklemmen. Deterministisch en niet-onderhandelbaar: ze mogen de analist
+# overrulen, nooit andersom.
+INVEST_RISK_PER_TRADE: float = float(os.getenv("INVEST_RISK_PER_TRADE", "0.01"))   # 1% van NAV per idee
+INVEST_MAX_POSITION_PCT: float = float(os.getenv("INVEST_MAX_POSITION_PCT", "0.15"))
+INVEST_MAX_CLASS_PCT: float = float(os.getenv("INVEST_MAX_CLASS_PCT", "0.35"))
+INVEST_MAX_CRYPTO_PCT: float = float(os.getenv("INVEST_MAX_CRYPTO_PCT", "0.25"))
+INVEST_MAX_DAY_LOSS_PCT: float = float(os.getenv("INVEST_MAX_DAY_LOSS_PCT", "0.03"))
+INVEST_MAX_DRAWDOWN_PCT: float = float(os.getenv("INVEST_MAX_DRAWDOWN_PCT", "0.15"))
+INVEST_COOLDOWN_DAYS: int = int(os.getenv("INVEST_COOLDOWN_DAYS", "5"))
+
+# Noodrem. Staat dit op 1, dan komen er geen voorstellen en worden er geen
+# orders uitgevoerd — ongeacht wat de analist vindt.
+INVEST_KILL_SWITCH: bool = os.getenv("INVEST_KILL_SWITCH", "0") == "1"
+
+# Claude Code als denkende partner (Pro-abonnement, geen API-kosten).
+# Leeg pad = uitgeschakeld; dan valt de analyse terug op de gateway en draagt
+# elk voorstel het label 'terugval'.
+CLAUDE_CODE_BIN: str = os.getenv("CLAUDE_CODE_BIN", "claude")
+CLAUDE_CODE_ENABLED: bool = os.getenv("CLAUDE_CODE_ENABLED", "1") == "1"
+CLAUDE_CODE_TIMEOUT: int = int(os.getenv("CLAUDE_CODE_TIMEOUT", "900"))    # seconden
+CLAUDE_CODE_MAX_RUNS_PER_DAY: int = int(os.getenv("CLAUDE_CODE_MAX_RUNS_PER_DAY", "8"))

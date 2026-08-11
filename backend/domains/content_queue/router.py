@@ -156,6 +156,39 @@ def _project_for_job(job: dict) -> str:
     return (site.get("name") or job.get("site_id") or "").lower()
 
 
+@router.post("/{job_id}/upgrade")
+async def upgrade_content_job(job_id: str, target: int = Query(85, ge=80, le=100)):
+    """Til één artikel naar de wereldklasse-lat (default 85) — met bevestigde
+    hermeting, want één meting boven de lat is bij deze reviewer geen bewijs.
+    Publiceert niets; het artikel blijft achter de Wachtrij-gate."""
+    from ..publish import upgrade
+    try:
+        return {"success": True, "result": await upgrade.upgrade_job(job_id, target=target)}
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+    except Exception as e:
+        logger.exception("Opschoonronde mislukt voor job %s", job_id)
+        raise HTTPException(500, detail=str(e)[:300])
+
+
+@router.post("/upgrade-all")
+async def upgrade_all_content_jobs(target: int = Query(85, ge=80, le=100),
+                                   site_id: Optional[str] = Query(None),
+                                   limit: Optional[int] = Query(None, ge=1, le=200)):
+    """Opschoonronde over alle artikelen die de lat nog niet halen.
+
+    Kan lang duren (meerdere LLM-rondes per artikel) — hervatbaar: wat al
+    bevestigd boven de lat staat valt bij een volgende run buiten de selectie.
+    """
+    from ..publish import upgrade
+    try:
+        return {"success": True, **await upgrade.upgrade_batch(
+            target=target, site_id=site_id, limit=limit)}
+    except Exception as e:
+        logger.exception("Opschoonronde (batch) mislukt")
+        raise HTTPException(500, detail=str(e)[:300])
+
+
 @router.post("/{job_id}/multiply")
 async def multiply_content_job(job_id: str):
     """Draai de Content Multiplier voor een gepubliceerd artikel: social-pack

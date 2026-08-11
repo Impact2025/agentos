@@ -149,45 +149,69 @@ def build_mail() -> Dict[str, Any]:
     week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
 
+    # Elke telling hieronder staat op het postvak IN én laat weggefilterde mail
+    # buiten beschouwing. Vóór 11 aug 2026 telden ze op de héle tabel: verzonden
+    # post, spam en ruis telden mee, en zo werd "121 open" het grootste getal op
+    # het scherm terwijl geen enkele knop daar iets aan veranderde. Wat om een
+    # handeling vraagt en wat er alleen ligt zijn twee verschillende getallen.
+    ECHT = ("folder='inbox' AND filter_rule_id IS NULL "
+            "AND triage_label NOT IN ('spam','archief')")
+
     with get_conn() as conn:
         # Onbeantwoord én ongelezen in het postvak IN — de echte achterstand.
         # 'is_replied' is de betrouwbaarste 'afgehandeld'-indicator die we
         # hebben; ongelezen alleen zou elke nieuwsbrief meetellen.
         backlog = conn.execute(
-            "SELECT COUNT(*) c FROM outlook_emails "
-            "WHERE folder='inbox' AND is_replied=0 AND is_read=0"
+            f"SELECT COUNT(*) c FROM outlook_emails "
+            f"WHERE {ECHT} AND is_replied=0 AND is_read=0"
         ).fetchone()["c"]
         week_in = conn.execute(
-            "SELECT COUNT(*) c FROM outlook_emails WHERE received_at >= ?",
+            f"SELECT COUNT(*) c FROM outlook_emails WHERE {ECHT} AND received_at >= ?",
             (week_ago,),
         ).fetchone()["c"]
         week_replied = conn.execute(
-            "SELECT COUNT(*) c FROM outlook_emails "
-            "WHERE received_at >= ? AND is_replied=1",
+            f"SELECT COUNT(*) c FROM outlook_emails "
+            f"WHERE {ECHT} AND received_at >= ? AND is_replied=1",
             (week_ago,),
         ).fetchone()["c"]
+        # Wat de afzenderregels weghielden. Apart getal, telt nergens in mee:
+        # zichtbaar zodat je kunt beoordelen of het filter te streng staat.
+        weggefilterd = conn.execute(
+            "SELECT COUNT(*) c FROM outlook_emails "
+            "WHERE filter_rule_id IS NOT NULL AND received_at >= ?", (week_ago,),
+        ).fetchone()["c"]
         oldest = conn.execute(
-            "SELECT subject, from_name, from_email, received_at FROM outlook_emails "
-            "WHERE folder='inbox' AND is_replied=0 AND is_read=0 "
-            "ORDER BY received_at ASC LIMIT 1"
+            f"SELECT subject, from_name, from_email, received_at FROM outlook_emails "
+            f"WHERE {ECHT} AND is_replied=0 AND is_read=0 "
+            f"ORDER BY received_at ASC LIMIT 1"
         ).fetchone()
+        # Een greep uit wat er is weggehouden, mét de reden. Dit is wat strenger
+        # filteren verantwoord maakt: op de telefoon kun je zien wát er weg is en
+        # de afzender met één tik weer toelaten. Zonder dat pad is een filter
+        # niet te beoordelen en wordt "0 urgent" ononderscheidbaar van "alles
+        # weggefilterd" (zelfde afweging als de bak Uitgefilterd bij de kansen).
+        filtered_recent = conn.execute(
+            "SELECT id, subject, from_name, from_email, received_at, filter_reason, "
+            "       triage_label FROM outlook_emails "
+            "WHERE filter_rule_id IS NOT NULL ORDER BY received_at DESC LIMIT 10"
+        ).fetchall()
         # Urgent = wat de triage hoog scoorde en nog openstaat. Archief
         # (geen potentiële klant: webshop/vacature/digest/systeem) valt er
         # expliciet uit — net als in list_sorted_db — zodat gearchiveerde
         # noise nooit in het urgent-blok op de telefoon belandt.
         urgent = conn.execute(
-            "SELECT id, subject, from_name, from_email, received_at, priority, "
-            "       triage_label, ai_summary, ai_action, suggested_reply "
-            "FROM outlook_emails WHERE folder='inbox' AND is_replied=0 "
-            "AND priority >= 70 AND triage_label != 'archief' AND received_at >= ? "
-            "ORDER BY priority DESC, received_at DESC LIMIT 8",
+            f"SELECT id, subject, from_name, from_email, received_at, priority, "
+            f"       triage_label, ai_summary, ai_action, suggested_reply "
+            f"FROM outlook_emails WHERE {ECHT} AND is_replied=0 "
+            f"AND priority >= 70 AND received_at >= ? "
+            f"ORDER BY priority DESC, received_at DESC LIMIT 8",
             (month_ago,),
         ).fetchall()
         senders = conn.execute(
-            "SELECT from_email, from_name, COUNT(*) c, "
-            "       SUM(CASE WHEN is_replied=1 THEN 1 ELSE 0 END) replied "
-            "FROM outlook_emails WHERE received_at >= ? AND from_email != '' "
-            "GROUP BY from_email ORDER BY c DESC LIMIT 5",
+            f"SELECT from_email, from_name, COUNT(*) c, "
+            f"       SUM(CASE WHEN is_replied=1 THEN 1 ELSE 0 END) replied "
+            f"FROM outlook_emails WHERE {ECHT} AND received_at >= ? AND from_email != '' "
+            f"GROUP BY from_email ORDER BY c DESC LIMIT 5",
             (month_ago,),
         ).fetchall()
         # Klaarstaande conceptantwoorden op Vincents éígen mail. Stond niet in
@@ -195,9 +219,9 @@ def build_mail() -> Dict[str, Any]:
         # onder de kop "Concepten" — twee verschillende soorten, één getal, en
         # de nieuwe soort telde niet mee.
         personal_drafts = conn.execute(
-            "SELECT COUNT(*) c FROM outlook_emails "
-            "WHERE folder='inbox' AND is_replied=0 AND suggested_reply_dismissed=0 "
-            "AND suggested_reply IS NOT NULL AND suggested_reply != ''"
+            f"SELECT COUNT(*) c FROM outlook_emails "
+            f"WHERE {ECHT} AND is_replied=0 AND suggested_reply_dismissed=0 "
+            f"AND suggested_reply IS NOT NULL AND suggested_reply != ''"
         ).fetchone()["c"]
 
     helpdesk = 0
@@ -233,16 +257,34 @@ def build_mail() -> Dict[str, Any]:
     # andere presentatie die de telefoon rechtstreeks kan renderen als pills.
     sorted_inbox = outlook.list_sorted_db(limit_per_bucket=8)
 
+    # Beantwoord-percentage mag alleen op het scherm als het waargenomen is.
+    # `is_replied` werd tot 11 aug 2026 uitsluitend gezet door onze eigen
+    # verstuurknop, dus alles wat Vincent gewoon in Outlook beantwoordde telde
+    # nooit mee en stond er permanent "0% beantwoord (7d)". Nu leest
+    # `_sync_sent_items` het uit Verzonden items; is dat pad (nog) nooit iets
+    # tegengekomen, dan is het antwoord `None` — "we weten het niet" — en nooit
+    # een 0 die als oordeel leest. Zelfde regel als de speculatieve SEO-kans.
+    with get_conn() as conn:
+        ooit_waargenomen = conn.execute(
+            "SELECT COUNT(*) c FROM outlook_emails WHERE replied_at != ''"
+        ).fetchone()["c"]
+    reply_meetbaar = bool(ooit_waargenomen)
+
     return {
         "backlog": backlog,
         "unread": stats.get("unread", 0),
         "untriaged": stats.get("untriaged", 0),
         "by_label": stats.get("by_label", {}),
+        "filtered_week": weggefilterd,
+        "filtered_total": stats.get("filtered", 0),
+        "filtered_recent": [dict(r) for r in filtered_recent],
         "helpdesk_pending": helpdesk,
         "personal_drafts": personal_drafts,
         "llm_paused": llm_paused,
         "week": {"received": week_in, "replied": week_replied,
-                 "reply_rate": round(100 * week_replied / week_in) if week_in else None},
+                 "measured": reply_meetbaar,
+                 "reply_rate": (round(100 * week_replied / week_in)
+                                if week_in and reply_meetbaar else None)},
         "oldest_open": ({"subject": oldest["subject"],
                          "from": oldest["from_name"] or oldest["from_email"],
                          "received_at": oldest["received_at"],

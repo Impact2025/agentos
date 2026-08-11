@@ -18,11 +18,26 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,sans-serif;
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* iOS draait de tekst in landscape eigenmachtig groter — dat breekt elke
+     zorgvuldig gezette regel. Wij bepalen de maat zelf. */
+  -webkit-text-size-adjust: 100%;
+}
+h1, h2, h3, h4 { letter-spacing: -0.011em; }
+/* Ketst geen enkele tap-target weg op een touchscreen: iOS wacht 300ms op een
+   dubbeltik zolang de pagina inzoombaar is per element. */
+button, a, [role="button"] { touch-action: manipulation; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 /* ── Layout ── */
@@ -73,10 +88,20 @@ body {
 .sidebar-nav button .icon {
   width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center;
   font-size: 14px; flex-shrink: 0;
+  /* Dwing tekst-presentatie af: zonder dit tekent Windows ✉ en ⚙ als gekleurde
+     emoji en valt het icoon uit de toon van de rest van het menu. */
+  font-variant-emoji: text;
+  opacity: .78;
+  line-height: 1;
 }
+.sidebar-nav button.active .icon { opacity: 1; }
 .sidebar-footer {
   padding: 8px;
   border-top: 1px solid var(--sidebar-border);
+}
+.sidebar-footer button .icon {
+  width: 18px; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px; flex-shrink: 0; opacity: .78; line-height: 1; font-variant-emoji: text;
 }
 .sidebar-footer button {
   display: flex; align-items: center; gap: 10px;
@@ -312,6 +337,11 @@ body {
 .homescreen { max-width: 800px; margin: 60px auto; padding: 0 24px; }
 .homescreen h2 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
 .homescreen .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
+/* Kop van de Control Room: titel → ondertitel → status-chips, elk op een eigen
+   regel. De chips wikkelen; ze mogen de zin ernaast nooit samendrukken. */
+.page-head { margin-bottom: 18px; }
+.page-head .subtitle { margin-bottom: 10px; }
+.head-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .project-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 .project-card {
   background: var(--card-bg);
@@ -381,3 +411,286 @@ body {
 }
 .agent-card .tips h3 { font-size: 12px; color: #991b1b; text-transform: uppercase; margin-bottom: 8px; }
 .agent-card .tips li { font-size: 12px; color: #7f1d1d; margin-bottom: 4px; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBIEL — de app op een telefoon
+   ══════════════════════════════════════════════════════════════════════
+   Deze SPA is geschreven met inline stijlen (grid-template-columns,
+   font-size, padding staan in duizenden `style=`-attributen). Een mobiele
+   laag die dáár omheen wil, kan niet anders dan met attribuut-selectors en
+   `!important` werken — dat is hier geen luiheid maar de enige manier om
+   één breekpunt af te dwingen zonder 7.000 regels JS te herschrijven.
+   Alles hieronder staat achter een media query: op desktop verandert er
+   niets. */
+
+/* ── De mobiele kopbalk + lade (bestaan alleen op een klein scherm) ── */
+.mobile-topbar { display: none; }
+.nav-scrim { display: none; }
+
+.mt-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  line-height: 1.15;
+}
+.mt-title strong {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.015em;
+}
+.mt-title .mt-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mt-btn {
+  width: 40px; height: 40px;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  color: var(--text-dim);
+  font-size: 17px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background .15s, transform .1s;
+}
+.mt-btn:active { background: #eef2f7; transform: scale(.94); }
+#agent-status-indicator-mobile { display: flex; align-items: center; padding: 0 4px; flex-shrink: 0; }
+/* Hamburger als drie lijnen i.p.v. een emoji: schaalt scherp op elk dpi. */
+.burger, .burger::before, .burger::after {
+  display: block;
+  width: 17px; height: 1.75px;
+  background: var(--text);
+  border-radius: 2px;
+  transition: transform .28s cubic-bezier(.32,.72,0,1), opacity .18s;
+}
+.burger { position: relative; }
+.burger::before, .burger::after { content: ''; position: absolute; left: 0; }
+.burger::before { top: -5.5px; }
+.burger::after { top: 5.5px; }
+body.nav-open .burger { background: transparent; }
+body.nav-open .burger::before { transform: translateY(5.5px) rotate(45deg); }
+body.nav-open .burger::after { transform: translateY(-5.5px) rotate(-45deg); }
+
+/* Tabellen op een telefoon: horizontaal schuiven binnen hun eigen kader —
+   nooit de hele pagina laten meeschuiven, want dan raak je de kolom kwijt
+   waar je in aan het lezen was. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+@media (max-width: 820px) {
+  html, body { overflow-x: hidden; }
+
+  /* ── Kopbalk: vast, met de doorschijnende laag die iOS herkenbaar maakt ── */
+  .mobile-topbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 130;
+    height: calc(52px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) 8px 0;
+    background: rgba(255,255,255,.82);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid rgba(15,23,42,.08);
+  }
+
+  /* ── Zijbalk wordt een lade ── */
+  .sidebar {
+    width: min(80vw, 290px);
+    z-index: 140;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    border-right: none;
+    box-shadow: 0 0 0 1px rgba(15,23,42,.05), 24px 0 48px -12px rgba(15,23,42,.18);
+    transform: translateX(-100%);
+    transition: transform .34s cubic-bezier(.32,.72,0,1);
+    will-change: transform;
+  }
+  body.nav-open .sidebar { transform: none; }
+  body.nav-open { overflow: hidden; }
+
+  .nav-scrim {
+    display: block;
+    position: fixed; inset: 0;
+    z-index: 135;
+    background: rgba(15,23,42,.4);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .28s ease;
+  }
+  body.nav-open .nav-scrim { opacity: 1; pointer-events: auto; }
+
+  /* Menu-items op vingerformaat: 44px is Apple's ondergrens en niet
+     onderhandelbaar — daaronder mis je de knop waar je op mikt. */
+  .sidebar-logo { padding: 14px 18px; }
+  .sidebar-logo img { width: 26px; height: 26px; border-radius: 7px; }
+  .sidebar-logo span { font-size: 14px; }
+  .sidebar-nav { padding: 8px 10px; }
+  .sidebar-nav button {
+    padding: 11px 12px;
+    font-size: 15px;
+    gap: 12px;
+    border-radius: 10px;
+    min-height: 44px;
+  }
+  .sidebar-nav button .icon { width: 22px; height: 22px; font-size: 15px; }
+  .sidebar-nav button.active { background: var(--accent-light); }
+  .sidebar-footer { padding: 10px; }
+  .sidebar-footer button { padding: 11px 12px; font-size: 15px; min-height: 44px; border-radius: 10px; }
+
+  /* ── Inhoud onder de vaste kopbalk ── */
+  .main-content {
+    margin-left: 0;
+    padding-top: calc(52px + env(safe-area-inset-top));
+  }
+  .app-layout { display: block; }
+
+  /* De projectkop staat al in de mobiele balk — hem nóg een keer tonen kost
+     een half scherm aan hoogte voor informatie die er al staat. */
+  .project-header { display: none; }
+
+  .tab-content { padding: 14px 14px calc(28px + env(safe-area-inset-bottom)); }
+
+  /* ── Homescreen ── */
+  .homescreen {
+    margin: 0;
+    padding: calc(18px + env(safe-area-inset-top)) 14px calc(32px + env(safe-area-inset-bottom));
+    max-width: 100%;
+  }
+  .homescreen h2 { font-size: 24px; letter-spacing: -0.025em; margin-bottom: 2px; }
+  .homescreen .subtitle { font-size: 14px; margin-bottom: 18px; }
+
+  /* ── Alles wat kolommen heeft, wordt één kolom ──
+     De inline `grid-template-columns` uit de JS moet wijken; op 360px is
+     twee kolommen naast elkaar geen dichtheid maar onleesbaarheid. */
+  [style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+  .grid-2, .grid-3 { grid-template-columns: 1fr !important; gap: 12px !important; }
+  /* KPI's zijn de uitzondering: korte getallen, twee naast elkaar leest
+     als één oogopslag i.p.v. als een lange lijst. */
+  .kpi-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 10px !important; margin-bottom: 14px; }
+  .kpi-card { padding: 12px; border-radius: 12px; }
+  .kpi-card .value { font-size: 21px; }
+
+  /* ── Kaarten ── */
+  .section-card {
+    padding: 14px;
+    border-radius: 14px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  }
+  .section-card h3 { font-size: 12px; margin-bottom: 10px; }
+  details.section-card { padding: 12px 14px !important; }
+  details.section-card summary { padding: 4px 0; }
+  summary { min-height: 32px; }
+
+  .project-card { padding: 16px !important; border-radius: 14px !important; }
+  .project-card:active { transform: scale(.99); }
+
+  /* ── Knoppen: alles wat je aantikt is minstens 40px hoog ──
+     De maten staan inline in de JS (padding:3px 10px), dus dit kan alleen
+     met !important. Op desktop blijft de compacte maat staan. */
+  .tab-content button,
+  .homescreen button,
+  .chat-container button,
+  .agent-card button {
+    min-height: 40px;
+    padding: 9px 16px !important;
+    font-size: 13px !important;
+    border-radius: 10px !important;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tab-content button:active,
+  .homescreen button:active { transform: scale(.97); }
+  /* Een knoplabel breekt nooit af: "Ververs" werd anders een kolom van drie
+     losse letters zodra de kop ernaast ruimte opeiste. */
+  .tab-content button, .homescreen button, .chat-container button { white-space: nowrap; max-width: 100%; }
+
+  /* Kaartkoppen zijn overal `flex; justify-content:space-between` met een titel
+     links en knoppen rechts. Op 390px past dat niet naast elkaar: de titel
+     krijgt de volle regel, de knoppen zakken eronder — in plaats van dat beide
+     tot onleesbaarheid worden samengeknepen. */
+  [style*="justify-content:space-between"] { flex-wrap: wrap !important; gap: 8px; }
+  /* De titel krijgt 60% als basis: past de knoppenrij in de rest, dan blijft
+     alles op één regel; is de rechterkant breder, dan zakt hij eronder. Zonder
+     die basis krimpt de titel tot een kolom van losse woorden. */
+  [style*="justify-content:space-between"] > :first-child { flex: 1 1 60%; }
+  /* Knoppenrijen breken netjes af i.p.v. buiten beeld te lopen. Bewust smal
+     gehouden: een algemene `flex-wrap` op elke inline-flexregel zou ook de
+     activiteitenlog uit elkaar trekken, waar de kolommen juist op één lijn
+     horen. */
+  .project-header .actions, .dash-alert, .opp-card .opp-actions { flex-wrap: wrap; }
+  /* De actieknop op een alert is de reden dat de kaart er staat: die gaat op
+     een eigen regel over de volle breedte, niet als knijpsel rechts. */
+  .dash-alert > button { flex: 1 1 100%; margin-top: 2px; }
+
+  /* Invoervelden: 16px is de grens waaronder iOS bij focus inzoomt en je
+     de rest van het scherm kwijt bent. */
+  input, select, textarea {
+    font-size: 16px !important;
+    min-height: 42px;
+    border-radius: 10px !important;
+  }
+  textarea { min-height: 96px; }
+
+  /* ── Tabellen ── */
+  .table-scroll .data-table { min-width: 460px; }
+  .data-table th, .data-table td { padding: 9px 10px; }
+  .data-table .url-cell { max-width: 170px; }
+
+  /* ── Leesbaarheid: de inline mini-lettertypen omhoog ──
+     De JS zet overal 10-12px. Dat is een desktopmaat; op een telefoon op
+     armlengte valt het weg. We tillen elke inline-maat één stap op zonder
+     de opbouw aan te raken. */
+  [style*="font-size:10px"] { font-size: 11.5px !important; }
+  [style*="font-size:11px"] { font-size: 12.5px !important; }
+  [style*="font-size:12px"] { font-size: 13.5px !important; }
+  [style*="font-size:13px"] { font-size: 14.5px !important; }
+  /* De activiteitenlog is monospace-terminal: die hoort compact te blijven,
+     anders past er geen enkele regel meer op één lijn. */
+  #activity-log-panel [style*="font-size"],
+  #project-activity-panel [style*="font-size"] { font-size: 11px !important; }
+  #activity-log-panel, #project-activity-panel { font-size: 11px !important; }
+
+  /* ── Chat ── */
+  .chat-container { padding: 16px 14px calc(24px + env(safe-area-inset-bottom)); }
+  .chat-msg.user { margin-left: 22px; }
+  .chat-msg.assistant { margin-right: 22px; }
+  .chat-msg { font-size: 14px; border-radius: 14px; padding: 10px 13px; }
+
+  /* ── Overig ── */
+  .agent-card { margin: 20px auto; }
+  .loading, .empty-state { padding: 32px 16px; }
+  canvas { max-width: 100% !important; }
+  /* Lange URL's en zoekwoorden mogen het kader nooit oprekken. */
+  .section-card, .opp-card, .project-card { overflow-wrap: anywhere; }
+}
+
+/* Heel smalle toestellen (iPhone SE / 360px): KPI's ook onder elkaar, want
+   twee kolommen knippen daar de getallen af. */
+@media (max-width: 380px) {
+  .kpi-grid { grid-template-columns: 1fr !important; }
+}
+
+/* Wie "verminder beweging" aan heeft staan, krijgt geen schuivende lade. */
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

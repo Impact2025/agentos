@@ -33,7 +33,8 @@ def _make_signal(radar, title, score, status="new", project="bijeen", match=80):
             "ai_match_score, status, obsidian_path, scanned_at, created_at, updated_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (sig_id, str(uuid.uuid4()), project, "vrijwilligers werven", title,
-             "https://reddit.com/" + sig_id, "reddit", "snippet", 2, score,
+             "https://reddit.com/r/test/comments/" + sig_id + "/" + title,
+             "reddit", "snippet", 2, score,
              "hook", "angle", json.dumps(["Titel A", "Titel B"]), match,
              status, "", "2026-07-08T00:00:00Z", "2026-07-08T00:00:00Z",
              "2026-07-08T00:00:00Z"),
@@ -43,10 +44,10 @@ def _make_signal(radar, title, score, status="new", project="bijeen", match=80):
 
 def test_auto_aeo_selects_top_signals(radar):
     """Alleen 'new' signalen boven de drempel worden aangevallen, max N."""
-    _make_signal(radar, "laag", 40)          # onder drempel
-    _make_signal(radar, "middel", 78)        # boven drempel
-    _make_signal(radar, "hoog1", 95)         # boven drempel
-    _make_signal(radar, "hoog2", 90)         # boven drempel
+    _make_signal(radar, "laagscore", 40)          # onder drempel
+    _make_signal(radar, "middelscore", 78)        # boven drempel
+    _make_signal(radar, "hoogscore1", 95)         # boven drempel
+    _make_signal(radar, "hoogscore2", 90)         # boven drempel
     _make_signal(radar, "al-converted", 99, status="converted")
 
     # aeo_attack maakt taken aan — tel hoeveel er bijkomen.
@@ -57,12 +58,12 @@ def test_auto_aeo_selects_top_signals(radar):
     with get_conn() as c:
         after = len(c.execute("SELECT id FROM tasks").fetchall())
 
-    # 3 aangevallen (middel 78, hoog1 95, hoog2 90) × 3 kanalen = 9 taken.
-    # "laag" (40) en "al-converted" (99) worden overgeslagen.
-    assert "middel" in attacked
-    assert "hoog1" in attacked
-    assert "hoog2" in attacked
-    assert "laag" not in attacked
+    # 3 aangevallen (middelscore 78, hoogscore1 95, hoogscore2 90) × 3 kanalen
+    # = 9 taken. "laagscore" (40) en "al-converted" (99) worden overgeslagen.
+    assert "middelscore" in attacked
+    assert "hoogscore1" in attacked
+    assert "hoogscore2" in attacked
+    assert "laagscore" not in attacked
     assert "al-converted" not in attacked
     assert after - before == 9  # 3 signalen × 3 kanalen
 

@@ -16,6 +16,7 @@ from .config import (
     OLLAMA_BASE_URL, OLLAMA_MODEL,
     HERMES_LOCAL_URL, HERMES_LOCAL_KEY,
     OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL,
+    AGNES_API_KEY, AGNES_BASE_URL, AGNES_MODEL,
     hermes_backend, HERMES_LOCAL_FALLBACK,
 )
 from ..tools import TOOLS, TOOL_MAP
@@ -68,12 +69,18 @@ def _is_rate_limited(status_code: int, body: Optional[dict] = None) -> bool:
 
 
 def _cloud_fallback_chain(skip: str) -> List[str]:
-    """Geeft beschikbare cloud-backends terug, de primaire overgeslagen."""
+    """Geeft beschikbare cloud-backends terug, de primaire overgeslagen.
+
+    Volgorde: openmodel → openrouter → agnes. Agnes is de allerlaatste reserve
+    (nooit primair): als zowel OpenModel (quota) als OpenRouter (geen key) falen,
+    levert Agnes alsnog een werkende response in plaats van hard te falen."""
     chain: List[str] = []
     if skip != "openmodel" and OPENMODEL_API_KEY:
         chain.append("openmodel")
     if skip != "openrouter" and OPENROUTER_API_KEY:
         chain.append("openrouter")
+    if skip != "agnes" and AGNES_API_KEY:
+        chain.append("agnes")
     return chain
 
 
@@ -124,6 +131,18 @@ async def run_agent(
                                            purpose=purpose):
             yield event
         return
+    if backend_override == "agnes":
+        # Forceer de Agnes-reserve-gateway (OpenAI-compat /chat/completions).
+        # Wordt gebruikt als laatste redmiddel wanneer OpenModel op quota zit.
+        try:
+            async for event in _openai_loop(messages, system_prompt, max_tokens,
+                                            "agnes", model_override=model_override,
+                                            use_tools=use_tools):
+                yield event
+            return
+        except _BackendUnavailable as exc:
+            yield {"type": "error", "message": f"backend_override agnes faalde: {exc}"}
+            return
     if backend_override == "openrouter":
         try:
             async for event in _openai_loop(messages, system_prompt, max_tokens,
@@ -383,6 +402,18 @@ def _openai_headers_and_url(backend: str):
             f"{OLLAMA_BASE_URL.rstrip('/')}/chat/completions",
             {"Content-Type": "application/json"},
             OLLAMA_MODEL,
+        )
+    if backend == "agnes":
+        # Sapiens AI "Agnes" gateway — standaard OpenAI-compat /chat/completions.
+        # Allerlaatste fallback-reserve wanneer OpenModel (quota) en OpenRouter
+        # (geen key) beiden falen.
+        return (
+            f"{AGNES_BASE_URL.rstrip('/')}/chat/completions",
+            {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {AGNES_API_KEY}",
+            },
+            AGNES_MODEL,
         )
     return (
         "https://openrouter.ai/api/v1/chat/completions",

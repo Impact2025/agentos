@@ -396,6 +396,20 @@ async def run_weekly_linkbuilding() -> None:
             ),
             status="error" if failed else "ok",
         )
+        # Goldie-modus: als LINKBUILD_AUTO_APPROVE aan staat, verstuurt de batch
+        # de goedgekeurde concepten meteen (zelfde checks als de handmatige knop).
+        if batch["drafted"]:
+            from .outreach import auto_approve_review_queue
+            auto = await auto_approve_review_queue()
+            if auto.get("sent"):
+                log_outcome(
+                    "Linkbuilding", "linkbuilding_auto_approve",
+                    f"Auto-approve: {auto['sent']} link-outreach verstuurd "
+                    f"({auto.get('skipped', 0)} overgeslagen).",
+                    artifact="/api/linkbuilding/funnel",
+                    next_step="Monitor checkt dagelijks of de links live komen.",
+                    status="ok",
+                )
     except Exception as e:
         logger.exception("Linkbuilding-weekrun gefaald")
         log_outcome(

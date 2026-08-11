@@ -23,11 +23,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import time as _time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from ...shared.config import (
     TAVILY_API_KEY, OBSIDIAN_VAULT_PATH,
@@ -37,10 +39,16 @@ from ...shared.config import (
 from ...shared.database import get_conn
 from ...shared import agent_runner as agent_service
 from ..vacancies import scraper
-from . import scorer
+from . import quality, scorer
 from .models import ensure_schema
 
 log = logging.getLogger(__name__)
+
+# Hoe lang één sky-scan maximaal mag duren. Ruim onder het interval van vier
+# uur, zodat een ronde altijd afgelopen is vóór de volgende vuurt en
+# `scheduler_runs` weer de waarheid vertelt. 0 zet het budget uit (handmatige
+# scans via de UI die wél volledig moeten zijn).
+_SCAN_BUDGET_SECONDS = int(os.getenv("RADAR_SCAN_BUDGET_SECONDS", "1800"))
 
 SCAN_LOOKBACK_DAYS = 14          # hoe ver terug we "trending" laten meetellen
 MAX_RESULTS_PER_WATCH = 6        # Tavily-resultaten per watch-item
@@ -123,6 +131,32 @@ class RadarService:
                 item,
             )
         return item
+
+    def _note_scan(self, watch_id: str, wanneer: str, status: str,
+                   *, gevonden: int = 0, fout: str = "") -> None:
+        """Leg vast dát er gekeken is, en met welke uitkomst.
+
+        Drie standen die vroeger op één hoop lagen omdat het veld alleen bij een
+        geslaagde opslag werd bijgewerkt: `ok` met nul hits (rust — de bron
+        publiceert simpelweg niets nieuws), `ok` met hits, en `error` (de bron
+        is onbereikbaar). Zonder dat onderscheid is een dode RSS-feed niet van
+        een rustige te onderscheiden, en twaalf van de twintig feeds hadden nog
+        nooit één signaal opgeleverd zonder dat iets dat meldde.
+
+        `scan_count`/`signal_count` zijn de teller waarop de invariant
+        `radar_watch_dood` rust: pas ná genoeg pogingen is "levert niets op" een
+        uitspraak in plaats van een momentopname.
+        """
+        try:
+            with get_conn() as conn:
+                conn.execute(
+                    "UPDATE radar_watchlist SET last_scanned_at = ?, last_status = ?, "
+                    "last_error = ?, last_found = ?, scan_count = COALESCE(scan_count, 0) + 1, "
+                    "signal_count = COALESCE(signal_count, 0) + ? WHERE id = ?",
+                    (wanneer, status, fout[:300], gevonden, gevonden, watch_id),
+                )
+        except Exception:  # noqa: BLE001 — boekhouding mag de scan nooit breken
+            log.exception("[radar] Kon scan-status van %s niet vastleggen", watch_id)
 
     def list_watch(self, project: Optional[str] = None) -> List[Dict]:
         project = (project or "").strip().lower() or None
@@ -300,6 +334,17 @@ class RadarService:
             # Budget-bewuste modus: alleen RSS-feeds (geen Tavily, geen LLM).
             # Houdt de sky-scan nuttig als het dagelijkse LLM-budget op is.
             watches = [w for w in watches if w["type"] == "rss"]
+
+        # ── Eerlijke volgorde: wie het langst niet aan de beurt was, eerst ──
+        # `list_watch` sorteert op `created_at`, en dat is precies fout voor een
+        # scan die niet altijd uitloopt: de kop van de lijst komt élke ronde aan
+        # de beurt en de staart nooit. Op 4 aug 2026 stonden er 171 actieve
+        # watches, waarvan 5 RSS-feeds met een lege `last_scanned_at` — nog geen
+        # één keer gescand sinds hun aanmaak, terwijl de eerste zeven keywords
+        # al weken elke ronde meeliepen. Nooit-gescand gaat vooraan (lege string
+        # sorteert vanzelf vóór elke tijdstempel), daarna oudste eerst.
+        watches.sort(key=lambda w: (w.get("last_scanned_at") or ""))
+
         yield {"type": "scan_start", "watch_count": len(watches), "rss_only": rss_only}
         if not watches:
             yield {"type": "scan_done", "total_saved": 0,
@@ -308,12 +353,40 @@ class RadarService:
 
         total_saved = 0
         now = _now()
-        for watch in watches:
+        eigen = quality.eigen_hosts()
+        # ── Wandklok-budget ─────────────────────────────────────────────────
+        # Waarom een scan die áltijd afloopt (4 aug 2026): `scheduler_runs`
+        # noteert `last_run_at` pas ná afloop (EVENT_JOB_EXECUTED), en voor
+        # `radar_sky_scan` stond die sinds 23 juli stil terwijl de watchlist
+        # aantoonbaar wél was aangeraakt. De job was niet stuk, hij was nooit
+        # klaar: 171 watches × (websearch + LLM-verrijking) past niet in het
+        # interval van vier uur, en APScheduler slaat met `max_instances=1`
+        # elke volgende vuurbeurt over zolang de vorige loopt. Een job die
+        # nooit eindigt, is een job die precies één keer draait — en 3.375
+        # signalen bleven op 'new' staan.
+        #
+        # De uitweg is niet 'sneller', maar 'begrensd én hervatbaar'. Elke
+        # watch legt via `_note_scan` zijn eigen voortgang vast, dus stoppen
+        # halverwege verliest niets: de volgende ronde begint dankzij de
+        # sortering hierboven bij wie is blijven liggen. Zo schuift de scan als
+        # een venster over de watchlist in plaats van steeds opnieuw vast te
+        # lopen op dezelfde kop.
+        _budget = _SCAN_BUDGET_SECONDS
+        _gestart = _time.monotonic()
+        afgebroken = 0
+        for index, watch in enumerate(watches):
+            if _budget and (_time.monotonic() - _gestart) > _budget:
+                afgebroken = len(watches) - index
+                log.info("[radar] Scanbudget (%ss) op na %s van %s watches — "
+                         "de rest gaat mee in de volgende ronde",
+                         _budget, index, len(watches))
+                break
             yield {"type": "watch_start", "label": watch["label"], "watch_type": watch["type"]}
             try:
                 results = self._gather(watch)
             except Exception as e:
                 log.exception("[radar] Scan van '%s' mislukt", watch["label"])
+                self._note_scan(watch["id"], now, "error", fout=str(e)[:200])
                 yield {"type": "watch_error", "label": watch["label"], "error": str(e)[:200]}
                 continue
 
@@ -334,7 +407,27 @@ class RadarService:
             seen: set = set()
             fresh = [r for r in fresh if not (r["url"] in seen or seen.add(r["url"]))]
 
-            # Heuristische score voor alles.
+            # De signaalpoort: is dit überhaupt iets om op te reageren? Draait
+            # vóór de scoring én vóór de verrijking, en dat is de hele winst.
+            # Tot 3 aug 2026 ging het LLM-budget (4 verrijkingen per watch) op
+            # aan vacatures, dienstpagina's en ons eigen blog, terwijl de échte
+            # artikelen eronder ongescoord bleven liggen — 666 van de 1676
+            # signalen kregen nooit een relevantie-oordeel. Zie quality.py.
+            fresh, geweerd = quality.partition(fresh, eigen=eigen)
+            for r in geweerd:
+                # Geweerde signalen krijgen wél een heuristische score: zonder
+                # cijfer is het lijstje 'uitgefilterd' niet te ordenen en kan
+                # niemand nagaan of de poort een topper heeft laten vallen.
+                r["signal_score"] = scorer.compute_signal_score(
+                    r["title"], r["url"], watch["value"],
+                    r.get("published_days_ago", -1), r.get("tavily_score", 0.0),
+                    r.get("source"), project=watch["project"],
+                    snippet=r.get("snippet", ""),
+                )
+                r.update({"ai_hook": "", "ai_angle": "", "ai_titles": [],
+                          "ai_match_score": -1})
+
+            # Heuristische score voor wat er doorheen kwam.
             for r in fresh:
                 r["signal_score"] = scorer.compute_signal_score(
                     r["title"], r["url"], watch["value"],
@@ -387,33 +480,43 @@ class RadarService:
                 except (TypeError, ValueError):
                     return default
 
-            rows = [
-                (
+            def _rij(r: Dict, status: str) -> tuple:
+                return (
                     str(uuid.uuid4()), watch["id"], watch["project"], watch["value"],
                     r["title"][:300], r["url"], r["source"], (r["snippet"] or "")[:2000],
                     _safe_int(r.get("published_days_ago"), -1),
                     _safe_int(r.get("signal_score"), 0),
                     r.get("ai_hook", ""), r.get("ai_angle", ""),
                     json.dumps(r.get("ai_titles", []), ensure_ascii=False),
-                    _safe_int(r.get("ai_match_score"), -1), "new", "", now, now, now,
+                    _safe_int(r.get("ai_match_score"), -1), status, "", now, now, now,
+                    r.get("filter_reason") or "", r.get("filter_label") or "",
+                    r.get("filter_detail") or "", 1,  # quality_reviewed: de poort liep al hierboven
                 )
-                for r in fresh
-            ]
+
+            # Geweerde signalen gaan er wél in, met hun oordeel: een poort die
+            # zijn afwijzingen weggooit is niet te controleren, en dan weet
+            # niemand over drie maanden of hij te streng of te soepel staat.
+            rows = [_rij(r, "new") for r in fresh]
+            rows += [_rij(r, "uitgefilterd") for r in geweerd]
             if rows:
                 with get_conn() as conn:
                     conn.executemany(
                         """INSERT OR IGNORE INTO radar_signals
                            (id, watch_id, project, keyword, title, url, source, snippet,
                             published_days_ago, signal_score, ai_hook, ai_angle, ai_titles,
-                            ai_match_score, status, obsidian_path, scanned_at, created_at, updated_at)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            ai_match_score, status, obsidian_path, scanned_at, created_at,
+                            updated_at, filter_reason, filter_label, filter_detail, quality_reviewed)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         rows,
                     )
-                    conn.execute(
-                        "UPDATE radar_watchlist SET last_scanned_at = ? WHERE id = ?",
-                        (now, watch["id"]),
-                    )
-                total_saved += len(rows)
+                total_saved += len(fresh)
+
+            # De scan-status wordt altijd bijgewerkt, ook bij nul nieuwe hits.
+            # Tot 3 aug 2026 gebeurde dat alleen `if rows:`, waardoor
+            # `last_scanned_at` "laatst iets opgeslagen" betekende in plaats van
+            # "laatst gekeken" — vijf projecten stonden zeven dagen op 27 juli
+            # zonder dat te achterhalen was of dat rust of storing was.
+            self._note_scan(watch["id"], now, "ok", gevonden=len(fresh))
 
             # Geheugen-loop: topsignalen direct de vault in.
             for r in fresh:
@@ -424,11 +527,16 @@ class RadarService:
 
             yield {
                 "type": "watch_done", "label": watch["label"],
-                "found": len(rows), "skipped": len(results) - len(fresh),
+                "found": len(fresh), "filtered": len(geweerd),
+                "skipped": len(results) - len(fresh) - len(geweerd),
                 "top_score": fresh[0]["signal_score"] if fresh else 0,
             }
 
-        yield {"type": "scan_done", "total_saved": total_saved}
+        yield {"type": "scan_done", "total_saved": total_saved,
+               **({"resterend": afgebroken,
+                   "note": (f"Scanbudget op — {afgebroken} watch(es) gaan mee in de "
+                            "volgende ronde (die begint bij wie is blijven liggen).")}
+                  if afgebroken else {})}
 
         # Tavily-quota op? Dat mag niet stil in een logregel verdwijnen — de radar
         # valt er (deels) door droog en dat vergt een menselijke actie (upgraden /
@@ -571,6 +679,11 @@ class RadarService:
             where.append("LOWER(project) = LOWER(?)"); params.append(project)
         if status:
             where.append("status = ?"); params.append(status)
+        else:
+            # Zonder expliciete status toont de lijst alleen échte signalen.
+            # Geweerde staan er wél in (bewijs, en met één knop op te pakken)
+            # maar horen niet tussen het werk — dat was nu juist het probleem.
+            where.append("status != 'uitgefilterd'")
         if source:
             where.append("source = ?"); params.append(source)
         if min_score is not None:
@@ -583,6 +696,7 @@ class RadarService:
                 [*params, limit],
             ).fetchall()
         out = []
+        te_hercontroleren = []
         for r in rows:
             d = dict(r)
             try:
@@ -590,7 +704,71 @@ class RadarService:
             except Exception:
                 d["ai_titles"] = []
             out.append(d)
+            # Nog nooit door de huidige poort beoordeeld (en geen bewuste
+            # 'Toch oppakken' — die zet quality_reviewed): kandidaat voor
+            # hercontrole. Zie _reconcile_quality hieronder.
+            if d["status"] == "new" and not d.get("quality_reviewed"):
+                te_hercontroleren.append(d)
+        if te_hercontroleren:
+            geweerd_ids = self._reconcile_quality(te_hercontroleren)
+            if geweerd_ids and status in (None, "new"):
+                # Default/'new'-lijst: net als bij opslag horen geweerde
+                # signalen niet tussen het werk. `status=None` (met de
+                # ingebouwde 'status != uitgefilterd'-clausule hierboven)
+                # zou ze anders alsnog tonen, want die clausule keek naar de
+                # status vóórdat deze hercontrole liep.
+                out = [d for d in out if d["id"] not in geweerd_ids]
         return out
+
+    def _reconcile_quality(self, signalen: List[Dict]) -> Set[str]:
+        """Herbeoordeel signalen die vóór een gate-verbetering zijn opgeslagen.
+
+        `INSERT OR IGNORE` (bij het scannen, zie boven) bevriest het eerste
+        oordeel over een URL voor altijd — verbetert de poort later (zoals de
+        eigen-site-regel van 3 aug 2026), dan houdt een al bestaande rij zijn
+        oude, te soepele verdict: een latere scan van dezelfde URL wordt
+        genegeerd omdat de URL al bestaat. Aangetoond (9 aug 2026): WeAreImpacts
+        eigen blogartikelen (gescand 25 jul - 3 aug) stonden met een leeg
+        filter_reason tussen de topsignalen, terwijl de huidige poort ze
+        feilloos als 'eigen-site' herkent zodra hij er ná opslag alsnog naar
+        kijkt. Dit repareert dat bij het lézen, net zoals `opportunity_quality`
+        al voor de Kansen-lijst doet — zónder de rijen die een mens bewust via
+        'Toch oppakken' heeft teruggezet (die dragen `quality_reviewed = 1` en
+        komen deze functie dus nooit in).
+
+        Elke rij die hier doorheen gaat krijgt `quality_reviewed = 1`, ook als
+        hij de poort haalt — anders herbeoordeelt elke volgende `list_signals`-
+        aanroep dezelfde honderden rijen opnieuw.
+        """
+        eigen = quality.eigen_hosts()
+        now = _now()
+        gewijzigd = []
+        beoordeeld_ok = []
+        for d in signalen:
+            oordeel = quality.assess({"url": d.get("url", ""), "title": d.get("title", "")}, eigen=eigen)
+            reden = oordeel.get("filter_reason")
+            if not reden:
+                beoordeeld_ok.append(d["id"])
+                continue
+            d.update(oordeel)
+            d["status"] = "uitgefilterd"
+            gewijzigd.append(d)
+        with get_conn() as conn:
+            if gewijzigd:
+                conn.executemany(
+                    "UPDATE radar_signals SET status = 'uitgefilterd', filter_reason = ?, "
+                    "filter_label = ?, filter_detail = ?, updated_at = ?, quality_reviewed = 1 "
+                    "WHERE id = ?",
+                    [(d["filter_reason"], d["filter_label"], d["filter_detail"], now, d["id"])
+                     for d in gewijzigd],
+                )
+            if beoordeeld_ok:
+                ph = ",".join("?" * len(beoordeeld_ok))
+                conn.execute(
+                    f"UPDATE radar_signals SET quality_reviewed = 1 WHERE id IN ({ph})",
+                    beoordeeld_ok,
+                )
+        return {d["id"] for d in gewijzigd}
 
     def get_signal(self, signal_id: str) -> Optional[Dict]:
         with get_conn() as conn:
@@ -605,9 +783,21 @@ class RadarService:
         return d
 
     def update_signal_status(self, signal_id: str, status: str) -> Optional[Dict]:
-        if status not in ("new", "targeted", "converted", "dismissed"):
+        if status not in ("new", "targeted", "converted", "dismissed", "uitgefilterd"):
             raise ValueError(f"Ongeldige status '{status}'")
         with get_conn() as conn:
+            # 'Toch oppakken': een signaal dat de poort weerde terugzetten op
+            # 'new' wist ook het oordeel. Anders blijft de kaart zeggen dat hij
+            # een vacature is terwijl hij inmiddels bewust in de lijst staat —
+            # en dan filtert de trend-brug hem alsnog weg (die kijkt op
+            # `filter_reason`, niet op de status).
+            if status == "new":
+                conn.execute(
+                    "UPDATE radar_signals SET filter_reason = '', filter_label = '', "
+                    "filter_detail = '', quality_reviewed = 1 "
+                    "WHERE id = ? AND status = 'uitgefilterd'",
+                    (signal_id,),
+                )
             cur = conn.execute(
                 "UPDATE radar_signals SET status = ?, updated_at = ? WHERE id = ?",
                 (status, _now(), signal_id),
@@ -641,14 +831,30 @@ class RadarService:
                 "SELECT COUNT(*) FROM radar_watchlist WHERE active = 1" +
                 (" AND LOWER(project) = LOWER(?)" if project else ""), params,
             ).fetchone()[0]
+            # Waaróm de poort iets weerde — zichtbaar in de UI, want een filter
+            # dat je niet kunt inzien is een filter dat je niet kunt bijstellen.
+            waarom = dict(conn.execute(
+                f"SELECT filter_reason, COUNT(*) FROM radar_signals "
+                f"{where + ' AND' if where else 'WHERE'} status = 'uitgefilterd' "
+                f"GROUP BY filter_reason", params,
+            ).fetchall())
+            # Bronnen die blijven draaien zonder ooit iets op te leveren.
+            dood = conn.execute(
+                "SELECT COUNT(*) FROM radar_watchlist WHERE active = 1 "
+                "AND COALESCE(scan_count, 0) >= 5 AND COALESCE(signal_count, 0) = 0" +
+                (" AND LOWER(project) = LOWER(?)" if project else ""), params,
+            ).fetchone()[0]
         return {
             "total": total,
             "new": by_status.get("new", 0),
             "targeted": by_status.get("targeted", 0),
             "converted": by_status.get("converted", 0),
             "dismissed": by_status.get("dismissed", 0),
+            "uitgefilterd": by_status.get("uitgefilterd", 0),
+            "filter_redenen": waarom,
             "top_score": top or 0,
             "watch_count": watch_count,
+            "dode_bronnen": dood,
         }
 
     # ── Geheugen-loop: Obsidian ──────────────────────────────────────────────
@@ -1102,27 +1308,48 @@ async def scan_the_skies() -> int:
 # onder de vault-drempel bleef, gaat vandaag niemand meer aanvallen. Zonder
 # opruimen groeit de tabel monotoon — 2656 rijen in de eerste drie weken, en
 # 2411 daarvan stonden nog op 'new' (27 jul 2026).
-SIGNAL_RETENTION_DAYS = 30
+SIGNAL_RETENTION_DAYS = 21
+
+# Een topsignaal dat drie weken niemand heeft geïnteresseerd was een gemiste
+# kans; na zes weken is het geen kans meer maar archeologie. Deze grens bestond
+# niet, waardoor de signalen ≥70 monotoon bleven groeien — 201 stuks op 3 aug
+# 2026, en de opruiming had er in vier weken nul verwijderd.
+TOPSIGNAL_RETENTION_DAYS = 45
+
+# Geweerde signalen zijn bewijs, geen voorraad. Een week is genoeg om te kunnen
+# nagaan waarom de poort iets liet vallen; daarna is het ballast.
+UITGEFILTERD_RETENTION_DAYS = 7
 
 
 def prune_stale_signals(days: int = SIGNAL_RETENTION_DAYS) -> int:
-    """Ruim ongetriageerde, laagscorende signalen op die over hun datum zijn.
+    """Ruim ongetriageerde signalen op die over hun datum zijn.
 
-    Bewust alleen status 'new': 'targeted' en 'converted' zijn besluiten en
-    horen in de historie te blijven staan, net als 'dismissed' (anders biedt de
-    volgende scan hetzelfde signaal opnieuw aan). En bewust alleen ónder
-    MIN_SCORE_FOR_OBSIDIAN: een topsignaal dat nog niemand heeft opgepakt is een
-    gemiste kans, geen ruis — die laten we juist staan.
+    Bewust alleen status 'new' en 'uitgefilterd': 'targeted' en 'converted' zijn
+    besluiten en horen in de historie te blijven, net als 'dismissed' (anders
+    biedt de volgende scan hetzelfde signaal opnieuw aan).
+
+    Drie horizonnen in plaats van één (3 aug 2026). De oude versie ruimde alleen
+    op onder score 70 en na 30 dagen — en had in vier weken nul rijen verwijderd
+    terwijl de invariant `radar_signaal_verlopen` al bij 21 dagen aansloeg. Een
+    opruiming die pas begint negen dagen nadat het alarm afgaat, is geen
+    opruiming maar een belofte.
     """
+    horizonnen = (
+        ("status = 'new' AND signal_score < ?", (MIN_SCORE_FOR_OBSIDIAN,), days),
+        ("status = 'new' AND signal_score >= ?", (MIN_SCORE_FOR_OBSIDIAN,),
+         TOPSIGNAL_RETENTION_DAYS),
+        ("status = 'uitgefilterd'", (), UITGEFILTERD_RETENTION_DAYS),
+    )
+    verwijderd = 0
     with get_conn() as conn:
-        cur = conn.execute(
-            "DELETE FROM radar_signals WHERE status = 'new' "
-            "AND signal_score < ? AND created_at < datetime('now', ?)",
-            (MIN_SCORE_FOR_OBSIDIAN, f"-{int(days)} days"),
-        )
-        verwijderd = cur.rowcount or 0
+        for clause, params, horizon in horizonnen:
+            cur = conn.execute(
+                f"DELETE FROM radar_signals WHERE {clause} AND created_at < datetime('now', ?)",
+                (*params, f"-{int(horizon)} days"),
+            )
+            verwijderd += cur.rowcount or 0
     if verwijderd:
-        log.info("[radar] %s verouderde signalen opgeruimd (ouder dan %s dagen, "
-                 "score < %s, nooit opgepakt)", verwijderd, days,
-                 MIN_SCORE_FOR_OBSIDIAN)
+        log.info("[radar] %s verouderde signalen opgeruimd (ongetriageerd: %sd, "
+                 "topsignalen: %sd, uitgefilterd: %sd)", verwijderd, days,
+                 TOPSIGNAL_RETENTION_DAYS, UITGEFILTERD_RETENTION_DAYS)
     return verwijderd

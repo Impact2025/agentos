@@ -56,7 +56,7 @@ import logging
 import re
 import sqlite3
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from ...shared.database import get_conn
@@ -464,6 +464,22 @@ def _check_cluster_kannibalisatie() -> List[Bevinding]:
     return uit
 
 
+# Paren die `is_same_topic` ten onrechte als duplicate markeert maar wél
+# legitieme, afzonderlijke artikelen zijn. Uitgesloten van de duplicaat-melding
+# zodat ze niet per ongeluk samengevoegd worden (zie Taak 0, canonicalisatie-plan).
+# Toegevoegd 2026-08-10 na handmatige review van de 25 sitemap_dubbele_pagina-
+# bevindingen: deze 3 zijn valse positieven (verschillende dieren / onderwerpen).
+_EXCLUDE_DUPLICATE_PAIRS = {
+    # Pootgelukkig: hond vs konijn — twee aparte adoptiegidsen
+    ("hond-adopteren-uit-het-asiel-complete-gids",
+     "konijn-adopteren-uit-het-asiel-complete-gids"),
+    # DatingAssistent: profielfoto-stappen vs profiel-stappenplan — andere angles
+    ("profielfoto-5-stappen", "profiel-stappenplan"),
+    # DatingAssistent: fotoshoot vs hoeveel-foto's — verschillende onderwerpen
+    ("fotoshoot", "hoeveel-fotos"),
+}
+
+
 def _check_sitemap_dubbele_pagina() -> List[Bevinding]:
     """Twee live pagina's op dezelfde site die over hetzelfde onderwerp gaan —
     gevonden in de sitemap zelf, zonder GSC, LLM of profiel nodig.
@@ -500,6 +516,10 @@ def _check_sitemap_dubbele_pagina() -> List[Bevinding]:
                 continue
             for b in slugs[i + 1:]:
                 if b in gezien or a == b:
+                    continue
+                # Valse positieven uitsluiten: paren die `is_same_topic` foutief
+                # als duplicate ziet maar wél losse, geldige artikelen zijn.
+                if (a, b) in _EXCLUDE_DUPLICATE_PAIRS or (b, a) in _EXCLUDE_DUPLICATE_PAIRS:
                     continue
                 if is_same_topic(a.replace("-", " "), b):
                     gezien.add(b)
@@ -2133,6 +2153,186 @@ def _check_doel_voltooid_zonder_taken() -> List[Bevinding]:
     ) for r in rijen]
 
 
+# ── Postvak ────────────────────────────────────────────────────────────────
+#
+# Vijf toetsen op één scherm, en dat is geen toeval: het Postvak was tot 11 aug
+# 2026 de plek waar élke faalmodus uit dit bestand tegelijk stond. Een lijst die
+# zegt "7 mails wachten op jouw antwoord" terwijl er vijf door jezelf verstuurd
+# zijn, een teller die alleen kan groeien, een waarschuwing die permanent aan
+# staat, en een filter zonder terugwerkende kracht. Geen ervan wierp ooit een
+# fout op; alle vijf zijn gevonden doordat iemand naar zijn telefoon keek.
+
+def _postvak_eigen_adressen() -> set:
+    try:
+        from ..outlook.service import own_addresses
+        return own_addresses()
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+def _check_postvak_eigen_verzonden() -> List[Bevinding]:
+    """Door jezelf verstuurde mail die als binnengekomen post in het postvak staat.
+
+    `sync_inbox` haalde `/me/messages` op — de héle mailbox — en schreef élke rij
+    weg met `folder='inbox'`. Vincents linkbuilding-outreach stond daardoor in
+    'wacht op jouw antwoord' (5 van de 7 items), en één ervan kreeg een
+    LLM-conceptantwoord op zijn eigen mail. De sync is gerepareerd; deze toets
+    bewaakt dat het niet via een andere weg terugkomt.
+    """
+    eigen = _postvak_eigen_adressen()
+    if not eigen:
+        return []
+    try:
+        with get_conn() as conn:
+            rijen = conn.execute(
+                "SELECT id, subject, from_email, to_email, received_at FROM outlook_emails "
+                "WHERE folder='inbox' ORDER BY received_at DESC LIMIT 200"
+            ).fetchall()
+    except Exception:
+        return []
+    bevindingen = []
+    for r in rijen:
+        afzender = (r["from_email"] or "").lower()
+        ontvangers = (r["to_email"] or "").lower()
+        if afzender in eigen and afzender not in ontvangers:
+            bevindingen.append(Bevinding(
+                subject=f"mail:{r['id']}",
+                detail=(f"'{(r['subject'] or '')[:60]}' is door jou verstuurd aan "
+                        f"{ontvangers[:40] or 'onbekend'} maar staat als binnengekomen mail"),
+                project="Postvak",
+            ))
+    return bevindingen
+
+
+def _check_postvak_regel_zonder_effect() -> List[Bevinding]:
+    """Mail die aan een actieve afzenderregel voldoet maar er nog gewoon staat.
+
+    Dit is de toets op de belofte die `rules.add_rule` doet: een regel werkt met
+    terugwerkende kracht. Slaat hij aan, dan is óf het toepassen stukgegaan, óf
+    er is een pad dat mail binnenhaalt zonder de regels te raadplegen — en dat
+    tweede is precies hoe een filter stilzwijgend niets gaat doen.
+    """
+    try:
+        from ..outlook import rules as mail_rules
+        actief = [r for r in mail_rules.list_rules()
+                  if r["action"] != mail_rules.ACTIE_ALTIJD_TONEN]
+        if not actief:
+            return []
+        alle = mail_rules.list_rules()
+        with get_conn() as conn:
+            rijen = conn.execute(
+                "SELECT id, from_email, subject FROM outlook_emails "
+                "WHERE folder='inbox' AND filter_rule_id IS NULL "
+                "  AND triage_label NOT IN ('spam','archief')"
+            ).fetchall()
+    except Exception:
+        return []
+    bevindingen = []
+    for r in rijen:
+        oordeel = mail_rules.verdict(r["from_email"], alle)
+        if oordeel:
+            bevindingen.append(Bevinding(
+                subject=f"regel:{oordeel['rule_id']}:mail:{r['id']}",
+                detail=(f"{r['from_email']} voldoet aan een actieve regel "
+                        f"({oordeel['reason'][:60]}) maar staat nog in het postvak"),
+                project="Postvak",
+            ))
+    return bevindingen
+
+
+def _check_postvak_beantwoord_niet_waargenomen() -> List[Bevinding]:
+    """Een postvak met verkeer waarin nog nooit een antwoord is wáárgenomen.
+
+    `is_replied` werd tot 11 aug 2026 alleen gezet door onze eigen verstuurknop:
+    alles wat Vincent in Outlook zelf beantwoordde telde nooit mee. Gevolg: de
+    achterstand kon alleen groeien en er stond permanent "0% beantwoord (7d)".
+    `_sync_sent_items` leest het nu uit Verzonden items; blijft dat leeg terwijl
+    er wél post binnenkomt, dan is die meting stuk — en een kapotte meting die
+    een 0 toont is erger dan geen meting.
+    """
+    try:
+        sinds = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+        with get_conn() as conn:
+            binnen = conn.execute(
+                "SELECT COUNT(*) c FROM outlook_emails "
+                "WHERE folder='inbox' AND received_at >= ?", (sinds,)
+            ).fetchone()["c"]
+            waargenomen = conn.execute(
+                "SELECT COUNT(*) c FROM outlook_emails WHERE replied_at != ''"
+            ).fetchone()["c"]
+    except Exception:
+        return []
+    if binnen < 20 or waargenomen:
+        return []
+    return [Bevinding(
+        subject="postvak:reply-detectie",
+        detail=(f"{binnen} mails binnengekomen in 14 dagen, geen enkel antwoord "
+                f"waargenomen in Verzonden items"),
+        project="Postvak",
+    )]
+
+
+def _check_postvak_sync_stil() -> List[Bevinding]:
+    """Een postvak dat al uren niet is opgehaald terwijl de koppeling leeft.
+
+    11 aug 2026: de laatste sync was van de dag ervóór. Er bestond geen
+    scheduler-job voor Vincents eigen postvak — alleen de helpdesk-mailboxen
+    hadden er een — dus werd er alleen opgehaald als een mens erom vroeg. Een
+    postvak dat stilstaat ziet er van buiten precies zo uit als een rustige dag.
+    """
+    try:
+        from ..outlook import service as outlook
+        if not outlook.is_configured() or not outlook.is_authenticated():
+            return []
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT MAX(synced_at) s FROM outlook_emails"
+            ).fetchone()
+    except Exception:
+        return []
+    laatste = (row["s"] if row else "") or ""
+    if not laatste:
+        return [Bevinding(subject="postvak:sync", detail="nog nooit opgehaald",
+                          project="Postvak")]
+    try:
+        dt = datetime.fromisoformat(str(laatste).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return []
+    uren = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+    if uren < 6:
+        return []
+    return [Bevinding(
+        subject="postvak:sync",
+        detail=f"laatste ophaalronde was {int(uren)} uur geleden",
+        project="Postvak",
+    )]
+
+
+def _check_postvak_triage_achterstand() -> List[Bevinding]:
+    """Een triage-achterstand die niet meer wegloopt.
+
+    De gele balk "106 mails nog niet getrieerd" stond er dagen: het commando
+    triageerde er 15 per keer en er was geen job die de rest ooit oppakte. Een
+    waarschuwing die altijd aan staat leert een mens hem te negeren — en dan
+    werkt hij ook niet meer op de dag dat er écht iets aan de hand is.
+    """
+    try:
+        from ..outlook import service as outlook
+        if not outlook.is_authenticated():
+            return []
+        stats = outlook.get_stats()
+    except Exception:
+        return []
+    n = int(stats.get("untriaged") or 0)
+    if n < 25:
+        return []
+    return [Bevinding(
+        subject="postvak:triage",
+        detail=f"{n} mails wachten op een triage-oordeel",
+        project="Postvak",
+    )]
+
+
 def _project_van_goal(goal_id: str) -> str:
     try:
         with get_conn() as conn:
@@ -2736,6 +2936,68 @@ INVARIANTEN: List[Invariant] = [
              "het — zolang het op 'completed' staat verbergt het de alert die het zou "
              "moeten oplossen.",
         check=_check_doel_voltooid_zonder_taken,
+    ),
+    Invariant(
+        key="postvak_eigen_verzonden_als_inkomend",
+        titel="Eigen verzonden mail staat als binnengekomen post in het postvak",
+        incident="11 aug 2026: `sync_inbox` haalde `/me/messages` op (de héle mailbox, "
+                 "incl. Verzonden items) en schreef alles weg met folder='inbox'. Vijf "
+                 "van de zeven mails onder 'wacht op jouw antwoord' waren door Vincent "
+                 "zélf verstuurde linkbuilding-outreach; op één ervan schreef het "
+                 "systeem een conceptantwoord op zijn eigen mail.",
+        severity=BLOKKEREND,
+        stap="Zet deze rijen op folder='sent' (de migratie _migrate_postvak doet dat "
+             "voor bestaande mail) en controleer dat de sync `/me/mailFolders/inbox/"
+             "messages` gebruikt — een andere scope haalt de verzonden map weer binnen.",
+        check=_check_postvak_eigen_verzonden,
+    ),
+    Invariant(
+        key="postvak_regel_zonder_effect",
+        titel="Afzenderregel bestaat, maar de mail staat er nog",
+        incident="11 aug 2026: de filtering zat in `triage_single`, dus een regel raakte "
+                 "alleen mail die daarná binnenkwam. De veertien mails die er al stonden "
+                 "bleven staan — precies het moment waarop een filter zijn belofte "
+                 "breekt. `rules.add_rule` past nu met terugwerkende kracht toe.",
+        severity=STIL,
+        stap="Draai de regels opnieuw over het postvak (rules.apply_all()) en zoek uit "
+             "welk pad mail binnenhaalt zonder de regels te raadplegen.",
+        check=_check_postvak_regel_zonder_effect,
+    ),
+    Invariant(
+        key="postvak_beantwoord_niet_waargenomen",
+        titel="Postvak met verkeer waarin nooit een antwoord is waargenomen",
+        incident="11 aug 2026: `is_replied` werd alleen gezet door de verstuurknop in "
+                 "Agent OS. Alles wat in Outlook zelf beantwoord werd telde nooit mee, "
+                 "dus stond er permanent '0% beantwoord (7d)' en kon de achterstand "
+                 "alleen groeien — een cijfer dat nooit iets anders kón worden.",
+        severity=STIL,
+        stap="Controleer of `_sync_sent_items` draait en of de Mail.Read-scope nog geldt; "
+             "zonder Verzonden items is elk doorlooptijd-cijfer over mail onbetrouwbaar.",
+        check=_check_postvak_beantwoord_niet_waargenomen,
+    ),
+    Invariant(
+        key="postvak_sync_stil",
+        titel="Postvak is al uren niet opgehaald",
+        incident="11 aug 2026: de laatste sync was van de dag ervóór. Er bestond geen "
+                 "scheduler-job voor het eigen postvak (alleen voor de helpdesk-"
+                 "mailboxen), dus werd er alleen opgehaald als een mens erom vroeg. Een "
+                 "stilstaand postvak ziet er van buiten uit als een rustige dag.",
+        severity=STIL,
+        stap="Draai POST /api/outlook/sync en controleer de job `outlook_sync` in de "
+             "scheduler; blijft hij falen, log dan opnieuw in via de Postvak-tab.",
+        check=_check_postvak_sync_stil,
+    ),
+    Invariant(
+        key="postvak_triage_achterstand",
+        titel="Triage-achterstand in het postvak loopt niet meer weg",
+        incident="11 aug 2026: 106 ongetrieerde mails, en het commando vanaf de telefoon "
+                 "triageerde er 15 per keer. De waarschuwing stond daardoor permanent "
+                 "aan — en een waarschuwing die altijd aan staat leert een mens hem te "
+                 "negeren, juist ook op de dag dat er wél iets is.",
+        severity=STIL,
+        stap="Draai de triage tot de achterstand leeg is (POST /api/outlook/triage/batch) "
+             "en controleer of de LLM-quota-rem actief staat.",
+        check=_check_postvak_triage_achterstand,
     ),
 ]
 

@@ -9,6 +9,7 @@ Endpoints:
 
   POST /api/outlook/sync             Inbox sync (haalt verse e-mails op)
   GET  /api/outlook/emails           Lijst (filter: label, unread, search)
+  GET  /api/outlook/sorted           Gegroepeerd: needs_reply / fyi / waiting
   GET  /api/outlook/emails/{id}      E-mail detail + body + lead-link
   POST /api/outlook/emails/{id}/read Mark as read
   POST /api/outlook/emails/{id}/triage  AI-triage (SSE)
@@ -18,6 +19,14 @@ Endpoints:
   POST /api/outlook/compose          Nieuwe e-mail versturen
   POST /api/outlook/triage/batch     Batch AI-triage (SSE)
   GET  /api/outlook/stats            Statistieken per label
+
+  GET    /api/outlook/rules              Afzenderregels + wat ze weghielden
+  POST   /api/outlook/rules              Regel toevoegen (past meteen toe)
+  DELETE /api/outlook/rules/{id}         Regel intrekken (geeft mail terug)
+  GET    /api/outlook/filtered           Weggehouden mail mét bewijs
+  POST   /api/outlook/emails/{id}/spam       Nooit meer van deze afzender
+  POST   /api/outlook/emails/{id}/archive    Deze mail hoeft niets van je
+  POST   /api/outlook/emails/{id}/restore    Terug in het postvak
 """
 import asyncio
 import json
@@ -107,8 +116,13 @@ def auth_logout():
 
 @router.post("/sync")
 async def sync_inbox(limit: int = Query(50, ge=1, le=100)):
-    if not outlook_service.is_authenticated():
-        raise HTTPException(401, "Niet geauthenticeerd bij Microsoft")
+    # `is_authenticated()` kent alleen het gecachete account; of er een bruikbaar
+    # token is, weet alleen `get_valid_token()`. Op 11 aug 2026 was het grant
+    # ingetrokken (AADSTS50173) en gaf deze route een kale 500 — een verlopen
+    # login hoort een 401 met een instructie te zijn, niet een serverfout.
+    if not outlook_service.is_authenticated() or not outlook_service.get_valid_token():
+        raise HTTPException(401, "Outlook-sessie verlopen of ingetrokken — log opnieuw in "
+                                 "via de Postvak-tab (Koppel Outlook-account).")
     emails = await outlook_service.sync_inbox(limit=limit)
     return {"synced": len(emails), "emails": emails}
 
@@ -133,6 +147,12 @@ def list_emails(
         offset=offset,
     )
     return {"emails": emails, "total": len(emails)}
+
+
+@router.get("/sorted")
+def sorted_inbox():
+    """Inbox gegroepeerd: needs_reply / fyi / waiting (+ untriaged-teller)."""
+    return outlook_service.list_sorted_db()
 
 
 # ── Email detail ──────────────────────────────────────────────────────────────
@@ -228,3 +248,85 @@ def batch_triage(limit: int = Query(30, ge=1, le=100)):
 @router.get("/stats")
 def get_stats():
     return outlook_service.get_stats()
+
+
+# ── Afzenderregels ────────────────────────────────────────────────────────────
+#
+# De spam-knop en alles eromheen. Twee dingen die deze endpoints anders maken
+# dan een gewone CRUD: aanmaken past de regel meteen toe op wat er al ligt (een
+# filter met terugwerkende kracht), en intrekken geeft élke mail terug die eraan
+# gesneuveld is. Zonder dat tweede is strenger filteren onverantwoord.
+
+class RuleRequest(BaseModel):
+    pattern: str
+    scope: str = "adres"          # adres | domein
+    action: str = "spam"          # spam | geen-klant | altijd-tonen
+    reason: str = ""
+
+
+class BlockRequest(BaseModel):
+    scope: str = "adres"
+    action: str = "spam"
+    reason: str = ""
+
+
+@router.get("/rules")
+def list_rules(include_inactive: bool = Query(False)):
+    from . import rules as mail_rules
+    return {
+        "rules": mail_rules.list_rules(include_inactive=include_inactive),
+        "stats": mail_rules.filtered_stats(),
+    }
+
+
+@router.post("/rules")
+def add_rule(body: RuleRequest):
+    from . import rules as mail_rules
+    try:
+        rule = mail_rules.add_rule(body.pattern, scope=body.scope, action=body.action,
+                                   reason=body.reason, source="mens")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"rule": rule, "applied": rule.get("applied", 0)}
+
+
+@router.delete("/rules/{rule_id}")
+def delete_rule(rule_id: int):
+    from . import rules as mail_rules
+    try:
+        return mail_rules.deactivate_rule(rule_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.get("/filtered")
+def filtered(limit: int = Query(50, ge=1, le=200)):
+    """Wat de regels hebben weggehouden, mét het bewijs en een weg terug."""
+    from . import rules as mail_rules
+    return {"emails": mail_rules.filtered_mails(limit=limit),
+            "stats": mail_rules.filtered_stats()}
+
+
+@router.post("/emails/{email_id}/spam")
+def block_sender(email_id: str, body: BlockRequest = BlockRequest()):
+    try:
+        return outlook_service.block_sender(
+            email_id, scope=body.scope, action=body.action, reason=body.reason)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/emails/{email_id}/archive")
+def archive_email(email_id: str):
+    try:
+        return outlook_service.archive_email(email_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.post("/emails/{email_id}/restore")
+def restore_email(email_id: str):
+    try:
+        return outlook_service.restore_email(email_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))

@@ -125,12 +125,31 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Hoeveel kandidaten we maximaal door `valid_target` halen om er `count` uit te
+# kiezen. Ruim genoeg dat een sliert onbruikbare adressen de batch nooit leeg
+# maakt, begrensd genoeg dat een voorraad van duizenden niet elke ochtend
+# volledig door de zeef gaat.
+_KANDIDAAT_SCAN_MAX = 500
+
+
 def select_batch_leads(count: int) -> List[Dict[str, Any]]:
     """Kies de beste onbenaderde leads met een bruikbaar e-mailadres.
 
     Selectie: nog nooit benaderd of afgeschreven, nog geen concept klaar,
     e-mail bekend (hoofdemail of contactpersoon), hoogste score eerst.
-    Deliverable-geverifieerde adressen ('valid') gaan vóór alleen-gescrapede."""
+    Deliverable-geverifieerde adressen ('valid') gaan vóór alleen-gescrapede.
+
+    De zeef van `valid_target` draait vóór het afkappen op `count`, niet erna.
+    Andersom kiest de database eerst `count` rijen en houdt Python daar
+    misschien niets van over — dan meldt de batch "geen bruikbare leads" terwijl
+    de voorraad vol staat. Precies dat gebeurde op 2 aug 2026: de eerste acht
+    rijen in deze sortering waren allemaal `info@`-adressen die de zeef weigert,
+    de eerste bruikbare stond op plek negen, en met count=5 kwam er nooit één
+    concept uit. Alle leads hadden bovendien dezelfde score (50), dus de
+    tie-break was `created_at` en de volgorde iedere dag identiek: dezelfde acht
+    onbruikbare adressen blokkeerden het venster permanent. De funnel stond
+    weken op "0 verstuurd" met zeven direct mailbare leads in voorraad.
+    """
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM leads "
@@ -139,12 +158,23 @@ def select_batch_leads(count: int) -> List[Dict[str, Any]]:
             "AND (email != '' OR contacts LIKE '%@%') "
             "ORDER BY CASE status WHEN 'valid' THEN 0 ELSE 1 END, score DESC, created_at ASC "
             "LIMIT ?",
-            (count,),
+            (_KANDIDAAT_SCAN_MAX,),
         ).fetchall()
-    leads = [dict(r) for r in rows]
-    # Sorteer direct al de leads eruit zonder serieus prospect-adres — die
-    # mogen nooit in de outreach-review belanden (zie valid_target()).
-    return [l for l in leads if valid_target(l)[0]]
+    # Sorteer de leads eruit zonder serieus prospect-adres — die mogen nooit in
+    # de outreach-review belanden (zie valid_target()).
+    bruikbaar = [dict(r) for r in rows if valid_target(dict(r))[0]]
+    return bruikbaar[:count]
+
+
+def count_mailable_leads() -> int:
+    """Hoeveel leads kunnen er vandáág een concept krijgen.
+
+    Bewust dezelfde selectie + zeef als `select_batch_leads`: "voorraad" en
+    "waar de batch mee vooruit kan" moeten één getal zijn. Zolang Iris' bottleneck
+    op `new + enriched` telde, las ze 47 waar er 7 mailbaar waren — en dan wijst
+    ze de verkeerde knop aan (nog meer leads zoeken in plaats van versturen).
+    """
+    return len(select_batch_leads(_KANDIDAAT_SCAN_MAX))
 
 
 def target_email_for(lead: Dict[str, Any]) -> str:

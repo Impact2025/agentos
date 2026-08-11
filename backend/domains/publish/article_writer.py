@@ -50,8 +50,43 @@ _MAX_LINK_CANDIDATES = 40
 _SECTIONS_PER_CALL = 3
 
 
+# ── Anti-verzinsel-grondwet ─────────────────────────────────────────────────
+# Vincent, 04-08-2026: "nooit geen verzonnen bedrijven of andere fake info,
+# ik wil alleen top info. Ga altijd voor het beste of niets."
+#
+# Aanleiding: twee gepubliceerde artikelen ('9 beste partners voor AI-oplossingen
+# in het sociale domein', 'Zeven AI-partners die bewezen hebben...') bevatten
+# verzonnen bedrijfsnamen én verzonnen cijfers/prijzen over ECHT bestaande
+# partijen. Dat is geen SEO-foutje maar een juridisch en reputatierisico.
+#
+# Elke schrijf-, herschrijf- en meta-stap krijgt deze regel mee, zodat één
+# losse prompt hem niet kan vergeten.
+FEITEN_GRONDWET = (
+    "\n\nHARDE FEITENREGELS (belangrijker dan lengte, SEO of vloeiendheid):\n"
+    "1. Verzin NOOIT bedrijfsnamen, merken, personen, klanten of partners. "
+    "Noem alleen organisaties die je uit de meegeleverde context kent.\n"
+    "2. Verzin NOOIT cijfers, percentages, prijzen, jaartallen, aantallen of "
+    "onderzoeksresultaten. Geen 'gemiddeld 23% meer', geen 'vanaf 499 euro', "
+    "geen 'uit onderzoek blijkt' zonder bron uit de context.\n"
+    "3. Verzin NOOIT citaten, reviews, testimonials of case-studies.\n"
+    "4. Verzin NOOIT bronnen, URL's of literatuurverwijzingen.\n"
+    "5. Schrijf geen claim OVER een bestaande partij (prijs, werkwijze, "
+    "resultaat) tenzij die letterlijk in de context staat.\n"
+    "6. Weet je iets niet? Laat het WEG of schrijf de zin algemener. "
+    "Een korter, kloppend artikel is beter dan een langer artikel met een "
+    "plausibel klinkend verzinsel. Het devies is: het beste of niets.\n"
+    "7. Vul een gevraagd aantal (bv. '7 tips') NOOIT op met verzonnen items. "
+    "Lever er liever minder en zet dat eerlijk in de tekst."
+)
+
+
 async def _llm(system: str, prompt: str, max_tokens: int = 2000) -> str:
     from . import content_pipeline
+    # De grondwet gaat mee met ELKE schrijfstap — outline, secties, FAQ,
+    # herschrijven, meta-teksten. Eén centrale plek, zodat een nieuwe prompt
+    # hem niet per ongeluk mist.
+    if FEITEN_GRONDWET not in system:
+        system = system + FEITEN_GRONDWET
     return await content_pipeline._llm(system, prompt, max_tokens=max_tokens)
 
 
@@ -661,6 +696,107 @@ def check_keyword(html_body: str, keyword: str) -> List[str]:
     return issues
 
 
+# ── Eigen bewijs (information gain) ─────────────────────────────────────────
+#
+# Waarom deze toets bestaat (5 aug 2026, gemeten op `data/agentos.db`): de haak
+# is er al sinds de kennisbank — `_make_outline` eist dat één sectie de
+# casestudy als bewijs gebruikt — maar de tabel `case_studies` bevatte 4 rijen
+# op één van de twaalf sites, en van de 138 artikelen met een QC-rapport hadden
+# er 7 écht een gekoppelde casestudy. Ruwweg 95% van wat we publiceren is dus
+# reproduceerbare AI-tekst: elke concurrent met hetzelfde model krijgt hetzelfde
+# artikel. De kwaliteitsgate (80) vangt dat níét — die meet vorm, en generiek
+# scoort probleemloos 84.
+#
+# Twee ontwerpbesluiten:
+#  * Deterministisch, géén LLM. Een model vragen "bevat dit artikel uniek
+#    bewijs?" levert een oordeel over stijl; wij willen een waarneming over
+#    herkomst. Zelfde afweging als `seo/opportunity_quality.py`.
+#  * Meten, niet blokkeren. De vlag komt in `qc_report` en telt in de invariant
+#    `artikel_zonder_eigen_bewijs`; hij weigert niets. Zou hij blokkeren, dan
+#    staat de contentmotor stil op data die alleen Vincent kan aanleveren —
+#    en dat is de verkeerde straf voor het verkeerde onderdeel.
+
+#: Getallen die als hard bewijs tellen. Losse cijfers ('3 tips', '2026') zeggen
+#: niets; een percentage of een getal van minstens twee cijfers wél.
+_BEWIJS_CIJFER = re.compile(r"\d[\d.,]*\s*%|\b\d[\d.,]*\d\b")
+
+#: Zoveel kenmerkende woorden uit de casestudy moeten in de tekst staan voordat
+#: 'de casestudy is verwerkt' een waarneming is in plaats van toeval. Eén
+#: gedeeld woord is bij een casestudy over hetzelfde vakgebied vrijwel gegarandeerd.
+_MIN_BEWIJS_WOORDEN = 2
+
+
+def _kenmerkende_woorden(case_study: Dict) -> set:
+    """De woorden waaraan je déze casestudy herkent (titel + tags, ontdaan van
+    stopwoorden). Bewust niet de body: die is lang en overlapt met elk artikel
+    over hetzelfde onderwerp, waardoor élk artikel zou 'slagen'."""
+    from ..seo.optimizer import _significant_tokens
+    tekst = f"{case_study.get('title', '')} {(case_study.get('tags') or '').replace(',', ' ')}"
+    return {fold_diacritics(t) for t in _significant_tokens(tekst)}
+
+
+def _site_heeft_bewijs(site_id: str) -> bool:
+    """Heeft deze site überhaupt bewijsmateriaal in de kennisbank? Faalt de
+    lookup, dan gaan we uit van 'ja' — de mildere reden ('niet gekoppeld')
+    beschuldigt niemand ten onrechte van een lege kennisbank."""
+    if not site_id:
+        return True
+    try:
+        from ..seo.knowledge import list_case_studies
+        return bool(list_case_studies(site_id, status="active"))
+    except Exception:
+        return True
+
+
+def check_own_evidence(html_body: str, case_study: Optional[Dict],
+                       site_has_case_studies: bool = True) -> Dict:
+    """Staat er in dit artikel bewijs dat alleen wíj hebben?
+
+    `pass=False` is geen fout van de schrijver maar een waarneming over het
+    artikel. De reden vertelt wie aan zet is:
+      * `geen-casestudy-in-kennisbank` — de site heeft er geen; Vincent moet er
+        2-3 aanleveren. Dit is veruit het meest voorkomende geval.
+      * `casestudy-niet-verwerkt` — er wás bewijsmateriaal, het artikel gebruikt
+        het niet. Dan zit het gat in de schrijfketen, niet in de kennisbank.
+    """
+    if not case_study:
+        return {"pass": False, "signalen": [],
+                "reden": "geen-casestudy-in-kennisbank" if not site_has_case_studies
+                         else "geen-casestudy-gekoppeld"}
+
+    tekst = fold_diacritics(_plain_text(html_body).lower())
+    html_low = (html_body or "").lower()
+    signalen: List[str] = []
+
+    bron = (case_study.get("source_url") or "").strip().lower()
+    if bron and bron.split("://")[-1].rstrip("/") in html_low:
+        signalen.append("bron-link")
+
+    # Cijfers uit de casestudy die letterlijk in het artikel terugkomen: het
+    # hardste signaal dat het bewijsmateriaal écht is gebruikt.
+    cijfers = set(_BEWIJS_CIJFER.findall(
+        f"{case_study.get('summary', '')} {case_study.get('body', '')}"))
+    gedeeld = {c for c in cijfers if c.strip().lower() in tekst}
+    if gedeeld:
+        signalen.append(f"cijfer:{sorted(gedeeld)[0].strip()}")
+
+    try:
+        woorden = _kenmerkende_woorden(case_study)
+    except Exception as e:  # tokenizer onbereikbaar: liever geen oordeel dan een vals oordeel
+        logger.warning("[article-writer] Bewijs-tokencheck mislukt: %s", e)
+        woorden = set()
+    raak = {w for w in woorden if w in tekst}
+    if len(raak) >= _MIN_BEWIJS_WOORDEN:
+        signalen.append(f"benoemd:{len(raak)}/{len(woorden)}")
+
+    return {
+        "pass": bool(signalen),
+        "signalen": signalen,
+        "reden": "" if signalen else "casestudy-niet-verwerkt",
+        "case_study": case_study.get("title", "")[:80],
+    }
+
+
 async def _qc_fix(site: Dict, keyword: str, html_body: str, issues: List[str],
                   ctas: List[str]) -> str:
     system = (
@@ -811,6 +947,8 @@ async def write_article_staged(site: Dict, keyword: str, angle: str, rationale: 
                  "configured": bool(ctas)}
     kw_after = check_keyword(html_body, keyword)
     qc["keyword"] = {"pass": not kw_after, "issues": kw_after, "fixed": fixed and bool(kw_issues)}
+    qc["eigen_bewijs"] = check_own_evidence(
+        html_body, case_study, site_has_case_studies=_site_heeft_bewijs(site.get("id", "")))
 
     try:
         html_body, meta_report = await _meta_pass(site, keyword, html_body)

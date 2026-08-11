@@ -54,12 +54,79 @@ CREATE INDEX IF NOT EXISTS idx_radar_watchlist_project ON radar_watchlist(projec
 _schema_ready = False
 
 
+# Kolommen die ná de eerste versie zijn bijgekomen. Idempotent per kolom,
+# zelfde patroon als `shared/database._migrate`.
+_MIGRATIES = {
+    "radar_signals": (
+        # De signaalpoort (`quality.py`, 3 aug 2026): waaróm een gevonden stuk
+        # geen signaal is. Bewaard in plaats van weggegooid, zodat de poort
+        # controleerbaar blijft en een geweerd signaal alsnog op te pakken is.
+        ("filter_reason", "ALTER TABLE radar_signals ADD COLUMN filter_reason TEXT DEFAULT ''"),
+        ("filter_label",  "ALTER TABLE radar_signals ADD COLUMN filter_label TEXT DEFAULT ''"),
+        ("filter_detail", "ALTER TABLE radar_signals ADD COLUMN filter_detail TEXT DEFAULT ''"),
+        # Onderscheidt "Toch oppakken" (een mens koos bewust voor dit signaal,
+        # ondanks het gate-oordeel) van "nog nooit door de huidige poort
+        # herbeoordeeld" — allebei zien er hetzelfde uit (status='new',
+        # filter_reason='') zónder deze vlag. Nodig sinds `_reconcile_quality`
+        # (9 aug 2026) rijen met een verouderd/leeg oordeel herbeoordeelt: zonder
+        # dit zou zo'n herbeoordeling een bewust herstelde 'Toch oppakken'-rij
+        # bij de eerstvolgende poort-verbetering alsnog terugzetten op
+        # 'uitgefilterd' — de override zou dan nooit blijvend zijn.
+        ("quality_reviewed", "ALTER TABLE radar_signals ADD COLUMN quality_reviewed INTEGER DEFAULT 0"),
+    ),
+    "radar_watchlist": (
+        # `last_scanned_at` werd alleen gezet als er iets wérd opgeslagen. Daardoor
+        # waren "gescand, niets nieuws", "gescand, gefaald" en "nooit gescand" niet
+        # van elkaar te onderscheiden — vijf projecten stonden zeven dagen op
+        # 27 juli zonder dat iemand kon zien of dat rust of storing was.
+        ("last_status", "ALTER TABLE radar_watchlist ADD COLUMN last_status TEXT DEFAULT ''"),
+        ("last_error",  "ALTER TABLE radar_watchlist ADD COLUMN last_error TEXT DEFAULT ''"),
+        ("last_found",  "ALTER TABLE radar_watchlist ADD COLUMN last_found INTEGER DEFAULT 0"),
+        ("scan_count",  "ALTER TABLE radar_watchlist ADD COLUMN scan_count INTEGER DEFAULT 0"),
+        ("signal_count", "ALTER TABLE radar_watchlist ADD COLUMN signal_count INTEGER DEFAULT 0"),
+    ),
+}
+
+
+def _migrate(conn) -> None:
+    for tabel, kolommen in _MIGRATIES.items():
+        bestaand = {r["name"] for r in conn.execute(f"PRAGMA table_info({tabel})")}
+        for naam, ddl in kolommen:
+            if naam not in bestaand:
+                conn.execute(ddl)
+    # Projectnamen zijn hoofdletterongevoelig bedoeld — `add_watch` verkleint ze
+    # al — maar er stonden 'WeAreImpact' (539 signalen) naast 'weareimpact' (79)
+    # en 'Bijeen' naast 'bijeen'. `list_watch` matcht exact op kleine letters,
+    # dus de hoofdlettervarianten waren via de UI onbereikbaar: watches die wél
+    # scanden maar in geen enkel overzicht stonden.
+    conn.execute("UPDATE radar_watchlist SET project = lower(project) "
+                 "WHERE project != lower(project)")
+    # Op signals ligt een UNIQUE index (project, url). Stond dezelfde URL onder
+    # beide schrijfwijzen, dan botsen ze bij het verkleinen; ruim die eerst op
+    # en houd de rij met de meeste inhoud (een opgepakt of verrijkt signaal
+    # weegt zwaarder dan een kale dubbelganger).
+    conn.execute(
+        """DELETE FROM radar_signals WHERE id IN (
+               SELECT id FROM (
+                   SELECT id, ROW_NUMBER() OVER (
+                       PARTITION BY lower(project), url
+                       ORDER BY (status != 'new') DESC, ai_match_score DESC, created_at
+                   ) AS rang
+                   FROM radar_signals
+               ) WHERE rang > 1
+           )"""
+    )
+    conn.execute("UPDATE radar_signals SET project = lower(project) "
+                 "WHERE project != lower(project)")
+
+
 def ensure_schema() -> None:
     global _schema_ready
     if _schema_ready:
         return
     with get_conn() as conn:
         conn.executescript(DDL)
+        _migrate(conn)
     _schema_ready = True
 
 

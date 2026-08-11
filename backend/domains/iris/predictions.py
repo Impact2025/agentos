@@ -113,23 +113,34 @@ def _judge(metric: str, direction: str, baseline: float, target: Optional[float]
         wanted_improvement = direction == "up"
 
     noise = _NOISE.get(metric, 0.5)
-    if abs(improvement) < noise:
-        return "unclear", f"nauwelijks bewogen ({baseline:g} → {outcome:g})"
-
+    bewogen = abs(improvement) >= noise
     moved_up = improvement > 0
-    hit_direction = moved_up == wanted_improvement
+    hit_direction = bewogen and (moved_up == wanted_improvement)
+
     if target is not None:
-        # Met target: correct als de gewenste kant én het doel gehaald is.
+        # Met een expliciet doel ís het doel de claim, en dan mag de ruisdrempel
+        # niet vóór de doeltoets komen. Vóór 2 aug 2026 stond hij daar wel, en
+        # dan heette "TeambuildingMetImpact krijgt 1 click" bij 0 → 0 netjes
+        # 'unclear' — niet meegeteld in de trefkans. Vijf van de negen unclears
+        # waren zulke stilstanden; de gemelde 42,9% was in werkelijkheid 26%.
+        # Een voorspelling die een drempel noemt en die drempel niet haalt is
+        # geen onbeslist geval maar een misser, hoe stil de metriek ook bleef.
         if metric == "position":
             reached = outcome <= target if direction == "up" else outcome >= target
         else:
             reached = outcome >= target if direction == "up" else outcome <= target
-        if hit_direction and reached:
+        if reached:
             return "correct", f"doel gehaald ({baseline:g} → {outcome:g}, doel {target:g})"
         if hit_direction:
             return "unclear", f"juiste kant maar doel niet gehaald ({baseline:g} → {outcome:g}, doel {target:g})"
+        if not bewogen:
+            return "wrong", f"niet bewogen, doel niet gehaald ({baseline:g} → {outcome:g}, doel {target:g})"
         return "wrong", f"verkeerde kant ({baseline:g} → {outcome:g}, doel {target:g})"
-    # Zonder target: alleen de richting telt.
+
+    # Zonder target telt alleen de richting — en dáár is een beweging binnen de
+    # ruismarge wél oprecht onbeslist: er is geen drempel om aan af te meten.
+    if not bewogen:
+        return "unclear", f"nauwelijks bewogen ({baseline:g} → {outcome:g})"
     return ("correct", f"{baseline:g} → {outcome:g}") if hit_direction \
         else ("wrong", f"tegengesteld ({baseline:g} → {outcome:g})")
 

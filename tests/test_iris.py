@@ -251,3 +251,56 @@ def test_briefing_needs_retry(conn, iris_clean):
                  "WHERE id='r-retry'")
     conn.commit()
     assert service.briefing_needs_retry()
+
+
+@pytest.mark.asyncio
+async def test_waarheidsaudit_blokkeert_de_webserver_niet(conn, iris_clean, monkeypatch):
+    """De audit haalt tientallen pagina's op met een sýnchrone httpx-client.
+
+    Vanuit de async briefing blokkeert dat de event loop en daarmee de hele
+    webserver. Bij een koude start om 08:00 draait de briefing als inhaalslag,
+    en stond het dashboard minutenlang op "kan geen verbinding maken" terwijl de
+    log al "startup complete" zei (gemeten 6 aug 2026: ruim vier minuten). De
+    audit hoort dus in een thread — deze test bewaakt dat met een hartslag die
+    gewoon door moet tikken terwijl de audit "traag" is.
+    """
+    import asyncio
+    import time
+    from backend.domains.iris import service, integrity, knowledge, metrics, selfheal
+
+    class Klaar(Exception):
+        """Stopt de briefing meteen ná de audit; de rest doet hier niet ter zake."""
+
+    async def geen_kennis_sync():
+        return {}
+
+    async def geen_zelfherstel(**kwargs):
+        return {"healed": 0}
+
+    def trage_audit(*, source="scheduler"):
+        time.sleep(0.4)          # staat voor de HTTP-probes van `_pagina_status`
+        return {"nieuw": 0}
+
+    def stop():
+        raise Klaar()
+
+    monkeypatch.setattr(knowledge, "sync_knowledge", geen_kennis_sync)
+    monkeypatch.setattr(selfheal, "run_selfheal", geen_zelfherstel)
+    monkeypatch.setattr(integrity, "run_audit", trage_audit)
+    monkeypatch.setattr(metrics, "snapshot", stop)
+
+    tikken = 0
+
+    async def hartslag():
+        nonlocal tikken
+        for _ in range(40):
+            await asyncio.sleep(0.02)
+            tikken += 1
+
+    klopt = asyncio.create_task(hartslag())
+    with pytest.raises(Klaar):
+        await service.run_morning_briefing()
+    klopt.cancel()
+
+    # Blokkeerde de audit de loop, dan staat de teller op nul of één.
+    assert tikken >= 5, f"event loop stond stil tijdens de audit (tikken={tikken})"

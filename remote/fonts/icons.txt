@@ -2,6 +2,7 @@ alternate_email
 analytics
 article
 auto_awesome
+block
 bolt
 calendar_month
 campaign
@@ -45,10 +46,12 @@ schedule
 security
 send
 settings_input_component
+shield
 support_agent
 sync
 task_alt
 trending_up
+undo
 verified
 visibility
 warning

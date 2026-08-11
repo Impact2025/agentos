@@ -61,6 +61,35 @@ def _strip_json(raw: str) -> str:
     return raw.strip()
 
 
+_FIT_SCORE_RE = re.compile(r'"fit_score"\s*:\s*(-?\d+)')
+_FIT_RATIONALE_RE = re.compile(r'"fit_rationale"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _salvage_fit(raw: str) -> Optional[Dict]:
+    """Red het oordeel uit JSON die niet volledig parseert.
+
+    `max_tokens=700` kapt een respons soms af vóórdat de sluithaak volgt —
+    het object mist dan alleen zijn einde, niet zijn inhoud. `json.loads` geeft
+    dan helemaal niets terug, terwijl "fit_score": 5 gewoon in de tekst staat.
+    Zonder deze redding verdween precies dát oordeel (een duidelijke afwijzing)
+    en kwam er een neutrale 50 voor in de plaats — de vacature leek daardoor
+    een middelmatige match in plaats van een afgewezen kans."""
+    m = _FIT_SCORE_RE.search(raw)
+    if not m:
+        return None
+    try:
+        score = int(m.group(1))
+    except ValueError:
+        return None
+    r = _FIT_RATIONALE_RE.search(raw)
+    rationale = r.group(1) if r else "(gered uit afgekapte JSON, geen rationale gevonden)"
+    return {
+        "fit_score": score, "fit_rationale": rationale,
+        "hours_detected": "", "location_detected": "", "contract_type_detected": "onbekend",
+        "posted_days_ago": -1,
+    }
+
+
 def _resolve_model_override(profile_model: Optional[str]) -> Optional[str]:
     """Profielmodel → bare model-string die de cloud-gateway snapt.
 
@@ -138,8 +167,6 @@ class VacancyService:
             ).fetchone()
         if row and (row["system_prompt"] or "").strip():
             return row["system_prompt"].strip(), _resolve_model_override(row["model"])
-        # Fallback als het profiel nog niet geseed is (zou niet moeten gebeuren, ensure_expert_team
-        # draait bij startup) - dan gewoon geen fit-analyse, neutrale score.
         return "", None
 
     async def analyze_fit(
@@ -150,7 +177,7 @@ class VacancyService:
         system, model_override = self._fit_config()
         if not system:
             return {
-                "fit_score": 50, "fit_rationale": "Fit-Analist-profiel niet gevonden.",
+                "fit_score": None, "fit_rationale": "Fit-Analist-profiel niet gevonden — onbeoordeeld, geen 50.",
                 "hours_detected": "", "location_detected": "", "contract_type_detected": "onbekend",
                 "posted_days_ago": -1,
             }
@@ -184,7 +211,7 @@ class VacancyService:
                     title, organization, url, source, snippet, description, _attempt=1,
                 )
             return {
-                "fit_score": 50, "fit_rationale": "Geen AI-analyse beschikbaar (backend onbereikbaar).",
+                "fit_score": None, "fit_rationale": "Geen AI-analyse beschikbaar (backend onbereikbaar) — onbeoordeeld, geen 50.",
                 "hours_detected": "", "location_detected": "", "contract_type_detected": "onbekend",
                 "posted_days_ago": -1,
             }
@@ -195,8 +222,16 @@ class VacancyService:
                 return await self.analyze_fit(
                     title, organization, url, source, snippet, description, _attempt=1,
                 )
+            # De JSON is stuk (vaak afgekapt door max_tokens), maar het echte
+            # oordeel staat er meestal gewoon in — "fit_score": 5" naast een
+            # ontbrekende sluithaak. Vóór deze salvage viel dat weg en kreeg de
+            # vacature een neutrale 50, wat een score van 5 (duidelijk geen fit)
+            # verandert in een score die middenin de "top"-lijst terechtkomt.
+            gered = _salvage_fit(raw)
+            if gered is not None:
+                return gered
             return {
-                "fit_score": 50, "fit_rationale": raw[:300],
+                "fit_score": None, "fit_rationale": "AI-analyse niet leesbaar (kapotte JSON) — onbeoordeeld, geen 50: " + raw[:250],
                 "hours_detected": "", "location_detected": "", "contract_type_detected": "onbekend",
                 "posted_days_ago": -1,
             }

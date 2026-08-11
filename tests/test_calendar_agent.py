@@ -10,8 +10,18 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from backend.domains.calendar import agent as A
-from backend.domains.calendar import service as cal
+from backend.domains.calendar import service as svc
+from backend.domains.calendar import service_google as cal
 from backend.shared.database import get_conn
+
+# `cal` (service_google) is voor tests die de Google-implementatie zelf
+# aanroepen/patchen (_api, CALENDAR_BUSY_CALENDAR_IDS). `svc` is de
+# backend-dispatcher (domains/calendar/service.py) — dat is de module die
+# agent.py daadwerkelijk gebruikt (`from ...domains.calendar import service
+# as cal`), dus alles wat agent.py-gedrag stuurt (is_configured/
+# get_busy_times/block_time als hele functie) moet dáár gepatcht worden:
+# patchen op service_google verandert niets aan de losse referentie die de
+# dispatcher bij het importeren al naar de oorspronkelijke functie had.
 
 TZ = ZoneInfo("Europe/Amsterdam")
 
@@ -140,8 +150,8 @@ def test_overlap_wordt_gemeld_en_krijgt_high_priority(vrijdag, mailbox, monkeypa
     async def bezet(start, end):
         return [{"start": "2026-07-21T14:00:00+02:00",
                  "end": "2026-07-21T15:00:00+02:00"}]
-    monkeypatch.setattr(cal, "is_configured", lambda: True)
-    monkeypatch.setattr(cal, "get_busy_times", bezet)
+    monkeypatch.setattr(svc, "is_configured", lambda: True)
+    monkeypatch.setattr(svc, "get_busy_times", bezet)
     body = "Dinsdag 14:00 bij ons op kantoor? Duurt 1 uur."
     p = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak", "k@b.nl", body)
     r = _proposal(p["id"])
@@ -153,8 +163,8 @@ def test_mislukte_check_leest_niet_als_vrij(vrijdag, mailbox, monkeypatch):
     """De gevaarlijkste faalmodus: een stukke check die 'geen conflict' zegt."""
     async def stuk(start, end):
         raise RuntimeError("notFound")
-    monkeypatch.setattr(cal, "is_configured", lambda: True)
-    monkeypatch.setattr(cal, "get_busy_times", stuk)
+    monkeypatch.setattr(svc, "is_configured", lambda: True)
+    monkeypatch.setattr(svc, "get_busy_times", stuk)
     body = "Dinsdag 14:00 op kantoor?"
     p = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak", "k@b.nl", body)
     note = _proposal(p["id"])["conflict_note"]
@@ -162,7 +172,7 @@ def test_mislukte_check_leest_niet_als_vrij(vrijdag, mailbox, monkeypatch):
 
 
 def test_zonder_gekoppelde_agenda_leest_niet_als_vrij(vrijdag, mailbox, monkeypatch):
-    monkeypatch.setattr(cal, "is_configured", lambda: False)
+    monkeypatch.setattr(svc, "is_configured", lambda: False)
     body = "Dinsdag 14:00 op kantoor?"
     p = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak", "k@b.nl", body)
     note = _proposal(p["id"])["conflict_note"]
@@ -172,8 +182,8 @@ def test_zonder_gekoppelde_agenda_leest_niet_als_vrij(vrijdag, mailbox, monkeypa
 def test_vrij_slot_geeft_geen_waarschuwing(vrijdag, mailbox, monkeypatch):
     async def vrij(start, end):
         return []
-    monkeypatch.setattr(cal, "is_configured", lambda: True)
-    monkeypatch.setattr(cal, "get_busy_times", vrij)
+    monkeypatch.setattr(svc, "is_configured", lambda: True)
+    monkeypatch.setattr(svc, "get_busy_times", vrij)
     body = "Dinsdag 14:00 op kantoor?"
     p = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak", "k@b.nl", body)
     assert _proposal(p["id"])["conflict_note"] == ""
@@ -220,14 +230,14 @@ def test_goedkeuren_weigert_ongecontroleerd_slot(vrijdag, mailbox, monkeypatch):
     """De kern van 'geen dubbele boekingen': niet gecontroleerd = niet boeken."""
     async def stuk(start, end):
         raise RuntimeError("notFound")
-    monkeypatch.setattr(cal, "is_configured", lambda: True)
-    monkeypatch.setattr(cal, "get_busy_times", stuk)
+    monkeypatch.setattr(svc, "is_configured", lambda: True)
+    monkeypatch.setattr(svc, "get_busy_times", stuk)
     body = "Dinsdag 14:00 op kantoor?"
     p = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak", "k@b.nl", body)
     assert _proposal(p["id"])["conflict_checked"] == "error"
 
     geboekt = []
-    monkeypatch.setattr(cal, "block_time",
+    monkeypatch.setattr(svc, "block_time",
                         lambda **kw: geboekt.append(kw) or {"event_id": "x"})
     res = A.approve_proposal(p["id"])
     assert res["ok"] is False
@@ -243,8 +253,8 @@ def test_geblokkeerd_voorstel_geneest_zodra_agenda_bereikbaar_is(
     bereikbaar, dan is het goed te keuren zonder het opnieuw te genereren."""
     async def stuk(start, end):
         raise RuntimeError("notFound")
-    monkeypatch.setattr(cal, "is_configured", lambda: True)
-    monkeypatch.setattr(cal, "get_busy_times", stuk)
+    monkeypatch.setattr(svc, "is_configured", lambda: True)
+    monkeypatch.setattr(svc, "get_busy_times", stuk)
     body = "Dinsdag 14:00 op kantoor?"
     p = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak", "k@b.nl", body)
     assert _proposal(p["id"])["conflict_checked"] == "error"
@@ -252,11 +262,11 @@ def test_geblokkeerd_voorstel_geneest_zodra_agenda_bereikbaar_is(
     # Agenda wordt nu bereikbaar en het slot is vrij.
     async def vrij(start, end):
         return []
-    monkeypatch.setattr(cal, "get_busy_times", vrij)
+    monkeypatch.setattr(svc, "get_busy_times", vrij)
 
     async def fake_block(**kw):
         return {"event_id": "evt9", "html_link": "https://cal/evt9"}
-    monkeypatch.setattr(cal, "block_time", fake_block)
+    monkeypatch.setattr(svc, "block_time", fake_block)
     res = A.approve_proposal(p["id"])
     assert res["ok"] is True
     assert _proposal(p["id"])["status"] == "booked"
@@ -269,21 +279,21 @@ def test_geblokkeerd_voorstel_blijft_geblokkeerd_bij_live_overlap(
     dan blokkeert goedkeuren alsnog — geen dubbele boeking."""
     async def stuk(start, end):
         raise RuntimeError("notFound")
-    monkeypatch.setattr(cal, "is_configured", lambda: True)
-    monkeypatch.setattr(cal, "get_busy_times", stuk)
+    monkeypatch.setattr(svc, "is_configured", lambda: True)
+    monkeypatch.setattr(svc, "get_busy_times", stuk)
     body = "Dinsdag 14:00 op kantoor?"
     p = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak", "k@b.nl", body)
     assert _proposal(p["id"])["conflict_checked"] == "error"
 
     async def bezet(start, end):
         return [{"start": start.isoformat(), "end": end.isoformat()}]
-    monkeypatch.setattr(cal, "get_busy_times", bezet)
+    monkeypatch.setattr(svc, "get_busy_times", bezet)
 
     geboekt = []
     async def fake_block(**kw):
         geboekt.append(kw)
         return {"event_id": "x"}
-    monkeypatch.setattr(cal, "block_time", fake_block)
+    monkeypatch.setattr(svc, "block_time", fake_block)
     res = A.approve_proposal(p["id"])
     assert res["ok"] is False
     assert res["code"] == "conflict_found"
@@ -294,15 +304,15 @@ def test_geblokkeerd_voorstel_blijft_geblokkeerd_bij_live_overlap(
 def test_goedkeuren_mag_wel_na_geslaagde_check(vrijdag, mailbox, monkeypatch):
     async def vrij(start, end):
         return []
-    monkeypatch.setattr(cal, "is_configured", lambda: True)
-    monkeypatch.setattr(cal, "get_busy_times", vrij)
+    monkeypatch.setattr(svc, "is_configured", lambda: True)
+    monkeypatch.setattr(svc, "get_busy_times", vrij)
     body = "Dinsdag 14:00 op kantoor?"
     p = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak", "k@b.nl", body)
     assert _proposal(p["id"])["conflict_checked"] == "ok"
 
     async def fake_block(**kw):
         return {"event_id": "evt1", "html_link": "https://cal/evt1"}
-    monkeypatch.setattr(cal, "block_time", fake_block)
+    monkeypatch.setattr(svc, "block_time", fake_block)
     res = A.approve_proposal(p["id"])
     assert res["ok"] is True
     assert _proposal(p["id"])["status"] == "booked"
@@ -343,8 +353,8 @@ def test_router_blocked_returns_200_niet_502(vrijdag, mailbox, monkeypatch):
     """conflict_unchecked → 200 met ok:false + error (instructie blijft leesbaar)."""
     async def stuk(start, end):
         raise RuntimeError("notFound")
-    monkeypatch.setattr(cal, "is_configured", lambda: True)
-    monkeypatch.setattr(cal, "get_busy_times", stuk)
+    monkeypatch.setattr(svc, "is_configured", lambda: True)
+    monkeypatch.setattr(svc, "get_busy_times", stuk)
     body = "Dinsdag 14:00 op kantoor?"
     p = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak", "k@b.nl", body)
 
@@ -365,15 +375,15 @@ def test_router_booking_error_returns_502(vrijdag, mailbox, monkeypatch):
     """Echt mislukt boeken (Google fout) → 502, maar wél met de fouttekst."""
     async def vrij(start, end):
         return []
-    monkeypatch.setattr(cal, "is_configured", lambda: True)
-    monkeypatch.setattr(cal, "get_busy_times", vrij)
+    monkeypatch.setattr(svc, "is_configured", lambda: True)
+    monkeypatch.setattr(svc, "get_busy_times", vrij)
     body = "Dinsdag 14:00 op kantoor?"
     p = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak", "k@b.nl", body)
     assert _proposal(p["id"])["conflict_checked"] == "ok"
 
     async def fake_block(**kw):
         raise RuntimeError("Google: 403 forbidden")
-    monkeypatch.setattr(cal, "block_time", fake_block)
+    monkeypatch.setattr(svc, "block_time", fake_block)
     from fastapi.testclient import TestClient
     from backend.main import app
     c = TestClient(app)
@@ -393,10 +403,23 @@ def test_router_booking_error_returns_502(vrijdag, mailbox, monkeypatch):
 def test_datum_ver_in_de_toekomst_wordt_niet_als_afspraak_gelezen():
     from backend.domains.calendar import agent as ag
     nu = ag._amsterdam_now()
-    # Kies een maand die zeker vóór de huidige ligt, zodat de jaar-ophoging
-    # aanslaat en de uitkomst ~10 maanden vooruit ligt.
-    maand = "januari" if nu.month > 2 else "december"
-    assert ag._parse_datetime(f"op 30 {maand} presenteerde het bedrijf zijn plannen") is None
+    # De vórige kalendermaand, altijd. Die ligt na de jaar-ophoging ~11 maanden
+    # vooruit, ongeacht wanneer deze test draait.
+    #
+    # Eerder stond hier een vaste "januari" (met "december" als de huidige maand
+    # januari of februari was), bedoeld als ~10 maanden vooruit. Dat klopt alleen
+    # in het najaar: op 4 aug 2026 is 30 januari 2027 nog maar 179 dagen weg, één
+    # dag bínnen `_MAX_HORIZON_DAGEN`, en faalde de test — niet omdat de horizon
+    # stuk was maar omdat de test met de kalender meedreef. Een test die zichzelf
+    # over een paar maanden weer repareert, meet niets.
+    #
+    # Dag 28 en niet 30: bij een test in maart is de vorige maand februari.
+    vorige = 12 if nu.month == 1 else nu.month - 1
+    # Namen uit de parser zelf, niet overgetypt: een tweede lijst maandnamen
+    # loopt uit de pas met de eerste.
+    # De langste variant is de voluit geschreven naam ('mei' heeft er maar één).
+    maand = max((naam for naam, nr in ag._MONTHS.items() if nr == vorige), key=len)
+    assert ag._parse_datetime(f"op 28 {maand} presenteerde het bedrijf zijn plannen") is None
 
 
 def test_normale_afspraak_binnen_de_horizon_blijft_werken():

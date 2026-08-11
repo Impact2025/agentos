@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from ...shared.config import OBSIDIAN_VAULT_PATH, hermes_backend
 from ...shared.database import get_conn
 from ...shared import agent_runner
-from ...domains.seo.engine import list_opportunities
+from ...domains.seo.engine import list_opportunities_truth
 from ...domains.seo import sites as sites_service
 from ...domains.goal.service import (
     list_goals, delete_goal as _delete_goal,
@@ -47,16 +47,38 @@ def _count_goals_by_status() -> Dict[str, int]:
 
 
 def _count_opportunities(site_name: str) -> Dict[str, int]:
-    """Tel kansen per status voor een site."""
+    """Tel kansen per status voor een site.
+
+    Loopt via `list_opportunities_truth` (de kwaliteitsgate uit
+    `opportunity_quality.py`) i.p.v. de ruwe `list_opportunities` — anders telt
+    de Control Room-badge letterlijk andere kansen dan de Kansen-tab zelf
+    toont, en dat is precies hoe twee antwoorden op dezelfde vraag uit elkaar
+    lopen (9 aug 2026: WeAreImpact hield "23 kansen" op de Control Room terwijl
+    de Kansen-tab er na de gate nog 12 toonde)."""
     counts: Dict[str, int] = {}
     try:
         site = _find_site(site_name)
         if site:
-            opps = list_opportunities(site_id=site.get("id"))
+            # Eén call, niet twee: `list_opportunities_truth` doet per site al
+            # een sitemap-/GSC-vergelijking (traag, soms een netwerkcall via
+            # `external_content`) — een tweede aanroep voor de open-telling
+            # verdubbelde de laadtijd van de Control Room naar >30s over alle
+            # projecten heen (9 aug 2026, gemeten). De open-telling hieronder
+            # is dezelfde regel als `status="open"` binnenin die functie,
+            # alleen op de al opgehaalde lijst toegepast.
+            opps = list_opportunities_truth(site_id=site.get("id"))
             counts["total"] = len(opps)
             for o in opps:
                 s = o.get("status", "new")
                 counts[s] = counts.get(s, 0) + 1
+            # 'new' is wat de Control Room-badge toont als "X kansen" — moet
+            # dus wat de Kansen-tab als open aanbiedt (new/in_progress zónder
+            # filter_reason), niet elke ruwe 'new'-rij inclusief ruis.
+            counts["new"] = sum(
+                1 for o in opps
+                if o.get("status") in ("new", "in_progress")
+                and not (o.get("filter_reason") and o.get("status") == "new")
+            )
     except Exception:
         pass
     return counts

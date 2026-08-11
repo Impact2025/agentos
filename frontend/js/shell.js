@@ -21,14 +21,14 @@ if (!window.__adviceActionBound) {
 }
 
 function renderSidebar() {
-  return '<div class="sidebar"><div class="sidebar-logo"><img src="logo.png" alt="AO" onerror="this.style.display=\'none\'"><span>Agent OS</span></div><nav class="sidebar-nav">' +
-    (currentProject ? TABS.map(function(t) {
+  return '<div class="sidebar"><div class="sidebar-logo"><img src="logo.png" alt="AO" onerror="this.style.display=\'none\'"><span>' + escHtml(window.__instanceName || 'Agent OS') + '</span></div><nav class="sidebar-nav">' +
+    (currentProject ? visibleTabs().map(function(t) {
       var badge = '';
       if (t === 'Helpdesk') badge = ' <span id="helpdesk-badge" class="nav-badge" style="display:none"></span>';
       return '<button class="' + (t===currentTab?' active':'') + '" onclick="switchView(\''+t+'\')"><span class="icon">' + (TAB_ICONS[t]||'') + '</span>' + t + badge + '</button>';
     }).join('') : '') +
-    '</nav><div class="sidebar-footer">' + (currentProject ? '<button onclick="switchView(\'chat\')"><span class="icon">o</span>Chat</button>' : '') +
-    '<button onclick="goHome()"><span class="icon"><-</span>Projecten</button>' +
+    '</nav><div class="sidebar-footer">' + (currentProject ? '<button onclick="switchView(\'chat\')"><span class="icon">✎</span>Chat</button>' : '') +
+    '<button onclick="goHome()"><span class="icon">←</span>Projecten</button>' +
     '<button onclick="logoutAgent()"><span class="icon">⏻</span>Uitloggen</button></div></div>';
 }
 function renderHeader() {
@@ -38,8 +38,39 @@ function renderHeader() {
     '<button onclick="switchView(\'chat\')">Chat</button><button onclick="togglePrint()" class="no-print">Export</button></div></div>';
 }
 
+// ── Mobiele kopbalk ────────────────────────────────────────────────────────
+// Op een telefoon is er geen ruimte voor een vaste zijbalk van 180px náást de
+// inhoud; die wordt een lade. De kopbalk is dan de enige plek waar je nog kunt
+// zien wáár je bent — vandaar project + tab, en niet alleen een hamburger.
+// Bestaat alleen visueel onder 820px (zie app.css); op desktop is hij verborgen.
+function renderMobileBar() {
+  return '<div class="nav-scrim" onclick="closeNav()"></div>' +
+    '<header class="mobile-topbar">' +
+    '<button class="mt-btn" type="button" onclick="toggleNav()" aria-label="Menu" aria-expanded="false" id="nav-toggle"><span class="burger"></span></button>' +
+    '<div class="mt-title"><strong>' + escHtml(currentProject || window.__instanceName || 'Agent OS') + '</strong>' +
+    (currentProject ? '<span class="mt-sub">' + escHtml(currentTab) + '</span>' : '') + '</div>' +
+    '<span id="agent-status-indicator-mobile"></span>' +
+    '<button class="mt-btn" type="button" onclick="goHome()" aria-label="Naar projecten">&#8962;</button>' +
+    '</header>';
+}
+function toggleNav() {
+  var open = document.body.classList.toggle('nav-open');
+  var b = document.getElementById('nav-toggle');
+  if (b) b.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function closeNav() {
+  document.body.classList.remove('nav-open');
+  var b = document.getElementById('nav-toggle');
+  if (b) b.setAttribute('aria-expanded', 'false');
+}
+// Escape sluit de lade — een open overlay zonder ontsnapping is een val.
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeNav(); });
+
 function renderProjectView(main) {
-  main.innerHTML = renderSidebar() + '<div class="main-content">' + renderHeader() + '<div class="tab-content" id="tab-content"><div class="loading"><div class="spinner"></div><p>' + currentTab + ' laden...</p></div></div></div>';
+  // De lade hoort dicht te zijn na elke navigatie: route() bouwt de DOM opnieuw
+  // op, maar de klasse staat op <body> en zou anders blijven hangen.
+  closeNav();
+  main.innerHTML = renderSidebar() + renderMobileBar() + '<div class="main-content">' + renderHeader() + '<div class="tab-content" id="tab-content"><div class="loading"><div class="spinner"></div><p>' + currentTab + ' laden...</p></div></div></div>';
   startAgentStatusPoll();
   startHelpdeskBadgePoll();
   loadCurrentTab();
@@ -48,13 +79,12 @@ async function loadCurrentTab() {
   var el = document.getElementById('tab-content'); if (!el) return;
   try {
     if (currentTab === 'Dashboard') await renderDashboardTab(el);
-    else if (currentTab === 'Content') await renderContentTab(el);
+    else if (currentTab === 'Postvak') await renderPostvakTab(el);
     else if (currentTab === 'Kansen') await renderKansenTab(el);
     else if (currentTab === 'Optimalisatie') await renderOptimalisatieTab(el);
     else if (currentTab === 'Wachtrij') await renderWachtrijTab(el);
     else if (currentTab === 'Concurrentie') await renderConcurrentieTab(el);
     else if (currentTab === 'Radar') await renderRadarTab(el);
-    else if (currentTab === 'Keywords') await renderKeywordsTab(el);
     else if (currentTab === 'Doelen') await renderDoelenTab(el);
     else if (currentTab === 'Geheugen') await renderGeheugenTab(el);
     else if (currentTab === 'Leads') await renderLeadsTab(el);
@@ -125,6 +155,34 @@ function pollHelpdeskBadge() {
     if (n > 0) { el.style.display = 'inline-block'; el.textContent = n; }
     else { el.style.display = 'none'; }
   }).catch(function(){});
+}
+
+// ── Recente reeks onder een KPI-tegel ──────────────────────────────────────
+// De grote delta vergelijkt 28 dagen met de 28 daarvoor. Deze regel toont de
+// laatste 7 GSC-dagen tegen de 7 daarvóór — de meting die zegt wat er nú
+// gebeurt. Staat er geen historie, dan staat er niets: "geen data" mag nooit
+// als "geen verandering" op het scherm komen.
+function recentFoot(advice, key) {
+  var k = advice && advice.dash_kpi;
+  if (!k) return '';
+  if (key === 'position') {
+    if (k.recent_position == null) return '';
+    var d = k.delta_position_7d;
+    if (d == null) return 'laatste 7 dagen: ' + k.recent_position;
+    // Positie: lager is beter, dus een positieve delta is verslechtering.
+    return 'laatste 7 dagen: ' + k.recent_position + ' (' + (d > 0 ? '+' : '') + d + ')';
+  }
+  if (k.recent_clicks == null) return '';
+  var dc = k.delta_clicks_7d;
+  return 'laatste 7 dagen: ' + k.recent_clicks + (dc == null ? '' : ' (' + (dc > 0 ? '+' : '') + dc + ')');
+}
+function recentTone(advice, key) {
+  var k = advice && advice.dash_kpi;
+  if (!k) return '';
+  var d = key === 'position' ? k.delta_position_7d : k.delta_clicks_7d;
+  if (d == null || d === 0) return '';
+  var slechter = key === 'position' ? d > 0 : d < 0;
+  return slechter ? 'bad' : 'good';
 }
 
 async function renderDashboardTab(el) {
@@ -198,10 +256,13 @@ async function renderDashboardTab(el) {
     html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><h3 style="font-size:15px;font-weight:700">Prestatieoverzicht</h3>' +
       '<div class="actions no-print" style="display:flex;gap:6px"><button onclick="switchView(\'Concurrentie\')" style="padding:5px 12px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">Trends & Analyse</button><button onclick="togglePrint()" style="padding:5px 12px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">Export PDF</button></div></div>' +
       '<div class="kpi-grid">' +
-      kpiBox('Geïndexeerd', s.indexed_pages, s.indexed_pages_change,'') + kpiBox('Klikken', s.total_clicks, s.total_clicks_change,'') +
+      kpiBox('Geïndexeerd', s.indexed_pages, s.indexed_pages_change,'') +
+      kpiBox('Klikken', s.total_clicks, s.total_clicks_change, '',
+             recentFoot(advice, 'clicks'), recentTone(advice, 'clicks')) +
       kpiBox('CTR', s.avg_ctr + '%', '', s.total_impressions + ' impressies') +
       // avg_position_change = vorige - huidige: positief = verbeterd (groen), negatief = verslechterd (rood)
-      kpiBox('Positie', s.avg_position, (s.avg_position_change !== undefined ? s.avg_position_change.toFixed(1) : ''), '') +
+      kpiBox('Positie', s.avg_position, (s.avg_position_change !== undefined ? s.avg_position_change.toFixed(1) : ''), '',
+             recentFoot(advice, 'position'), recentTone(advice, 'position')) +
       '</div>' +
       '<div class="grid-2">' +
       '<div class="section-card"><h3>Top pagina\'s</h3>' + tbl(gsc.top_pages||[], ['pagina','page'], ['Klikken','clicks'], ['Impressies','impressions'], ['CTR','ctr'], ['Positie','position']) + '</div>' +
@@ -357,16 +418,69 @@ function handleAdviceAction(btn, action) {
   }
   if (action === 'write_all_kansen') { writeAllNewKansen(); return; }
   if (action === 'run_scan') { switchViewThen('Kansen', runDemandScan); return; }
-  if (action === 'generate_suggestions') { switchViewThen('Content', generateSuggestions); return; }
   if (action === 'new_goal') { switchViewThen('Doelen', showNewGoalForm); return; }
   if (action.startsWith('retry_goal:')) { retryFailedGoal(action.split(':')[1]); return; }
+  // Een alert die al twee keer op een vastloper strandde stuurt naar dát doel
+  // in plaats van er een derde te starten (zie `_knop_of_blokkade`).
+  if (action.startsWith('open_goal:')) {
+    var goalId = action.slice('open_goal:'.length);
+    switchViewThen('Doelen', function() { loadGoalDetail(goalId); });
+    return;
+  }
   if (action.startsWith('open_tab:')) { switchView(action.split(':')[1]); return; }
   if (action.startsWith('write_article:')) {
     var keyword = action.split(':').slice(1).join(':');
     writeArticleForKeyword(keyword, btn);
     return;
   }
+  if (action.startsWith('optimize_page:')) {
+    optimizePageForKeyword(action.split(':').slice(1).join(':'), btn);
+    return;
+  }
   console.warn('Onbekende action:', action);
+}
+
+// ── "Optimaliseer pagina": de knop die hoort bij de diagnose "de pagina rankt
+// al, maar niemand klikt". Levert 3 concrete title+meta-varianten op voor de
+// pagina die Google voor dit zoekwoord toont — geen tweede artikel over
+// hetzelfde onderwerp, want dat is kannibalisatie.
+async function optimizePageForKeyword(keyword, btn) {
+  var orig = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Analyseren...'; }
+  try {
+    var resp = await fetch('/api/seo-optimizer/' + encodeURIComponent(currentProject) +
+      '/optimize-query?query=' + encodeURIComponent(keyword), { method: 'POST' });
+    var data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Optimalisatie mislukt');
+    if (data.outcome === 'geen-pagina') {
+      // Geen ranking-pagina gevonden: dan is schrijven wél het juiste werk.
+      // Niet stil omvallen, maar de gebruiker naar de juiste actie sturen.
+      if (confirm(data.detail + '\n\nWil je er een artikel voor schrijven?')) {
+        writeArticleForKeyword(keyword, btn);
+        return;
+      }
+    } else if (data.outcome === 'geen-varianten') {
+      // Gedeeltelijk resultaat: de bevinding staat er wél. Dat verzwijgen zou
+      // de gebruiker hetzelfde werk nog eens laten doen.
+      alert(data.detail);
+      switchView('Optimalisatie');
+      return;
+    } else if (data.outcome === 'varianten') {
+      alert('3 varianten klaar voor ' + data.page + '\n\n' +
+        (data.variants || []).map(function(v, i) {
+          return (i + 1) + '. ' + v.title + '\n   ' + v.meta;
+        }).join('\n\n') +
+        '\n\nZe staan in de Optimalisatie-tab; daar kies je er één.');
+      switchView('Optimalisatie');
+      return;
+    } else {
+      alert(data.detail || 'Er viel niets te optimaliseren.');
+    }
+  } catch (e) {
+    alert('Optimalisatie mislukt: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; if (orig) btn.textContent = orig; }
+  }
 }
 
 // ── Start een write-and-publish job en poll de voortgang, met live update op de knop die de actie startte ──
@@ -443,6 +557,9 @@ function startGoalFromAction(opts, btn) {
 }
 
 async function solveAlert(objective, btn) {
+  // 60 = `_ACTIEPUNT_TITELCAP` in backend/domains/projects/router.py. De backend
+  // dedupliceert op precies deze titel; wijken de twee af, dan matcht de dedupe
+  // nooit en biedt het dashboard hetzelfde actiepunt eeuwig opnieuw aan.
   var title = 'Actiepunt: ' + objective.slice(0, 60);
   if (!confirm('Actiepunt als gedaan markeren?\n\n"' + objective.slice(0, 160) + (objective.length > 160 ? '...' : '') + '"\n\nHet vinkje wordt direct in je Obsidian-vault gezet. De agent kan daarna optioneel verder werken.')) return;
   // 1) Bron van waarheid direct afvinken in de vault — item verdwijnt meteen uit de todo.
@@ -487,7 +604,9 @@ async function writeArticleForKeyword(keyword, btn) {
 
 function tbl(items, labelA, ...cols) {
   if (!items||!items.length) return '<p style="color:#94a3b8;font-size:12px;text-align:center;padding:16px">Geen data</p>';
-  return '<table class="data-table"><thead><tr><th>' + labelA[0] + '</th>' + cols.map(function(c){return '<th class="num">'+c[0]+'</th>';}).join('') + '</tr></thead><tbody>' +
+  // De tabel schuift binnen zijn eigen kader; zonder die wikkel duwt hij op een
+  // telefoon de hele pagina breder dan het scherm en schuift álles mee.
+  return '<div class="table-scroll"><table class="data-table"><thead><tr><th>' + labelA[0] + '</th>' + cols.map(function(c){return '<th class="num">'+c[0]+'</th>';}).join('') + '</tr></thead><tbody>' +
     items.map(function(it){
       var cell = '<td class="url-cell">' + escHtml(it[labelA[1]]||it.page||it.query||'-') + '</td>';
       var vals = cols.map(function(c){
@@ -498,6 +617,6 @@ function tbl(items, labelA, ...cols) {
         return '<td class="num">'+v+'</td>';
       }).join('');
       return '<tr>' + cell + vals + '</tr>';
-    }).join('') + '</tbody></table>';
+    }).join('') + '</tbody></table></div>';
 }
 

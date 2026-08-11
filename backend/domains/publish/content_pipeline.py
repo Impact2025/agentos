@@ -20,6 +20,7 @@ een neutrale schrijfstijl-instructie.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -33,6 +34,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from ...shared.database import get_conn
+from ...shared.hermes_context import build_hermes_context
 from ..chat import hermes as hermes_service
 from . import article_writer
 from . import service as publish_service
@@ -40,6 +42,7 @@ from ..seo import engine as demand_engine
 from ..seo import external_content as external_content_service
 from ..seo import gsc as gsc_service
 from ..seo import knowledge as knowledge_service
+from ..seo import opportunity_quality as demand_quality
 from ..seo import sites as sites_service
 from ...shared import facebook as facebook_service
 from ...shared import linkedin as linkedin_service
@@ -299,14 +302,36 @@ def select_topic(site: Dict) -> Optional[Dict]:
     Kansen die overlappen met content die al écht op de site staat (via
     `external_db_url`, buiten Agent OS' eigen `published_pages` om) worden
     overgeslagen en op 'dismissed' gezet i.p.v. verspild te worden aan een
-    dubbel artikel."""
+    dubbel artikel.
+
+    Sinds 2 aug 2026 loopt de keuze door dezelfde kwaliteitsgate als het
+    Kansen-paneel (`opportunity_quality`). Anders schrijft de autonome motor
+    's nachts alsnog het artikel dat Vincent overdag met reden weggefilterd
+    ziet — en dan is het filter alleen cosmetiek."""
     kansen = demand_engine.list_opportunities(site_id=site["id"], status="new")
     if not kansen:
         return None
     # Externe CMS-DB (indien geconfigureerd) + live sitemap (zero-config) —
     # zodat ook content die buiten Agent OS om is gepubliceerd meetelt.
     external_titles = external_content_service.fetch_all_known_content(site)
+    try:
+        demand_quality.annotate(kansen, site)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[content-pipeline] Kwaliteitsgate op kansen overgeslagen: %s",
+                       str(e)[:200])
     for kans in kansen:
+        reason = kans.get("filter_reason")
+        if reason:
+            # 'in-wachtrij' laten we op 'new' staan noch dismissen: het artikel
+            # is al onderweg, de kans wordt vanzelf 'published' of komt vrij als
+            # het concept wordt afgewezen (`reconcile_opportunities`).
+            if reason != "in-wachtrij":
+                demand_engine.update_opportunity_status(kans["id"], "dismissed")
+                _log_activity(site["name"], "kans-overgeslagen-" + reason,
+                              f"'{kans['query']}' overgeslagen — "
+                              f"{demand_quality.REASON_LABELS[reason]}: "
+                              f"{kans.get('filter_detail') or ''}".strip())
+            continue
         if external_titles and _topic_already_covered(kans["query"], external_titles):
             demand_engine.update_opportunity_status(kans["id"], "dismissed")
             _log_activity(site["name"], "kans-overgeslagen-dubbel",
@@ -315,6 +340,51 @@ def select_topic(site: Dict) -> Optional[Dict]:
         demand_engine.update_opportunity_status(kans["id"], "in_progress")
         return kans
     return None
+
+
+def _bijvullen_en_opnieuw_kiezen(site: Dict) -> Optional[Dict]:
+    """De voorraad is op — vul hem hier en nu bij in plaats van over te slaan.
+
+    Aanleiding (4 aug 2026): `run_weekly_demand_scan` draagt in zijn eigen
+    docstring de belofte "zonder deze job raakt de kansen-voorraad op en valt de
+    di/vr-contentmotor stil zonder dat iemand het ziet". Precies dat gebeurde
+    tóch, want de belofte klopt maar de cadans niet: de scan draait maandag
+    06:15, de motor dinsdag én vrijdag. Wat maandag wordt aangeboden is tegen
+    donderdag opgebruikt of weggefilterd, en de vrijdagrun logt dan
+    'auto-content-overslagen — voer eerst een Demand Engine-scan uit'. Dat is
+    een instructie aan een mens, in een logregel die geen mens leest, van een
+    motor die de scan zélf had kunnen draaien. WeAreImpact stond zo op nul open
+    kansen terwijl er 1.727 vertoningen per 28 dagen binnenkwamen.
+
+    Drie stappen, in deze volgorde — dezelfde als de weekscan, en om dezelfde
+    reden: eerst teruggeven wat onterecht bezet is, dan pas nieuw zoeken.
+    Anders halen we een kans van buiten terwijl er één vaststaat op
+    'in_progress' van een artikel dat al is afgewezen.
+
+    Faalt de bijvulling, dan is dat geen fout van de contentrun: de aanroeper
+    logt 'overgeslagen' en de scheduler probeert het maandag opnieuw. Wel luid
+    in de log, want een GSC-koppeling die stuk is hoort vindbaar te zijn.
+    """
+    naam = site.get("name") or site.get("id") or "?"
+    try:
+        demand_engine.reconcile_opportunities(site["id"])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[content-pipeline] Reconciliatie voor %s mislukt: %s", naam, str(e)[:200])
+
+    gevonden = 0
+    if (site.get("gsc_property") or "").strip():
+        try:
+            res = demand_engine.scan_site(site)
+            gevonden = int(res.get("new", 0)) + int(res.get("cold_start", 0))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[content-pipeline] Demand-scan voor %s mislukt: %s", naam, str(e)[:200])
+
+    opnieuw = select_topic(site)
+    if opnieuw:
+        _log_activity(naam, "kansen-bijgevuld",
+                      f"Voorraad was op; verse Demand-scan leverde {gevonden} kans(en) op. "
+                      f"De motor schrijft nu over '{opnieuw['query']}'.")
+    return opnieuw
 
 
 # ── Schrijven + SEO-review + optimaliseren ──────────────────────────────────
@@ -348,6 +418,14 @@ async def _write_article(site: Dict, keyword: str, angle: str, rationale: str) -
     if learned:
         write_system += f"\n\n## Gemeten vorm-lessen (pas toe waar passend)\n{learned}"
 
+    # HERMES-context: als de vault-context hierboven leeg viel (geen PROJECT_CORE/
+    # SCHRIJF-DNA via VaultReader), gebruik dan Vincent's Hermes-skills + de
+    # vault SCHRIJF-DNA-note als robuuste, projectbewuste aanvulling. Opt-in via
+    # AGENTOS_USE_HERMES_SKILLS. Nooit een crash, lege context = geen effect.
+    hermes_ctx = build_hermes_context(project_name)
+    if hermes_ctx:
+        write_system += f"\n\n{hermes_ctx}"
+
     write_prompt = (
         f"Schrijf een compleet blogartikel voor {project_name}.\n\n"
         f"Kernzoekwoord: {keyword}\n"
@@ -355,6 +433,23 @@ async def _write_article(site: Dict, keyword: str, angle: str, rationale: str) -
         f"Rationale: {rationale}\n\n"
         f"Project-context (SKILL.md):\n{skill_body}\n\n"
         f"Bestaande artikelen (vermijd overlap): {', '.join(existing_titles[:15])}\n\n"
+    )
+    # Onderzoek is beschikbaar (NotebookLM-rapporten uit de vault): eis dat de
+    # schrijf-agent minimaal één concreet, citeerbaar inzicht verwerkt. Dat
+    # verhoogt de E-E-A-T-score én maakt het artikel uniek t.o.v. de 10 andere
+    # sites die hetzelfde onderwerp beschrijven — en het duwt de score boven de
+    # kwaliteitsgrens (GEO: een antwoord moet iets toevoegen, geen herhaling).
+    if vault_context:
+        write_prompt += (
+            "VERPLICHTPOST: de 'Merkcontext uit Obsidian vault' hierboven bevat "
+            "onderzoek (NotebookLM). Verwerk MINIMAAL ÉÉN specifiek, feitelijk "
+            "inzicht uit dat onderzoek in het artikel — bij voorkeur met een "
+            "concreet cijfer of bevinding — en benoem het als onderbouwing (bijv. "
+            "een tussenkop 'Wat onderzoek laat zien' of een genummerd inzicht). "
+            "Zonder die verwerking is het artikel niet uniek genoeg en wordt het "
+            "afgekeurd. Verzin geen cijfers die niet in het onderzoek staan.\n\n"
+        )
+    write_prompt += (
         "Lever ALLEEN de HTML-body zonder <html>/<head>/<body>. Gebruik <h1> voor de titel, "
         "<h2>/<h3> voor tussenkoppen, <p> voor alinea's, <ul>/<li> voor lijsten. "
         "Geen inline CSS of styles."
@@ -406,13 +501,60 @@ def _derive_meta_desc(html_body: str) -> str:
     return _smart_truncate(text, 155)
 
 
+_META_TITLE_MAX = 60
+
+# Het model schrijft met enige regelmaat zijn eigen tekenaantal ín de titel
+# ("... zo val je op als interimmer (54 tekens)"). Dat is instructie-echo, geen
+# titel, en het ging ongefilterd de <title> van live pagina's in.
+_META_ANNOTATIE = re.compile(r"\s*[\(\[]\s*\d{1,3}\s*(?:tekens?|chars?|characters?)\s*[\)\]]\s*$",
+                             re.IGNORECASE)
+
+
+def meta_title_for(title: str, max_len: int = _META_TITLE_MAX) -> str:
+    """De meta-titel zoals hij de <title> in hoort — één definitie voor het
+    hele systeem.
+
+    Aanleiding (2 aug 2026): 47 van 103 artikelen droegen een meta-titel die op
+    exact 60 tekens midden in een woord was afgekapt ('... Jouw teambeleving in
+    de l'), waarvan er 15 al live stonden. De reviewer trok daar élke meting
+    punten voor af — terecht — en omdat de titel buiten de body valt kon geen
+    enkele herschrijfronde het repareren. Zes verbeterrondes per artikel liepen
+    zich daarop stuk: de score bewoog wel (ruis) maar steeg nooit.
+
+    Voor slugs is deze les al in 2026 geleerd (zie `slugify_title`); de
+    meta-titel had dezelfde fix nooit gekregen, op vier plekken tegelijk —
+    de review-preview én de drie publicatieroutes. Vandaar één helper: vier
+    kopieën van dezelfde regel is hoe ze uit elkaar gaan lopen.
+
+    Drie bewerkingen, in deze volgorde:
+      1. instructie-echo eraf ('(54 tekens)');
+      2. HTML-entiteiten terug naar tekens — '&amp;' hoort niet in een <title>;
+      3. inkorten op een woordgrens, nooit midden in een woord.
+    """
+    t = _META_ANNOTATIE.sub("", (title or "").strip())
+    t = html.unescape(t).strip()
+    if len(t) <= max_len:
+        return t
+    # Woordgrens: knip op de laatste spatie binnen de limiet. Levert dat niets
+    # bruikbaars op (één lang woord), dan alsnog hard afkappen — een te lange
+    # titel is erger dan een afgekapte.
+    kort = t[:max_len].rsplit(" ", 1)[0].rstrip(" -–—|·,;:")
+    return kort if len(kort) >= max_len // 2 else t[:max_len]
+
+
 def _preview_meta(html_body: str) -> tuple:
     """De meta-titel/description zoals die bij publicatie daadwerkelijk wordt
     weggeschreven: uit expliciete META-blokken, anders afgeleid uit de body.
-    Spiegelt `_publish_to_site` — zie de meta-afleiding daar."""
+    Spiegelt `_publish_to_site` — zie de meta-afleiding daar.
+
+    Let op: dit moet exact hetzelfde opleveren als wat de publisher wegschrijft.
+    Wijkt het af, dan beoordeelt de reviewer een titel die nooit bestaat en is
+    zijn aftrek per definitie onrepareerbaar — daarom lopen beide via
+    `meta_title_for`.
+    """
     cleaned, meta_title, meta_desc = _strip_meta_and_suggestions(html_body or "")
     title = meta_title or _extract_title(cleaned, fallback="")
-    return title[:60], meta_desc or _derive_meta_desc(cleaned)
+    return meta_title_for(title), meta_desc or _derive_meta_desc(cleaned)
 
 
 async def _review_article(site: Dict, keyword: str, html_body: str) -> Dict:
@@ -486,7 +628,116 @@ async def _review_article(site: Dict, keyword: str, html_body: str) -> Dict:
     except Exception as e:
         logger.debug("[content-pipeline] E-E-A-T-correctie overgeslagen: %s", str(e)[:120])
 
+    # ── Verzinsel-gate (hard) ───────────────────────────────────────────────
+    # Vincent, 04-08-2026: "nooit verzonnen bedrijven of andere fake info —
+    # het beste of niets." Twee LIVE artikelen bevatten verzonnen bedrijven én
+    # verzonnen prijzen/cijfers over echt bestaande partijen. Een systeemprompt
+    # is een verzoek, geen garantie: dit is het vangnet dat wél sluit.
+    #
+    # Anders dan de aftrekpunten hierboven is dit géén weging maar een VETO:
+    # een niet-onderbouwde harde claim mag nooit door de gate, hoe goed de rest
+    # ook is. Liever een artikel dat wacht op een mens dan een verzinsel online.
+    try:
+        claims = _detect_unsupported_claims(html_body)
+        if claims:
+            score = min(score, _VERZINSEL_MAX_SCORE)
+            melding = ("VERZINSEL-VETO — onderbouw of verwijder deze claims: "
+                       + "; ".join(claims[:5]))
+            feedback = (feedback + " | " + melding) if feedback else melding
+            logger.warning("[content-pipeline] Verzinsel-veto (%d claim(s)): %s",
+                           len(claims), "; ".join(claims[:3]))
+    except Exception as e:
+        logger.debug("[content-pipeline] Verzinsel-gate overgeslagen: %s", str(e)[:120])
+
     return {"score": score, "feedback": feedback}
+
+
+# Score-plafond bij een niet-onderbouwde harde claim. Ligt bewust onder elke
+# publicatiegate, zodat het artikel naar review gaat i.p.v. live.
+_VERZINSEL_MAX_SCORE = 45
+
+# Zinnen die een controleerbare, harde bewering doen. Bewust NAUW gehouden:
+# een valse positieve blokkeert echt werk, dus we vangen alleen patronen die
+# in de twee echte incidenten voorkwamen.
+_CLAIM_PATRONEN = (
+    # Prijzen: "vanaf 499 euro", "€1.250 per maand", "kost 89,-"
+    (r"(?:€\s?\d[\d.,]*|(?:vanaf|kost|kosten|prijs|tarief)\s+\d[\d.,]*\s*(?:euro|eur|€))",
+     "prijsclaim"),
+    # Percentages met effect: "23% meer", "stijging van 40%"
+    (r"\b\d{1,3}(?:[.,]\d+)?\s?%\s*(?:meer|minder|hoger|lager|stijging|daling|groei|toename|afname|van de)",
+     "percentageclaim"),
+    # Onderzoek zonder bron: "uit onderzoek blijkt", "studies tonen aan"
+    (r"\b(?:uit onderzoek blijkt|onderzoek toont aan|studies tonen aan|volgens onderzoek|wetenschappelijk bewezen)\b",
+     "onderzoeksclaim zonder bron"),
+    # Superlatief-ranglijsten over derden: "de 7 beste partners/bureaus".
+    # Let op: LLM's schrijven het telwoord vaak VOLUIT ("Zeven AI-partners
+    # die bewezen hebben..."), en dat was precies het tweede incident. Vandaar
+    # dat zowel cijfers als Nederlandse telwoorden matchen, en dat een
+    # opsomming óók zonder "beste" telt als hij derde partijen rangschikt.
+    (r"\b(?:de\s+)?(?:\d{1,2}|twee|drie|vier|vijf|zes|zeven|acht|negen|tien|elf|twaalf)"
+     r"\s+(?:\w+[- ])?(?:beste|top|meest gerenommeerde|bewezen)?\s*"
+     r"(?:partners|bureaus|bedrijven|aanbieders|leveranciers|specialisten)\b",
+     "ranglijst over derde partijen"),
+)
+
+# Losse detectie voor de vraag "gaat dit artikel OVER derde partijen?".
+# Ruimer dan het veto-patroon hierboven: hier volstaat een aanwijzing, want
+# het gevolg is alleen dat prijs/percentage-claims strenger worden bekeken.
+_DERDEN_PATROON = (
+    r"\b(?:de\s+)?(?:\d{1,2}|twee|drie|vier|vijf|zes|zeven|acht|negen|tien|elf|twaalf)"
+    r"\s+(?:\w+[- ])?(?:beste|top|meest gerenommeerde|bewezen)?\s*"
+    r"(?:partners|bureaus|bedrijven|aanbieders|leveranciers|specialisten|tools|platforms|datingsites|apps)\b"
+)
+
+
+def _detect_unsupported_claims(html_body: str) -> List[str]:
+    """Vind harde feitelijke claims die niet met een bron zijn onderbouwd.
+
+    NUANCE (04-08-2026, na een scan over 138 artikelen): prijzen en
+    percentages zijn NIET per definitie fout. Een artikel als "Wat kost een
+    hond uit het asiel?" hóórt bedragen te noemen — dat is het onderwerp, en
+    een veto daarop zou 60 goede artikelen blokkeren en precies de ruis
+    opleveren die we willen wegnemen.
+
+    Het echte risico dat de incidenten veroorzaakte, is een claim OVER EEN
+    DERDE PARTIJ: "Bureau X werkt vanaf 8.000 euro", "de 9 beste partners".
+    Dat is smaad-gevoelig en juridisch riskant. Eigen tarieven of algemene
+    kostenindicaties zijn dat niet.
+
+    Daarom veto'en we alleen:
+      - ranglijsten over derde partijen (altijd),
+      - onderzoeksclaims zonder bron (altijd),
+      - prijs/percentage-claims ALLEEN in een artikel dat derde partijen
+        opsomt (de gevaarlijke combinatie uit beide incidenten).
+    """
+    if not html_body:
+        return []
+
+    tekst_totaal = re.sub(r"<[^>]+>", " ", html_body)
+    tekst_totaal = re.sub(r"\s+", " ", tekst_totaal)
+    # Somt dit artikel derde partijen op? Dan is elke prijs/percentage een
+    # uitspraak over iemand anders' bedrijf.
+    over_derden = bool(re.search(_DERDEN_PATROON, tekst_totaal, re.I))
+
+    gevonden: List[str] = []
+    alineas = re.split(r"</(?:p|li|h[1-6]|td|blockquote)>", html_body, flags=re.I)
+    for alinea in alineas:
+        tekst = re.sub(r"<[^>]+>", " ", alinea)
+        tekst = re.sub(r"\s+", " ", tekst).strip()
+        if not tekst:
+            continue
+        # Externe link in dezelfde alinea = onderbouwd.
+        if re.search(r'<a\b[^>]*href="https?://', alinea, re.I):
+            continue
+        for patroon, label in _CLAIM_PATRONEN:
+            if label in ("prijsclaim", "percentageclaim") and not over_derden:
+                continue  # eigen budget-artikel: bedragen zijn het onderwerp
+            m = re.search(patroon, tekst, re.I)
+            if m:
+                fragment = tekst[max(0, m.start() - 40):m.end() + 40].strip()
+                gevonden.append(f"{label}: \"...{fragment}...\"")
+                break
+    return gevonden
 
 
 def _internal_link_count(html_body: str, site: Dict) -> int:
@@ -792,7 +1043,19 @@ async def _write_article_best(site: Dict, keyword: str, angle: str,
             if n_stripped:
                 logger.info("[content-pipeline] Single-shot-fallback: %d ongevette interne link(s) verwijderd",
                             n_stripped)
-        return html_body, {"staged": False, "fallback_reason": str(e)[:200]}, ""
+        # Ook de terugval krijgt het bewijs-oordeel: zonder die sleutel is
+        # "geen eigen bewijs" niet te onderscheiden van "niet gemeten", en dan
+        # telt de invariant `artikel_zonder_eigen_bewijs` juist de artikelen
+        # weg die er het slechtst aan toe zijn (de single-shot-schrijver krijgt
+        # de casestudy namelijk helemaal niet mee).
+        return html_body, {
+            "staged": False,
+            "fallback_reason": str(e)[:200],
+            "eigen_bewijs": article_writer.check_own_evidence(
+                html_body, None,
+                site_has_case_studies=bool(
+                    knowledge_service.list_case_studies(site["id"], status="active"))),
+        }, ""
 
 
 #: Een titel is een kop, geen alinea. Boven deze lengte is het bijna altijd een
@@ -1138,6 +1401,7 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
                      json.dumps(qc_report or {}, ensure_ascii=False),
                      case_study_id, existing["id"]),
                 )
+                demand_quality.invalidate(site_id)
                 return existing["id"]
 
         job_id = str(uuid.uuid4())
@@ -1154,6 +1418,10 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
              json.dumps(qc_report or {}, ensure_ascii=False), case_study_id,
              infographic_path, _now()),
         )
+    # De kwaliteitsgate van de Kansen-lijst vergelijkt tegen content_jobs; een
+    # verse job moet meteen meetellen, anders biedt het paneel het zoekwoord dat
+    # we zojuist zijn gaan schrijven nog vijf minuten als "nieuw" aan.
+    demand_quality.invalidate(site_id)
     return job_id
 
 
@@ -1201,10 +1469,12 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
     (OpenModel) waar de volledige cyclus per artikel te lang duurt.
     """
     if keyword is None:
-        topic = select_topic(site)
+        topic = select_topic(site) or _bijvullen_en_opnieuw_kiezen(site)
         if not topic:
             _log_activity(site["name"], "auto-content-overslagen",
-                          "Geen nieuwe kansen — voer eerst een Demand Engine-scan uit.")
+                          "Geen nieuwe kansen — ook een verse Demand-scan leverde niets op. "
+                          "Controleer de GSC-koppeling en het siteprofiel (cold-start vereist "
+                          "een profiel van ≥40 tekens).")
             return None
         keyword, angle, rationale = topic["query"], topic.get("angle", ""), topic.get("rationale", "")
 
@@ -1807,6 +2077,30 @@ async def _verify_live(url: str) -> Optional[str]:
     zonder dat er iets online stond. Vertrouw de statuscode niet, kijk zelf."""
     if not url:
         return None
+    # Een 404 vlák na publicatie is meestal GEEN publicatiefout maar bouw-/
+    # ISR-vertraging: de rij bestaat, de statische pagina moet nog gerenderd
+    # worden. Op 02-08-2026 leverde dat 13 valse 'publicatie_mislukt'-kaarten
+    # voor ictusgo.nl op die twee dagen later allemaal HTTP 200 gaven. Daarom:
+    # geef de deploy tijd (3 pogingen, oplopende wachttijd) vóór we een 404 of
+    # 5xx als bewijs van mislukking accepteren.
+    _RETRY_WACHT = (10, 30, 60)
+    laatste_reden: Optional[str] = None
+    for poging, wacht in enumerate(_RETRY_WACHT, start=1):
+        reden = await _verify_live_once(url)
+        if reden is None:
+            return None
+        laatste_reden = reden
+        if poging < len(_RETRY_WACHT):
+            logger.info("[content-pipeline] Live-controle poging %d faalde (%s) — "
+                        "%ds wachten op deploy", poging, reden, wacht)
+            await asyncio.sleep(wacht)
+    return laatste_reden
+
+
+async def _verify_live_once(url: str) -> Optional[str]:
+    """Eén live-controle (zie _verify_live voor de retry-laag)."""
+    if not url:
+        return None
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
             headers = {"User-Agent": "AgentOS-publish-check"}
@@ -1920,7 +2214,7 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
             "title": title,
             "content": (html_body or "").strip(),
             "excerpt": excerpt,
-            "metaTitle": (parsed_title or title)[:60],
+            "metaTitle": meta_title_for(parsed_title or title),
             "metaDescription": meta_desc,
             "tags": [keyword] if keyword else [],
             "status": "published",
@@ -1930,7 +2224,7 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
             "title": title,
             "content": (html_body or "").strip(),
             "slug": slug,
-            "seoTitle": (parsed_title or title)[:60],
+            "seoTitle": meta_title_for(parsed_title or title),
             "seoDescription": meta_desc,
             "tags": [keyword] if keyword else [],
             "source": "agent-os",
@@ -1981,6 +2275,75 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
         return {"success": False, "error": str(e)[:200]}
 
 
+async def unpublish_from_project_site(site: Dict, slug: str, reason: str = "") -> Dict:
+    """Haal een gepubliceerd artikel OFFLINE via {PREFIX}_PUBLISH_URL → /api/unpublish.
+
+    Aanleiding (04-08-2026): twee artikelen met verzonnen bedrijfsnamen en
+    verzonnen pilotprijzen over echt bestaande partijen stonden live. AgentOS
+    kon ze afkeuren in de eigen database, maar niet van de site halen — de
+    actiekaart zei letterlijk "AgentOS kan niet depubliceren, de pagina staat
+    nog live". Een reputatierisico dat op de gebruiker werd afgeschoven.
+
+    De site zet de post op status 'draft' (geen harde delete), zodat de tekst
+    te repareren en te herpubliceren blijft. Retourneert altijd een dict,
+    nooit een exception — depubliceren mag een opruimronde niet laten crashen.
+    """
+    import os
+    name = site.get("name", "")
+    if not (slug or "").strip():
+        return {"success": False, "error": "geen slug opgegeven"}
+
+    env_prefix = re.sub(r"[^A-Z0-9]", "", name.upper())
+    publish_url = os.getenv(f"{env_prefix}_PUBLISH_URL", "").strip()
+    publish_key = os.getenv(f"{env_prefix}_PUBLISH_KEY", "").strip()
+    if not publish_url or not publish_key:
+        return {"success": False,
+                "error": f"Geen {env_prefix}_PUBLISH_URL/_PUBLISH_KEY — depubliceren niet mogelijk"}
+
+    # /api/publish → /api/unpublish op dezelfde host.
+    unpublish_url = re.sub(r"/api/publish/?$", "/api/unpublish", publish_url)
+    if unpublish_url == publish_url:
+        unpublish_url = publish_url.rstrip("/") + "/../unpublish"
+
+    try:
+        import httpx
+
+        def _post_follow(url: str, body: dict, key: str):
+            # Zelfde redirect-afhandeling als de publisher: httpx stript de
+            # Authorization-header op een cross-host redirect (apex→www).
+            headers = {"Authorization": f"Bearer {key}",
+                       "Content-Type": "application/json"}
+            cur, resp = url, None
+            for _ in range(5):
+                resp = httpx.post(cur, json=body, headers=headers, timeout=60,
+                                  follow_redirects=False)
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    loc = resp.headers.get("location")
+                    if not loc:
+                        break
+                    cur = str(httpx.URL(cur).join(loc))
+                    continue
+                break
+            return resp
+
+        resp = await asyncio.to_thread(
+            _post_follow, unpublish_url, {"slug": slug, "reason": reason}, publish_key)
+        if resp.status_code in (200, 201):
+            data = {}
+            try:
+                data = resp.json()
+            except Exception:
+                pass
+            _log_activity(name, "offline",
+                          f"'{slug}' offline gehaald{(' — ' + reason) if reason else ''}")
+            return {"success": True, "slug": slug, "response": data}
+        return {"success": False,
+                "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as e:
+        logger.warning("Depubliceren van '%s' mislukt: %s", slug, str(e)[:200])
+        return {"success": False, "error": str(e)[:200]}
+
+
 def _export_for_manual_publish(site: Dict, title: str, html_body: str,
                                 keyword: str, slug: str, seo_score: int) -> Dict:
     """Voor sites zónder publish-API (`sites.manual_publish`, bv. LiefdeVoorIedereen —
@@ -2008,7 +2371,7 @@ def _export_for_manual_publish(site: Dict, title: str, html_body: str,
         "---\n"
         f"title: \"{(parsed_title or title).replace(chr(34), chr(39))}\"\n"
         f"slug: \"{slug}\"\n"
-        f"meta_title: \"{(parsed_title or title)[:60].replace(chr(34), chr(39))}\"\n"
+        f"meta_title: \"{meta_title_for(parsed_title or title).replace(chr(34), chr(39))}\"\n"
         f"meta_description: \"{meta_desc.replace(chr(34), chr(39))}\"\n"
         f"keyword: \"{keyword}\"\n"
         f"seo_score: {seo_score}\n"
@@ -2123,7 +2486,7 @@ async def approve_and_publish(job_id: str,
     infographic_bytes = (base64.b64decode(job["infographic_path"])
                          if job.get("infographic_path") else None)
 
-    result: Dict = {"netlify": None, "gsc": None, "bing": None, "social": {}}
+    result: Dict = {"netlify": None, "gsc": None, "social": {}}
     article_url = None
     image_url = None
     # De URL die de publish-route zélf teruggaf — het enige adres waarvan we
@@ -2200,14 +2563,18 @@ async def approve_and_publish(job_id: str,
         ok, detail = gsc_service.submit_sitemap(gsc_property, sitemap_url)
         result["gsc"] = {"status": "ingediend" if ok else "fout", "detail": detail, "sitemap": sitemap_url}
 
-    # ── Bing ping (nog wel functioneel, i.t.t. Google's ping-endpoint) ──
-    if base_url:
-        try:
-            import httpx
-            resp = httpx.get(f"https://www.bing.com/ping?sitemap={base_url}/sitemap.xml", timeout=10)
-            result["bing"] = {"status_code": resp.status_code}
-        except Exception as e:
-            result["bing"] = {"error": str(e)[:100]}
+    # ── Bing: géén ping meer ─────────────────────────────────────────────────
+    # Microsoft heeft het sitemap-ping-endpoint uitgezet, net als Google eerder
+    # deed. Het antwoordt HTTP 410 (Gone). Dat is precies de faalmodus waar dit
+    # bestand vol van staat: de call slaagde technisch, we schreven het
+    # statuscijfer weg als resultaat, en 98 van de 102 publicaties droegen zo
+    # een 'bing: 410' die als "ingediend bij de zoekmachine" gelezen werd
+    # (4 aug 2026). Een dood endpoint aanroepen is geen indiening.
+    #
+    # Er is niets te vervangen: IndexNow hieronder dekt Bing (én Yandex, Seznam,
+    # Naver) en is de route die Microsoft zélf aanwijst. De sleutel `bing`
+    # verdwijnt daarom uit publish_result in plaats van op een vaste string te
+    # blijven staan — een veld dat altijd hetzelfde zegt is ruis.
 
     # ── Directe indexering van de nieuwe URL (IndexNow + optioneel Google) ──
     from . import indexing as indexing_service
@@ -2302,9 +2669,19 @@ async def approve_and_publish(job_id: str,
         _log_activity(site_name, "publicatie", f"'{job['title']}' goedgekeurd en gepubliceerd",
                       artifact=article_url or "")
     else:
+        # status='error', want dit wacht op een mens: een artikel dat de
+        # review-gate is gepasseerd en tóch niet live staat komt nergens anders
+        # meer voorbij. Het stond hier tot 2 aug 2026 op de standaard 'ok' en
+        # dan is de uitkomstkaart een logregel in plaats van een inbox-item —
+        # Ictusgo's 404 kwam daardoor drie ochtenden terug als "les" in Iris'
+        # briefing zonder één keer als beslissing op het scherm te staan.
         _log_activity(site_name, "publicatie_mislukt",
                       f"'{job['title']}' goedgekeurd maar NIET gepubliceerd: {reden}",
-                      artifact="")
+                      artifact="",
+                      next_step=("Bekijk de fout in de Wachtrij en publiceer opnieuw; "
+                                 "blijft het misgaan, dan zit het defect in de "
+                                 "publicatieroute van deze site."),
+                      status="error")
 
     # ── Content Multiplier: format-waaier als achtergrondtaak ────────────────
     # Uit één goedgekeurd artikel automatisch social-pack + video genereren.
@@ -2337,10 +2714,40 @@ def reject_job(job_id: str) -> None:
     job = get_job(job_id)
     if not job:
         raise ValueError("Content-job niet gevonden.")
+    # Stond dit artikel al live? Dan verandert 'rejected' alleen de rij, niet de
+    # wereld: de pagina blijft staan en verdwijnt tegelijk uit élk overzicht,
+    # want in de Wachtrij en de tellingen is hij netjes afgewezen. Zo stonden op
+    # 2 aug 2026 negen pagina's live met een afgewezen job eronder, waaronder
+    # 'Agent OS end-to-end publicatietest' op de site van een klant. De afwijzing
+    # gaat gewoon door (dat is wat de mens bedoelt), maar het depubliceren is
+    # werk dat blijft liggen — dus wordt het een beslissing in het Actiecentrum
+    # in plaats van een stille statuswijziging.
+    live_url = ""
+    if job.get("status") == "published":
+        try:
+            # Twee vormen komen echt voor: het platte {"success", "url"} van de
+            # directe publisher en het genestelde {"site": {...}} van de pipeline.
+            data = json.loads(job.get("publish_result") or "{}") or {}
+            live_url = data.get("url") or ""
+            if not live_url and isinstance(data.get("site"), dict):
+                live_url = data["site"].get("url") or ""
+        except (ValueError, TypeError, AttributeError):
+            live_url = ""
+
     _update_job(job_id, status="rejected", reviewed_at=_now())
     site = sites_service.get_site(job["site_id"])
-    if site:
-        _log_activity(site["name"], "afgekeurd", f"'{job['title']}' afgewezen")
+    if not site:
+        return
+    if job.get("status") == "published":
+        _log_activity(site["name"], "afgekeurd_maar_live",
+                      f"'{job['title']}' is afgewezen maar stond al gepubliceerd"
+                      + (f" op {live_url}" if live_url else ""),
+                      artifact=live_url,
+                      next_step="Haal deze pagina offline in het CMS en zet een 301 naar "
+                                "een relevant artikel — afwijzen doet dat niet vanzelf.",
+                      status="error")
+        return
+    _log_activity(site["name"], "afgekeurd", f"'{job['title']}' afgewezen")
 
 
 async def regenerate_job(job_id: str) -> str:

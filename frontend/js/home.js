@@ -6,12 +6,19 @@ function renderHome(main) {
   main.innerHTML = '<div class="loading"><div class="spinner"></div><p>Control Room laden...</p></div>';
   fetch('/api/strategist/control-room').then(function(r){return r.json();}).then(function(data){
     if (data.error) { main.innerHTML = '<div class="empty-state">Fout: ' + escHtml(data.error) + '</div>'; return; }
-    var html = '<div class="homescreen"><h2>Agent OS</h2><div style="display:flex;align-items:center;gap:8px;margin-bottom:16px"><span id="agent-status-indicator">' +
+    // De kop is een blok, geen rij: titel, ondertitel, dan pas de status-chips.
+    // Stonden ze op één flexregel (zoals tot 10 aug 2026), dan werd de zin
+    // "Control Room — overzicht van alle projecten" op een telefoon een kolom
+    // van vier woorden naast een badge, en las de kop als een storing.
+    var html = '<div class="homescreen"><header class="page-head">' +
+      '<h2>' + escHtml(window.__instanceName || 'Agent OS') + '</h2>' +
+      '<p class="subtitle">Control Room &mdash; overzicht van alle projecten en systemen</p>' +
+      '<div class="head-chips"><span id="agent-status-indicator">' +
       '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:12px;background:#f1f5f9;color:#94a3b8;font-size:10px;font-weight:600">' +
       '<span style="width:6px;height:6px;border-radius:50%;background:#94a3b8"></span> Laden...</span></span>' +
       '<span style="font-size:11px;color:#94a3b8" id="agent-log-count"></span>' +
       '<span id="resolve-failed-btn-container"></span>' +
-      '<p style="font-size:12px;color:#64748b">Control Room &mdash; overzicht van alle projecten en systemen</p></div>';
+      '</div></header>';
 
     // ── Actiecentrum: alles wat op een menselijke beslissing wacht ──
     html += '<div id="action-center-panel"><div style="color:#64748b;font-size:12px;padding:8px 0">Inbox laden...</div></div>';
@@ -25,9 +32,21 @@ function renderHome(main) {
       '<button id="iris-run-btn" onclick="runIrisNow()" style="padding:3px 10px;background:#7c3aed;color:#fff;border:none;border-radius:4px;font-size:10px;font-weight:600;cursor:pointer">Analyseer nu</button>' +
       '</div></div>' +
       '<div id="iris-panel" style="font-size:12px"><div style="color:#64748b">Laden...</div></div>' +
+      // Het trage beeld naast het snelle: 28 dagen tegen de 28 daarvóór, per
+      // project. Dit is dezelfde bron die Iris in haar briefing leest — zag je
+      // hier iets anders dan zij, dan is één van beide een verzinsel.
+      '<details style="margin-top:10px;border-top:1px solid #ede9fe;padding-top:8px" ontoggle="if(this.open)loadWeekbeeld()">' +
+      '<summary style="cursor:pointer;font-size:12px;font-weight:600;color:#7c3aed">\u{1F4C8} Weekbeeld — 28 dagen vs. de 28 daarvóór (per project)</summary>' +
+      '<div id="weekbeeld-panel" style="margin-top:8px;font-size:12px"><div style="color:#64748b">Klik om te laden...</div></div></details>' +
       '<details style="margin-top:10px;border-top:1px solid #ede9fe;padding-top:8px" ontoggle="if(this.open)loadIrisKnowledge()">' +
       '<summary style="cursor:pointer;font-size:12px;font-weight:600;color:#7c3aed">\u{1F4DA} Kennisbank — voed Iris met onderzoek (GEO, SEO, ...)</summary>' +
       '<div id="iris-knowledge-panel" style="margin-top:8px;font-size:12px"><div style="color:#64748b">Klik om te laden...</div></div></details></div>';
+
+    // ── Postvak — gesorteerd naar wat een mail van jou nodig heeft ──
+    html += '<div class="section-card" style="margin-bottom:16px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+      '<h4 style="font-size:13px;font-weight:700">\u{1F4E8} Postvak — gesorteerd</h4>' +
+      '<button onclick="loadSortedInbox()" style="padding:3px 10px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:4px;font-size:10px;cursor:pointer">Ververs</button></div>' +
+      '<div id="sorted-inbox-panel" style="font-size:12px"><div style="color:#64748b">Laden...</div></div></div>';
 
     // ── Ochtendrapport (inklapbaar; zelfde inhoud als de 07:00-digest) ──
     html += '<details class="section-card" style="margin-bottom:16px;padding:10px 16px" ontoggle="if(this.open)loadDigest()">' +
@@ -35,14 +54,19 @@ function renderHome(main) {
       '<div id="digest-panel" style="margin-top:10px;font-size:12px"><div style="color:#64748b">Klik om te laden...</div></div></details>';
 
     // ── Linkbuilding — funnel, live links en open kansen per site ──
-    html += '<details class="section-card" style="margin-bottom:16px;padding:10px 16px" ontoggle="if(this.open)loadLinkbuilding()">' +
-      '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:#334155">\u{1F517} Linkbuilding — kansen · outreach · links live</summary>' +
-      '<div style="display:flex;gap:6px;margin-top:8px">' +
-      '<button onclick="runLinkbuildingProspecting(this)" style="padding:3px 10px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:4px;font-size:10px;cursor:pointer">Zoek kansen</button>' +
-      '<button onclick="runLinkbuildingBatch(this)" style="padding:3px 10px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:4px;font-size:10px;cursor:pointer">Maak concepten (review)</button>' +
-      '<button onclick="loadLinkbuilding()" style="padding:3px 10px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:4px;font-size:10px;cursor:pointer">Ververs</button>' +
-      '</div>' +
-      '<div id="linkbuilding-panel" style="margin-top:10px;font-size:12px"><div style="color:#64748b">Klik om te laden...</div></div></details>';
+    // Hoort bij domain "linkbuilding": op een instance die dat niet heeft
+    // (bv. Nicole) is de route niet eens gemonteerd — de sectie tonen zou
+    // alleen een knop zijn die op een 404 uitkomt.
+    if (domainOn('linkbuilding')) {
+      html += '<details class="section-card" style="margin-bottom:16px;padding:10px 16px" ontoggle="if(this.open)loadLinkbuilding()">' +
+        '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:#334155">\u{1F517} Linkbuilding — kansen · outreach · links live</summary>' +
+        '<div style="display:flex;gap:6px;margin-top:8px">' +
+        '<button onclick="runLinkbuildingProspecting(this)" style="padding:3px 10px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:4px;font-size:10px;cursor:pointer">Zoek kansen</button>' +
+        '<button onclick="runLinkbuildingBatch(this)" style="padding:3px 10px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:4px;font-size:10px;cursor:pointer">Maak concepten (review)</button>' +
+        '<button onclick="loadLinkbuilding()" style="padding:3px 10px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:4px;font-size:10px;cursor:pointer">Ververs</button>' +
+        '</div>' +
+        '<div id="linkbuilding-panel" style="margin-top:10px;font-size:12px"><div style="color:#64748b">Klik om te laden...</div></div></details>';
+    }
 
     // ── Recent Activity logs (Vercel-style) ──
     html += '<div class="section-card" style="margin-bottom:16px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
@@ -58,27 +82,32 @@ function renderHome(main) {
       '<div id="llm-usage-panel" style="font-size:12px"><div style="color:#64748b">Laden...</div></div></div>';
 
     // ── System Health bar ──
+    // "Doelen" hoort bij domain "goal" — zonder de Doelen-engine (geen
+    // goal_router gemonteerd) is dat getal altijd 0/0 en dus ruis, geen info.
     var sys = data.system || {};
     var obs = sys.obsidian || {};
-    html += '<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">' +
+    var goalOn = domainOn('goal');
+    html += '<div class="kpi-grid" style="grid-template-columns:repeat(' + (goalOn ? 4 : 3) + ',1fr);margin-bottom:16px">' +
       kpiBox('Hermes', sys.hermes_configured ? sys.hermes_backend : '❌ Uit', '', sys.hermes_model || '') +
       kpiBox('Obsidian', obs.configured ? 'Actief' : 'Uit', '', obs.total_notes + ' notities') +
       kpiBox('OMI', obs.omi_configured ? 'Actief' : 'Uit') +
-      kpiBox('Doelen', data.goals_summary ? data.goals_summary.total : 0, '', (data.goals_summary ? data.goals_summary.running : 0) + ' actief') +
+      (goalOn ? kpiBox('Doelen', data.goals_summary ? data.goals_summary.total : 0, '', (data.goals_summary ? data.goals_summary.running : 0) + ' actief') : '') +
     '</div>';
 
     // ── Systeemgezondheid ──
     html += '<div id="system-health-panel"></div>';
 
     // ── Goals summary mini-bar ──
-    var gs = data.goals_summary || {};
-    html += '<div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:16px">' +
-      kpiBox('Totaal doelen', gs.total||0) +
-      kpiBox('Actief', gs.running||0, '', '') +
-      kpiBox('Gereed', gs.completed||0, '', '') +
-      kpiBox('Mislukt', gs.failed||0, '', '') +
-      kpiBox('Gepauzeerd', gs.paused||0, '', '') +
-    '</div>';
+    if (goalOn) {
+      var gs = data.goals_summary || {};
+      html += '<div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:16px">' +
+        kpiBox('Totaal doelen', gs.total||0) +
+        kpiBox('Actief', gs.running||0, '', '') +
+        kpiBox('Gereed', gs.completed||0, '', '') +
+        kpiBox('Mislukt', gs.failed||0, '', '') +
+        kpiBox('Gepauzeerd', gs.paused||0, '', '') +
+      '</div>';
+    }
 
     // ── Project cards ──
     html += '<div class="grid-2" style="margin-bottom:20px">';
@@ -109,20 +138,25 @@ function renderHome(main) {
     });
     html += '</div>';
 
-    // ── Strategist analyse knop ──
-    html += '<div class="section-card" style="text-align:center;background:linear-gradient(135deg,#eef2ff,#f8fafc);border:1px solid #e0e7ff">' +
-      '<h4 style="font-size:14px;font-weight:700;color:var(--accent);margin-bottom:4px">Strategist Agent</h4>' +
-      '<p style="font-size:12px;color:#64748b;margin-bottom:12px">AI-manager die alle projecten, doelen en kansen analyseert en prioriteiten stelt</p>' +
-      '<button onclick="runStrategistAnalysis()" id="strat-btn" style="padding:10px 24px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">\u{1F9E0} Analyseer &amp; prioriteer</button>' +
-      '</div>';
+    // ── Strategist analyse knop ── (maakt/prioriteert doelen — hoort bij
+    // domain "goal"; zonder strategist_router gemonteerd is dit een knop naar
+    // een 404, dus alleen tonen als het domein er is)
+    if (goalOn) {
+      html += '<div class="section-card" style="text-align:center;background:linear-gradient(135deg,#eef2ff,#f8fafc);border:1px solid #e0e7ff">' +
+        '<h4 style="font-size:14px;font-weight:700;color:var(--accent);margin-bottom:4px">Strategist Agent</h4>' +
+        '<p style="font-size:12px;color:#64748b;margin-bottom:12px">AI-manager die alle projecten, doelen en kansen analyseert en prioriteiten stelt</p>' +
+        '<button onclick="runStrategistAnalysis()" id="strat-btn" style="padding:10px 24px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">\u{1F9E0} Analyseer &amp; prioriteer</button>' +
+        '</div>';
 
-    // ── Strategist result container ──
-    html += '<div id="strategist-result"></div>';
+      // ── Strategist result container ──
+      html += '<div id="strategist-result"></div>';
+    }
 
     html += '</div>';
     main.innerHTML = html;
     loadActionCenter();
     startActionCenterRefresh();
+    loadSortedInbox();
     loadIrisBriefing();
     loadActivityLogs();
     loadLlmUsage();
@@ -190,6 +224,18 @@ function loadActionCenter() {
         '<span style="font-size:11px;color:#9a3412;flex:1"><b>' + gscCount + ' Search Console-melding(en)</b> — laat de GSC-expert ze analyseren &amp; afhandelen:</span>' +
         '<button onclick="acGscFixAll(this)" style="padding:4px 12px;background:#ea580c;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">⚡ Verwerk alle GSC</button></div>';
     }
+    // Fout-triage bulk: alle foutkaarten (activity_log-fouten + mislukte
+    // content_jobs) in één keer analyseren & herstellen — in plaats van ze
+    // stuk voor stuk aan te klikken. Patroon-fouten (OpenModel-down, MS-auth,
+    // catch-up) worden deterministisch gediagnosticeerd, zonder LLM per kaart.
+    var errorCount = items.filter(function(i){
+      return i.kind === 'error' || (i.kind === 'content_needs_work' || i.kind === 'publish_failed');
+    }).length;
+    if (errorCount >= 1) {
+      bulkBar += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;padding:8px 12px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px">' +
+        '<span style="font-size:11px;color:#312e81;flex:1"><b>' + errorCount + ' foutkaart(en)</b> — laat Iris ze allemaal analyseren &amp; afhandelen:</span>' +
+        '<button onclick="acTriageAll(this)" style="padding:4px 12px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">⚡ Analyseer alle fouten</button></div>';
+    }
     var html = '<div class="section-card" style="margin-bottom:16px;border:2px solid #6366f1;background:linear-gradient(135deg,#eef2ff,#fff)">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
       '<h3 style="font-size:15px;font-weight:800;color:#312e81">\u{1F4E5} Vandaag — wacht op jou (' + items.length + ')</h3>' +
@@ -217,6 +263,13 @@ function loadActionCenter() {
           return '<button onclick=\'acAction(this, ' + JSON.stringify(a).replace(/'/g, '&#39;') + ', ' + JSON.stringify(it.project || '') + ')\' ' +
             'style="padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;' + style + '">' + escHtml(a.label) + '</button>';
         }).join('') +
+        // Voor een MS-auth-fout toont het backend-antwoord (na 'Analyseer & fix')
+        // de vlag reconnect_ms — maar de kaart staat er al mét die fout vóórdat
+        // je klikt. We herkennen hem direct aan de titel/summary en bieden de
+        // echte re-auth-knop aan, zodat je niet eerst "Analyseer & fix" hoeft.
+        (it.reconnect_ms || /niet geauthenticeerd bij microsoft/i.test(it.summary || '') || /microsoft/i.test(it.title || '')
+          ? '<button onclick="acReconnectMicrosoft(this, ' + JSON.stringify(it.project || '') + ')" style="padding:4px 12px;background:#0ea5e9;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">🔌 Verbind Microsoft opnieuw</button>'
+          : '') +
         '</div></div></div>';
     });
     html += '</div>';
@@ -237,6 +290,56 @@ function loadDigest() {
     el.innerHTML = '<div class="strategist-analyse-content">' + mdToHtml(d.markdown || '') + '</div>';
   }).catch(function(e){
     el.innerHTML = '<div style="color:#ef4444">Rapport laden mislukt: ' + escHtml(e.message) + '</div>';
+  });
+}
+
+// ── Postvak — gesorteerd naar wat een mail van jou nodig heeft ─────
+// Hergebruikt precies de triage die al bestond (urgent/actie/wacht/info,
+// zie outlook/service.py _TRIAGE_SYSTEM) via GET /api/outlook/sorted —
+// alleen de presentatie is nieuw: gegroepeerd op wat er van jou verwacht
+// wordt in plaats van op prioriteitscijfer.
+var _sortedInboxMeta = {
+  needs_reply: { label: 'Reageren', color: '#4f46e5', bg: '#eef2ff' },
+  waiting: { label: 'Wacht op hen', color: '#64748b', bg: '#f8fafc' },
+  fyi: { label: 'Ter info', color: '#64748b', bg: '#f8fafc' }
+};
+var _sortedInboxOrder = ['needs_reply', 'waiting', 'fyi'];
+
+function loadSortedInbox() {
+  var el = document.getElementById('sorted-inbox-panel');
+  if (!el) return;
+  fetch('/api/outlook/status').then(function(r){return r.json();}).then(function(status){
+    if (!el) return;
+    if (!status.configured) { el.innerHTML = '<div style="color:#94a3b8">Outlook niet geconfigureerd.</div>'; return; }
+    if (!status.authenticated) { el.innerHTML = '<div style="color:#94a3b8">Outlook niet ingelogd — koppel je account via de Postvak-tab.</div>'; return; }
+    return fetch('/api/outlook/sorted').then(function(r){return r.json();}).then(function(d){
+      if (!el) return;
+      var any = _sortedInboxOrder.some(function(k){ return (d[k]||[]).length; });
+      if (!any) {
+        el.innerHTML = '<div style="color:#166534">✅ Niets dat op je wacht.</div>' +
+          (d.untriaged ? '<div style="color:#94a3b8;font-size:11px;margin-top:4px">' + d.untriaged + ' nog niet getrieerd.</div>' : '');
+        return;
+      }
+      var html = '';
+      _sortedInboxOrder.forEach(function(key){
+        var items = d[key] || [];
+        if (!items.length) return;
+        var meta = _sortedInboxMeta[key];
+        html += '<div style="margin-bottom:10px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:' + meta.color + ';margin-bottom:4px">' + meta.label + ' (' + items.length + ')</div>';
+        items.forEach(function(m){
+          html += '<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;margin-bottom:3px;background:' + meta.bg + ';border-radius:6px">' +
+            '<span style="flex:1;min-width:0;font-size:12px;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+            '<strong>' + escHtml(m.from_name || m.from_email || '') + '</strong> — ' + escHtml(m.subject || '(geen onderwerp)') + '</span>' +
+            (m.suggested_reply ? '<span style="font-size:9px;font-weight:600;color:#4f46e5;background:#e0e7ff;padding:1px 6px;border-radius:8px;flex-shrink:0">concept klaar</span>' : '') +
+            '</div>';
+        });
+        html += '</div>';
+      });
+      if (d.untriaged) html += '<div style="color:#94a3b8;font-size:11px">+ ' + d.untriaged + ' nog niet getrieerd</div>';
+      el.innerHTML = html;
+    });
+  }).catch(function(e){
+    el.innerHTML = '<div style="color:#ef4444">Postvak laden mislukt: ' + escHtml(e.message) + '</div>';
   });
 }
 
@@ -423,6 +526,63 @@ function loadLlmUsage() {
     el.innerHTML = html;
   }).catch(function(e){
     el.innerHTML = '<div style="color:#ef4444">Verbruik laden mislukt: ' + escHtml(e.message) + '</div>';
+  });
+}
+
+// ── Weekbeeld — het trage zoekbeeld uit het weekrapport ────────────
+// De projectcijfers hierboven draaien op 7-vs-7 dagen; dit is 28-vs-28. Ze
+// horen te verschillen: een slechte week binnen een stijgende lijn is geen
+// probleem. Zolang dit alleen in de mail stond, stuurde het niets aan.
+function _weekDelta(v, suffix) {
+  if (v == null) return '<span style="color:#94a3b8">n/b</span>';
+  var kleur = v > 0 ? '#166534' : (v < 0 ? '#991b1b' : '#64748b');
+  return '<span style="color:' + kleur + ';font-weight:600">' + (v > 0 ? '+' : '') + v + (suffix || '') + '</span>';
+}
+
+function loadWeekbeeld() {
+  var el = document.getElementById('weekbeeld-panel');
+  if (!el) return;
+  fetch('/api/analytics/weekly-insights').then(function(r){return r.json();}).then(function(d){
+    var s = d.summary || {};
+    if (s.state === 'geen') {
+      el.innerHTML = '<div style="color:#64748b">Nog geen weekrapport vastgelegd. ' +
+        'De maandagrun (08:00) legt het eerste weekbeeld vast — dit is dus geen ' +
+        'uitspraak over de prestaties.</div>';
+      return;
+    }
+    var html = '<div style="font-size:11px;color:#64748b;margin-bottom:6px">Week ' + escHtml(s.week || '') +
+      (s.state === 'verouderd' ? ' <span style="color:#b45309;font-weight:600">· ' + s.weken_oud +
+        ' weken oud — de weekrun heeft sindsdien niet gedraaid</span>' : '') + '</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11px">' +
+      '<tr style="color:#64748b;text-align:right"><th style="text-align:left">Project</th>' +
+      '<th>Klikken</th><th>Δ</th><th>Impressies</th><th>Δ</th><th>Positie</th><th>Δ</th><th>Kansen</th></tr>';
+    (s.projects || []).forEach(function(p){
+      html += '<tr style="border-top:1px solid #f1f5f9;text-align:right">' +
+        '<td style="text-align:left;font-weight:600">' + escHtml(p.project) + '</td>' +
+        '<td>' + p.clicks + '</td><td>' + _weekDelta(p.clicks_pct, '%') + '</td>' +
+        '<td>' + p.impressions + '</td><td>' + _weekDelta(p.impressions_pct, '%') + '</td>' +
+        '<td>' + p.position + '</td><td>' + _weekDelta(p.position_delta, '') + '</td>' +
+        '<td>' + (p.quick_wins || 0) + (p.ctr_fix ? ' · ' + p.ctr_fix + ' CTR' : '') + '</td></tr>';
+    });
+    html += '</table>';
+    html += '<div style="font-size:10px;color:#94a3b8;margin-top:4px">Positie: lager is beter, ' +
+      'dus een positieve Δ is winst. "Kansen" = quick wins (positie 4-15 met volume) · ' +
+      'CTR = veel vertoningen bij minder dan 2% doorklik (snippet-probleem, geen nieuw artikel).</div>';
+    if ((s.structureel_dalend || []).length) {
+      html += '<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#fef2f2;color:#991b1b;font-size:11px">' +
+        '<strong>Structureel dalend</strong> (volume én positie over 28 dagen): ' +
+        s.structureel_dalend.map(escHtml).join(', ') + ' — dit is geen weekruis.</div>';
+    }
+    var blijvers = d.blijvers || [];
+    if (blijvers.length) {
+      html += '<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#fffbeb;color:#92400e;font-size:11px">' +
+        '<strong>Blijft liggen:</strong> ' + blijvers.slice(0, 5).map(function(b){
+          return escHtml(b.query) + ' (' + escHtml(b.project || '') + ', ' + b.weken + ' wk)';
+        }).join(' · ') + ' — een kans die zich elke week herhaalt zonder te bewegen, wordt niet opgepakt.</div>';
+    }
+    el.innerHTML = html;
+  }).catch(function(e){
+    el.innerHTML = '<div style="color:#ef4444">Weekbeeld laden mislukt: ' + escHtml(e.message) + '</div>';
   });
 }
 
@@ -734,6 +894,48 @@ function acGscFixAll(btn) {
     });
 }
 
+// Alle foutkaarten in één keer analyseren & afhandelen (ipv ze stuk voor stuk
+// aan te klikken). Vuur-en-vergeet: de backend loopt op de achtergrond en geeft
+// meteen een job_id terug; het Actiecentrum toont de resultaten zodra ze landen.
+function acTriageAll(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Iris analyseert alle fouten…'; }
+  post('/api/iris/errors/triage-all', {})
+    .then(function(d){
+      var msg = (d && d.message) ? d.message
+        : 'Alle foutkaarten worden op de achtergrond geanalyseerd.';
+      alert(msg);
+      // Ververs na een paar seconden zodat de diagnoses/resultaten zichtbaar zijn.
+      setTimeout(function(){ loadActionCenter(); loadActivityLogs(); }, 4000);
+    })
+    .catch(function(e){
+      if (btn) { btn.disabled = false; btn.textContent = '⚡ Analyseer alle fouten'; }
+      alert('Bulk-analyse mislukt: ' + e.message);
+    });
+}
+
+// Start de Microsoft device-code login voor een "Niet geauthenticeerd bij
+// Microsoft"-fout. Toont de code + link; na invoeren herstelt de Bridge-mail-
+// sync zichzelf. Dit is de echte fix, niet alleen "check je credentials".
+function acReconnectMicrosoft(btn, project) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Microsoft-login starten…'; }
+  post('/api/iris/errors/reconnect-microsoft', {})
+    .then(function(d){
+      if (btn) { btn.disabled = false; btn.textContent = '🔌 Verbind Microsoft opnieuw'; }
+      if (!d || !d.ok) { alert('Kon de Microsoft-login niet starten.'); return; }
+      var link = d.verification_uri || 'https://login.microsoft.com/device';
+      var code = d.user_code || '(zie de site)';
+      var w = window.open(link, '_blank');
+      alert('Microsoft-login gestart.\n\n1. Open deze pagina: ' + link + (w ? ' (nieuw tabblad geopend)' : '') +
+            '\n2. Voer deze code in: ' + code +
+            '\n\nNa het inloggen herstelt de Bridge-mail-sync zichzelf.');
+      loadActionCenter(); loadActivityLogs();
+    })
+    .catch(function(e){
+      if (btn) { btn.disabled = false; btn.textContent = '🔌 Verbind Microsoft opnieuw'; }
+      alert('Microsoft-login mislukt: ' + e.message);
+    });
+}
+
 // omdat conflict_checked != 'ok') IN de Actiecentrum-kaart, zodat de gebruiker
 // leest wát er aan de hand is — niet alleen een 502 in de console.
 function showCalendarInstruction(btn, msg) {
@@ -923,6 +1125,15 @@ function acAction(btn, action, project) {
     if (!confirm('Afspraak-voorstel weigeren?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
     post('/api/calendar/proposals/reject', JSON.stringify({ proposal_id: action.id }), 'application/json')
       .then(done).catch(fail);
+  } else if (type === 'run_job') {
+    // Een gemiste geplande taak alsnog draaien. Draait op de achtergrond: een
+    // contentronde of outreach-batch duurt minuten. De kaart verdwijnt vanzelf
+    // zodra de run slaagt — dat is precies wanneer het gat gedicht is.
+    post('/api/scheduler/jobs/' + encodeURIComponent(action.id) + '/run', {})
+      .then(function(d){
+        if (btn) btn.textContent = 'Gestart — draait op de achtergrond';
+        setTimeout(function(){ loadActionCenter(); loadActivityLogs(); }, 8000);
+      }).catch(fail);
   } else if (type === 'mail_edit') {
     acMailEdit(btn, action); return;
   } else {

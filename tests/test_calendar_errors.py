@@ -6,7 +6,7 @@ scheduler-historie in het Actiecentrum belandt.
 """
 import httpx
 
-from backend.domains.calendar import service
+from backend.domains.calendar import service_google as service
 
 
 def _http_error(code: int) -> httpx.HTTPStatusError:

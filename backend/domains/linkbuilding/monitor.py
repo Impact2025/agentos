@@ -85,8 +85,24 @@ def _fetch(url: str) -> Optional[str]:
 
 def _check_one(placement: Dict[str, Any]) -> None:
     now = _now()
-    html = _fetch(placement["source_url"])
-    hit = find_link_in_html(html, placement["target_url"]) if html else None
+    # Eerst de afgesproken pagina, daarna de homepage van het domein: veel
+    # linkdeals belanden op een andere pagina dan waarnaar verwezen werd (een
+    # "links"-pagina, de homepage, of een gastblog-op de site van de partner).
+    # Alleen de domein-homepage bij als fallback — niet de hele site crawlen.
+    source = placement["source_url"]
+    dom = norm_domain(source)
+    candidates = [source]
+    if dom:
+        home = f"https://{dom}"
+        if home.rstrip("/") != source.rstrip("/"):
+            candidates.append(home)
+    hit = None
+    for url in candidates:
+        html = _fetch(url)
+        if html:
+            hit = find_link_in_html(html, placement["target_url"])
+            if hit:
+                break
 
     with get_conn() as conn:
         if hit:
@@ -97,11 +113,26 @@ def _check_one(placement: Dict[str, Any]) -> None:
                 (hit["anchor"], hit["rel"], now, now, now, placement["id"]),
             )
         else:
+            new_fails = placement["check_fails"] + 1
             conn.execute(
                 "UPDATE link_placements SET last_checked = ?, "
-                "check_fails = check_fails + 1, updated_at = ? WHERE id = ?",
-                (now, now, placement["id"]),
+                "check_fails = ?, updated_at = ? WHERE id = ?",
+                (now, new_fails, now, placement["id"]),
             )
+            # Nadert de grens zonder ooit gevonden te zijn: de afspraak is
+            # kennelijk niet doorgegaan. Eén kaart om Vincent dat te laten zien,
+            # zodat de wachtrij niet eindeloos op een dode deal blijft wachten.
+            if new_fails == _MAX_PENDING_FAILS:
+                log_outcome(
+                    "Linkbuilding", "link_placement_stalled",
+                    f"Backlink-afspraak met {dom} ({source}) is na "
+                    f"{_MAX_PENDING_FAILS} checks nog steeds niet live — "
+                    f"waarschijnlijk niet doorgegaan.",
+                    artifact=source,
+                    next_step="Mail de partner na of wijs de linkkans af "
+                              "(dan stopt de monitor met crawlen).",
+                    status="error",
+                )
 
     was = placement["status"]
     if hit:
@@ -122,7 +153,7 @@ def _check_one(placement: Dict[str, Any]) -> None:
         elif not prospect.get("verified_at") and (placement.get("first_seen") or "")[:10] < now[:10]:
             # Tweede waarneming op een latere dag: geverifieerd.
             service.advance_prospect(prospect["id"], "verified")
-    elif was == "live" and placement["check_fails"] + 1 >= 2:
+    elif was == "live" and new_fails >= 2:
         with get_conn() as conn:
             conn.execute(
                 "UPDATE link_placements SET status = 'lost', updated_at = ? WHERE id = ?",

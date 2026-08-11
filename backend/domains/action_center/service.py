@@ -88,6 +88,10 @@ def build_inbox() -> Dict[str, Any]:
         except Exception:
             pass
 
+        # Beleggingsvoorstellen staan bewust NIET in het Actiecentrum: die horen
+        # uitsluitend op het Beursmeester-dashboard thuis (tabs-invest.js), niet
+        # tussenin het algemene dashboard.
+
         # ── 1. Doelen die op jou wachten ────────────────────────────────
         for g in conn.execute(
             "SELECT id, title, status, project, created_at FROM goals "
@@ -290,6 +294,14 @@ def build_inbox() -> Dict[str, Any]:
                 {"label": "Analyseer & fix", "type": "error_triage", "id": e["id"], "accent": True},
                 {"label": "Gezien, verberg", "type": "dismiss", "dismiss_kind": "error", "id": e["id"]},
             ]
+            # Een taak die nog nooit slaagde analyseer je niet weg — je draait
+            # hem en leest de fout. De kaart droeg alleen "Analyseer & fix",
+            # terwijl de stilstand-kaart ernaast wél de inhaalknop had; de
+            # tekst zei "draai hem handmatig" en bood daar geen knop voor.
+            if e["action"] == "job_nooit_geslaagd":
+                job_id = (e["detail"] or "").split("|")[0].strip()
+                if job_id:
+                    actions.insert(0, {"label": "Nu draaien", "type": "run_job", "id": job_id})
             summary = (e["detail"] or "")[:220]
             # Werkt Iris hier al aan? Dan hoort de kaart dát te zeggen. Anders
             # kijkt Vincent naar een rood item terwijl er al iemand op zit — en
@@ -473,6 +485,39 @@ def build_inbox() -> Dict[str, Any]:
                     {"label": "Afwijzen", "type": "personal_mail_reject", "id": r["id"], "danger": True},
                 ],
             })
+
+    # Stilstand: geplande runs die overgingen terwijl de machine uit stond.
+    # Eén item per taak, niet per gemist vuurmoment — vier kaarten voor vier
+    # dagen dezelfde stilstand zeggen niets extra's en verdringen wel vier
+    # andere dingen. De knop draait de taak alsnog; zonder die knop is de
+    # melding alleen een mededeling dat er werk verdampt is.
+    try:
+        from ...shared import downtime
+        for gap in downtime.summary():
+            if not gap["recoverable"]:
+                continue
+            # De wegklik-sleutel bevat het laatste gemiste moment, niet alleen
+            # het job-id. Anders zou één keer "gezien, verberg" deze taak voor
+            # altijd onzichtbaar maken — óók de stilstand van volgende maand.
+            dismiss_ref = f"{gap['job_id']}:{gap['last']}"
+            if ("scheduler_gap", dismiss_ref) in skip:
+                continue
+            items.append({
+                "kind": "error",
+                "dismiss_kind": "scheduler_gap",
+                "id": gap["job_id"],
+                "title": f"Taak niet gedraaid: {gap['label']}",
+                "project": "Scheduler",
+                "created_at": gap["last"],
+                "summary": gap["detail"],
+                "actions": [
+                    {"label": "Nu alsnog draaien", "type": "run_job", "id": gap["job_id"]},
+                    {"label": "Gezien, verberg", "type": "dismiss",
+                     "dismiss_kind": "scheduler_gap", "id": dismiss_ref},
+                ],
+            })
+    except Exception:
+        logger.exception("[actiecentrum] Kon gemiste runs niet ophalen")
 
     # Scheduler-fouten. Staan sinds de run-historie in `scheduler_runs` ook een
     # herstart door: een gefaalde job blijft in het Actiecentrum tot hij slaagt.

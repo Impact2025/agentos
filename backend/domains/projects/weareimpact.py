@@ -862,13 +862,41 @@ def project_kansen(name: str, status: Optional[str] = Query(None)):
         raise HTTPException(404, f"Project '{name}' niet gevonden")
 
     from ..seo import engine as demand_engine
+    from ..seo import potential as _potential
     # Truth-modus: status wordt afgeleid uit content_jobs (wat er écht live
-    # staat), zodat de Kansen-UI de waarheid toont en nooit dubbel werk doet.
+    # staat) en de kwaliteitsgate wiedt dubbelen, kannibalen en ruis eruit,
+    # zodat de Kansen-UI de waarheid toont en nooit dubbel werk aanbiedt.
     kansen = demand_engine.list_opportunities_truth(site_id=site["id"], status=status)
+    # De tellingen komen uit de vólledige lijst, niet uit de zojuist gefilterde:
+    # anders zou de bak "Uitgefilterd" altijd (0) tonen zolang je er niet in
+    # kijkt, en dan is het filter alsnog onzichtbaar.
+    alles = demand_engine.list_opportunities_truth(site_id=site["id"],
+                                                  include_filtered=True)
+    open_kansen = [o for o in alles
+                   if o["status"] in ("new", "in_progress")
+                   and not (o.get("filter_reason") and o["status"] == "new")]
+    uitgefilterd = [o for o in alles
+                    if o.get("filter_reason") and o["status"] == "new"]
+    redenen: dict = {}
+    for o in uitgefilterd:
+        redenen[o["filter_reason"]] = redenen.get(o["filter_reason"], 0) + 1
     return {
         "site": {"name": site["name"], "gsc_property": site.get("gsc_property", "")},
         "count": len(kansen),
         "kansen": kansen,
+        "counts": {
+            "open": len(open_kansen),
+            "nieuw": len([o for o in open_kansen if o["status"] == "new"]),
+            "in_behandeling": len([o for o in open_kansen if o["status"] == "in_progress"]),
+            "gemeten": len([o for o in open_kansen if o.get("demand") == "gemeten"]),
+            "uitgefilterd": len(uitgefilterd),
+            "redenen": redenen,
+            # De opgetelde verwachte klikwinst van alles wat nog openstaat.
+            # Dit is het enige getal waarmee "schrijf deze kansen" een belofte
+            # kan doen die je achteraf kunt narekenen tegen gsc_history.
+            "potentieel_klikken": _potential.total_potential(
+                [o for o in open_kansen if o.get("demand") == "gemeten"]),
+        },
     }
 
 

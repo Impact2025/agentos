@@ -65,6 +65,28 @@ def _amsterdam_now() -> datetime:
     return datetime.now(timezone.utc).astimezone(_TZ)
 
 
+# Markeert het begin van een geciteerde eerdere mail (Outlook/Gmail-stijl,
+# NL en EN). Alles ná de eerste treffer is iemand anders' oude bericht, niet
+# de nieuwe tekst — een datum/tijd/locatie daaruit is metadata van de
+# aanhef, niet een afspraakwens. Gemeten 9 aug 2026: een "Sent: ... 20:11:04"
+# regel in een geciteerde header leverde een afspraakvoorstel op om 20:11.
+_QUOTE_MARKERS = re.compile(
+    r"(-{2,}\s*(oorspronkelijk bericht|original message)\s*-{2,}"
+    r"|^\s*van\s*:.{0,120}$"
+    r"|^\s*from\s*:.{0,120}$"
+    r"|^\s*sent\s*:.{0,120}$"
+    r"|^\s*verzonden\s*:.{0,120}$"
+    r"|^\s*op .{0,80} schreef .{0,80}\s*:\s*$"
+    r"|^\s*on .{0,80} wrote\s*:\s*$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _strip_quoted_history(body: str) -> str:
+    m = _QUOTE_MARKERS.search(body)
+    return body[: m.start()] if m else body
+
+
 def extract_appointment(subject: str, body: str, from_addr: str = "") -> Dict:
     """Haal afspraak-gegevens uit een mail. Regelgebaseerd, geen LLM.
 
@@ -72,7 +94,7 @@ def extract_appointment(subject: str, body: str, from_addr: str = "") -> Dict:
     duration_min (int), location (str), is_remote (bool), priority (str),
     attendees (list), raw_hints (list).
     """
-    text = f"{subject or ''}\n{body or ''}".lower()
+    text = f"{subject or ''}\n{_strip_quoted_history(body or '')}".lower()
     out: Dict = {
         "has_time": False,
         "date": None,
@@ -85,7 +107,10 @@ def extract_appointment(subject: str, body: str, from_addr: str = "") -> Dict:
     }
 
     # ── Locatie ──
-    loc_m = re.search(r"(locatie|adres|plek|waar)\s*[:=]?\s*([^\n,.;]{3,60})", text)
+    # \b vóór 'waar': anders matcht dat ook midden in 'meerwaarde' of 'waarom'
+    # en levert de rest van dié zin als nep-locatie (gemeten 9 aug 2026: "of
+    # PootGelukkig voor ons meerwaarde heeft" -> locatie "de heeft").
+    loc_m = re.search(r"\b(locatie|adres|plek|waar)\b\s*[:=]?\s*([^\n,.;]{3,60})", text)
     if loc_m:
         out["location"] = loc_m.group(2).strip()
     # remote-signalen: alleen expliciete online-platformen tellen als remote.
@@ -103,7 +128,9 @@ def extract_appointment(subject: str, body: str, from_addr: str = "") -> Dict:
         out["location"] = "Telefonisch"
 
     # ── Duur ──
-    dur_m = re.search(r"(\d+)\s*(uur|uurb|min|minuten|kwartier)", text)
+    # (?<![:.\d]) sluit de minuten van een kloktijd uit: "09:00 uur" matchte
+    # zonder deze guard als "00 uur" -> 0 minuten duur (gemeten 9 aug 2026).
+    dur_m = re.search(r"(?<![:.\d])(\d+)\s*(uur|uurb|min|minuten|kwartier)", text)
     if dur_m:
         n = int(dur_m.group(1))
         unit = dur_m.group(2)
@@ -232,10 +259,17 @@ def _free_busy_conflict(start: datetime, end: datetime) -> tuple:
     """Vraag Google Calendar free/busy (als gekoppeld).
 
     Returns (status, overlaps) met status 'ok' (gecontroleerd), 'unavailable'
-    (geen agenda gekoppeld) of 'error' (check mislukt). Die drie mógen niet op
-    één hoop: een mislukte check is géén bewijs van een vrij slot, en juist dat
-    verschil houdt dubbele boekingen tegen.
+    (geen agenda gekoppeld), 'invalid_range' (begin ≥ eind — geen agendafout)
+    of 'error' (check mislukt). Die vier mógen niet op één hoop: een mislukte
+    check is géén bewijs van een vrij slot, en juist dat verschil houdt
+    dubbele boekingen tegen.
     """
+    if end <= start:
+        # Google's freeBusy geeft hier een kale 400 Bad Request — dat lijkt op
+        # een agenda-koppelingsfout maar is een kapotte tijdsduur (gemeten:
+        # voorstel #19 had proposed_start == proposed_end). Nooit de API
+        # bellen met een leeg of negatief venster.
+        return "invalid_range", []
     try:
         from ...domains.calendar import service as cal
         if not cal.is_configured():
@@ -295,7 +329,12 @@ def create_proposal(mailbox_id: str, inbox_id: int, subject: str, from_addr: str
         # geen tijd in mail → stel morgen 10:00 voor (mens beslist definitief)
         start = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
 
-    duration = appt["duration_min"]
+    # Nooit een 0-minuten-afspraak: Google's freeBusy-endpoint geeft een kale
+    # 400 Bad Request zodra timeMin == timeMax, en dat werd tot nu toe gemeld
+    # als "kan je agenda's niet controleren, koppel Google Agenda opnieuw" —
+    # een op-het-verkeerde-been-zettende diagnose voor wat gewoon een kapotte
+    # duur is (gemeten 9-10 aug 2026, voorstel #19: duration_min=0).
+    duration = appt["duration_min"] or _DEFAULT_DURATION_MIN
     end = start + timedelta(minutes=duration)
 
     # Reistijd-buffer als onderweg.
@@ -380,6 +419,13 @@ def approve_proposal(proposal_id: int) -> Dict:
                 return {"ok": False, "code": "conflict_found", "blocked": True,
                         "error": ("Dit slot overlapt nu met een bestaande afspraak "
                                   f"({overlap}). Verplaats het of kies een ander slot.")}
+            if fb_status == "invalid_range":
+                # Geen agendaprobleem: begin ≥ eind (bv. een 0-minuten-parse uit
+                # een oudere bug). Niets valt te "koppelen" — het voorstel zelf
+                # is kapot en moet opnieuw gemaakt worden.
+                return {"ok": False, "code": "invalid_range", "blocked": True,
+                        "error": ("Voorgestelde tijd is ongeldig (begin ligt niet vóór "
+                                  "eind). Wijs af en laat het voorstel opnieuw maken.")}
             if fb_status != "ok":
                 from . import service as cal
                 access = _run_async(cal.verify_access())

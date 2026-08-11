@@ -61,3 +61,60 @@ def test_preview_meta_gebruikt_expliciet_blok_boven_afleiding():
     title, desc = cp._preview_meta(html)
     assert title == "Echte titel"
     assert desc == "Echte description."
+
+
+# ── Meta-titel: één definitie voor reviewer én publisher ────────────────────
+#
+# 2 aug 2026: 47 van 103 artikelen droegen een meta-titel die op exact 60 tekens
+# midden in een woord was afgekapt ('... Jouw teambeleving in de l'), waarvan 15
+# al live. De harde `[:60]` stond op vier plekken: de review-preview én de drie
+# publicatieroutes. Voor slugs was die les al geleerd (`slugify_title` knipt op
+# een woordgrens); de meta-titel had de fix nooit gekregen.
+
+def test_titel_wordt_op_een_woordgrens_geknipt():
+    lang = "Bedrijfsuitje Hoofddorp Schiphol - Jouw teambeleving in de luchthavenregio"
+    uit = cp.meta_title_for(lang)
+    assert len(uit) <= 60
+    assert not uit.endswith(" ")
+    assert lang.startswith(uit), "de kop van de titel hoort ongewijzigd te blijven"
+    # Het afgekapte woord mag niet half meekomen.
+    assert not uit.endswith("de l")
+    assert uit.split()[-1] in lang.split(), "laatste woord moet een heel woord zijn"
+
+
+def test_instructie_echo_van_het_model_gaat_eraf():
+    """Het model schrijft zijn eigen tekenaantal in de titel; dat ging live mee."""
+    assert cp.meta_title_for("Zo val je op als interimmer (54 tekens)") == \
+        "Zo val je op als interimmer"
+    assert cp.meta_title_for("Stappenplan en voorbeeld (48 chars)") == \
+        "Stappenplan en voorbeeld"
+
+
+def test_html_entiteiten_horen_niet_in_een_title():
+    assert "&amp;" not in cp.meta_title_for("Data, SEO &amp; analytics")
+    assert cp.meta_title_for("Data, SEO &amp; analytics") == "Data, SEO & analytics"
+
+
+def test_korte_titel_blijft_ongemoeid():
+    assert cp.meta_title_for("Korte titel") == "Korte titel"
+
+
+def test_een_woord_zonder_spaties_wordt_alsnog_ingekort():
+    """Liever hard afgekapt dan een titel die de limiet overschrijdt."""
+    uit = cp.meta_title_for("A" * 90)
+    assert len(uit) == 60
+
+
+def test_lege_invoer_geeft_lege_string():
+    assert cp.meta_title_for("") == ""
+    assert cp.meta_title_for(None) == ""
+
+
+def test_preview_en_publisher_leveren_dezelfde_titel():
+    """Wijken die af, dan beoordeelt de reviewer een titel die nooit bestaat —
+    en is zijn aftrek per definitie onrepareerbaar."""
+    body = ("<h1>Bedrijfsuitje Hoofddorp Schiphol - Jouw teambeleving in de "
+            "luchthavenregio</h1><p>" + "tekst " * 40 + "</p>")
+    preview_title, _ = cp._preview_meta(body)
+    titel = cp._extract_title(body, fallback="")
+    assert preview_title == cp.meta_title_for(titel)

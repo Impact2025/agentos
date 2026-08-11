@@ -165,6 +165,26 @@ def _strip_json(raw: str) -> str:
     return raw.strip()
 
 
+_LEAD_SCORE_RE = re.compile(r'"score"\s*:\s*(-?\d+)')
+
+
+def _salvage_score(raw: str) -> Optional[int]:
+    """Red het fitnessscore-cijfer uit JSON die niet volledig parseert.
+
+    Zelfde storing als `vacancies/service.py:_salvage_fit` (9 aug 2026): een
+    afgekapte respons (max_tokens=900) mist alleen de sluithaak, niet de
+    inhoud — "score": 8 staat er gewoon. Zonder redding viel dat cijfer weg en
+    kwam er via `.get('score', 50)` een neutrale 50 voor terug, wat een
+    duidelijke afwijzing (8) in een middelmatige-lijkende lead veranderde."""
+    m = _LEAD_SCORE_RE.search(raw)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
 def _domain(url: str) -> str:
     try:
         d = urlparse(url).netloc.lower()
@@ -355,15 +375,20 @@ Regels:
             return {
                 "summary": snippet[:300], "contacts": [], "phone": "",
                 "email": "", "address": "", "postal_code": "", "city": "",
-                "kvk_number": "", "relevance": "gemiddeld", "tags": [],
+                "kvk_number": "", "relevance": "onbeoordeeld", "score": None, "tags": [],
             }
         try:
             return json.loads(_strip_json(raw))
         except Exception:
+            # Zelfde storing als vacancies/service.py: de JSON is vaak alleen
+            # afgekapt, niet inhoudelijk stuk. Red het cijfer vóórdat we het
+            # opgeven — anders wordt een lage score (bijv. 8, duidelijk geen
+            # fit) via de 50-fallback een schijnbaar middelmatige lead.
             return {
                 "summary": raw[:300], "contacts": [], "phone": "",
                 "email": "", "address": "", "postal_code": "", "city": "",
-                "kvk_number": "", "relevance": "gemiddeld", "tags": [],
+                "kvk_number": "", "relevance": "onbeoordeeld",
+                "score": _salvage_score(raw), "tags": [],
             }
 
     def _hermes_complete(self, prompt: str, max_tokens: int = 900) -> str:
@@ -516,7 +541,13 @@ Regels:
             "postal_code": scraped.get("postal_code") or analysis.get("postal_code", ""),
             "kvk_number":  scraped.get("kvk_number") or analysis.get("kvk_number", ""),
             "summary":     analysis.get("summary") or lead.get("summary", ""),
-            "score":       analysis.get("score") or lead.get("score", 50),
+            # `or` zou een echte score van 0 (terecht "geen fit") ook laten
+            # doorvallen naar de oude score — expliciet op None toetsen houdt
+            # een 0 een 0. Levert een nieuwe analyse niets op, dan blijft de
+            # vorige score staan (die kan zelf ook al None zijn — dat is
+            # eerlijker dan een verzonnen 50).
+            "score":       analysis.get("score") if analysis.get("score") is not None
+                           else lead.get("score"),
             "enriched_at": _now(),
             "status":      "enriched",
         }

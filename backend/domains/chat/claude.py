@@ -215,19 +215,28 @@ async def stream_response(
                 raise  # midden in een stream niet meer stilletjes wisselen
             logger.warning(f"Anthropic direct faalde ({e.__class__.__name__}) — terugval op OpenModel/OpenRouter")
 
+    openmodel_error = ""
     if openmodel_claude_configured():
         try:
             # Gateway streamt niet betrouwbaar — volledige tekst als één chunk.
             yield await _get_via_openmodel(messages, system_prompt, max_tokens, purpose)
             return
         except Exception as e:
-            logger.warning(f"Claude via OpenModel faalde ({e}) — terugval op OpenRouter")
+            openmodel_error = f"{e.__class__.__name__}: {str(e)[:160]}"
+            logger.warning(f"Claude via OpenModel faalde ({openmodel_error}) — terugval op OpenRouter")
 
     if OPENROUTER_API_KEY:
         async for text in _stream_via_openrouter(messages, system_prompt, max_tokens):
             yield text
         return
 
+    if openmodel_error:
+        # Er wás een geconfigureerde route; "geen key" zou de echte oorzaak
+        # (timeout, quota, gateway-storing) verhullen en stuurde debuggers naar
+        # een niet-bestaand key-probleem (incident 04-08-2026).
+        raise RuntimeError(
+            f"OpenModel-route faalde en geen OpenRouter-terugval: {openmodel_error}"
+        )
     raise RuntimeError(
         "Geen werkende Claude-backend: geen ANTHROPIC_API_KEY, OPENMODEL_API_KEY of OPENROUTER_API_KEY."
     )

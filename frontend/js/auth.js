@@ -7,10 +7,11 @@ function showLoginScreen(reason) {
   var main = document.getElementById('main-content');
   if (!main) return;
   var note = reason ? '<p style="color:#dc2626;font-size:12px;margin-bottom:12px">' + reason + '</p>' : '';
+  var name = window.__instanceName || 'Agent OS';
   main.innerHTML =
     '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f172a">' +
     '<div style="width:320px;max-width:90vw;background:#1e293b;border:1px solid #334155;border-radius:12px;padding:28px 24px;box-shadow:0 10px 40px rgba(0,0,0,.4)">' +
-    '<h1 style="font-size:18px;font-weight:700;color:#f8fafc;margin-bottom:4px">Agent OS</h1>' +
+    '<h1 style="font-size:18px;font-weight:700;color:#f8fafc;margin-bottom:4px">' + escHtml(name) + '</h1>' +
     '<p style="font-size:12px;color:#94a3b8;margin-bottom:20px">Log in om je mission control te openen.</p>' +
     note +
     '<input id="login-pw" type="password" placeholder="Wachtwoord" autofocus ' +
@@ -49,12 +50,33 @@ async function submitLogin() {
 }
 
 async function checkAuthAndStart() {
+  // /api/status is publiek (ook zonder sessie) — vóór alles ophalen zodat het
+  // loginscherm zélf al de instance-naam toont i.p.v. altijd "Agent OS", en
+  // de sidebar straks meteen met de juiste tabs rendert i.p.v. even alles te
+  // tonen en dan te herschikken.
+  await loadInstanceStatus();
+  document.title = window.__instanceName || 'Agent OS';
   try {
     var resp = await fetch('/api/auth/me');
     var d = await resp.json();
     if (d.authenticated) { route(); return; }
   } catch (e) { /* server weg of geen me-endpoint — val door naar login */ }
   showLoginScreen();
+}
+
+// Op een klant-instance (AGENTOS_ENABLED_DOMAINS gezet) toont /api/status welke
+// domeinen gemonteerd zijn; de sidebar verbergt dan tabs die er toch niet
+// achter zitten (Beursmeester/Leads/Radar op een instance die alleen
+// mail+agenda+blog heeft) — anders klik je op een tab die overal leeg of 404
+// teruggeeft en dat oogt kapot, niet als "minimale scope". `instance_name`
+// personaliseert loginscherm/sidebar/browsertab naar de merknaam van de klant.
+async function loadInstanceStatus() {
+  try {
+    var r = await fetch('/api/status');
+    var d = await r.json();
+    window.__enabledDomains = d.enabled_domains || null; // null = alles aan
+    window.__instanceName = d.instance_name || 'Agent OS';
+  } catch (e) { window.__enabledDomains = null; window.__instanceName = 'Agent OS'; }
 }
 
 async function logoutAgent() {

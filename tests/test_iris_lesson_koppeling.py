@@ -76,9 +76,32 @@ class TestOordeelVersusBoekhouding:
     slechter lijken dan hij is.
     """
 
-    def test_nauwelijks_bewogen_is_unclear(self):
-        status, _ = predictions._judge("clicks", "up", 8.0, 12.0, 8.0)
+    def test_stilstand_met_doel_is_wrong(self):
+        """Een voorspelling die een drempel noemt en niet beweegt, is mis.
+
+        Tot 2 aug 2026 lag de ruisdrempel vóór de doeltoets en heette dit
+        'unclear'. Vijf van de negen onbesliste uitslagen waren zulke
+        stilstanden ("krijgt 1 click", uitkomst 0 → 0); daardoor meldde de
+        briefing 42,9% trefkans waar 26% de waarheid was.
+        """
+        status, note = predictions._judge("clicks", "up", 8.0, 12.0, 8.0)
+        assert status == "wrong"
+        assert "niet bewogen" in note
+
+    def test_stilstand_zonder_doel_is_unclear(self):
+        """Zonder drempel is stilstand wél oprecht onbeslist: er is niets om
+        aan af te meten, en dan is 'mis' net zo goed een verzinsel als 'raak'."""
+        status, note = predictions._judge("clicks", "up", 8.0, None, 8.0)
         assert status == "unclear"
+        assert "nauwelijks bewogen" in note
+
+    def test_doel_al_gehaald_bij_stilstand_is_correct(self):
+        """Baseline stond al op het doel en bleef daar: de claim klopt.
+
+        Zonder deze regel zou 'blijft op 8+' bij uitkomst 8 als mis boeken,
+        puur omdat er niets bewoog."""
+        status, _ = predictions._judge("clicks", "up", 8.0, 8.0, 8.0)
+        assert status == "correct"
 
     def test_juiste_kant_zonder_doel_is_unclear(self):
         status, note = predictions._judge("clicks", "up", 8.0, 12.0, 11.0)

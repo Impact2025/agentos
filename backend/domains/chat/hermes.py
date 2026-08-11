@@ -9,6 +9,7 @@ import json
 import httpx
 import anthropic
 from typing import AsyncGenerator, List, Dict
+from ...shared.hermes_context import build_hermes_context
 from ...shared.config import (
     ANTHROPIC_API_KEY, CLAUDE_MODEL_2,
     OPENROUTER_API_KEY, HERMES_MODEL,
@@ -87,12 +88,27 @@ async def _stream_for_backend(
             yield chunk
 
 
+# Welke callers een eigen, projectbewuste prompt meesturen (goal/service,
+# content_pipeline, iris). Die mogen NIET dubbel gevoed worden met de generieke
+# Hermes-context — anders botst het met hun eigen scherpe context.
+_DEFAULT_SYSTEM = "You are Hermes, a helpful AI assistant."
+
+
 async def stream_response(
     messages: List[Dict],
-    system_prompt: str = "You are Hermes, a helpful AI assistant.",
+    system_prompt: str = _DEFAULT_SYSTEM,
     max_tokens: int = 4096,
     purpose: str = "",
+    project: str | None = None,
 ) -> AsyncGenerator[str, None]:
+    # Opt-in: alleen als AGENTOS_USE_HERMES_SKILLS=true en de caller géén eigen
+    # prompt meegaf, verrijk de default met Hermes-skills + schrijf-DNA.
+    # Bestaande callers die wél een prompt meesturen veranderen niet van gedrag.
+    if system_prompt == _DEFAULT_SYSTEM:
+        hermes_ctx = build_hermes_context(project)
+        if hermes_ctx:
+            system_prompt = f"{_DEFAULT_SYSTEM}\n\n{hermes_ctx}"
+
     backend = hermes_backend()
     chain = _fallback_backends(backend)
     last_error: Exception | None = None
@@ -254,6 +270,37 @@ async def _stream_openai_compat(
         timeout = httpx.Timeout(600.0, connect=15.0)
     else:
         timeout = httpx.Timeout(120.0)
+
+    # Ollama/local: de async SSE-read (aiter_lines) hangt in deze omgeving op
+    # Ollama's OpenAI-compat endpoint (ReadTimeout, terwijl een sync-call wél
+    # werkt). Daarom hier non-streaming — één volledige response, geen hang.
+    if backend in ("local", "ollama"):
+        payload_nos = dict(payload)
+        payload_nos["stream"] = False
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(
+                    f"{base_url}/chat/completions", json=payload_nos, headers=headers
+                )
+                if resp.status_code == 404:
+                    raise RuntimeError(
+                        f"Model '{model}' niet gevonden (404) op backend '{backend}'. "
+                        "Controleer OLLAMA_MODEL in .env."
+                    )
+                resp.raise_for_status()
+                data = resp.json()
+                text = data["choices"][0]["message"].get("content", "")
+                if text:
+                    yield text
+                return
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise RuntimeError(
+                    f"Model '{model}' niet gevonden (404) op backend '{backend}'. "
+                    "Controleer OLLAMA_MODEL in .env."
+                ) from e
+            raise
+        return
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:

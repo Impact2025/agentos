@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ...shared.config import BASE_DIR, OBSIDIAN_VAULT_PATH, hermes_backend
 from ...shared.database import get_conn
+from ...shared.projects import squash_project
 from ...shared import agent_runner as agent_service
 from ...domains.delegate import event_bus
 from ...infinite_context import InfiniteContextEngine
@@ -173,6 +174,37 @@ async def _is_topic_relevant(site: dict, title: str, html_body: str) -> tuple:
         return (True, "relevantie-check overgeslagen (fout)")
 
 
+# Merker in `content_jobs.rationale` die vastlegt wélke goal-taak de bron van
+# dit artikel was. Bewust in de bestaande vrije-tekstkolom en niet in een nieuwe
+# kolom: de rationale wordt toch al per job geschreven, en de merker moet ook
+# leesbaar zijn in de Wachtrij-UI ("waar komt dit vandaan?").
+_BRON_MARKER = "bron-taak:"
+
+
+def _reeds_gestagede_bronnen(goal_id: str) -> set:
+    """Ids van goal-taken waarvan het resultaat al als Wachtrij-job staat.
+
+    Leest de wérkelijke Wachtrij en niet een teller in het geheugen: een
+    herstart tussen taak 3 en taak 4 mag niet betekenen dat het doel opnieuw
+    begint met stagen. Kan de tabel niet gelezen worden, dan is een lege set het
+    veilige antwoord — dan valt de bestaande dubbel-detectie hooguit terug op
+    het oude gedrag, in plaats van dat er niets meer gestaged kan worden.
+    """
+    try:
+        with get_conn() as conn:
+            rijen = conn.execute(
+                "SELECT rationale FROM content_jobs WHERE rationale LIKE ?",
+                (f"%goal {goal_id}%",),
+            ).fetchall()
+    except Exception as e:
+        logger.warning(f"Kon reeds-gestagede bronnen niet lezen voor goal {goal_id}: {e}")
+        return set()
+    uit = set()
+    for r in rijen:
+        uit.update(re.findall(rf"{_BRON_MARKER}([0-9a-fA-F-]+)", r["rationale"] or ""))
+    return uit
+
+
 async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str
                              ) -> Tuple[Optional[Tuple[str, str, int]], str]:
     """ECHTE actie voor publisher-taken: pak het artikel uit eerdere
@@ -199,15 +231,29 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str
             return None, (f"geen site gekoppeld aan project '{project}' — "
                           "publiceren kan alleen naar een geregistreerde site")
 
+        # Elke bron-taak mag maar één keer gestaged worden. Zonder deze zeef
+        # pakt élke publisher-taak in het doel dezelfde nieuwste content-taak:
+        # een doel met "Publiceer artikel 1 t/m 19" leverde 19 identieke
+        # Wachtrij-jobs van hetzelfde artikel op, en 19 taken die stuk voor stuk
+        # "ECHTE ACTIE UITGEVOERD" meldden (4 aug 2026 — gemeten: 21 taken
+        # claimden 6 jobs, en één artikel stond 19× in de Wachtrij). Dat is
+        # dezelfde storing als 'activiteit is geen effect', alleen omgekeerd:
+        # één effect, meervoudig opgeëist. De negentiende taak hóórt te falen —
+        # er ís geen negentiende artikel — waarmee het doel 'partial' wordt.
+        gestaged = _reeds_gestagede_bronnen(goal_id)
         with get_conn() as conn:
-            row = conn.execute(
-                "SELECT title, result FROM goal_tasks WHERE goal_id = ? "
+            kandidaten = conn.execute(
+                "SELECT id, title, result FROM goal_tasks WHERE goal_id = ? "
                 "AND skill IN ('content-writer', 'content-editor', 'seo') "
                 "AND status = 'completed' AND result IS NOT NULL AND length(result) > 400 "
-                "ORDER BY updated_at DESC LIMIT 1",
+                "ORDER BY updated_at DESC",
                 (goal_id,),
-            ).fetchone()
+            ).fetchall()
+        row = next((r for r in kandidaten if r["id"] not in gestaged), None)
         if not row:
+            if kandidaten:
+                return None, (f"alle {len(kandidaten)} artikelen uit dit doel staan al in "
+                              "de Wachtrij — er is geen nieuw artikel om te stagen")
             return None, ("geen publiceerbaar artikel in dit doel — eerdere "
                           "content-taken leverden niets van voldoende lengte op")
 
@@ -286,7 +332,8 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str
             site_id=site["id"],
             title=title,
             keyword="",
-            rationale=f"Uit goal {goal_id} — publisher-taak '{task_title}'",
+            rationale=(f"Uit goal {goal_id} — publisher-taak '{task_title}' "
+                       f"[{_BRON_MARKER}{row['id']}]"),
             blog_html=html_body,
             seo_score=seo_score,
             social_copy=social,
@@ -441,21 +488,41 @@ async def _stream_text(system_prompt: str, user_prompt: str, max_tokens: int = 3
     Optioneel model_override routeert naar een sterkere cloud-model (bv.
     deepseek-v4-flash via OpenModel) voor plannings- en decompositiewerk, ook
     als de standaard-backend lokaal/Ollama is. run_agent auto-routeert cloud-
-    modellen naar de juiste gateway."""
-    full = ""
-    async for chunk in agent_service.run_agent(
-        messages=[{"role": "user", "content": user_prompt}],
-        system_prompt=system_prompt,
-        agent="hermes",
-        max_tokens=max_tokens,
-        use_tools=False,
-        model_override=model_override,
-    ):
-        if chunk.get("type") == "text":
-            full += chunk["text"]
-        elif chunk.get("type") == "error":
-            raise RuntimeError(chunk.get("message", "Agent error"))
-    return full.strip()
+    modellen naar de juiste gateway.
+
+    Valt de primaire route uit (bijv. OpenModel-dagquota 403), dan forceren we
+    bij de tweede poging expliciet de Agnes-reserve-backend (backend_override)
+    in plaats van opnieuw op hetzelfde model te belanden. Zo blijft goal-
+   planning werken ook als het primaire smart-model op quota zit."""
+    attempts = [
+        {"model_override": model_override, "backend_override": None},
+        {"model_override": None, "backend_override": "agnes"},
+    ]
+    last_err: Optional[Exception] = None
+    for attempt in attempts:
+        try:
+            full = ""
+            async for chunk in agent_service.run_agent(
+                messages=[{"role": "user", "content": user_prompt}],
+                system_prompt=system_prompt,
+                agent="hermes",
+                max_tokens=max_tokens,
+                use_tools=False,
+                model_override=attempt["model_override"],
+                backend_override=attempt["backend_override"],
+            ):
+                if chunk.get("type") == "text":
+                    full += chunk["text"]
+                elif chunk.get("type") == "error":
+                    raise RuntimeError(chunk.get("message", "Agent error"))
+            return full.strip()
+        except Exception as e:
+            last_err = e
+            logger.warning("[goal] _stream_text poging (override=%s, backend=%s) faalde: %s",
+                           attempt["model_override"], attempt["backend_override"], e)
+    if last_err:
+        raise last_err
+    return ""
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -1443,7 +1510,31 @@ async def _execute_task(goal_id: str, task: Dict[str, Any]) -> str:
             _log_activity(goal_id, "task_failed", f"'{title}' na {retry+1} pogingen: {error_str}",
                           status="error", next_step="Bekijk het doel in de Doelen-tab of laat de agent het opnieuw proberen")
 
-            # Probeer alternatieve aanpak (self-correctie)
+            # Probeer alternatieve aanpak (self-correctie) — maar NOOIT voor een
+            # skill waarvan het eindproduct een effect in de wereld is. Voor
+            # publisher/outreach/analyst bestaat er geen "eenvoudigere aanpak":
+            # het externe systeem ontbrak, en wat het model dan levert is proza
+            # ovér het werk. Zo kwam "GSC-data ophalen via hermes-analytics" als
+            # completed binnen met "# Instructie: GSC-data exporteren voor
+            # bewaardvoorjou.nl via ..." — een handleiding voor een mens, geteld
+            # als uitgevoerde taak (4 aug 2026). `_NO_FABRICATION_RULE` schrijft
+            # dat plan bewust voor als eerlijk alternatief voor een verzinsel;
+            # de fout zat nooit in de tekst maar in de boekhouding eromheen.
+            # Het resultaat gaat niet verloren — het wordt als `result` bewaard
+            # bij een taak die `failed` blijft, en het doel wordt 'partial'.
+            if skill in _CONCEPT_ONLY_SKILLS or skill in _DATA_SKILLS:
+                _update_task(task_id, result=(
+                    "⚠️ **NIET UITGEVOERD.** Deze taak vereist een extern systeem dat de "
+                    f"goal-engine niet heeft ({skill}). Onderstaande tekst is een voorstel, "
+                    f"geen uitgevoerd werk.\n\nOorspronkelijke fout: {error_str}"))
+                _log_activity(
+                    goal_id, "task_not_executed",
+                    f"'{title}': {skill} kan geen alternatieve aanpak hebben — "
+                    f"het externe systeem ontbrak ({error_str})",
+                    status="error",
+                    next_step="Voer deze stap handmatig uit, of laat de taak vervallen")
+                raise
+
             try:
                 alternative = await _find_alternative(skill, title, description, error_str)
                 if alternative:
@@ -2100,23 +2191,54 @@ def get_goal(goal_id: str) -> Optional[Dict[str, Any]]:
     return result
 
 
+# `task_count` is de waarde uit het plán, niet uit de wereld: bij vijf doelen
+# stond er 14 terwijl er 28 taakrijen waren (4 aug 2026 — de hele planning was
+# tweemaal weggeschreven en dus tweemaal uitgevoerd, 57 dubbele taakruns in
+# totaal). Een voortgangsbalk die daarop deelt geeft "26/14". De noemer moet
+# daarom uit `goal_tasks` komen; `task_count` blijft staan als wat het is — de
+# omvang van het plan — zodat het verschil zichtbaar blijft in plaats van
+# weggerekend.
+_GOAL_KOLOMMEN = (
+    "g.id, g.title, g.objective, g.project, g.status, "
+    "g.phase_count, g.task_count, g.completed_tasks, g.failed_tasks, "
+    "g.created_at, g.started_at, g.finished_at, "
+    "(SELECT COUNT(*) FROM goal_tasks t WHERE t.goal_id = g.id) AS tasks_actual, "
+    "(SELECT COUNT(*) FROM goal_tasks t WHERE t.goal_id = g.id "
+    " AND t.status = 'completed') AS completed_actual, "
+    "(SELECT COUNT(*) FROM goal_tasks t WHERE t.goal_id = g.id "
+    " AND t.status = 'failed') AS failed_actual"
+)
+
+
 def list_goals(limit: int = 10, project: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Lijst recente goals, optioneel gefilterd op project."""
+    """Lijst recente goals, optioneel gefilterd op project.
+
+    De projectfilter matcht op de squash-vorm, niet op `LOWER()`: 'Bewaard voor
+    Jou' en 'Bewaardvoorjou' zijn hetzelfde project en stonden beide in de
+    tabel (4 aug 2026, zie `shared/projects.py`). `_migrate_projectnamen` trekt
+    de historie recht, maar een filter die alléén op de gemigreerde spelling
+    werkt verbergt stilzwijgend alles wat een oudere export of een handmatige
+    invoer er later weer naast zet — en 'geen doelen' leest als 'niets gedaan'.
+    """
     with get_conn() as conn:
         if project:
+            varianten = [
+                r["project"] for r in conn.execute(
+                    "SELECT DISTINCT project FROM goals "
+                    "WHERE COALESCE(project, '') != ''").fetchall()
+                if squash_project(r["project"]) == squash_project(project)
+            ] or [project]
+            plaatshouders = ",".join("?" for _ in varianten)
             rows = conn.execute(
-                "SELECT g.id, g.title, g.objective, g.project, g.status, "
-                "g.phase_count, g.task_count, g.completed_tasks, g.failed_tasks, "
-                "g.created_at, g.started_at, g.finished_at "
-                "FROM goals g WHERE LOWER(g.project) = LOWER(?) ORDER BY g.created_at DESC LIMIT ?",
-                (project, limit),
+                f"SELECT {_GOAL_KOLOMMEN} FROM goals g "
+                f"WHERE g.project IN ({plaatshouders}) "
+                f"ORDER BY g.created_at DESC LIMIT ?",
+                (*varianten, limit),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT g.id, g.title, g.objective, g.project, g.status, "
-                "g.phase_count, g.task_count, g.completed_tasks, g.failed_tasks, "
-                "g.created_at, g.started_at, g.finished_at "
-                "FROM goals g ORDER BY g.created_at DESC LIMIT ?",
+                f"SELECT {_GOAL_KOLOMMEN} FROM goals g "
+                f"ORDER BY g.created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
     return [dict(r) for r in rows]

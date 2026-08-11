@@ -10,7 +10,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi import Request
@@ -22,7 +22,7 @@ from .shared.logging_config import setup_logging
 setup_logging()
 
 from .shared.database import init_db
-from .shared.config import OBSIDIAN_VAULT_PATH, hermes_backend
+from .shared.config import OBSIDIAN_VAULT_PATH, hermes_backend, domain_enabled, ENABLED_DOMAINS, AGENTOS_INSTANCE_NAME
 from .domains.chat import hermes as hermes_service
 from .expert.team import ensure_expert_team
 
@@ -47,6 +47,7 @@ from .domains.seo import knowledge as knowledge_router
 from .domains.delegate import router as delegate_router
 from .domains.loop import router as loops_router
 from .domains.finance import router as finance_router
+from .domains.invest import router as invest_router
 from .domains.analytics import router as analytics_router
 from .domains.publish import router as publish_router
 from .domains.outlook import router as outlook_router
@@ -165,49 +166,85 @@ async def static_no_cache_middleware(request: Request, call_next):
     return response
 
 # ── Monteer alle domein-routers ─────────────────────────────────────────────
+# Kern: geen domain-tag, altijd aan (ook op een klant-instance met een
+# beperkte AGENTOS_ENABLED_DOMAINS-whitelist — zie shared/config.py).
 app.include_router(chat_router.router)
 app.include_router(sessions_router.router)
 app.include_router(obsidian_router.router)
 app.include_router(chat_upload_router.router)
 app.include_router(journeys_router.router)
-app.include_router(tasks_router.router)
-app.include_router(agent_profiles_router.router)
-app.include_router(delegate_router.router)
-app.include_router(loops_router.router)
-app.include_router(leads_router.router)
-app.include_router(learning_router.router)
-app.include_router(linkbuilding_router.router)
-app.include_router(vacancies_router.router)
-app.include_router(demand_router.router)
-app.include_router(sites_router.router)
-app.include_router(knowledge_router.router)
-app.include_router(analytics_router.router)
-app.include_router(finance_router.router)
-app.include_router(publish_router.router)
-app.include_router(outlook_router.router)
-app.include_router(linkedin_router.router)
-app.include_router(social_router.router)
-app.include_router(social_inbox_router.router)
-app.include_router(social_content_router.router)
-app.include_router(content_queue_router.router)
 app.include_router(projects_router.router)
 app.include_router(activity_router)
-app.include_router(goal_router.router)
 app.include_router(health_router.router)
 app.include_router(infinite_context_router.router)
-app.include_router(strategist_router.router)
-app.include_router(seo_optimizer.router)
-app.include_router(radar_router.router)
 app.include_router(action_center_router.router)
-app.include_router(iris_router.router)
-app.include_router(researcher_router.router)
 app.include_router(auth_router.router)
-from .domains.mail import router as mail_router
-app.include_router(mail_router.router)
-from .domains.calendar import router as calendar_router
-app.include_router(calendar_router.router)
-from .domains.bridge import router as bridge_router
-app.include_router(bridge_router.router)
+# strategist_router draagt ook /control-room — de databron van de hele Control
+# Room-homepage (project-cards, systeemgezondheid), niet alleen de Doelen-
+# functies. Die hoort dus bij de kern, niet achter de "goal"-whitelist: anders
+# 404't de complete homepage op een instance zonder Doelen-engine. Alleen de
+# Doelen-tab en het aanmaken/starten van doelen blijven achter "goal" (zie
+# goal_router hieronder + de frontend die de Strategist-analyseknop verbergt).
+app.include_router(strategist_router.router)
+
+# Optioneel per domain-tag — een klant-instance monteert alleen wat is
+# afgesproken (bv. Nicole: mail,calendar,publish,seo,iris). Zonder whitelist
+# (de bestaande installatie) staat domain_enabled() alles toe.
+if domain_enabled("pipeline"):
+    app.include_router(tasks_router.router)
+    app.include_router(agent_profiles_router.router)
+    app.include_router(delegate_router.router)
+    app.include_router(loops_router.router)
+if domain_enabled("prospecting"):
+    app.include_router(leads_router.router)
+if domain_enabled("learning"):
+    app.include_router(learning_router.router)
+if domain_enabled("linkbuilding"):
+    app.include_router(linkbuilding_router.router)
+if domain_enabled("vacancies"):
+    app.include_router(vacancies_router.router)
+if domain_enabled("seo"):
+    app.include_router(demand_router.router)
+    app.include_router(sites_router.router)
+    app.include_router(knowledge_router.router)
+    app.include_router(seo_optimizer.router)
+if domain_enabled("analytics"):
+    app.include_router(analytics_router.router)
+if domain_enabled("finance"):
+    app.include_router(finance_router.router)
+if domain_enabled("invest"):
+    app.include_router(invest_router.router)
+if domain_enabled("publish"):
+    app.include_router(publish_router.router)
+    app.include_router(content_queue_router.router)
+# outlook_router leest globale env-vars (OUTLOOK_CLIENT_ID) i.p.v. per-project
+# DB-rijen zoals het generieke `mail`-domein (mailboxes-tabel) — bewust een
+# eigen tag zodat een klant-instance 'm nooit per ongeluk meekrijgt via de
+# 'mail'-whitelist en tegen Vincents eigen Outlook-app aanloopt.
+if domain_enabled("outlook_legacy"):
+    app.include_router(outlook_router.router)
+if domain_enabled("social"):
+    app.include_router(linkedin_router.router)
+    app.include_router(social_router.router)
+    app.include_router(social_inbox_router.router)
+    app.include_router(social_content_router.router)
+if domain_enabled("goal"):
+    app.include_router(goal_router.router)
+if domain_enabled("radar"):
+    app.include_router(radar_router.router)
+if domain_enabled("iris"):
+    app.include_router(iris_router.router)
+if domain_enabled("researcher"):
+    app.include_router(researcher_router.router)
+if domain_enabled("mail"):
+    from .domains.mail import router as mail_router
+    app.include_router(mail_router.router)
+if domain_enabled("calendar"):
+    from .domains.calendar import router as calendar_router
+    app.include_router(calendar_router.router)
+if domain_enabled("bridge"):
+    from .domains.bridge import router as bridge_router
+    app.include_router(bridge_router.router)
 
 
 # ── Status / health endpoints ──────────────────────────────────────────────
@@ -226,12 +263,35 @@ def status():
             "vault_path": OBSIDIAN_VAULT_PATH,
             "file_count": obs.total_file_count() if obs.is_configured else 0,
         },
+        # None = geen whitelist, alles aan (hoofdinstallatie). Een lijst is een
+        # klant-instance — de frontend verbergt tabs die niet in de lijst staan.
+        "enabled_domains": sorted(ENABLED_DOMAINS) if ENABLED_DOMAINS else None,
+        "instance_name": AGENTOS_INSTANCE_NAME,
     }
 
 
 @app.get("/api/scheduler/status")
 def scheduler_status():
     return get_scheduler_status()
+
+
+@app.get("/api/scheduler/gaps")
+def scheduler_gaps():
+    """Wat er niet gebeurde toen de machine uit stond — per taak samengevat."""
+    from .shared import downtime
+    return {"gaps": downtime.summary()}
+
+
+@app.post("/api/scheduler/jobs/{job_id}/run")
+async def scheduler_run_job(job_id: str):
+    """Draai een gemiste taak alsnog. Sluit bij succes de openstaande gaten."""
+    from .scheduler import run_job_now
+    try:
+        return await run_job_now(job_id)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/api/conveyor/status")

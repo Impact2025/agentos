@@ -465,12 +465,29 @@ async def generate_ctr_variants(sug: Dict, site: Dict) -> List[Dict]:
         f"Huidige meta description: {current_meta or '(ontbreekt!)'}\n\n"
         "Schrijf 3 sterkere title+meta-combinaties."
     )
-    raw = await _llm(system, prompt, max_tokens=1200)
-    try:
-        variants = json.loads(_extract_json_block(raw))
-        assert isinstance(variants, list) and variants
-    except Exception:
-        raise RuntimeError(f"Kon geen geldige varianten parsen uit LLM-output: {raw[:200]}")
+    # Eén herkansing op een lege of onleesbare respons. De gateway levert met
+    # enige regelmaat een leeg antwoord (zie `_get_via_openmodel`, dat om
+    # dezelfde reden retryt); zonder deze retry is het van de blip afhankelijk
+    # of de knop "Optimaliseer pagina" iets oplevert, en dan is de actie een
+    # muntworp in plaats van een resultaat. Waargenomen op 2 aug 2026: leeg bij
+    # de eerste poging, drie bruikbare varianten bij de tweede.
+    variants = None
+    laatste_raw = ""
+    for poging in (1, 2):
+        laatste_raw = await _llm(system, prompt, max_tokens=1200)
+        try:
+            parsed = json.loads(_extract_json_block(laatste_raw))
+            if isinstance(parsed, list) and parsed:
+                variants = parsed
+                break
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning("[optimizer] CTR-varianten poging %d gaf geen bruikbare JSON (%d tekens)",
+                       poging, len(laatste_raw or ""))
+    if variants is None:
+        raise RuntimeError(
+            "Kon geen geldige varianten parsen uit LLM-output na twee pogingen: "
+            f"{(laatste_raw or '(leeg antwoord)')[:200]}")
 
     data = dict(sug["data"])
     data["current_title"] = current_title
@@ -478,6 +495,120 @@ async def generate_ctr_variants(sug: Dict, site: Dict) -> List[Dict]:
     data["variants"] = variants[:3]
     _update_suggestion(sug["id"], data=data)
     return variants[:3]
+
+
+# ── Actie: één zoekwoord verzilveren (dashboard-knop "Optimaliseer pagina") ──
+
+def ranking_page_for_query(site: Dict, query: str, days: int = 28) -> Optional[Dict]:
+    """Welke pagina van deze site verschijnt er voor `query` in Google?
+
+    Dit is het verschil tussen "schrijf een artikel" en "verbeter de pagina
+    die je al hebt". Zonder dit antwoord kan het dashboard alleen maar raden,
+    en raadde het structureel verkeerd: 'code sociaal ondernemen' stond op
+    positie 18 met een bestaande pagina, en het advies eronder bood een knop
+    "Artikel schrijven" — een tweede pagina voor hetzelfde zoekwoord, dus
+    kannibalisatie als beloning voor het opvolgen van je eigen dashboard.
+    """
+    gsc_prop = (site.get("gsc_property") or "").strip()
+    if not gsc_prop or not gsc.is_configured() or not (query or "").strip():
+        return None
+    target = query.strip().lower()
+    try:
+        rows = gsc.fetch_page_query_performance(gsc_prop, days=days)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[optimizer] page/query-data niet opgehaald voor %s: %s",
+                       site.get("name"), str(e)[:200])
+        return None
+    hits = [r for r in rows if (r.get("query") or "").strip().lower() == target]
+    if not hits:
+        return None
+    # Meeste impressies = de pagina die Google voor dit zoekwoord kiest. Bij
+    # meerdere hits is dat óók meteen het kannibalisatie-signaal.
+    hits.sort(key=lambda r: -r["impressions"])
+    best = dict(hits[0])
+    best["competing_pages"] = len(hits)
+    return best
+
+
+async def optimize_query(site: Dict, query: str) -> Dict[str, Any]:
+    """Zet het advies "optimaliseer titel en meta description" om in iets
+    tastbaars: 3 concrete title+meta-varianten voor de pagina die al rankt.
+
+    Geeft een expliciete `outcome` terug in plaats van een uitzondering te
+    gooien wanneer er niets te optimaliseren valt — de aanroeper (dashboard,
+    Iris) moet het verschil kunnen zien tussen "mislukt" en "hier hoort een
+    ándere actie". Precies dat verschil ontbrak toen elke SEO-tip op dezelfde
+    knop uitkwam.
+    """
+    page = ranking_page_for_query(site, query)
+    if not page:
+        return {
+            "outcome": "geen-pagina",
+            "query": query,
+            "detail": ("Geen enkele pagina van deze site verschijnt in Search "
+                       "Console voor dit zoekwoord — er valt niets te "
+                       "optimaliseren, dit vraagt om nieuwe content."),
+        }
+
+    expected = _expected_ctr(page["position"])
+    missed = round(page["impressions"] * (expected - page["ctr"]) / 100, 1)
+    sug_title = (f"CTR {page['ctr']}% op positie {page['position']} — "
+                 f"benchmark ~{expected}%")
+    suggestion = {
+        "page": page["page"],
+        "query": query,
+        "title": sug_title,
+        "score": max(missed, 0.0),
+        "data": {
+            "position": page["position"], "ctr": page["ctr"],
+            "expected_ctr": expected, "impressions": page["impressions"],
+            "clicks": page["clicks"], "missed_clicks_per_period": max(missed, 0.0),
+            "competing_pages": page.get("competing_pages", 1),
+        },
+    }
+    # Opslaan vóór het LLM-werk: dan staat de bevinding in de Optimalisatie-tab
+    # ook als de gateway er net uit ligt, en is de knop niet voor niets ingedrukt.
+    _store_suggestions(site["id"], "ctr", list_suggestions(site["id"], "ctr", "new") + [suggestion])
+    sid = _fingerprint(site["id"], "ctr", suggestion["page"], suggestion["title"])
+    stored = _get_suggestion(sid)
+    if not stored:
+        return {"outcome": "fout", "query": query, "page": page["page"],
+                "detail": "Suggestie kon niet worden opgeslagen."}
+    try:
+        variants = await generate_ctr_variants(stored, site)
+    except RuntimeError as e:
+        # De bevinding zélf is al opgeslagen en staat in de Optimalisatie-tab.
+        # Melden dat "de optimalisatie mislukte" zou dat verzwijgen en de
+        # gebruiker hetzelfde werk nog eens laten doen; melden wát er wél is,
+        # is het verschil tussen een foutmelding en een gedeeltelijk resultaat.
+        logger.warning("[optimizer] Varianten voor '%s' mislukt: %s", query, str(e)[:200])
+        return {
+            "outcome": "geen-varianten",
+            "query": query,
+            "page": page["page"],
+            "suggestion_id": sid,
+            "position": page["position"],
+            "impressions": page["impressions"],
+            "ctr": page["ctr"],
+            "expected_ctr": expected,
+            "missed_clicks": max(missed, 0.0),
+            "detail": (f"De bevinding staat opgeslagen ({sug_title}, {page['page']}), "
+                       "maar het schrijven van title/meta-varianten lukte niet: "
+                       f"{str(e)[:160]}. Probeer het opnieuw vanuit de Optimalisatie-tab."),
+        }
+    return {
+        "outcome": "varianten",
+        "query": query,
+        "page": page["page"],
+        "suggestion_id": sid,
+        "position": page["position"],
+        "impressions": page["impressions"],
+        "ctr": page["ctr"],
+        "expected_ctr": expected,
+        "missed_clicks": max(missed, 0.0),
+        "competing_pages": page.get("competing_pages", 1),
+        "variants": variants,
+    }
 
 
 # ── Actie: Content-refresh → Wachtrij (LLM + Tavily, op verzoek) ─────────────
@@ -607,6 +738,34 @@ async def api_ctr_variants(sid: str):
         return {"variants": variants}
     except RuntimeError as e:
         raise HTTPException(502, str(e))
+
+
+@router.post("/{project}/optimize-query")
+async def api_optimize_query(project: str, query: str):
+    """De dashboard-knop "Optimaliseer pagina": van diagnose naar 3 varianten.
+
+    Logt een uitkomstkaart, want dit is een agent-run met een resultaat dat
+    op een mens wacht (kiezen welke variant live gaat). Zonder kaart zou het
+    werk alleen bestaan zolang het tabblad openstaat.
+    """
+    site = resolve_site(project)
+    if not site:
+        raise HTTPException(404, f"Site/project '{project}' niet gevonden")
+    from ...shared.outcomes import log_outcome
+    try:
+        result = await optimize_query(site, query)
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+    if result["outcome"] == "varianten":
+        log_outcome(
+            site["name"], "ctr_optimalisatie",
+            f"3 title/meta-varianten voor '{query}' ({result['page']}) — "
+            f"nu {result['ctr']}% CTR op positie {result['position']}, "
+            f"benchmark {result['expected_ctr']}%",
+            artifact=result["page"],
+            next_step="Kies een variant in de Optimalisatie-tab en zet hem live op de pagina.",
+        )
+    return result
 
 
 @router.post("/suggestions/{sid}/refresh")

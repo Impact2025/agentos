@@ -8,12 +8,22 @@ Als OBSIDIAN_VAULT_PATH niet gezet is, valt het terug op de projects/ map.
 
 from fastapi import APIRouter, HTTPException, Query
 from pathlib import Path
+import logging
 import re, os
 from typing import List, Dict, Optional
 
 from ...shared.database import get_conn
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+# Response-cache voor /advice: de dashboard-banner pollt dit elke 8s. De
+# GSC-feiten zijn al gecached (600s), maar de rest van de advice-opbouw
+# (goals, trends) kost bij elke call alsnog ~6s. Met een 60s response-TTL
+# serveert de poll daarna <1ms en verdwijnt de laadvertraging.
+_ADVICE_TTL_SECONDS = 60
+_advice_cache: Dict[str, tuple] = {}
 
 # Primary: lees uit Obsidian vault /10_Projects/
 VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH", "")
@@ -355,9 +365,210 @@ def _goal_addresses(goals: List[Dict], *phrases: str, days: int = 14) -> bool:
     return False
 
 
+# Vanaf zoveel vastgelopen pogingen op hetzelfde onderwerp is "nog een keer
+# proberen" geen actie meer maar een gewoonte. Twee is de grens: één mislukking
+# kan pech zijn (een LLM-timeout, een lege gateway), twee is een patroon.
+_VASTGELOPEN_DREMPEL = 2
+_VASTGELOPEN_VENSTER_DAGEN = 30
+
+# Zoveel tekens van een vault-actiepunt komen in de doeltitel terecht. Deze
+# waarde staat óók in `frontend/js/shell.js` (`solveAlert`); ze horen gelijk te
+# blijven, want de dedupe vergelijkt precies die titel.
+_ACTIEPUNT_TITELCAP = 60
+
+
+def _vastgelopen_pogingen(goals: List[Dict], *phrases: str) -> List[Dict]:
+    """Doelen die dit onderwerp al probeerden en op `partial`/`failed` strandden.
+
+    Tegenhanger van `_goal_addresses`. Die dempt terecht níét op 'partial' — het
+    werk is aantoonbaar niet gedaan, dus de cijfer-alert hoort te blijven staan.
+    Het gevolg was alleen dat dezelfde knop dezelfde vastloper bleef starten:
+    'Verbeter de CTR van WeAreImpact' werd tussen 15 en 17 juli 2026 zeven keer
+    aangemaakt en strandde zeven keer op 'partial' (4 aug 2026 gemeten: 28
+    Actiepunt-doelen, 14 unieke titels). Het probleem is echt en de alert moet
+    blijven — maar de knop eronder moet naar de vastloper wijzen in plaats van
+    er een achtste van te maken.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_VASTGELOPEN_VENSTER_DAGEN)
+    uit: List[Dict] = []
+    for g in goals:
+        if g.get("status") not in ("partial", "failed"):
+            continue
+        haystack = ((g.get("objective") or "") + " " + (g.get("title") or "")).lower()
+        if not any(p.lower() in haystack for p in phrases):
+            continue
+        try:
+            created = datetime.fromisoformat(g.get("created_at") or "")
+        except ValueError:
+            continue
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if created >= cutoff:
+            uit.append(g)
+    return uit
+
+
+def _knop_of_blokkade(alert: Dict, goals: List[Dict], *phrases: str) -> Dict:
+    """Laat de alert staan, maar vervang de knop zodra het vastloopt.
+
+    Een dashboard-tip die niet uitvoerbaar is, is ruis — en een knop die
+    aantoonbaar tot dezelfde vastloper leidt is erger dan ruis: hij kost elke
+    klik opnieuw LLM-budget en levert een extra 'partial' doel op dat de
+    volgende meting vertroebelt.
+    """
+    vast = _vastgelopen_pogingen(goals, *phrases)
+    if len(vast) < _VASTGELOPEN_DREMPEL:
+        return alert
+    laatste = vast[0]
+    alert = dict(alert)
+    alert["type"] = "danger"
+    alert["icon"] = "🔁"
+    alert["text"] = (
+        f"{alert.get('text', '')} — {len(vast)} eerdere pogingen strandden op "
+        f"'{laatste.get('status')}'. Nog een doel starten verandert dat niet: "
+        f"kijk eerst waaróm '{(laatste.get('title') or '')[:60]}' vastliep."
+    )
+    alert["action"] = f"open_goal:{laatste.get('id')}"
+    alert["action_label"] = "Bekijk de vastloper"
+    return alert
+
+
+# ── GSC-feiten voor het advies (met TTL-cache) ──────────────────────────────
+# De dashboard-banner pollt `/advice` elke 8 seconden. Zonder cache betekent
+# dat drie Search Console-calls per 8 seconden per open tabblad — richting de
+# 20.000 API-calls per dag voor cijfers die één keer per etmaal veranderen, en
+# een dashboard dat op elke verversing seconden staat te wachten. De TTL is
+# ruim: GSC levert sowieso alleen 'final' data van twee dagen geleden.
+_GSC_FACTS_TTL_SECONDS = 600
+_gsc_facts_cache: Dict[str, tuple] = {}
+
+
+def _gsc_facts(site: Dict, days: int) -> Optional[Dict]:
+    """Alles wat het advies uit Search Console nodig heeft, in één keer.
+
+    Inclusief de pagina-per-zoekwoord-dimensie: zonder die vraag kan het
+    dashboard niet weten óf er al een pagina rankt voor een zoekwoord, en dan
+    is elk advies over dat zoekwoord een gok. Dat was precies de fout achter
+    "optimaliseer titel en meta description" met een knop "Artikel schrijven".
+    """
+    import time
+    from ..seo import gsc
+
+    gsc_prop = (site.get("gsc_property") or "").strip()
+    if not gsc_prop or not gsc.is_configured():
+        return None
+    key = f"{site['id']}|{days}"
+    hit = _gsc_facts_cache.get(key)
+    now = time.time()
+    if hit and hit[0] > now:
+        return hit[1]
+
+    pages = gsc.fetch_page_performance(gsc_prop, days=days, row_limit=500)
+    queries = gsc.fetch_query_performance(gsc_prop, days=days, row_limit=500)
+    try:
+        page_queries = gsc.fetch_page_query_performance(gsc_prop, days=days)
+    except Exception:
+        # Best-effort: zonder deze dimensie verliezen we alleen de zekerheid
+        # over "welke pagina rankt hier", niet het hele advies.
+        page_queries = []
+
+    ranking_page: Dict[str, Dict] = {}
+    for r in page_queries:
+        q = (r.get("query") or "").strip().lower()
+        if not q:
+            continue
+        best = ranking_page.get(q)
+        if best is None or r["impressions"] > best["impressions"]:
+            ranking_page[q] = r
+
+    cur_imps = sum(p["impressions"] for p in pages)
+    cur_clicks = sum(p["clicks"] for p in pages)
+    facts = {
+        "pages": pages,
+        "queries": queries,
+        "ranking_page": ranking_page,
+        "clicks": cur_clicks,
+        "impressions": cur_imps,
+        "position": (round(sum(p["position"] * p["impressions"] for p in pages) / cur_imps, 1)
+                     if cur_imps else 0),
+        "ctr": round(cur_clicks / cur_imps * 100, 2) if cur_imps else 0,
+    }
+    _gsc_facts_cache[key] = (now + _GSC_FACTS_TTL_SECONDS, facts)
+    return facts
+
+
+def zero_click_advice(query: str, position: float, impressions: int,
+                      has_ranking_page: bool) -> Dict[str, str]:
+    """Diagnose én knop voor een zoekwoord met impressies maar nul klikken.
+
+    Eén functie, want dit is één beslissing. Vóór 2 aug 2026 stonden diagnose
+    en knop los van elkaar: de tekst zei "optimaliseer titel en meta
+    description" en de knop eronder heette "Artikel schrijven". Wie het advies
+    opvolgde kreeg een tweede pagina voor een zoekwoord waar er al één voor
+    rankte — kannibalisatie als beloning voor het gehoorzamen van je eigen
+    dashboard. Zolang die twee op verschillende plekken worden bepaald, lopen
+    ze vroeg of laat weer uit elkaar.
+    """
+    if position <= 20 and has_ranking_page:
+        return {
+            "tekst": (f"'{query}' heeft {impressions} impressies maar 0 klikken "
+                      f"(pos {position}). De pagina rankt al — dit is een "
+                      "snippet-probleem, geen contentprobleem."),
+            "action": f"optimize_page:{query}",
+            "action_label": "Optimaliseer pagina",
+        }
+    if position <= 20:
+        # Binnen klikbereik, maar geen pagina in de pagina/zoekwoord-dimensie.
+        # Dan is "schrijf er een" het eerlijkste advies dat de data toelaat.
+        return {
+            "tekst": (f"'{query}' heeft {impressions} impressies maar 0 klikken "
+                      f"(pos {position}) en geen pagina die er specifiek op mikt: "
+                      "schrijf er een."),
+            "action": f"write_article:{query}",
+            "action_label": "Artikel schrijven",
+        }
+    return {
+        "tekst": (f"'{query}' heeft {impressions} impressies op positie {position} — "
+                  "te ver weg om klikken te krijgen. Er is nog geen pagina die "
+                  "hierop mikt: schrijf er een."),
+        "action": f"write_article:{query}",
+        "action_label": "Artikel schrijven",
+    }
+
+
+def _queue_pressure(site_id: str) -> Dict[str, int]:
+    """Hoeveel werk staat er al klaar te wachten op een mens?
+
+    Het dashboard adviseerde "schrijf 11 artikelen" terwijl er 53 concepten
+    in de Wachtrij lagen. Meer produceren lost een doorvoerprobleem niet op —
+    het maakt het groter, en verstopt tegelijk de plek waar de opbrengst
+    vandaan moet komen.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) c FROM content_jobs WHERE site_id = ? "
+            "AND status IN ('pending_review', 'needs_work', 'publish_failed') "
+            "GROUP BY status", (site_id,),
+        ).fetchall()
+    counts = {r["status"]: r["c"] for r in rows}
+    return {
+        "pending_review": counts.get("pending_review", 0),
+        "needs_work": counts.get("needs_work", 0),
+        "publish_failed": counts.get("publish_failed", 0),
+        "totaal": sum(counts.values()),
+    }
+
+
 @router.get("/{name}/advice")
 def project_advice(name: str, days: int = Query(28)):
     """Data-gedreven advies voor het dashboard — geen LLM call."""
+    # Response-cache: zie _advice_cache hierboven.
+    import time as _time
+    _key = f"{name}|{days}"
+    _hit = _advice_cache.get(_key)
+    if _hit and _hit[0] > _time.time():
+        return _hit[1]
+
     site = _find_site(name)
     if not site:
         raise HTTPException(404, f"Project '{name}' niet gevonden")
@@ -403,13 +614,38 @@ def project_advice(name: str, days: int = Query(28)):
     # 2. GSC data analysis
     if gsc_prop and gsc.is_configured():
         try:
-            pages = gsc.fetch_page_performance(gsc_prop, days=days, row_limit=500)
-            queries = gsc.fetch_query_performance(gsc_prop, days=days, row_limit=500)
-            cur_clicks = sum(p["clicks"] for p in pages)
-            cur_imps = sum(p["impressions"] for p in pages)
-            cur_pos = round(sum(p["position"] * p["impressions"]
-                           for p in pages) / cur_imps, 1) if cur_imps else 0
-            cur_ctr = round((cur_clicks / cur_imps * 100), 2) if cur_imps else 0
+            facts = _gsc_facts(site, days)
+            if facts is None:
+                raise RuntimeError("geen GSC-feiten")
+            pages, queries = facts["pages"], facts["queries"]
+            cur_clicks, cur_imps = facts["clicks"], facts["impressions"]
+            cur_pos, cur_ctr = facts["position"], facts["ctr"]
+
+            # De recente reeks náást het periode-aggregaat. Die twee kunnen
+            # tegengesteld zijn, en dan is het aggregaat de misleidende: op
+            # 2 aug 2026 stond WeAreImpact op "positie 18,9 (-4,2)" — een
+            # verbetering t.o.v. de vorige 28 dagen — terwijl de laatste zeven
+            # GSC-dagen op 22,5 lagen en de klikken van 7 naar 3 waren gezakt.
+            # Een dashboard dat alleen het eerste toont, meldt vooruitgang
+            # tijdens een terugval.
+            from ..seo import history as seo_history
+            trend = seo_history.site_trend(site["id"])
+            recent_pos = (trend or {}).get("last7", {}).get("avg_position")
+            pos_worsening = bool(trend and (trend.get("delta_position") or 0) > 1.0)
+            # Voor elk oordeel over "waar staan we nu" telt de verse meting,
+            # niet het 28-daags gemiddelde waar de slechte week in wegvalt.
+            judged_pos = recent_pos if recent_pos is not None else cur_pos
+            advice["trend"] = trend
+
+            def _trend_suffix() -> str:
+                if not trend or recent_pos is None:
+                    return ""
+                d = trend.get("delta_position")
+                if d is None:
+                    return f" (laatste 7 dagen: {recent_pos})"
+                richting = "gezakt" if d > 0 else "verbeterd"
+                return (f" (laatste 7 dagen: {recent_pos}, "
+                        f"{richting} met {abs(d)} t.o.v. de week ervoor)")
 
             # Positie alert — gedempt zolang er al een doel voor loopt of recent
             # is gestart (GSC-cijfers reageren pas dagen later op het werk).
@@ -420,24 +656,26 @@ def project_advice(name: str, days: int = Query(28)):
             )
             if position_addressed:
                 pass
-            elif cur_pos > 15:
-                advice["alerts"].append({
+            elif judged_pos > 15:
+                advice["alerts"].append(_knop_of_blokkade({
                     "type": "danger",
                     "icon": "⚠️",
-                    "text": f"Gemiddelde positie {cur_pos} — te laag. Optimaliseer bestaande content voor CTR en kwaliteit.",
+                    "text": f"Gemiddelde positie {judged_pos} — te laag{_trend_suffix()}. "
+                            "Buiten klikbereik: dit vraagt om betere rankings, niet om snippets.",
                     "action": f"fix_alert:Optimaliseer de bestaande content van {name} voor betere zoekposities "
-                               f"(interne links, meta descriptions, contentdiepte). Huidige gemiddelde positie: {cur_pos}.",
+                               f"(interne links, contentdiepte, autoriteit). Huidige gemiddelde positie: {judged_pos}.",
                     "action_label": "Oplossen",
-                })
-            elif cur_pos > 10:
-                advice["alerts"].append({
+                }, project_goals, f"Optimaliseer de bestaande content van {name}"))
+            elif judged_pos > 10 or pos_worsening:
+                advice["alerts"].append(_knop_of_blokkade({
                     "type": "warning",
                     "icon": "📉",
-                    "text": f"Gemiddelde positie {cur_pos} — kan beter. Werk aan striking-distance zoekwoorden.",
+                    "text": f"Gemiddelde positie {judged_pos}{_trend_suffix()}. "
+                            "Werk aan striking-distance zoekwoorden.",
                     "action": f"fix_alert:Werk de striking-distance zoekwoorden van {name} bij (posities 10-20) "
-                               f"door bestaande pagina's te optimaliseren. Huidige gemiddelde positie: {cur_pos}.",
+                               f"door bestaande pagina's te optimaliseren. Huidige gemiddelde positie: {judged_pos}.",
                     "action_label": "Oplossen",
-                })
+                }, project_goals, f"Werk de striking-distance zoekwoorden van {name}"))
 
             # CTR-alert — zelfde demping als de positie-alert, én positie-bewust.
             # Een vaste ondergrens van 3% is zinloos: op positie 45 ís 0% CTR de
@@ -448,31 +686,31 @@ def project_advice(name: str, days: int = Query(28)):
             # het een ranking-probleem en dekt de positie-alert het al.
             from ..seo.optimizer import _expected_ctr
             ctr_addressed = _goal_addresses(project_goals, f"Verbeter de CTR van {name}")
-            expected_ctr = _expected_ctr(cur_pos)
-            if (not ctr_addressed and cur_imps > 100 and cur_pos <= 20
+            expected_ctr = _expected_ctr(judged_pos)
+            if (not ctr_addressed and cur_imps > 100 and judged_pos <= 20
                     and cur_ctr < expected_ctr * 0.7):
-                advice["alerts"].append({
+                advice["alerts"].append(_knop_of_blokkade({
                     "type": "warning",
                     "icon": "🎯",
-                    "text": f"CTR {cur_ctr}% op positie {cur_pos} — benchmark is ~{expected_ctr}%. "
+                    "text": f"CTR {cur_ctr}% op positie {judged_pos} — benchmark is ~{expected_ctr}%. "
                             f"Verbeter meta descriptions en titels.",
                     "action": f"fix_alert:Verbeter de CTR van {name} door meta descriptions en titels te herschrijven "
-                               f"voor de best presterende pagina's. Huidige CTR: {cur_ctr}% op positie {cur_pos} "
+                               f"voor de best presterende pagina's. Huidige CTR: {cur_ctr}% op positie {judged_pos} "
                                f"(benchmark ~{expected_ctr}%).",
                     "action_label": "Oplossen",
-                })
+                }, project_goals, f"Verbeter de CTR van {name}"))
 
             # Indexed pages alert — zelfde demping
             if len(pages) < 10 and not _goal_addresses(
                     project_goals, f"Schrijf en publiceer nieuwe content voor {name}"):
-                advice["alerts"].append({
+                advice["alerts"].append(_knop_of_blokkade({
                     "type": "info",
                     "icon": "📝",
                     "text": f"Slechts {len(pages)} pagina's geïndexeerd — maak meer content aan.",
                     "action": f"fix_alert:Schrijf en publiceer nieuwe content voor {name} — nu slechts {len(pages)} "
                               f"pagina's geïndexeerd. Kies onderwerpen op basis van zoekwoordkansen.",
                     "action_label": "Doen",
-                })
+                }, project_goals, f"Schrijf en publiceer nieuwe content voor {name}"))
 
             # Top queries with 0 clicks = striking distance. GSC-data loopt ~2 dagen achter,
             # dus "0 klikken" kan hier nog kloppen terwijl er al een artikel voor is
@@ -485,23 +723,17 @@ def project_advice(name: str, days: int = Query(28)):
                           if not _keyword_already_covered(q["query"], covered)]
             if zero_click:
                 top = zero_click[0]
-                # De diagnose hangt aan de positie. Binnen klikbereik (≤20) is
-                # 0 klikken een snippet-probleem; op positie 45 is het geen
-                # optimalisatie- maar een ranking-probleem, en "optimaliseer
-                # deze pagina" stuurt dan de verkeerde kant op.
-                if top["position"] <= 20:
-                    tekst = (f"'{top['query']}' heeft {top['impressions']} impressies maar 0 klikken "
-                             f"(pos {top['position']}). Optimaliseer titel en meta description.")
-                else:
-                    tekst = (f"'{top['query']}' heeft {top['impressions']} impressies op positie "
-                             f"{top['position']} — te ver weg om klikken te krijgen. Er is nog geen "
-                             f"pagina die hierop mikt: schrijf er een.")
+                diagnose = zero_click_advice(
+                    top["query"], top["position"], top["impressions"],
+                    has_ranking_page=bool(
+                        facts["ranking_page"].get((top["query"] or "").strip().lower())),
+                )
                 advice["alerts"].append({
                     "type": "opportunity",
                     "icon": "💡",
-                    "text": tekst,
-                    "action": f"write_article:{top['query']}",
-                    "action_label": "Artikel schrijven",
+                    "text": diagnose["tekst"],
+                    "action": diagnose["action"],
+                    "action_label": diagnose["action_label"],
                 })
 
             advice["dash_kpi"] = {
@@ -510,51 +742,116 @@ def project_advice(name: str, days: int = Query(28)):
                 "ctr": cur_ctr,
                 "position": cur_pos,
                 "pages": len(pages),
+                # De verse meting apart, zodat de tegel de terugval kan tonen
+                # die in het 28-daags gemiddelde wegvalt.
+                "recent_position": recent_pos,
+                "recent_clicks": (trend or {}).get("last7", {}).get("clicks"),
+                "delta_position_7d": (trend or {}).get("delta_position"),
+                "delta_clicks_7d": (trend or {}).get("delta_clicks"),
             }
 
-            # Next step suggestion
-            next_action = None
-            if not running and zero_click:
-                kw = zero_click[0]['query']
-                advice["next_step"] = f"📝 Schrijf een artikel voor '{kw}' — {zero_click[0]['impressions']} onbenutte impressies"
-                advice["next_step_action"] = f"write_article:{kw}"
-                # Check of dit keyword al een kans is
-                try:
-                    from ..seo import engine as demand_engine
-                    existing_kansen = demand_engine.list_opportunities(site_id=site["id"], status="new")
-                    existing_kansen += demand_engine.list_opportunities(site_id=site["id"], status="in_progress")
-                    if not any(k.get("query","").lower() == kw.lower() for k in existing_kansen):
-                        advice["next_step_action"] = f"write_article:{kw}"
-                except Exception:
-                    pass
-            elif not running and cur_pos > 10 and not position_addressed:
-                advice["next_step"] = "🔧 Optimaliseer bestaande pagina's voor betere posities (meta descriptions, interne links)"
-            elif not running:
+            # ── Beste volgende stap ────────────────────────────────────────
+            # Volgorde = wat het meeste oplevert, niet wat het makkelijkst te
+            # starten is. Doorvoer staat bewust bóven productie: op 2 aug 2026
+            # adviseerde dit dashboard "schrijf 11 artikelen" terwijl er 53
+            # concepten op goedkeuring wachtten. Nog eens elf schrijven maakt
+            # de rij langer en levert geen enkele klik op — publiceren wel.
+            queue = _queue_pressure(site["id"])
+            advice["queue"] = queue
+            if running:
+                advice["next_step"] = (f"▶️ Doel '{running[0]['title']}' loopt — "
+                                       f"{running[0]['completed_tasks']}/{running[0]['task_count']} taken voltooid")
+            elif queue["pending_review"] >= 5:
+                extra = ""
+                if queue["needs_work"]:
+                    extra = f" ({queue['needs_work']} daarvan halen de kwaliteitsgate niet)"
+                advice["next_step"] = (
+                    f"✅ Beoordeel de Wachtrij — {queue['pending_review']} concept(en) wachten op "
+                    f"jouw goedkeuring{extra}. Niets hiervan levert een klik op zolang het blijft liggen.")
+                advice["next_step_action"] = "open_tab:Wachtrij"
+            elif zero_click:
+                # Zelfde beslissing als de alert hierboven, uit dezelfde functie:
+                # anders adviseert de tip "optimaliseer" terwijl de hoofdknop
+                # eronder een artikel schrijft.
+                top = zero_click[0]
+                diagnose = zero_click_advice(
+                    top["query"], top["position"], top["impressions"],
+                    has_ranking_page=bool(
+                        facts["ranking_page"].get((top["query"] or "").strip().lower())),
+                )
+                if diagnose["action"].startswith("optimize_page:"):
+                    advice["next_step"] = (
+                        f"🔧 Optimaliseer de pagina voor '{top['query']}' — "
+                        f"{top['impressions']} impressies op positie {top['position']}, nul klikken")
+                else:
+                    advice["next_step"] = (f"📝 Schrijf een artikel voor '{top['query']}' — "
+                                           f"{top['impressions']} onbenutte impressies")
+                advice["next_step_action"] = diagnose["action"]
+            elif judged_pos > 10 and not position_addressed:
+                advice["next_step"] = "🔧 Optimaliseer bestaande pagina's voor betere posities (interne links, contentdiepte)"
+                advice["next_step_action"] = "open_tab:Optimalisatie"
+            else:
                 advice["next_step"] = "📈 Voer een kansen-scan uit om nieuwe striking-distance kansen te vinden"
                 advice["next_step_action"] = "run_scan"
-            else:
-                advice["next_step"] = f"▶️ Doel '{running[0]['title']}' loopt — {running[0]['completed_tasks']}/{running[0]['task_count']} taken voltooid"
 
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            # Niet stil inslikken: een dashboard dat zijn cijfers niet kon
+            # ophalen ziet er precies zo uit als een dashboard zonder
+            # problemen, en dat is hoe je dagenlang naar oude waarheden kijkt.
+            # Wel alleen loggen + één regel in het antwoord — deze route wordt
+            # elke acht seconden gepolld, dus een uitkomstkaart per poging zou
+            # het Actiecentrum onbruikbaar maken.
+            logger.exception("[advies] GSC-analyse mislukt voor %s", name)
+            advice["status"] = "gsc_error"
+            advice["alerts"].append({
+                "type": "danger",
+                "icon": "🔌",
+                "text": f"Search Console-cijfers konden niet worden opgehaald: {str(e)[:160]}",
+            })
 
     # 3. Kansen check — truth-modus: status afgeleid uit content_jobs
     # (wat er écht live staat), zodat "in behandeling" niet liegt.
     try:
         from ..seo import engine as demand_engine
+        from ..seo import potential as demand_potential
         kansen = demand_engine.list_opportunities_truth(site_id=site["id"], status="new")
         if kansen:
+            # Zeg wat het waard is, niet alleen hoeveel het er zijn. "11
+            # nieuwe kansen" klinkt als winst; "samen ≈ 10 klikken per maand"
+            # laat zien dat elf artikelen schrijven daar geen goede ruil voor
+            # is — en dát is de afweging die een mens hier moet maken.
+            gemeten = [k for k in kansen if k.get("demand") == "gemeten"]
+            winst = demand_potential.total_potential(gemeten)
+            # Alleen groen vieren wat gemeten vraag heeft — puur speculatieve
+            # kansen (geen GSC-signaal) krijgen dezelfde neutrale styling als
+            # een informatieve melding, anders oogt "0 gemeten vraag" als
+            # goed nieuws door dezelfde groene kaart als een échte kans.
+            alert_type = "opportunity" if gemeten else "info"
+            alert_icon = "🎯" if gemeten else "🌱"
+            if gemeten and winst:
+                tekst = (f"{len(kansen)} nieuwe kansen — waarvan {len(gemeten)} met gemeten "
+                         f"vraag, samen goed voor ≈ {winst} klikken per maand")
+            elif gemeten:
+                tekst = f"{len(kansen)} nieuwe kansen, waarvan {len(gemeten)} met gemeten vraag"
+            else:
+                tekst = (f"{len(kansen)} kandidaat-kansen — allemaal speculatief, "
+                         "nul gemeten vraag in Search Console")
             advice["alerts"].append({
-                "type": "opportunity",
-                "icon": "🎯",
-                "text": f"{len(kansen)} nieuwe kansen gevonden — schrijf er een artikel voor",
+                "type": alert_type,
+                "icon": alert_icon,
+                "text": tekst,
                 "action": f"open_tab:Kansen",
                 "action_label": "Bekijk kansen",
             })
+            # De bulkknop is geen hoofdactie zolang de Wachtrij vol staat (dan
+            # is schrijven precies het werk dat de rij langer maakt) of zolang
+            # geen van de kansen gemeten vraag heeft — zes artikelen schrijven
+            # op een gok is geen "beste volgende stap".
+            queue_jam = (advice.get("queue") or {}).get("pending_review", 0) >= 5
             advice["quick_actions"].append({
                 "label": f"Schrijf {len(kansen)} kansen",
                 "action": "write_all_kansen",
-                "primary": True,
+                "primary": bool(gemeten) and not queue_jam,
             })
         in_prog = demand_engine.list_opportunities_truth(site_id=site["id"], status="in_progress")
         if in_prog:
@@ -576,23 +873,30 @@ def project_advice(name: str, days: int = Query(28)):
                 # automatisch afgevinkt als het onderliggende doel al is uitgevoerd. Filter
                 # daarom actiepunten weg waarvoor al een voltooid doel "Actiepunt: <tekst>"
                 # bestaat voor dit project, anders blijft de app hetzelfde werk voorstellen.
-                completed_titles = [
-                    g["title"].strip().lower()
+                # `_ACTIEPUNT_TITELCAP` moet gelijk zijn aan de slice waarmee
+                # `shell.js:solveAlert` de doeltitel bouwt — wijkt hij af, dan
+                # matcht de dedupe nooit en stelt het dashboard hetzelfde
+                # actiepunt eeuwig opnieuw voor. Ook 'running' telt mee: een
+                # doel dat nú aan dit actiepunt werkt is geen reden om er een
+                # tweede naast te zetten.
+                bestaande_titels = [
+                    (g["title"] or "").strip().lower()
                     for g in goal_service.list_goals(limit=500, project=name)
-                    if g["status"] == "completed"
+                    if g["status"] in ("completed", "running", "ready")
                 ]
                 pending = [
                     a for a in actions
-                    if f"actiepunt: {a[:60]}".strip().lower() not in completed_titles
+                    if f"actiepunt: {a[:_ACTIEPUNT_TITELCAP]}".strip().lower()
+                    not in bestaande_titels
                 ]
                 for a in pending[:3]:
-                    advice["alerts"].append({
+                    advice["alerts"].append(_knop_of_blokkade({
                         "type": "info",
                         "icon": "📋",
                         "text": f"Actiepunt: {a[:80]}",
                         "action": f"fix_alert:{a[:200]}",
                         "action_label": "Doen",
-                    })
+                    }, project_goals, f"Actiepunt: {a[:_ACTIEPUNT_TITELCAP]}"))
             analytics = vr.get_recent_analytics()
             if analytics:
                 # Extract key insight from analytics
@@ -613,10 +917,19 @@ def project_advice(name: str, days: int = Query(28)):
 
     # Quick actions always available
     if not running:
-        advice["quick_actions"].insert(0, {
+        queue = advice.get("queue") or {}
+        if queue.get("pending_review"):
+            # Vooraan, want dit is het enige werk in dit rijtje dat iets
+            # bestaands naar buiten brengt in plaats van iets nieuws bij te maken.
+            advice["quick_actions"].insert(0, {
+                "label": f"Beoordeel {queue['pending_review']} concepten",
+                "action": "open_tab:Wachtrij",
+                "primary": True,
+            })
+        advice["quick_actions"].insert(0 if not queue.get("pending_review") else 1, {
             "label": "Voer scan uit",
             "action": "run_scan",
-            "primary": True,
+            "primary": not queue.get("pending_review"),
         })
         advice["quick_actions"].append({
             "label": "Genereer blog suggesties",
@@ -627,6 +940,7 @@ def project_advice(name: str, days: int = Query(28)):
             "action": "new_goal",
         })
 
+    _advice_cache[_key] = (_time.time() + _ADVICE_TTL_SECONDS, advice)
     return advice
 
 

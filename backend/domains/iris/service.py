@@ -19,6 +19,7 @@ Zonder LLM valt ze terug op een puur cijfermatige briefing — nooit stil.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -553,6 +554,15 @@ async def _apply_rule_based(snapshot: Dict[str, Any]) -> tuple:
                 done = await actions.lead_search_run(
                     payload.get("zoekopdrachten") or payload.get("queries"), reason,
                     template=str(payload.get("template") or ""))
+            elif typ == "run_job":
+                # Een gemiste geplande taak inhalen is het veiligste werk dat
+                # Iris kent: het is exact de taak die vanzelf had moeten
+                # draaien, met dezelfde review-gates. Juist op een
+                # terugval-dag (LLM plat) is dit wat er nog wél kan.
+                from ...scheduler import run_job_now
+                res = await run_job_now(str(payload.get("job_id") or sug.get("target") or ""))
+                done = (f"Gemiste taak '{res.get('label')}' alsnog gestart"
+                        if res.get("ok") else None)
             else:
                 leftovers.append(sug)
                 continue
@@ -583,6 +593,39 @@ def _yesterday_activity(limit: int = 40) -> List[Dict[str, Any]]:
                 d["detail"] = f"[OPGELOST] {d.get('detail') or ''}"
             out.append(d)
     return out
+
+
+def _audit_blok() -> str:
+    """De waarheidsaudit als tekst voor de prompt.
+
+    Faalt hij, dan liever een expliciete melding in de prompt dan stilte: Iris
+    moet kunnen zien dat ze deze ronde blind is, anders concludeert ze uit een
+    leeg blok dat alles in orde is — en dat is exact de fout die de audit
+    bestrijdt.
+    """
+    try:
+        from . import integrity
+        return integrity.prompt_block()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[iris] waarheidsaudit-blok bouwen mislukt")
+        return (f"Waarheidsaudit: NIET beschikbaar deze ronde ({type(e).__name__}). "
+                f"Trek hieruit géén conclusie dat alles in orde is.")
+
+
+def _weekrapport_blok() -> str:
+    """Het 28-daagse weekbeeld als tekst voor de prompt.
+
+    Faalt het, dan expliciet melden in plaats van weglaten: een ontbrekend blok
+    leest als 'geen bijzonderheden', en het weekrapport is juist de plek waar
+    een langzame daling zichtbaar wordt die in de dagcijfers verdrinkt.
+    """
+    try:
+        from ..analytics import insights
+        return insights.prompt_block()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[iris] weekrapport-blok bouwen mislukt")
+        return (f"Weekrapport: NIET beschikbaar deze ronde ({type(e).__name__}). "
+                f"Er is dus géén 28-daags beeld; oordeel alleen op de dagcijfers.")
 
 
 async def gather_context(snapshot: Optional[Dict[str, Any]] = None,
@@ -616,6 +659,8 @@ async def gather_context(snapshot: Optional[Dict[str, Any]] = None,
         "lessons": active_lessons(),
         "knowledge": knowledge_service.knowledge_prompt_block(),
         "validation": validation,
+        "integrity": _audit_blok(),
+        "weekrapport": _weekrapport_blok(),
         "agenda": agenda_summary,
         "agenda_proposals": agenda_proposals,
         "track_record": predictions.track_record(),
@@ -632,6 +677,15 @@ def _build_prompt(ctx: Dict[str, Any]) -> str:
     parts = [
         f"Datum: {_today()}. Hieronder de actuele stand van Agent OS.",
         "",
+        "## Waarheidsaudit — wat is er stil kapot? (LEES DIT EERST)",
+        "Deze toetsen vergelijken wat het systeem over zichzelf beweert met wat er "
+        "werkelijk is. Ze staan bovenaan omdat een cijfer dat op een kapot mechanisme "
+        "steunt, geen cijfer is. Weeg blokkerende bevindingen zwaarder dan élke "
+        "groeikans: een dode pagina of twee artikelen op één zoekwoord doen actief "
+        "schade, en die stopzetten gaat vóór iets nieuws beginnen. Noem in je advies "
+        "expliciet wat je hiermee doet — negeer je een bevinding bewust, zeg dan waarom.",
+        ctx.get("integrity") or "Waarheidsaudit: geen gegevens.",
+        "",
         "## Cijfers per project (deterministisch berekend, 0-10)",
         "Elk project heeft een 'trend'-blok met week-over-week GSC-delta's "
         "(clicks/impressies/positie t.o.v. vorige 7 dagen) plus stijgers/dalers "
@@ -640,7 +694,26 @@ def _build_prompt(ctx: Dict[str, Any]) -> str:
         "Gebruik deze delta's om te toetsen of eerdere bijsturing werkte.",
         json.dumps(snapshot["projects"], ensure_ascii=False, default=str),
         "",
-        "## Globale cijfers (funnel, fouten, scheduler)",
+        "## Weekrapport — het trage beeld (28 dagen vs. de 28 daarvóór)",
+        "De cijfers hierboven zijn de snelle horizon (7 vs. 7 dagen); dit is de "
+        "trage. Ze spreken elkaar niet tegen als ze verschillen — een project dat "
+        "deze week zakt maar over 28 dagen stijgt heeft géén probleem, en andersom "
+        "is een goede week binnen een dalende lijn geen reden tot rust. Stuur op de "
+        "trage lijn en gebruik de snelle alleen als vroeg signaal. De quick wins en "
+        "CTR-gaten hieronder zijn gemeten kansen: een CTR-gat is een snippet-probleem "
+        "(title/meta herschrijven), géén reden voor een nieuw artikel.",
+        ctx.get("weekrapport") or "Weekrapport: geen gegevens.",
+        "",
+        "## Globale cijfers (funnel, fouten, scheduler, stilstand)",
+        "Let op `downtime_gaps`: geplande taken die niet gedraaid hebben omdat de "
+        "machine uit stond. Dit is géén prestatiecijfer maar een verklaring — een "
+        "agent die niet draaide heeft die dag niet bestaan. Verklaar een tegenvallend "
+        "cijfer daarom altijd eerst uit de stilstand voordat je de agent bijstuurt: "
+        "een droge funnel na vier dagen zonder outreach-batch vraagt om die batch "
+        "alsnog draaien, niet om een nieuwe outreach-strategie. En let op "
+        "`pending_review_total`: staat daar een stapel, dan is méér produceren "
+        "schadelijk — het verstopt precies de plek waar de opbrengst vandaan moet "
+        "komen. Stel in dat geval geen content_run voor.",
         json.dumps(snapshot["global"], ensure_ascii=False, default=str),
         "",
         "## Systeem-knelpunten (deterministisch voorgesorteerd op bedrijfsimpact)",
@@ -765,7 +838,10 @@ def _build_prompt(ctx: Dict[str, Any]) -> str:
         "project zonder meetdata of zonder output benoem je als probleem nummer één. "
         "Voorspellingen (max 3) maken je aantoonbaar: koppel er waar mogelijk een les "
         "aan en kies alleen meetbare metrieken. Voorspel niets voor projecten met "
-        "trend=null — die zijn nog niet te toetsen. "
+        "trend=null — die zijn nog niet te toetsen. Grijp je in op een structurele "
+        "daling uit het weekrapport, zet daar dan een voorspelling met "
+        "horizon_dagen 28 bij: die interventie werkt op de trage horizon, en een "
+        "toets op 7 dagen rekent hem af op ruis — dat leert je het verkeerde. "
         "actie_voorstellen (max 4): dit zijn de knoppen die Vincent in zijn briefing "
         "ziet — elk is één concreet uitvoerbare stap met een agent erachter, "
         "gekoppeld aan de cijfers hierboven. Zet hier de echte fixes neer, niet de "
@@ -1068,7 +1144,32 @@ async def run_morning_briefing() -> Dict[str, Any]:
     except Exception:
         logger.exception("[iris] zelfherstel-ronde mislukt")
 
-    snapshot = metrics.snapshot()
+    # 0c. En daarna: zoeken wat stíl kapot is. Zelfherstel kijkt naar fouten die
+    #     zichzelf hebben gemeld; de waarheidsaudit toetst de beweringen die het
+    #     systeem over zichzelf doet ('published' = staat live, 'rejected' = niet
+    #     meer online, 'geleerd' = een les die vertrouwen won). Vóór de snapshot,
+    #     want blokkerende bevindingen horen in het oordeel van vandaag mee te
+    #     wegen — niet pas morgen.
+    #
+    #     Naar een thread, en dat is geen detail. De audit haalt tientallen
+    #     pagina's op met een sýnchrone httpx-client (`_pagina_status`, timeout
+    #     15s per URL) — vanuit deze async functie blokkeert dat de event loop,
+    #     en daarmee de hele webserver. Bij een koude start om 08:00 loopt de
+    #     briefing als inhaalslag, dus stond het dashboard minutenlang op "kan
+    #     geen verbinding maken" terwijl de log al "startup complete" zei
+    #     (gemeten 6 aug 2026: ruim vier minuten). Hetzelfde geldt voor
+    #     `metrics.snapshot()` (~3,4s): op zichzelf klein, maar het telt op en
+    #     beide draaien elders al in een threadpool, dus dit is de bestaande
+    #     route en geen nieuwe aanname.
+    try:
+        from . import integrity
+        audit = await asyncio.to_thread(integrity.run_audit, source="briefing")
+        if audit.get("nieuw"):
+            logger.info("[iris] waarheidsaudit: %d nieuwe bevinding(en)", audit["nieuw"])
+    except Exception:
+        logger.exception("[iris] waarheidsaudit mislukt")
+
+    snapshot = await asyncio.to_thread(metrics.snapshot)
 
     # 1. Reken eerst de openstaande voorspellingen af tegen de echte cijfers.
     #    Dit werkt het vertrouwen van de lessen bij vóór we de context bouwen.

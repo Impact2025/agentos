@@ -12,7 +12,7 @@ Retour: (ok: bool, message: str) — gaat terug naar de cloud zodat de telefoon
 toont wat er met het besluit gebeurde ("verstuurd" / "geweigerd: ...").
 """
 import logging
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +193,53 @@ async def _cmd_mail_sync(payload: Dict) -> Tuple[bool, str]:
     return True, f"{len(mails)} mail(s) opgehaald, {triaged} getrieerd"
 
 
+async def _cmd_mail_rule(payload: Dict) -> Tuple[bool, str]:
+    """"Nooit meer van deze afzender", getikt op je telefoon.
+
+    Dit is de enige weg: de mailregels in het Postvak-scherm bestaan niet als
+    `sync_items`, dus kunnen ze geen gewoon besluit (`decide`) dragen — alleen
+    mail mét conceptantwoord is een item. Het commando raakt bewust niets in de
+    échte mailbox: er wordt niets verplaatst en niets verwijderd, alleen bepaald
+    wat jóu nog bereikt. En het is omkeerbaar (Geblokkeerde afzenders → intrekken).
+    """
+    from ..outlook import service as outlook
+    from ..outlook import rules
+
+    scope = str(payload.get("scope") or "adres")
+    actie = str(payload.get("action") or "spam")
+    email_id = str(payload.get("email_id") or "").strip()
+    adres = str(payload.get("email") or "").strip()
+
+    try:
+        if email_id:
+            uitslag = outlook.block_sender(email_id, scope=scope, action=actie)
+            patroon, geraakt = uitslag["pattern"], uitslag["applied"]
+        elif adres:
+            rule = rules.add_rule(adres, scope=scope, action=actie, source="mens")
+            patroon, geraakt = rule["pattern"], rule.get("applied", 0)
+        else:
+            return False, "Geen afzender meegegeven"
+    except ValueError as e:
+        return False, str(e)[:200]
+
+    if actie == rules.ACTIE_ALTIJD_TONEN:
+        return True, f"'{patroon}' blijft voortaan zichtbaar ({geraakt} teruggezet)"
+    return True, f"'{patroon}' geblokkeerd — {geraakt} mail(s) opgeruimd"
+
+
+async def _cmd_mail_archive(payload: Dict) -> Tuple[bool, str]:
+    """Deze mail hoeft niets van je. Géén regel — de afzender blijft welkom."""
+    from ..outlook import service as outlook
+    email_id = str(payload.get("email_id") or "").strip()
+    if not email_id:
+        return False, "Geen mail meegegeven"
+    try:
+        outlook.archive_email(email_id)
+    except ValueError as e:
+        return False, str(e)[:200]
+    return True, "Gearchiveerd"
+
+
 async def _cmd_helpdesk_run(payload: Dict) -> Tuple[bool, str]:
     """Helpdesk-mailboxen langsgaan: concepten schrijven, niets versturen."""
     from ..mail import service as mail
@@ -229,6 +276,95 @@ async def _cmd_digest(payload: Dict) -> Tuple[bool, str]:
 
 # Commando's staan bewust in een eigen tabel: ze horen niet bij één item, en
 # een tikfout mag nooit per ongeluk in de item-whitelist vallen.
+async def _cmd_calendar_add(payload: Dict) -> Tuple[bool, str]:
+    """Vrije-tekst / spraak opdracht -> agenda-voorstel (review-gate).
+
+    Payload: {'text': 'dinsdag 18 augustus om 12.15 naar de tandarts'} of
+    {'text': 'blok alle dinsdagen tussen 09.00 en 10.00'}.
+    Parsed naar een afspraak, conflict-gecontroleerd, en neergelegd als
+    calendar_proposal (status=pending_review) — boeken gebeurt pas als Vincent
+    het voorstel in Iris Remote goedkeurt.
+    """
+    text = (payload.get("text") or "").strip()
+    if not text:
+        return False, "Geen opdracht meegegeven (verwacht payload.text)"
+    from ...domains.calendar import nl_command as nlc
+    from ...domains.calendar import agent as cal_agent
+    from ...shared.database import get_conn
+
+    cmd = nlc.parse_command(text)
+    if cmd.kind == "error":
+        return False, cmd.error or "Kon de opdracht niet lezen"
+    cmd = nlc.check_conflict(cmd)
+
+    # Bouw rationale (conflict-analyse voor de mens).
+    conflict_txt = ""
+    if cmd.conflict:
+        st = cmd.conflict.get("status")
+        ov = cmd.conflict.get("overlaps") or []
+        if ov:
+            conflict_txt = ("LET OP: overlap met bestaande afspraak " +
+                            "; ".join(f"{c.get('start')}–{c.get('end')}" for c in ov[:2]) +
+                            ". Verplaats of kies een ander slot.")
+            cmd.title = cmd.title  # conflict blijft zichtbaar in de titel-context
+        elif st == "unavailable":
+            conflict_txt = "Niet op dubbele boeking gecontroleerd: geen agenda gekoppeld."
+        elif st == "error":
+            conflict_txt = "Niet op dubbele boeking gecontroleerd: agenda-check mislukte."
+
+    recur = cmd.recur_weekday
+    rationale = (
+        f"Spraak/tekst-opdracht: \"{cmd.raw}\". "
+        f"Voorgesteld: {cmd.start.strftime('%a %d-%m %H:%M')}–{cmd.end.strftime('%H:%M')} "
+        f"({cmd.duration_min} min). Locatie: {'Online' if cmd.is_remote else (cmd.location or 'niet genoemd')}. "
+        + (f"Terugkerend: elke {_wd_nl(recur)}." if recur is not None else "")
+        + (f" {conflict_txt}" if conflict_txt else " Geen conflict gevonden.")
+    )
+    # Titel: parse_command levert al '(wekelijks)' bij recursief; niet nog een
+    # keer dubbel plakken.
+    title = cmd.title
+    if recur is not None and not title.endswith("(wekelijks)"):
+        title = f"{title} (wekelijks)"
+
+    with get_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO calendar_proposals
+               (mailbox_id, inbox_id, from_addr, subject, title,
+                proposed_start, proposed_end, location, is_remote,
+                duration_min, travel_buffer_min, priority, conflict_note,
+                conflict_checked, rationale, recur_weekday, status, created_at)
+               VALUES ('iris-command', 0, 'iris-command', ?, ?, ?, ?, ?, ?,
+                       ?, 0, 'normal', ?, ?, ?, ?, 'pending_review', datetime('now'))""",
+            (text[:120], title,
+             cmd.start.isoformat(), cmd.end.isoformat(),
+             "Online" if cmd.is_remote else (cmd.location or ""),
+             1 if cmd.is_remote else 0, cmd.duration_min,
+             conflict_txt, cmd.conflict.get("status") if cmd.conflict else "ok",
+             rationale, recur if recur is not None else -1),
+        )
+        pid = cur.lastrowid
+
+    when = _nl_date(cmd.start)
+    kind = "wekelijks terugkerend blok" if recur is not None else "afspraak"
+    conflict_flag = " ⚠️ CONFLICT" if (cmd.conflict and cmd.conflict.get("overlaps")) else ""
+    return True, (f"Voorstel {kind} aangemaakt: '{title}' op {when}.{conflict_flag} "
+                  f"Keur goed in Iris Remote om te boeken.")
+
+
+def _wd_nl(num: Optional[int]) -> str:
+    return {0: "maandag", 1: "dinsdag", 2: "woensdag", 3: "donderdag",
+            4: "vrijdag", 5: "zaterdag", 6: "zondag"}.get(num or 0, "?")
+
+
+_NL_MONTHS = ["januari", "februari", "maart", "april", "mei", "juni", "juli",
+              "augustus", "september", "oktober", "november", "december"]
+
+
+def _nl_date(dt) -> str:
+    """NL datum zonder locale-afhankelijkheid (strftime geeft hier Engels)."""
+    return f"{_wd_nl(dt.weekday())} {dt.day} {_NL_MONTHS[dt.month - 1]}"
+
+
 _COMMANDS = {
     "content_run": _cmd_content_run,
     "outreach_run": _cmd_outreach_run,
@@ -236,10 +372,13 @@ _COMMANDS = {
     "lead_search": _cmd_lead_search,
     "linkbuilding_run": _cmd_linkbuilding_run,
     "mail_sync": _cmd_mail_sync,
+    "mail_rule": _cmd_mail_rule,
+    "mail_archive": _cmd_mail_archive,
     "helpdesk_run": _cmd_helpdesk_run,
     "iris_briefing": _cmd_iris_briefing,
     "context_refresh": _cmd_context_refresh,
     "digest": _cmd_digest,
+    "calendar_add": _cmd_calendar_add,
 }
 
 

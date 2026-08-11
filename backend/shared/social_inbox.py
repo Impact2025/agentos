@@ -530,13 +530,23 @@ async def run_inbox(inbox_id: str) -> int:
             )
             return 0
         if klass == _fail.CLASS_AUTH:
+            # Een verlopen token herstelt zich NOOIT vanzelf. Zonder pauze
+            # escaleert dezelfde fout elke poll opnieuw en spamt het
+            # Actiecentrum dagelijks een identieke kaart (bewezen 01/03/04-08).
+            # Daarom: kanaal pauzeren en één heldere kaart achterlaten.
+            with get_conn() as conn:
+                conn.execute(
+                    "UPDATE social_inboxes SET enabled=0 WHERE id=?", (inbox_id,)
+                )
             detail = (
                 f"Het {inbox['platform']}-kanaal van {inbox.get('project', '')} wijst ons af: "
-                f"{desc}. Dit kan geen agent oplossen — alleen een nieuw token helpt."
+                f"{desc}. Dit kan geen agent oplossen — alleen een nieuw token helpt. "
+                "Het kanaal is gepauzeerd zodat deze melding niet elke dag terugkomt."
             )
             next_step = (
                 f"Vernieuw het {inbox['platform']}-token in de Social-tab "
-                "(Meta Business → Toegangstokens → nieuw token genereren en plakken)."
+                "(Meta Business → Toegangstokens → nieuw token genereren en plakken) "
+                "en zet het kanaal daarna weer aan."
             )
         else:
             detail = (

@@ -1,6 +1,9 @@
+import logging
 import sqlite3
 from contextlib import contextmanager
 from .config import DB_PATH
+
+logger = logging.getLogger(__name__)
 
 DDL = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -371,6 +374,24 @@ CREATE TABLE IF NOT EXISTS outlook_emails (
     synced_at       TEXT NOT NULL
 );
 
+-- Afzenderregels: welke post nooit meer in het postvak hoort, en van wie die
+-- regel is. Vóór 11 aug 2026 stond dit als Python-lijst in mail/classify.py —
+-- onzichtbaar, niet uit te zetten en zonder terugwerkende kracht. Zie
+-- domains/outlook/rules.py voor de motivering per veld.
+CREATE TABLE IF NOT EXISTS mail_sender_rules (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern     TEXT NOT NULL,                  -- kleingeletterd adres/domein/deel
+    scope       TEXT NOT NULL DEFAULT 'adres',  -- adres | domein | deel
+    action      TEXT NOT NULL DEFAULT 'spam',   -- spam | geen-klant | altijd-tonen
+    reason      TEXT DEFAULT '',
+    source      TEXT NOT NULL DEFAULT 'mens',   -- mens | systeem
+    active      INTEGER DEFAULT 1,
+    hits        INTEGER DEFAULT 0,
+    last_hit_at TEXT DEFAULT '',
+    created_at  TEXT NOT NULL,
+    UNIQUE(pattern, scope)
+);
+
 CREATE INDEX IF NOT EXISTS idx_outlook_emails_received ON outlook_emails(received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_outlook_emails_label    ON outlook_emails(triage_label, priority DESC);
 CREATE INDEX IF NOT EXISTS idx_outlook_emails_unread   ON outlook_emails(is_read, received_at DESC);
@@ -475,13 +496,164 @@ CREATE TABLE IF NOT EXISTS bridge_context_cache (
     updated_at TEXT NOT NULL
 );
 
+-- `last_run_at` mag NULL zijn en betekent dan écht "heeft nog nooit gedraaid".
+-- Een gemist vuurmoment vult alleen `last_missed_at`: er is niets uitgevoerd,
+-- dus er valt niets als run te boeken. Zie scheduler._record_run.
 CREATE TABLE IF NOT EXISTS scheduler_runs (
-    job_id      TEXT PRIMARY KEY,
-    status      TEXT NOT NULL,              -- ok | error | missed
-    last_run_at TEXT NOT NULL,              -- laatste run, ongeacht uitkomst
-    last_ok_at  TEXT,                       -- laatste geslaagde run; bepaalt of een run ingehaald moet worden
-    error       TEXT,
-    source      TEXT NOT NULL DEFAULT 'schedule'  -- schedule | catchup | manual
+    job_id         TEXT PRIMARY KEY,
+    status         TEXT NOT NULL,           -- ok | error | missed
+    last_run_at    TEXT,                    -- laatste échte uitvoering, ongeacht uitkomst
+    last_ok_at     TEXT,                    -- laatste geslaagde run; bepaalt of een run ingehaald moet worden
+    last_missed_at TEXT,                    -- laatste vuurmoment dat overging zónder uitvoering
+    error          TEXT,
+    source         TEXT NOT NULL DEFAULT 'schedule',  -- schedule | catchup | manual
+    -- Vanaf wanneer deze job bestaat. Een nieuw toegevoegde JobSpec heeft de
+    -- vuurmomenten van vórige week niet gemist: hij was er niet. Zonder dit
+    -- veld rekent `_record_downtime_gaps` het verleden van de trigger toe aan
+    -- een job van gisteren. Zie scheduler._seed_first_seen.
+    first_seen_at  TEXT
+);
+
+-- ── Beursmeester (domains/invest) ────────────────────────────────────────
+--
+-- Koershistorie. Dezelfde reden als `gsc_history` naast `published_pages`:
+-- `tools/market_data.py` haalt de stand van nú op en bewaart niets, dus een
+-- advies van vorige maand is achteraf niet af te rekenen en een backtest is
+-- onmogelijk. Idempotente upsert op (symbol, date) — een sync die twee keer
+-- draait mag geen dubbele dag opleveren.
+CREATE TABLE IF NOT EXISTS market_history (
+    symbol      TEXT NOT NULL,
+    date        TEXT NOT NULL,               -- YYYY-MM-DD (handelsdag)
+    open        REAL,
+    high        REAL,
+    low         REAL,
+    close       REAL NOT NULL,
+    volume      REAL DEFAULT 0,
+    currency    TEXT DEFAULT '',
+    fetched_at  TEXT NOT NULL,
+    PRIMARY KEY (symbol, date)
+);
+CREATE INDEX IF NOT EXISTS idx_market_history_date ON market_history(date);
+
+-- De portefeuille die écht bestaat. Vóór dit domein was de €10.000 een
+-- getal in een promptregel dat elke ochtend opnieuw werd verzonnen.
+-- `benchmark_start_price` wordt éénmalig vastgelegd: zonder vast startpunt is
+-- "we verslaan de index" achteraf naar elke gewenste uitkomst te rekenen.
+CREATE TABLE IF NOT EXISTS invest_portfolio (
+    id                    TEXT PRIMARY KEY,
+    name                  TEXT NOT NULL,
+    mode                  TEXT NOT NULL DEFAULT 'paper',   -- paper | alpaca_paper | live
+    base_currency         TEXT NOT NULL DEFAULT 'EUR',
+    start_capital         REAL NOT NULL,
+    cash                  REAL NOT NULL,
+    benchmark_symbol      TEXT NOT NULL DEFAULT 'IWDA.AS',
+    benchmark_start_price REAL,
+    started_on            TEXT NOT NULL,
+    halted_until          TEXT DEFAULT '',                 -- risicostop: geen nieuwe posities t/m deze datum
+    halt_reason           TEXT DEFAULT '',
+    created_at            TEXT NOT NULL
+);
+
+-- Open én gesloten posities. Gesloten posities blijven staan: zonder de
+-- verliezers is elk rendementscijfer gevleid (invariant `rendement_gevleid`).
+CREATE TABLE IF NOT EXISTS invest_positions (
+    id           TEXT PRIMARY KEY,
+    portfolio_id TEXT NOT NULL,
+    symbol       TEXT NOT NULL,
+    asset_class  TEXT DEFAULT '',
+    qty          REAL NOT NULL,
+    avg_price    REAL NOT NULL,
+    stop         REAL,                       -- verplicht bij openen; zie risk.py
+    target       REAL,
+    horizon_days INTEGER DEFAULT 0,
+    thesis       TEXT DEFAULT '',
+    proposal_id  TEXT DEFAULT '',
+    status       TEXT NOT NULL DEFAULT 'open',   -- open | closed
+    opened_on    TEXT NOT NULL,
+    closed_on    TEXT DEFAULT '',
+    close_reason TEXT DEFAULT '',            -- stop | target | horizon | handmatig
+    realized_pnl REAL DEFAULT 0,
+    FOREIGN KEY (portfolio_id) REFERENCES invest_portfolio(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_invest_positions_pf ON invest_positions(portfolio_id, status);
+
+-- Het grootboek. Elke fill, mét kosten en slippage — een papieren strategie
+-- die op de koers vult die het model zag, rekent zichzelf rijk.
+CREATE TABLE IF NOT EXISTS invest_trades (
+    id           TEXT PRIMARY KEY,
+    portfolio_id TEXT NOT NULL,
+    position_id  TEXT DEFAULT '',
+    proposal_id  TEXT DEFAULT '',
+    symbol       TEXT NOT NULL,
+    side         TEXT NOT NULL,              -- buy | sell
+    qty          REAL NOT NULL,
+    price        REAL NOT NULL,              -- werkelijke fill-prijs (incl. slippage)
+    ref_price    REAL,                       -- de koers waarop het besluit rustte
+    fee          REAL DEFAULT 0,
+    reason       TEXT DEFAULT '',            -- entry | stop | target | horizon | handmatig
+    executed_on  TEXT NOT NULL,              -- handelsdag van de fill
+    created_at   TEXT NOT NULL,
+    FOREIGN KEY (portfolio_id) REFERENCES invest_portfolio(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_invest_trades_pf ON invest_trades(portfolio_id, executed_on);
+
+-- Voorstellen wachten op een mens. Dit is de Wachtrij-gate van dit domein:
+-- geen enkel voorstel wordt vanzelf een order.
+CREATE TABLE IF NOT EXISTS invest_proposals (
+    id            TEXT PRIMARY KEY,
+    portfolio_id  TEXT NOT NULL,
+    run_id        TEXT DEFAULT '',
+    symbol        TEXT NOT NULL,
+    asset_class   TEXT DEFAULT '',
+    side          TEXT NOT NULL,             -- buy | sell
+    ref_price     REAL NOT NULL,             -- slotkoers waarop de these rust
+    ref_date      TEXT NOT NULL,             -- handelsdag van die koers (voor `koers_verouderd`)
+    stop          REAL,
+    target        REAL,
+    horizon_days  INTEGER DEFAULT 14,
+    size_pct      REAL DEFAULT 0,            -- gevraagd door de analist
+    qty           REAL DEFAULT 0,            -- toegekend door risk.py, niet door de analist
+    thesis        TEXT DEFAULT '',
+    invalidation  TEXT DEFAULT '',
+    confidence    TEXT DEFAULT '',
+    backtest_ref  TEXT DEFAULT '',           -- pad naar het backtest-artefact; leeg = geweigerd
+    denkwerk      TEXT DEFAULT '',           -- claude_code | terugval
+    risk_note     TEXT DEFAULT '',           -- waarom risk.py hem toestond of blokkeerde
+    prediction_id TEXT DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'pending_review',
+    created_at    TEXT NOT NULL,
+    decided_at    TEXT DEFAULT '',
+    FOREIGN KEY (portfolio_id) REFERENCES invest_portfolio(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_invest_proposals_status ON invest_proposals(status, created_at);
+
+-- Eén rij per analyse-ronde. Maakt zichtbaar of het denkwerk écht via Claude
+-- Code liep of via de terugval, en hoe lang het duurde.
+CREATE TABLE IF NOT EXISTS invest_runs (
+    id           TEXT PRIMARY KEY,
+    portfolio_id TEXT DEFAULT '',
+    run_date     TEXT NOT NULL,
+    denkwerk     TEXT DEFAULT '',            -- claude_code | terugval | geen
+    status       TEXT NOT NULL DEFAULT 'ok', -- ok | error
+    workspace    TEXT DEFAULT '',            -- map met snapshot, backtest en voorstel
+    proposals    INTEGER DEFAULT 0,
+    duration_ms  INTEGER DEFAULT 0,
+    note         TEXT DEFAULT '',
+    error        TEXT DEFAULT '',
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_invest_runs_date ON invest_runs(run_date);
+
+-- De koerslijn van de portefeuille naast die van de benchmark. Zonder deze
+-- reeks is "+3%" een cijfer zonder betekenis.
+CREATE TABLE IF NOT EXISTS invest_nav (
+    portfolio_id    TEXT NOT NULL,
+    date            TEXT NOT NULL,
+    nav             REAL NOT NULL,
+    cash            REAL NOT NULL,
+    positions_value REAL NOT NULL,
+    benchmark_price REAL,
+    PRIMARY KEY (portfolio_id, date)
 );
 """
 
@@ -494,6 +666,10 @@ def init_db() -> None:
 
 def _migrate(conn) -> None:
     """Idempotente kolom- en status-migraties voor bestaande databases."""
+    sr_cols = {row["name"] for row in conn.execute("PRAGMA table_info(scheduler_runs)").fetchall()}
+    if sr_cols and "first_seen_at" not in sr_cols:
+        conn.execute("ALTER TABLE scheduler_runs ADD COLUMN first_seen_at TEXT")
+
     task_cols = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
     if "assigned_agent_id" not in task_cols:
         conn.execute(
@@ -564,6 +740,19 @@ def _migrate(conn) -> None:
         conn.execute("ALTER TABLE agent_profiles ADD COLUMN memory_session TEXT DEFAULT ''")
     if "mcp_servers" not in profile_cols:
         conn.execute("ALTER TABLE agent_profiles ADD COLUMN mcp_servers TEXT DEFAULT '[]'")
+
+    # Calendar proposals: terugkerende blokken + herinnerings-flag (idempotent)
+    cp_exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='calendar_proposals'"
+    ).fetchone()
+    if cp_exists:
+        cp_cols = {row["name"] for row in conn.execute("PRAGMA table_info(calendar_proposals)").fetchall()}
+        for col, ddl in (
+            ("recur_weekday", "ALTER TABLE calendar_proposals ADD COLUMN recur_weekday INTEGER DEFAULT -1"),
+            ("reminder_sent", "ALTER TABLE calendar_proposals ADD COLUMN reminder_sent INTEGER DEFAULT 0"),
+        ):
+            if col not in cp_cols:
+                conn.execute(ddl)
 
     # Outlook-emails: nieuwe kolommen (idempotent)
     oe_exists = conn.execute(
@@ -754,6 +943,41 @@ def _migrate(conn) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_gsc_history_site_date "
         "ON gsc_history(site_id, scope, date DESC)"
+    )
+
+    # Weekrapport-bevindingen per project (28 dagen vs. de 28 daarvóór). Dit is
+    # bewust géén duplicaat van `gsc_history`: die bewaart dagcijfers en levert
+    # het snelle 7-vs-7-beeld, dit bewaart het trage 28-vs-28-beeld plus de
+    # afgeleide bevindingen (quick wins, CTR-gaten, dalers) die het weekrapport
+    # elke maandag berekent. Vóór 4 aug 2026 bestond dat rapport alleen als mail
+    # en Obsidian-notitie: niemand in het systeem kon het lezen, dus stuurde het
+    # niets aan en leerde Iris er niets van. Opgeslagen bevindingen zijn ook de
+    # enige manier om te zien dat dezelfde quick win drie weken blijft liggen.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS weekly_insights (
+            id            TEXT PRIMARY KEY,
+            week_label    TEXT NOT NULL,          -- 2026-W31 (ISO)
+            site_id       TEXT NOT NULL,
+            project       TEXT NOT NULL,
+            gsc_property  TEXT DEFAULT '',
+            clicks        INTEGER DEFAULT 0,
+            impressions   INTEGER DEFAULT 0,
+            ctr           REAL DEFAULT 0,
+            position      REAL DEFAULT 0,
+            clicks_prev   INTEGER DEFAULT 0,
+            impressions_prev INTEGER DEFAULT 0,
+            position_prev REAL DEFAULT 0,
+            quick_wins    TEXT DEFAULT '[]',      -- JSON
+            ctr_fix       TEXT DEFAULT '[]',      -- JSON
+            risers        TEXT DEFAULT '[]',      -- JSON
+            fallers       TEXT DEFAULT '[]',      -- JSON
+            created_at    TEXT NOT NULL,
+            UNIQUE(week_label, site_id)
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_weekly_insights_week "
+        "ON weekly_insights(week_label DESC, site_id)"
     )
 
     # Iris — de manager-agent: dagelijkse briefing (rapport per dag) en het
@@ -975,6 +1199,105 @@ def _migrate(conn) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_iris_heal_log_sig "
         "ON iris_heal_log(signature, created_at)"
+    )
+
+    # ── Een gemiste run is geen run ────────────────────────────────────────
+    # `last_run_at` was NOT NULL en werd óók gezet bij een misfire. Daardoor
+    # voldeed een taak die nooit was uitgevoerd aan de definitie van
+    # `downtime.never_succeeded` ("heeft gevuurd, nooit geslaagd") en meldde het
+    # Actiecentrum hem als defect, terwijl de machine simpelweg uit had gestaan
+    # (2 aug 2026, linkbuilding_weekly). SQLite kan NOT NULL niet laten vallen
+    # met ALTER, dus herbouwen we de tabel — hij bevat één rij per job.
+    run_cols = {r["name"] for r in conn.execute("PRAGMA table_info(scheduler_runs)")}
+    if run_cols and "last_missed_at" not in run_cols:
+        conn.execute("ALTER TABLE scheduler_runs RENAME TO scheduler_runs_oud")
+        conn.execute(
+            """CREATE TABLE scheduler_runs (
+                job_id         TEXT PRIMARY KEY,
+                status         TEXT NOT NULL,
+                last_run_at    TEXT,
+                last_ok_at     TEXT,
+                last_missed_at TEXT,
+                error          TEXT,
+                source         TEXT NOT NULL DEFAULT 'schedule'
+            )"""
+        )
+        # Een bestaande 'missed'-rij droeg een `last_run_at` die nooit een run
+        # was; die verhuist naar de juiste kolom in plaats van te blijven liegen.
+        conn.execute(
+            """INSERT INTO scheduler_runs
+                   (job_id, status, last_run_at, last_ok_at, last_missed_at, error, source)
+               SELECT job_id, status,
+                      CASE WHEN status = 'missed' THEN last_ok_at ELSE last_run_at END,
+                      last_ok_at,
+                      CASE WHEN status = 'missed' THEN last_run_at ELSE NULL END,
+                      error, source
+               FROM scheduler_runs_oud"""
+        )
+        conn.execute("DROP TABLE scheduler_runs_oud")
+
+    # ── Gemiste geplande runs (stilstand) ──────────────────────────────────
+    # `scheduler_runs` bewaart één rij per job: de láátste run. Daarmee is
+    # "deze job draaide vier werkdagen niet" niet te zien — de rij toont
+    # alleen dat hij op 27 juli nog werkte. Deze tabel bewaart de gemiste
+    # vuurmomenten zélf, want alleen dan kun je optellen hoeveel werk er niet
+    # gebeurd is. Zie shared/downtime.py.
+    #
+    # `cost` leeg = geregistreerd maar niet meldenswaardig (de opbrengst van
+    # die job is morgen vanzelf weer vers). `recovered_at` gevuld = de job is
+    # daarna weer geslaagd, dus het gat is dicht en de kaart mag weg.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS scheduler_gaps (
+            id            TEXT PRIMARY KEY,
+            job_id        TEXT NOT NULL,
+            label         TEXT DEFAULT '',
+            scheduled_for TEXT NOT NULL,   -- het vuurmoment dat overging
+            detected_at   TEXT NOT NULL,
+            cost          TEXT DEFAULT '', -- wat er verloren ging, in mensentaal
+            recoverable   INTEGER DEFAULT 0,
+            recovered_at  TEXT
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_scheduler_gaps_open "
+        "ON scheduler_gaps(recovered_at, job_id)"
+    )
+
+    # ── Waarheidsaudit: bevindingen met een levensloop ─────────────────────
+    # De tegenhanger van iris_heal_log. Dáár staan pogingen om iets op te
+    # lossen dat luid faalde; hier staat wat stíl kapot is — een systeem dat
+    # succes meldt terwijl het effect nooit plaatsvond. Zie iris/integrity.py.
+    #
+    # Waarom een levensloop en geen momentopname: het verschil tussen "dit is
+    # vandaag stuk" en "dit staat al drie weken open" bepaalt de urgentie, en
+    # een bevinding die verdwijnt moet zichzelf kunnen sluiten. Zonder
+    # resolved_at blijft er een rode kaart staan voor iets dat allang gefikst
+    # is — precies de ruis die het Actiecentrum onleesbaar maakt.
+    #
+    # UNIQUE(invariant, subject) is wat "dezelfde bevinding als gisteren"
+    # betekent: het subject moet stabiel zijn over runs heen (een job-id, een
+    # URL), nooit een timestamp of een teller.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS integrity_findings (
+            id           TEXT PRIMARY KEY,
+            invariant    TEXT NOT NULL,          -- key uit integrity.INVARIANTEN
+            subject      TEXT NOT NULL,          -- stabiele sleutel van het geval
+            project      TEXT DEFAULT '',
+            detail       TEXT DEFAULT '',
+            severity     TEXT DEFAULT 'stil',    -- blokkerend | stil | hygiene
+            first_seen   TEXT NOT NULL,
+            last_seen    TEXT NOT NULL,
+            resolved_at  TEXT,                   -- gevuld = de toets vindt het niet meer
+            escalated_id TEXT                    -- activity_log-id van de kaart, indien geëscaleerd
+        )"""
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_integrity_uniek "
+        "ON integrity_findings(invariant, subject)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_integrity_open "
+        "ON integrity_findings(resolved_at, severity)"
     )
 
     # ── Mail helpdesk (review-gate): per project een eigen mailbox ──────────
@@ -1403,6 +1726,86 @@ def _migrate(conn) -> None:
         "ON gsc_feedback(analysis_id)"
     )
 
+    _migrate_projectnamen(conn)
+    _migrate_postvak(conn)
+
+
+def _migrate_postvak(conn) -> None:
+    """Postvak-kolommen + de eenmalige opruiming van verzonden mail.
+
+    11 aug 2026: `sync_inbox` haalde `/me/messages` op — dat is de héle mailbox,
+    niet het postvak IN — en schreef élke rij weg met `folder='inbox'`. Vincents
+    eigen linkbuilding-outreach stond daardoor als binnengekomen mail in de
+    lijst 'wacht op jouw antwoord' (5 van de 7 items op de telefoon), en één
+    ervan kreeg zelfs een conceptantwoord op zijn eigen mail. De sync is
+    gerepareerd, maar dat verandert niets aan de rijen die er al staan; dit doet
+    dat wél, en alleen voor mail die aantoonbaar door de eigenaar zélf verstuurd
+    is (afzender = het gekoppelde account). Idempotent.
+    """
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(outlook_emails)").fetchall()}
+    if not cols:
+        return
+    for col, ddl in (
+        # Waarom een mail is weggehouden — nooit stil filteren (zie rules.py).
+        ("filter_reason", "ALTER TABLE outlook_emails ADD COLUMN filter_reason TEXT DEFAULT ''"),
+        ("filter_rule_id", "ALTER TABLE outlook_emails ADD COLUMN filter_rule_id INTEGER"),
+        # Wanneer er is geantwoord, waargenomen uit Verzonden items i.p.v. uit
+        # onze eigen verstuurknop: dat laatste maakte van '0% beantwoord' een
+        # cijfer dat nooit iets anders kón worden.
+        ("replied_at", "ALTER TABLE outlook_emails ADD COLUMN replied_at TEXT DEFAULT ''"),
+    ):
+        if col not in cols:
+            conn.execute(ddl)
+
+    row = conn.execute(
+        "SELECT email FROM outlook_tokens ORDER BY updated_at DESC LIMIT 1"
+    ).fetchone()
+    eigen = (row["email"] or "").lower().strip() if row else ""
+    if eigen:
+        conn.execute(
+            "UPDATE outlook_emails SET folder='sent' "
+            "WHERE folder='inbox' AND lower(from_email) = ? "
+            "  AND lower(COALESCE(to_email,'')) NOT LIKE ?",
+            (eigen, f"%{eigen}%"),
+        )
+
+    try:
+        from ..domains.outlook.rules import seed_system_rules
+        seed_system_rules(conn)
+    except Exception:  # noqa: BLE001
+        logger.warning("Seeden van afzenderregels mislukt", exc_info=True)
+
+
+def _migrate_projectnamen(conn) -> None:
+    """Trek `goals.project` recht naar de spelling uit `sites`.
+
+    4 aug 2026: zeventien projectwaarden voor twaalf projecten. Zolang de
+    Doelen-tab álle doelen ophaalde viel dat niet op; met een werkende
+    projectfilter zou 'Bewaardvoorjou' (9 doelen) en 'Bewaard voor Jou' (11)
+    twee gescheiden historieën worden. Zelfde opruiming als `radar/models.py`
+    voor de watchlist deed. Idempotent — een tweede run raakt niets meer aan.
+
+    Inline i.p.v. via `shared/projects.merge_project_column`, omdat die functie
+    zijn eigen verbinding opent en dat hier op de migratie-lock zou wachten.
+    """
+    from .projects import squash_project
+    try:
+        namen = [r[0] for r in conn.execute(
+            "SELECT name FROM sites WHERE COALESCE(name, '') != ''").fetchall()]
+        waarden = [r[0] for r in conn.execute(
+            "SELECT DISTINCT project FROM goals "
+            "WHERE COALESCE(project, '') != ''").fetchall()]
+    except Exception:
+        return  # verse installatie: de tabellen bestaan nog niet
+    kaart = {squash_project(n): n for n in namen}
+    for waarde in waarden:
+        juist = kaart.get(squash_project(waarde))
+        if juist and juist != waarde:
+            cur = conn.execute(
+                "UPDATE goals SET project = ? WHERE project = ?", (juist, waarde))
+            logger.info("projectnaam rechtgetrokken in goals: %r → %r (%d doelen)",
+                        waarde, juist, cur.rowcount)
+
 
 @contextmanager
 def get_conn():
@@ -1416,11 +1819,11 @@ def get_conn():
     # binnen microseconden de lock krijgt — precies wat de Graph-mailflow
     # (langzame network-fetch vóór de write) blootlegde. 5s bleek te krap: de
     # mail-poll classificeert/draft per bericht via de LLM terwijl hij de write-
-    # transactie vasthoudt, en de piepkleine scheduler-writes (`_record_run`)
-    # gaven dan "database is locked". De echte oplossing is de lock niet over
-    # traag werk vasthouden (zie social_inbox.run_inbox); 15s is de vangrail
-    # voor de flows waar dat nog wél gebeurt.
-    conn.execute("PRAGMA busy_timeout=15000")
+    # traag werk vasthouden (zie social_inbox.run_inbox); 30s is de vangrail
+    # voor de flows waar dat nog wél gebeurt. (04-08: 15s was nog te krap —
+    # `_run_mailbox_graph` gaf onder gelijktijdige conveyor+linkbuilding-writes
+    # alsnog "database is locked" en liet de mail-job crashen.)
+    conn.execute("PRAGMA busy_timeout=30000")
     try:
         yield conn
         conn.commit()

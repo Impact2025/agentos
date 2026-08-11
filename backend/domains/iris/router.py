@@ -8,7 +8,7 @@
 """
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict
 
 from . import metrics, service
 
@@ -174,6 +174,64 @@ async def selfheal_run():
     return await selfheal.run_selfheal(source="handmatig")
 
 
+# ── Waarheidsaudit: wat is er stil kapot? ──────────────────────────────────
+@router.get("/integrity")
+def integrity_status(severity: str = Query("", pattern="^(blokkerend|stil|hygiene)?$"),
+                     limit: int = Query(200, ge=1, le=500)):
+    """Openstaande bevindingen + de stand per invariant.
+
+    `invarianten` gaat mee in het antwoord zodat de UI kan laten zien wáárom een
+    toets bestaat: elke regel codeert een storing die echt is voorgekomen. Een
+    audit waarvan niemand de herkomst kent, wordt genegeerd zodra hij een keer
+    ongelegen komt.
+    """
+    from . import integrity
+    return {
+        "samenvatting": integrity.audit_summary(),
+        "bevindingen": integrity.open_findings(severity=severity, limit=limit),
+        "invarianten": [
+            {"key": i.key, "titel": i.titel, "severity": i.severity,
+             "incident": i.incident, "stap": i.stap}
+            for i in integrity.INVARIANTEN
+        ],
+    }
+
+
+@router.post("/integrity/run")
+def integrity_run():
+    """Draai de audit nu (draait ook dagelijks 06:40 en bij elke briefing)."""
+    from . import integrity
+    return integrity.run_audit(source="handmatig")
+
+
+@router.post("/integrity/repair/{invariant}")
+async def integrity_repair(invariant: str, project: str = Query(""),
+                           maximum: int = Query(25, ge=1, le=100)):
+    """Repareer de openstaande bevindingen van één invariant.
+
+    De andere helft van de audit. Tot 4 aug 2026 leverde élke invariant alleen
+    een kaart op: er stonden 82 bevindingen open en er bestond geen enkele
+    remedie in de codebase, ook niet via zelfherstel (`waarheidsaudit` staat in
+    `_MENSELIJK_BESLUIT`). Elke toets die erbij kwam, werd zo een to-do voor een
+    mens in plaats van werk voor een agent.
+
+    Reparaties lopen via de gewone publicatieroute mét alle gates — nooit via
+    rechtstreekse HTTP, want dat is precies hoe een eenmalig reparatiescript op
+    23 juli een niet-publiceerbare taaktitel live zette. En de bevinding wordt
+    hier niet gesloten: dat doet de audit als hij hem niet meer vindt.
+    """
+    from ..publish import repair
+
+    remedies = repair.REMEDIES
+    doe = remedies.get(invariant)
+    if not doe:
+        raise HTTPException(
+            status_code=404,
+            detail=(f"Voor '{invariant}' bestaat nog geen automatische remedie. "
+                    f"Beschikbaar: {', '.join(sorted(remedies)) or '(geen)'}."))
+    return await doe(project=project or None, maximum=maximum)
+
+
 # ── "Analyseer & fix" — vanuit een bestaande foutkaart in het Actiecentrum ──
 @router.post("/errors/{error_id}/triage")
 async def errors_triage(error_id: str, kind: str = Query("activity_log")):
@@ -186,3 +244,38 @@ async def errors_triage(error_id: str, kind: str = Query("activity_log")):
     if not result.get("ok") and "diagnosis" not in result:
         raise HTTPException(status_code=400, detail=result.get("error", "Analyseren mislukt"))
     return result
+
+
+@router.post("/errors/triage-all")
+async def errors_triage_all(body: Optional[Dict] = None):
+    """Bulk-variant: analyseer én herstel alle foutkaarten in het Actiecentrum
+    in één keer. VUUR-EN-VERGEET — komt meteen terug met een job_id; de
+    verwerking loopt op de achtergrond. Patroon-errors (OpenModel-down,
+    MS-auth, catch-up-timeout) worden deterministisch gediagnosticeerd, zonder
+    een LLM per kaart. Ververs het Actiecentrum na enkele seconden."""
+    from . import triage
+    kinds = None
+    if isinstance(body, dict):
+        kinds = body.get("kinds")
+    return await triage.analyze_and_fix_all(kinds=kinds)
+
+
+@router.post("/errors/{error_id}/reconnect-microsoft")
+async def errors_reconnect_microsoft(error_id: str):
+    """Start de Microsoft device-code login (Outlook/Graph) voor een
+    'Niet geauthenticeerd bij Microsoft'-fout. Geeft de user_code +
+    verification_uri terug die Vincent in zijn browser invoert."""
+    from ...domains.outlook import service as outlook_service
+    if not outlook_service.is_configured():
+        raise HTTPException(400, "OUTLOOK_CLIENT_ID niet ingesteld in .env")
+    try:
+        flow = outlook_service.prepare_device_flow()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Kon de Microsoft login niet starten: {e}")
+    return {
+        "ok": True,
+        "user_code": flow.get("user_code"),
+        "verification_uri": flow.get("verification_uri"),
+        "expires_in": flow.get("expires_in"),
+        "message": "Open de link, voer de code in, en de Bridge-mail-sync herstelt zichzelf.",
+    }

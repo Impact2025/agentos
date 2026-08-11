@@ -67,6 +67,23 @@ _SAFE_JOB_PROBES = {
 # veilig (dedupe op external_id), en juist die polls falen op een netwerkblip.
 _SAFE_JOB_PREFIXES = ("mail_", "social_")
 
+# Kaarten die per ontwérp op een mens wachten. Hier valt niets te herstellen:
+# ze zijn geen storing maar een beslissing die alleen Vincent kan nemen.
+#
+# 2 aug 2026 stond boven 'content-stuck — Ictusgo' de tekst "[Iris probeert dit
+# zelf — poging 1 van 3]" op een artikel dat na drie verbeterrondes de
+# kwaliteitsgate niet haalde. Dat ís de bedoelde uitkomst van die gate: het
+# wacht op "verbeter met AI" of "wijs af". De banner nodigde uit om te wachten
+# op hulp die nooit komt, en elke ronde ging er een LLM-triage overheen die
+# steeds op "geen remedie bekend" uitkwam. Wat je niet kunt oplossen, moet je
+# ook niet claimen te proberen.
+_MENSELIJK_BESLUIT = {
+    "content-stuck",        # kwaliteitsgate: verbeteren of afwijzen is een keuze
+    "gemiste_runs",         # de machine stond uit; de knop staat op de gap-kaart
+    "job_nooit_geslaagd",   # draaien en de fout lezen, niet blind opnieuw proberen
+    "waarheidsaudit",       # een bevinding over de buitenwereld (CMS, 301) — geen agentwerk
+}
+
 
 def _now_iso() -> str:
     return datetime.now().isoformat()
@@ -93,6 +110,8 @@ def _open_cases(limit: int = MAX_CASES_PER_RUN) -> List[Dict[str, Any]]:
             # 'iris_actie'/'iris_zelfherstel' zijn meta over een andere fout —
             # daarop zelfherstel loslaten is jezelf achterna lopen.
             if row["action"] in ("iris_actie", "iris_zelfherstel"):
+                continue
+            if row["action"] in _MENSELIJK_BESLUIT:
                 continue
             if ("error", row["id"]) in dismissed:
                 continue
@@ -278,6 +297,50 @@ async def _probe_social_fetch(case: Dict[str, Any]) -> Tuple[bool, str]:
     return True, "; ".join(notes)
 
 
+async def _probe_publicatie_mislukt(case: Dict[str, Any]) -> Tuple[bool, str]:
+    """Staat die pagina inmiddels wél? Kijken, niet opnieuw publiceren.
+
+    3 aug 2026: twaalf kaarten 'Publiceren mislukt' voor ictusgo.nl waren geen
+    twaalf publicatiefouten. De publicatie was elke keer geslaagd (HTTP 201, de
+    artikelen stonden in de database van de site); de site zelf kon ze niet
+    renderen. Toen dat defect verholpen was, waren alle twaalf pagina's in één
+    klap live — en bleven de twaalf kaarten staan, want er is geen stap die de
+    wereld nóg een keer raadpleegt. Zonder deze probe moest een mens twaalf keer
+    'Opnieuw publiceren' klikken om te ontdekken dat er niets te publiceren viel.
+
+    Publiceren doet deze probe uitdrukkelijk níét: dat is een verzending, en die
+    hoort achter de Wachtrij-gate te blijven. Hij doet exact wat de oorspronkelijke
+    controle deed — `_verify_live` op dezelfde URL — en verandert de status alleen
+    in de richting die het net bewijst.
+    """
+    from ..publish import content_pipeline as cp
+    from . import integrity
+
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, title, publish_result FROM content_jobs "
+            "WHERE status = 'publish_failed' AND COALESCE(publish_result, '') != ''"
+        ).fetchall()
+    detail = (case.get("detail") or "") + " " + (case.get("label") or "")
+    job = next((dict(r) for r in rijen if r["title"] and r["title"] in detail), None)
+    if not job:
+        return False, "de bijbehorende job staat niet meer op 'publish_failed'"
+
+    url = integrity._live_url(job["publish_result"] or "")
+    if not url:
+        return False, "er is geen gepubliceerde URL vastgelegd om te controleren"
+    reden = await cp._verify_live(url)
+    if reden:
+        return False, f"pagina staat er nog steeds niet: {reden}"
+
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE content_jobs SET status = 'published', error = '' WHERE id = ?",
+            (job["id"],),
+        )
+    return True, f"{url} rendert inmiddels wél — job op 'published' gezet"
+
+
 async def _probe_scheduler_job(case: Dict[str, Any]) -> Tuple[bool, str]:
     """Draai een lees-/sync-job opnieuw. Alleen jobs uit de veilige lijst: een
     zelfherstel-ronde hoort niets te produceren dat een mens moet beoordelen."""
@@ -325,6 +388,8 @@ def _probe_for(case: Dict[str, Any]) -> Optional[Callable]:
     action = (case.get("action") or "").lower()
     if action == "social_fetch":
         return _probe_social_fetch
+    if action == "publicatie_mislukt":
+        return _probe_publicatie_mislukt
     return None
 
 
@@ -641,6 +706,12 @@ def heal_status(signature_action: str, detail: str, conn=None) -> Optional[Dict[
     if conn is None:
         with get_conn() as own:
             return heal_status(signature_action, detail, conn=own)
+    # Werkt Iris hier niet aan, dan zegt de kaart dat ook niet. `iris_heal_log`
+    # kan nog pogingen bevatten van vóórdat deze soort werd uitgesloten, en een
+    # banner "poging 1 van 3" op een besluit dat alleen Vincent kan nemen laat
+    # hem wachten op hulp die niet komt.
+    if signature_action in _MENSELIJK_BESLUIT:
+        return None
     signature = _signature(signature_action, detail)
     attempts = _count_failed_probes(conn, signature)
     if not attempts:

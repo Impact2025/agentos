@@ -475,12 +475,12 @@ function mdToHtmlSimple(text) {
 //  FINANCE EXPERT (non-GSC)
 // ═══════════════════════════════════════════════════════════════════
 function renderFinanceExpert(el) {
-  el.innerHTML = '<div class="agent-card"><div class="agent-icon" style="background:linear-gradient(135deg,#f43f5e,#e11d48)">F</div><h2>Finance Expert Agent</h2><p class="desc">Financiele analyse, rapportage en inzicht.</p><div class="cap-grid">' +
-    '<div class="cap-item"><div class="num" style="background:#f43f5e">1</div><div><p>Dagelijks financieel rapport</p><p class="sub">Automatisch om 09:00.</p></div></div>' +
-    '<div class="cap-item"><div class="num" style="background:#f43f5e">2</div><div><p>Wekelijkse trendanalyse</p><p class="sub">Inzicht in patronen en budget-bewaking.</p></div></div>' +
-    '<div class="cap-item"><div class="num" style="background:#f43f5e">3</div><div><p>Ad-hoc analyses</p><p class="sub">Stel vragen over specifieke periodes.</p></div></div></div>' +
-    '<div class="tips"><h3>Tips</h3><ul><li>Vraag naar de dagelijkse financiele samenvatting voor een snel overzicht van je omzet en uitgaven.</li><li>Laat een wekelijks rapport genereren met trends en afwijkingen in je financien.</li><li>Gebruik "vergelijken met vorige maand" om seizoenspatronen te ontdekken.</li></ul></div>' +
+  el.innerHTML = '<div id="beursmeester-desk"></div>' +
+    '<div class="agent-card" style="margin-top:20px"><div class="agent-icon" style="background:linear-gradient(135deg,#f43f5e,#e11d48)">F</div><h2>Finance Expert Agent</h2><p class="desc">Marktanalyse en rapportage. Het dagrapport (07:30) en weekrapport (ma 08:15) adviseren; de Beursmeester hierboven rekent dat advies af.</p>' +
     '<button onclick="switchView(\'chat\')" style="padding:10px 28px;background:#f43f5e;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer">Start chat</button></div>';
+  // Het volledige beursbureau staat in tabs-invest.js. Bewust één implementatie:
+  // twee panelen die dezelfde vraag beantwoorden, lopen uit elkaar.
+  renderBeursmeester(document.getElementById('beursmeester-desk'));
 }
 
 // ═══════════════════════════════════════════════════════════════════

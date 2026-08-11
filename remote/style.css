@@ -632,5 +632,40 @@ details.mail-sectie > summary.mail-sectie-kop { cursor: pointer; }
 .mail-note-caret { transition: transform 0.2s var(--ease); opacity: 0.6; }
 details[open] > summary .mail-note-caret { transform: rotate(180deg); }
 
+/* Neutrale variant van .mail-note: de uitgefilterde bak is naslag, geen
+   waarschuwing. Geel zou hem laten schreeuwen om aandacht die hij niet vraagt. */
+.mail-note.is-stil { background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.07); }
+.mail-note.is-stil > summary { color: var(--on-surface-variant); }
+
+/* Rij-acties. Bewust laag contrast tot je ze aanraakt: ze moeten bereikbaar
+   zijn zonder de lijst in een knoppenbalk te veranderen — je scant hier post,
+   je bedient geen apparaat. Blokkeren kleurt pas rood bij aanraking, want een
+   permanent rood icoon naast elke afzender leest als een oordeel over die
+   afzender. Tikdoel blijft 34px: dit wordt met een duim bediend. */
+.mail-acties { display: flex; gap: 2px; align-items: center; flex: none; margin-top: 1px; }
+.mail-actie {
+  width: 34px; height: 34px; border-radius: 9px; border: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--on-surface-variant); opacity: 0.5;
+  cursor: pointer; transition: opacity 0.15s var(--ease), background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.mail-actie .material-symbols-outlined { font-size: 18px; }
+.mail-actie:hover, .mail-actie:focus-visible { opacity: 1; background: rgba(255, 255, 255, 0.06); }
+.mail-actie.is-blok:hover, .mail-actie.is-blok:focus-visible { color: var(--err); background: rgba(255, 156, 146, 0.1); }
+.mail-actie:disabled { opacity: 0.25; cursor: default; }
+
+.mail-blocklist { margin-top: 8px; padding-left: 24px; }
+.mail-blocklist > li {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 7px 0; border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.mail-blocklist > li:first-child { border-top: 0; }
+.mail-blocked-from { font-size: 12px; color: var(--on-surface); }
+.mail-blocked-sub {
+  font-size: 11.5px; color: var(--on-surface-variant);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mail-blocked-why { font-size: 10.5px; color: var(--on-surface-variant); opacity: 0.6; margin-top: 1px; }
+
 .mail-leeg, .mail-voet { font-size: 12px; color: var(--on-surface-variant); opacity: 0.7; }
 .mail-voet { padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.05); }

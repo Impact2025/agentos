@@ -152,7 +152,7 @@ def test_list_signals_source_filter():
         conn.execute(
             "INSERT INTO radar_signals (id, watch_id, project, keyword, title, url, "
             "source, snippet, signal_score, ai_angle, status, scanned_at, created_at, "
-            "updated_at) VALUES ('s1','', 'Bijeen','q2','Scan','https://reddit.com/r/x','reddit',"
+            "updated_at) VALUES ('s1','', 'Bijeen','q2','Scan resultaat','https://reddit.com/r/x/comments/y/scan','reddit',"
             "'', 70,'','new','2026-07-08','2026-07-08','2026-07-08')")
     svc = rsvc.RadarService()
     growth = svc.list_signals(project="Bijeen", source="gsc-growth")

@@ -370,114 +370,10 @@ async function helpdeskAdd(btn) {
 //  renderSeriesChart/renderPositionChart helpers staan in shell.js.
 // ═══════════════════════════════════════════════════════════════════
 
-async function renderContentTab(el) {
-  if (currentProject === 'Finance Expert') { el.innerHTML = '<div class="empty-state">Geen content</div>'; return; }
-  el.innerHTML = '<div class="loading"><div class="spinner"></div><p>Content laden...</p></div>';
-  try { var d = await (await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/content')).json(); }
-  catch(e) { el.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; return; }
-  var html = '<div class="grid-2">';
-  var gsc = d.gsc_pages||[];
-  html += '<div class="section-card"><h3>Live pagina\'s (' + gsc.length + ')</h3>' + (gsc.length ? '<table class="data-table"><thead><tr><th>Pagina</th><th class="num">Clicks</th><th class="num">Positie</th></tr></thead><tbody>' + gsc.slice(0,20).map(function(p){return '<tr><td class="url-cell"><span class="badge badge-live">live</span> ' + escHtml(p.title) + '</td><td class="num">' + p.clicks + '</td><td class="num">' + (typeof p.position==='number'?p.position.toFixed(1):p.position) + '</td></tr>';}).join('') + '</tbody></table>' + (gsc.length>20?'<p style="font-size:11px;color:#94a3b8;margin-top:6px">+ nog ' + (gsc.length-20) + '</p>':''):'<p style="color:#94a3b8;font-size:12px;padding:16px;text-align:center">Geen GSC-data</p>') + '</div>';
-  var cf=d.content_files||[], le=d.log_entries||[], zf=d.zzp_opdrachten||[];
-  function fileRow(kind, badgeClass, badgeLabel, f) {
-    return '<div onclick="openContentFile(\''+kind+'\',\''+encodeURIComponent(f.name)+'\')" style="font-size:12px;padding:3px 0;cursor:pointer;color:#2563eb" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'"><span class="badge '+badgeClass+'" style="color:inherit;text-decoration:none">'+badgeLabel+'</span> '+escHtml(f.name.replace(/-/g,' '))+'</div>';
-  }
-  html += '<div class="section-card"><h3>Lokale bestanden (' + (cf.length+le.length+zf.length) + ')</h3>' + (cf.length?'<p style="font-size:11px;color:#64748b;margin-bottom:4px">Concepten (klik om te lezen)</p>'+cf.map(function(f){return fileRow('content','badge-draft','concept',f);}).join(''):'') + (le.length?'<p style="font-size:11px;color:#64748b;margin:8px 0 4px">Logboek</p>'+le.map(function(f){return fileRow('log','badge-log','log',f);}).join(''):'') + (zf.length?'<p style="font-size:11px;color:#64748b;margin:8px 0 4px">ZZP</p>'+zf.map(function(f){return fileRow('zzp','badge-zzp','zzp',f);}).join(''):'') + (!cf.length&&!le.length&&!zf.length?'<p style="color:#94a3b8;font-size:12px;padding:16px;text-align:center">Geen lokale bestanden</p>':'') + '</div></div>';
-  html += '<div class="section-card"><h3>Blog suggesties</h3><div id="sug-container">' + (weSuggestions.length ? renderSuggestions() : '<p style="color:#94a3b8;font-size:12px;text-align:center;padding:12px">Klik op "Genereer suggesties" voor AI-blog-onderwerpen.</p>') + '</div><button onclick="generateSuggestions()" id="sug-btn" style="margin-top:10px;padding:6px 16px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">Genereer suggesties</button></div>';
-  el.innerHTML = html;
-}
-async function openContentFile(kind, encodedName) {
-  var name = decodeURIComponent(encodedName);
-  var overlay = document.createElement('div');
-  overlay.id = 'file-modal-overlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;z-index:1000;padding:24px';
-  var footer = kind === 'content' ? (
-    '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:10px 16px;border-top:1px solid #e2e8f0;background:#f8fafc">' +
-    '<button onclick="analyzeContentFile(\''+kind+'\',\''+encodedName+'\')" style="padding:6px 14px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">🔍 Analyseer als SEO-expert</button>' +
-    '<button onclick="generateSocialCopyForFile(\''+kind+'\',\''+encodedName+'\')" style="padding:6px 14px;background:#0891b2;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">📣 Maak social media teksten</button>' +
-    '</div>'
-  ) : '';
-  overlay.innerHTML = '<div style="background:#fff;border-radius:10px;max-width:800px;width:100%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden">' +
-    '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid #e2e8f0"><h3 style="font-size:14px;font-weight:700">'+escHtml(name.replace(/-/g,' '))+'</h3><button onclick="closeContentFile()" style="background:none;border:none;font-size:18px;cursor:pointer;color:#64748b;line-height:1">✕</button></div>' +
-    '<div style="overflow:auto;flex:1"><div id="file-modal-body" style="padding:16px;font-size:13px;line-height:1.6">Laden...</div><div id="file-modal-results" style="padding:0 16px 16px"></div></div>' +
-    footer + '</div>';
-  overlay.addEventListener('click', function(e){ if (e.target === overlay) closeContentFile(); });
-  document.body.appendChild(overlay);
-  try {
-    var res = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/content-file?kind=' + encodeURIComponent(kind) + '&file=' + encodeURIComponent(name));
-    var data = await res.json();
-    var body = document.getElementById('file-modal-body');
-    if (!res.ok) { body.innerHTML = '<p style="color:#dc2626">'+escHtml(data.detail||'Kon bestand niet laden')+'</p>'; return; }
-    if (data.extension === '.html') {
-      body.innerHTML = data.content.replace(/^---[\s\S]*?---\n*/, '');
-    } else {
-      body.innerHTML = '<pre style="white-space:pre-wrap;font-family:inherit">'+escHtml(data.content)+'</pre>';
-    }
-  } catch(e) {
-    var body = document.getElementById('file-modal-body'); if (body) body.innerHTML = '<p style="color:#dc2626">Fout: '+escHtml(e.message)+'</p>';
-  }
-}
-function closeContentFile() {
-  var overlay = document.getElementById('file-modal-overlay');
-  if (overlay) overlay.remove();
-}
-async function analyzeContentFile(kind, encodedName) {
-  var results = document.getElementById('file-modal-results'); if (!results) return;
-  results.innerHTML = '<div style="margin-top:10px;padding:10px;background:#f1f5f9;border-radius:8px;font-size:12px;color:#64748b">SEO-expert analyseert...</div>';
-  try {
-    var res = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/content-file/analyze?kind=' + encodeURIComponent(kind) + '&file=' + encodeURIComponent(decodeURIComponent(encodedName)), {method:'POST'});
-    var data = await res.json();
-    if (!res.ok) { results.innerHTML = '<div style="margin-top:10px;color:#dc2626;font-size:12px">'+escHtml(data.detail||'Analyse mislukt')+'</div>'; return; }
-    var color = data.score>=85?'#16a34a':(data.score>=60?'#d97706':'#dc2626');
-    results.innerHTML = '<div style="margin-top:10px;padding:12px;border:1px solid #e2e8f0;border-radius:8px">' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">' +
-      '<span style="font-size:13px;font-weight:700;color:'+color+'">Score: '+data.score+'/100'+(data.score>=85?' 🏆':'')+'</span>' +
-      (data.score<85?'<button onclick="applyContentFileFeedback(this,\''+kind+'\',\''+encodedName+'\')" style="padding:5px 12px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">✓ Pas toe</button>':'') +
-      '</div>' +
-      '<div style="font-size:12px;color:#334155;white-space:pre-wrap">'+escHtml(data.feedback||'(geen feedback)')+'</div></div>';
-  } catch(e) { results.innerHTML = '<div style="margin-top:10px;color:#dc2626;font-size:12px">Fout: '+escHtml(e.message)+'</div>'; }
-}
-async function applyContentFileFeedback(btn, kind, encodedName) {
-  var results = document.getElementById('file-modal-results');
-  var origLabel = btn.textContent;
-  btn.disabled = true; btn.textContent = 'Toepassen (kan ~30-60s duren)...';
-  try {
-    var res = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/content-file/optimize?kind=' + encodeURIComponent(kind) + '&file=' + encodeURIComponent(decodeURIComponent(encodedName)), {method:'POST'});
-    var data = await res.json();
-    if (!res.ok) { alert('Toepassen mislukt: ' + (data.detail||'onbekende fout')); btn.disabled = false; btn.textContent = origLabel; return; }
-    // Ververs zowel het artikel als de score met de nieuwe, opgeslagen versie
-    var bodyEl = document.getElementById('file-modal-body');
-    if (bodyEl) bodyEl.innerHTML = data.extension === '.html' ? data.content.replace(/^---[\s\S]*?---\n*/, '') : '<pre style="white-space:pre-wrap;font-family:inherit">'+escHtml(data.content)+'</pre>';
-    var color = data.score>=85?'#16a34a':(data.score>=60?'#d97706':'#dc2626');
-    if (results) results.innerHTML = '<div style="margin-top:10px;padding:12px;border:1px solid #e2e8f0;border-radius:8px">' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">' +
-      '<span style="font-size:13px;font-weight:700;color:'+color+'">Nieuwe score: '+data.score+'/100'+(data.score>=85?' 🏆':'')+' (na '+data.rounds+' ronde'+(data.rounds!==1?'n':'')+')</span>' +
-      (data.score<85?'<button onclick="applyContentFileFeedback(this,\''+kind+'\',\''+encodedName+'\')" style="padding:5px 12px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">✓ Nogmaals toepassen</button>':'') +
-      '</div><div style="font-size:12px;color:#334155;white-space:pre-wrap">'+escHtml(data.feedback||'(geen feedback)')+'</div></div>';
-  } catch(e) { alert('Fout: ' + e.message); btn.disabled = false; btn.textContent = origLabel; }
-}
-async function generateSocialCopyForFile(kind, encodedName) {
-  var results = document.getElementById('file-modal-results'); if (!results) return;
-  results.innerHTML = '<div style="margin-top:10px;padding:10px;background:#f1f5f9;border-radius:8px;font-size:12px;color:#64748b">Social teksten genereren...</div>';
-  try {
-    var res = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/content-file/social-copy?kind=' + encodeURIComponent(kind) + '&file=' + encodeURIComponent(decodeURIComponent(encodedName)), {method:'POST'});
-    var data = await res.json();
-    if (!res.ok) { results.innerHTML = '<div style="margin-top:10px;color:#dc2626;font-size:12px">'+escHtml(data.detail||'Genereren mislukt')+'</div>'; return; }
-    window._fileSocialCopy = data.social_copy || {};
-    var platforms = [['linkedin','LinkedIn'],['facebook','Facebook'],['instagram','Instagram'],['twitter','X / Twitter']];
-    results.innerHTML = '<div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">' + platforms.map(function(p){
-      var text = window._fileSocialCopy[p[0]] || '(geen tekst)';
-      return '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span style="font-size:11px;font-weight:700;color:#475569">'+p[1]+'</span><button onclick="copySocialText(this,\''+p[0]+'\')" style="padding:2px 8px;background:#fff;border:1px solid #cbd5e1;border-radius:4px;font-size:10px;cursor:pointer">Kopieer</button></div><div style="font-size:12px;color:#334155;white-space:pre-wrap">'+escHtml(text)+'</div></div>';
-    }).join('') + '</div>';
-  } catch(e) { results.innerHTML = '<div style="margin-top:10px;color:#dc2626;font-size:12px">Fout: '+escHtml(e.message)+'</div>'; }
-}
-function copySocialText(btn, platform) {
-  var text = (window._fileSocialCopy || {})[platform] || '';
-  navigator.clipboard.writeText(text).then(function(){
-    var orig = btn.textContent; btn.textContent = 'Gekopieerd ✓';
-    setTimeout(function(){ btn.textContent = orig; }, 1500);
-  });
-}
+// renderContentTab en zijn modal-helpers (openContentFile e.a.) zijn hier
+// verwijderd (9 aug 2026): ze riepen /api/projects/{p}/content en
+// /content-file* aan, routes die nergens in de backend bestaan — de tab heeft
+// dus nooit data getoond, voor geen enkel project.
 function renderSuggestions() {
   if (!weSuggestions.length) return '<p style="color:#94a3b8;font-size:12px;text-align:center;padding:12px">Geen suggesties</p>';
   return weSuggestions.map(function(sug,i){return '<div style="border:1px solid #e2e8f0;border-radius:6px;padding:10px;margin-bottom:6px"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><p style="font-weight:600;font-size:13px">' + escHtml(sug.title) + '</p><p style="font-size:11px;color:#64748b;margin-top:2px">' + escHtml(sug.rationale) + '</p><div style="display:flex;gap:6px;margin-top:4px"><span style="font-size:10px;padding:1px 6px;background:#f1f5f9;border-radius:4px;color:#475569">' + escHtml(sug.keyword) + '</span><span style="font-size:10px;padding:1px 6px;background:#f1f5f9;border-radius:4px;color:#475569">' + escHtml(sug.estimated_hours||'?') + '</span></div></div><button onclick="publishSuggestion(this,' + i + ')" style="padding:4px 12px;background:#4f46e5;color:#fff;border:none;border-radius:4px;font-size:11px;cursor:pointer">Schrijf &amp; zet in Wachtrij</button></div></div>';}).join('');
@@ -541,17 +437,43 @@ async function renderKansenTab(el) {
   if (data.error) { el.innerHTML = '<div class="empty-state">' + escHtml(data.error) + '</div>'; return; }
   var kansen = data.kansen || [];
   window._kansenData = kansen;
-  var newCount = kansen.filter(function(o){return o.status==='new';}).length;
-  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px"><div><h3 style="font-size:15px;font-weight:700">Striking distance kansen (' + kansen.length + ')</h3>' + (newCount>0?'<p style="font-size:11px;color:#64748b;margin-top:2px">' + newCount + ' nieuwe kansen</p>':'') + '</div><div style="display:flex;gap:6px;flex-wrap:wrap">' +
+  // De tellingen komen van de server (over de vólledige lijst), niet uit de
+  // zojuist gefilterde weergave — anders zou "Uitgefilterd" altijd (0) tonen
+  // zolang je er niet in kijkt, en is het filter alsnog onzichtbaar.
+  var c = data.counts || {};
+  var newCount = kansen.filter(function(o){return o.status==='new' && !o.filter_reason;}).length;
+  var samenvatting = [];
+  if (c.nieuw) samenvatting.push(c.nieuw + ' nieuw');
+  if (c.in_behandeling) samenvatting.push(c.in_behandeling + ' in behandeling');
+  if (c.gemeten) samenvatting.push(c.gemeten + ' met gemeten vraag');
+  if (c.uitgefilterd) samenvatting.push(c.uitgefilterd + ' uitgefilterd');
+  // De belofte van de hele lijst in één getal. Zonder dit is "11 kansen" een
+  // hoeveelheid werk zonder opbrengst — en dan is meer altijd beter, wat de
+  // reden was dat de knop "Schrijf alle 11" ooit aantrekkelijk leek.
+  if (c.potentieel_klikken) samenvatting.push('samen ≈ +' + String(c.potentieel_klikken).replace('.',',') + ' klikken/mnd');
+  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px"><div><h3 style="font-size:15px;font-weight:700">Kansen (' + kansen.length + ')</h3>' + (samenvatting.length?'<p style="font-size:11px;color:#64748b;margin-top:2px">' + samenvatting.join(' · ') + '</p>':'') + '</div><div style="display:flex;gap:6px;flex-wrap:wrap">' +
     '<select id="kansen-filter" onchange="oppStatusFilter=this.value;renderKansenTab(document.getElementById(\'tab-content\'))" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;background:#fff">' +
-    '<option value="open"'+(oppStatusFilter==='open'?' selected':'')+'>Open · niet afgerond (' + kansen.filter(function(o){return o.status==='new'||o.status==='in_progress';}).length + ')</option><option value="">Alle</option><option value="new">Nieuw (' + kansen.filter(function(o){return o.status==='new';}).length + ')</option><option value="in_progress">In behandeling</option><option value="published">Gepubliceerd</option><option value="dismissed">Genegeerd</option></select>' +
+    '<option value="open"'+(oppStatusFilter==='open'?' selected':'')+'>Open · niet afgerond (' + (c.open!=null?c.open:kansen.length) + ')</option><option value="">Alle</option><option value="new"'+(oppStatusFilter==='new'?' selected':'')+'>Nieuw (' + (c.nieuw||0) + ')</option><option value="in_progress"'+(oppStatusFilter==='in_progress'?' selected':'')+'>In behandeling</option><option value="published"'+(oppStatusFilter==='published'?' selected':'')+'>Gepubliceerd</option><option value="uitgefilterd"'+(oppStatusFilter==='uitgefilterd'?' selected':'')+'>Uitgefilterd (' + (c.uitgefilterd||0) + ')</option><option value="dismissed"'+(oppStatusFilter==='dismissed'?' selected':'')+'>Genegeerd</option></select>' +
     (newCount>=2?'<button onclick="writeAllNewKansen(this)" style="padding:4px 12px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Schrijf alle ' + newCount + '</button>':'') +
     '<button onclick="runDemandScan()" style="padding:4px 12px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Scan uitvoeren</button></div></div>';
-  if (!kansen.length) { el.innerHTML = html + '<div class="empty-state"><p style="font-size:14px;font-weight:600;color:#475569;margin-bottom:4px">Nog geen kansen</p><p style="color:#94a3b8">Voer een scan uit</p></div>'; return; }
+  if (oppStatusFilter==='uitgefilterd') {
+    html += '<p style="font-size:11px;color:#64748b;margin:-6px 0 12px;line-height:1.5">Deze zoekwoorden zijn uit de kansenlijst gehouden omdat er al content voor is, ze een bestaande pagina kannibaliseren, of het geen contentvraag is. Klopt een oordeel niet? Heropen de kans — dan telt hij weer mee.</p>';
+  }
+  if (!kansen.length) {
+    var leegTekst = oppStatusFilter==='uitgefilterd'
+      ? '<p style="font-size:14px;font-weight:600;color:#475569;margin-bottom:4px">Niets uitgefilterd</p><p style="color:#94a3b8">Elke gevonden kans is bruikbaar.</p>'
+      : '<p style="font-size:14px;font-weight:600;color:#475569;margin-bottom:4px">Geen openstaande kansen</p><p style="color:#94a3b8">' + (c.uitgefilterd? c.uitgefilterd + ' kans(en) zijn uitgefilterd — bekijk ze via het menu.' : 'Voer een scan uit.') + '</p>';
+    el.innerHTML = html + '<div class="empty-state">' + leegTekst + '</div>'; return;
+  }
   kansen.forEach(function(opp, idx) {
     var sc = ({new:'#dbeafe',in_progress:'#fef3c7',published:'#dcfce7',dismissed:'#f1f5f9'})[opp.status]||'#f1f5f9';
     var st = ({new:'Nieuw',in_progress:'In behandeling',published:'Gepubliceerd',dismissed:'Genegeerd'})[opp.status]||opp.status;
-    var score = typeof opp.opportunity_score==='number'?opp.opportunity_score.toFixed(0):opp.opportunity_score;
+    // Geen kale "Score 15" meer: een getal zonder eenheid zegt niemand of 15
+    // veel is, en juist die vraag bepaalt of je de kans oppakt. De server
+    // rekent in verwachte klikken per maand (potential.py).
+    var opbrengst = opp.potential_clicks != null
+      ? '<span style="font-weight:700;color:#166534">+' + String(opp.potential_clicks).replace('.',',') + ' klikken/mnd</span>'
+      : '<span style="color:#94a3b8">opbrengst onbekend</span>';
     var pos = typeof opp.position==='number'?opp.position:10;
     var GOAL_POS = 3;
     var posPct = function(p){ return Math.max(0, Math.min(100, ((20-p)/19)*100)); };
@@ -563,8 +485,21 @@ async function renderKansenTab(el) {
       // Geen GSC-data: toon eerlijke "geen data"-staat in plaats van vals "✓ doel bereikt"
       atGoal = false; barColor = '#94a3b8';
     }
-    html += '<div class="opp-card" style="'+(opp.status==='new'?'border-left:3px solid #4f46e5;':'')+'"><div class="opp-header"><div style="flex:1"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><p class="opp-query">'+escHtml(opp.query)+'</p><span style="font-size:10px;padding:2px 8px;border-radius:6px;background:'+sc+';font-weight:600">'+st+'</span><span style="font-size:10px;padding:2px 8px;border-radius:6px;background:'+(opp.action==='re-optimaliseren'?'#fef3c7':'#dbeafe')+'">'+(opp.action==='re-optimaliseren'?'Heroptimaliseren':'Nieuwe content')+'</span></div>' +
-    '<div class="opp-meta"><span style="color:#16a34a;font-weight:600">'+opp.clicks+' clicks</span><span>'+opp.impressions+' impressies</span><span>Pos. '+pos.toFixed(1)+'</span><span style="font-weight:600">Score '+score+'</span></div></div></div>' +
+    // Vraag-herkomst eerlijk labelen: een kans met 400 impressies op positie 7
+    // is een andere belofte dan een bedacht zoekwoord uit de cold-start.
+    var demandBadge = opp.demand==='gemeten'
+      ? '<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:#dcfce7;color:#166534;font-weight:600" title="Uit Google Search Console: mensen zoeken hier al op en de site verschijnt al">Gemeten vraag</span>'
+      : '<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:#f1f5f9;color:#64748b;font-weight:600" title="Bedacht zoekwoord (cold-start of trendsignaal) — nog geen gemeten vraag in Search Console">Speculatief</span>';
+    var filterBanner = opp.filter_reason
+      ? '<div style="margin-top:8px;padding:8px 10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;font-size:11px;color:#7c2d12;line-height:1.5">' +
+        '<strong>Uitgefilterd — ' + escHtml(opp.filter_label||'') + '</strong>' +
+        (opp.filter_detail?'<br>' + escHtml(opp.filter_detail):'') +
+        (opp.filter_url?' <a href="'+escHtml(opp.filter_url)+'" target="_blank" style="color:#7c2d12;text-decoration:underline">bekijk</a>':'') +
+        '</div>'
+      : '';
+    html += '<div class="opp-card" style="'+(opp.filter_reason?'border-left:3px solid #fb923c;opacity:.85;':(opp.status==='new'?'border-left:3px solid #4f46e5;':''))+'"><div class="opp-header"><div style="flex:1"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap"><p class="opp-query">'+escHtml(opp.query)+'</p><span style="font-size:10px;padding:2px 8px;border-radius:6px;background:'+sc+';font-weight:600">'+st+'</span><span style="font-size:10px;padding:2px 8px;border-radius:6px;background:'+(opp.action==='re-optimaliseren'?'#fef3c7':'#dbeafe')+'">'+(opp.action==='re-optimaliseren'?'Heroptimaliseren':'Nieuwe content')+'</span>'+demandBadge+'</div>' +
+    '<div class="opp-meta"><span style="color:#16a34a;font-weight:600">'+opp.clicks+' clicks</span><span>'+opp.impressions+' impressies</span><span>Pos. '+pos.toFixed(1)+'</span>'+opbrengst+'</div>' +
+    (opp.potential_label?'<div style="font-size:11px;color:#64748b;margin-top:2px">'+escHtml(opp.potential_label)+'</div>':'') + '</div></div>' + filterBanner +
     (opp.angle?'<div class="opp-angle" style="margin-top:6px">'+escHtml(opp.angle)+'</div>':'') + (opp.rationale?'<div class="opp-rationale" style="margin-top:4px">'+escHtml(opp.rationale)+'</div>':'') +
     renderOppStepper(opp.status) +
     '<div style="margin:2px 0 8px">' +
@@ -585,8 +520,11 @@ async function renderKansenTab(el) {
       '</div>' +
     '</div>' +
     '<div class="opp-actions" style="display:flex;gap:6px;flex-wrap:wrap">' +
-    ((opp.status==='new'||opp.status==='in_progress')&&!opp.live_url?'<button onclick="writeArticleFromOpp(this,'+idx+')" style="padding:5px 14px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">Schrijf artikel</button>':'') +
-    (opp.status==='new'?'<button onclick="updateOppStatus(\''+opp.id+'\',\'in_progress\')" style="padding:5px 12px;background:#fff;color:#92400e;border:1.5px solid #f59e0b;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">→ Pak aan</button>':'') +
+    // Geen schrijfknop op een uitgefilterde kans: dát is de hele bedoeling van
+    // het filter. Wie het oordeel betwist, gebruikt eerst "Toch oppakken".
+    ((opp.status==='new'||opp.status==='in_progress')&&!opp.live_url&&!opp.filter_reason?'<button onclick="writeArticleFromOpp(this,'+idx+')" style="padding:5px 14px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">Schrijf artikel</button>':'') +
+    (opp.status==='new'&&!opp.filter_reason?'<button onclick="updateOppStatus(\''+opp.id+'\',\'in_progress\')" style="padding:5px 12px;background:#fff;color:#92400e;border:1.5px solid #f59e0b;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">→ Pak aan</button>':'') +
+    (opp.filter_reason?'<button onclick="writeArticleFromOpp(this,'+idx+')" style="padding:5px 12px;background:#fff;color:#9a3412;border:1.5px solid #fb923c;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">Toch oppakken</button>':'') +
     ((opp.status==='in_progress'&&!opp.live_url)?'<button onclick="publishOpportunity(this,'+idx+')" style="padding:5px 12px;background:#16a34a;color:#fff;border:none;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">📝 Schrijf & zet in Wachtrij</button>':'') +
     (opp.live_url?'<a href="'+escHtml(opp.live_url)+'" target="_blank" style="padding:5px 12px;background:#fff;color:#166534;border:1.5px solid #16a34a;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600;text-decoration:none">🔗 Bekijk live</a>':'') +
     (opp.status!=='dismissed'&&!opp.live_url?'<button onclick="updateOppStatus(\''+opp.id+'\',\'dismissed\')" style="padding:5px 12px;background:#fff;color:#475569;border:1.5px solid #cbd5e1;border-radius:6px;font-size:10px;cursor:pointer;font-weight:600">✕ Negeren</button>':'') +
@@ -599,7 +537,12 @@ async function renderKansenTab(el) {
 }
 async function writeArticleFromOpp(btn, idx) {
   var opp = window._kansenData && window._kansenData[idx]; if (!opp) { alert('Kans niet gevonden'); return; }
-  if (!confirm('Schrijf artikel voor kans: "'+opp.query+'"?')) return;
+  var waarschuwing = opp.filter_reason
+    ? '\n\nLET OP — deze kans is uitgefilterd: ' + (opp.filter_label||'') +
+      (opp.filter_detail? '\n' + opp.filter_detail : '') +
+      '\nDoorgaan levert waarschijnlijk dubbele of kannibaliserende content op.'
+    : '';
+  if (!confirm('Schrijf artikel voor kans: "'+opp.query+'"?'+waarschuwing)) return;
   try {
     var result = await runArticlePipeline({title: opp.angle||opp.query, rationale: opp.rationale||'SEO-kans', keyword: opp.query}, btn);
     if (result.success) {
@@ -626,8 +569,11 @@ async function publishOpportunity(btn, idx) {
 }
 async function writeAllNewKansen(btn) {
   if (!confirm('Schrijf artikelen voor ALLE nieuwe kansen? Dit kan even duren.')) return;
-  var data = await (await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/kansen')).json();
-  var newKansen = (data.kansen||[]).filter(function(o){return o.status==='new';});
+  // Expliciet ?status=new: dat is de gefilterde lijst. Zonder statusfilter komt
+  // álles terug en zou de bulkknop precies de dubbelen en kannibalen schrijven
+  // die het paneel net had weggehouden.
+  var data = await (await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/kansen?status=new')).json();
+  var newKansen = (data.kansen||[]).filter(function(o){return o.status==='new' && !o.filter_reason;});
   if (!newKansen.length) { alert('Geen nieuwe kansen'); return; }
   if (btn) btn.disabled = true;
   var written = 0;
@@ -904,52 +850,6 @@ async function renderConcurrentieTab(el) {
 // Eén meetreeks per grafiek — de kaarttitel benoemt de reeks, dus geen legenda nodig.
 
 // ═══════════════════════════════════════════════════════════════════
-//  KEYWORDS TAB
-// ═══════════════════════════════════════════════════════════════════
-async function renderKeywordsTab(el) {
-  el.innerHTML = '<div class="loading"><div class="spinner"></div><p>Keyword data laden...</p></div>';
-  try {
-    var gapResp = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/keyword-gaps?days=28');
-    var gaps = await gapResp.json();
-  } catch(e) { el.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; return; }
-  if (gaps.error) { el.innerHTML = '<div class="empty-state">' + escHtml(gaps.error) + '</div>'; return; }
-
-  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px"><h3 style="font-size:15px;font-weight:700">Keyword Research</h3></div>' +
-    '<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">' +
-    kpiBox('Totaal queries', gaps.total_queries||0, '', '') +
-    kpiBox('Totaal klikken', (gaps.categories&&gaps.categories.clicks)||0, '', '') +
-    kpiBox('Gem. CTR', (gaps.categories&&gaps.categories.avg_ctr)+'%'||'', '', '') +
-    kpiBox('Gem. positie', (gaps.categories&&gaps.categories.avg_position)||'', '', '') +
-    '</div>';
-
-  // Best performers
-  if (gaps.best_performers && gaps.best_performers.length) {
-    html += '<div class="section-card"><h3>Best presterend</h3>' +
-      '<table class="data-table"><thead><tr><th>Zoekwoord</th><th class="num">Clicks</th><th class="num">Impressies</th><th class="num">CTR</th><th class="num">Positie</th></tr></thead><tbody>' +
-      gaps.best_performers.map(function(q){return '<tr><td class="url-cell">'+escHtml(q.query)+'</td><td class="num" style="color:#16a34a;font-weight:600">'+q.clicks+'</td><td class="num">'+q.impressions+'</td><td class="num">'+q.ctr+'%</td><td class="num">'+(typeof q.position==='number'?q.position.toFixed(1):q.position)+'</td></tr>';}).join('') +
-      '</tbody></table></div>';
-  }
-
-  // Gaps (hoge impressies, lage CTR)
-  if (gaps.gaps && gaps.gaps.length) {
-    html += '<div class="section-card"><h3>Kansen: hoge impressies, lage CTR (' + gaps.gaps.length + ')</h3>' +
-      '<table class="data-table"><thead><tr><th>Zoekwoord</th><th class="num">Impressies</th><th class="num">Clicks</th><th class="num" style="color:#ef4444">CTR</th><th class="num">Positie</th></tr></thead><tbody>' +
-      gaps.gaps.map(function(q){return '<tr><td class="url-cell">'+escHtml(q.query)+'</td><td class="num">'+q.impressions+'</td><td class="num">'+q.clicks+'</td><td class="num" style="color:#ef4444;font-weight:600">'+q.ctr+'%</td><td class="num">'+(typeof q.position==='number'?q.position.toFixed(1):q.position)+'</td></tr>';}).join('') +
-      '</tbody></table></div>';
-  }
-
-  // Striking distance
-  if (gaps.striking_distance && gaps.striking_distance.length) {
-    html += '<div class="section-card"><h3>Striking distance (pos 4-20, veel impressies)</h3>' +
-      '<table class="data-table"><thead><tr><th>Zoekwoord</th><th class="num">Impressies</th><th class="num">Clicks</th><th class="num">CTR</th><th class="num">Positie</th></tr></thead><tbody>' +
-      gaps.striking_distance.map(function(q){return '<tr><td class="url-cell">'+escHtml(q.query)+'</td><td class="num">'+q.impressions+'</td><td class="num">'+(q.clicks||0)+'</td><td class="num">'+q.ctr+'%</td><td class="num">'+(typeof q.position==='number'?q.position.toFixed(1):q.position)+'</td></tr>';}).join('') +
-      '</tbody></table></div>';
-  }
-
-  el.innerHTML = html;
-}
-
-// ═══════════════════════════════════════════════════════════════════
 //  TECHNISCH TAB
 // ═══════════════════════════════════════════════════════════════════
 async function renderTechTab(el) {
@@ -1004,14 +904,35 @@ async function renderActiviteitTab(el) {
 let goalPlanResult = null;
 let goalCurrentId = null;
 
+// Toont de Doelen-tab álle projecten of alleen het geselecteerde? Standaard
+// alleen het geselecteerde: de kop boven deze tab noemt één project, en een
+// lijst die daar niet bij hoort is een stille leugen (4 aug 2026 — de tab
+// haalde `/api/goals` zonder projectfilter op, waardoor onder de kop
+// "Bewaardvoorjou" negen doelen van vier ándere projecten stonden).
+let goalsAlleProjecten = false;
+
+function toggleGoalScope() {
+  goalsAlleProjecten = !goalsAlleProjecten;
+  var el = document.getElementById('tab-content');
+  if (el) renderDoelenTab(el);
+}
+
 async function renderDoelenTab(el) {
   el.innerHTML = '<div class="loading"><div class="spinner"></div><p>Doelen laden...</p></div>';
+  var scope = (!goalsAlleProjecten && currentProject) ? currentProject : '';
   try {
-    var resp = await fetch('/api/goals?limit=10');
+    var resp = await fetch('/api/goals?limit=25' +
+      (scope ? '&project=' + encodeURIComponent(scope) : ''));
     var goals = await resp.json();
   } catch(e) { el.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; return; }
 
-  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px"><h3 style="font-size:15px;font-weight:700">Goal Mode</h3>' +
+  var scopeLabel = scope ? escHtml(scope) : 'alle projecten';
+  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">' +
+    '<div><h3 style="font-size:15px;font-weight:700">Goal Mode</h3>' +
+    '<span style="font-size:11px;color:#64748b">Doelen van <strong>' + scopeLabel + '</strong>' +
+    (currentProject ? ' &middot; <a href="#" onclick="event.preventDefault();toggleGoalScope()" style="color:#4f46e5">' +
+      (goalsAlleProjecten ? 'alleen ' + escHtml(currentProject) : 'alle projecten') + '</a>' : '') +
+    '</span></div>' +
     '<button onclick="showNewGoalForm()" style="padding:6px 16px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">+ Nieuw doel</button></div>';
 
   if (goalCurrentId) {
@@ -1026,17 +947,39 @@ async function renderDoelenTab(el) {
       goals.map(function(g) {
         var statusColors = {draft:'#f1f5f9',ready:'#dbeafe',running:'#fef3c7',paused:'#f1f5f9',completed:'#dcfce7',partial:'#fed7aa',failed:'#fecaca'};
         var sc = statusColors[g.status]||'#f1f5f9';
-        var total = g.phase_count || 1;
-        var done = g.completed_tasks || 0;
-        var pct = total > 0 ? Math.round(done/total*100) : 0;
-        return '<tr style="cursor:pointer" onclick="loadGoalDetail(\'' + g.id + '\')"><td><span class="badge" style="background:' + sc + '">' + escHtml(g.status) + '</span> ' + escHtml(g.title) + (g.status==='failed'?' <button onclick="event.stopPropagation();retryFailedGoal(\'' + g.id + '\')" style="padding:2px 8px;background:#ef4444;color:#fff;border:none;border-radius:4px;font-size:10px;cursor:pointer">\u2728 Los het op met AI</button>':'') + '</td>' +
-          '<td>' + escHtml(g.status) + '</td><td><div style="display:flex;align-items:center;gap:6px"><div style="flex:1;height:4px;background:#e2e8f0;border-radius:2px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:' + (g.status==='completed'?'#16a34a':g.status==='failed'?'#ef4444':'#4f46e5') + ';border-radius:2px"></div></div><span style="font-size:10px;color:#64748b">' + done + '/' + total + '</span></div></td>' +
+        // Teller en noemer moeten dezelfde eenheid hebben. Tot 4 aug 2026 stond
+        // hier `phase_count` (fases) onder `completed_tasks` (taken), wat "9/3"
+        // en "14/4" opleverde en elke balk op >100% zette \u2014 een doel waarvan 4
+        // van de 13 taken faalden zag er identiek uit als een dat alles haalde.
+        // Geteld uit `goal_tasks`, niet uit de opgeslagen plancijfers: bij vijf
+        // doelen stond `task_count` op 14 terwijl er 28 taakrijen waren (de hele
+        // planning was tweemaal weggeschreven en dus tweemaal uitgevoerd).
+        var total = (g.tasks_actual != null ? g.tasks_actual : g.task_count) || 0;
+        var done = (g.completed_actual != null ? g.completed_actual : g.completed_tasks) || 0;
+        var failed = (g.failed_actual != null ? g.failed_actual : g.failed_tasks) || 0;
+        var pctDone = total > 0 ? Math.min(100, Math.round(done/total*100)) : 0;
+        var pctFail = total > 0 ? Math.min(100 - pctDone, Math.round(failed/total*100)) : 0;
+        var barColor = g.status==='completed' ? '#16a34a' : g.status==='failed' ? '#ef4444' : '#4f46e5';
+        // Gefaalde taken staan in de data en werden nergens getoond. Juist bij
+        // 'partial' is dat het hele verhaal: 'partial' betekent per definitie
+        // dat de \u00e9chte actie niet is uitgevoerd.
+        var counter = done + '/' + total + (failed ? ' <span style="color:#dc2626;font-weight:600">' + failed + ' mislukt</span>' : '');
+        return '<tr style="cursor:pointer" onclick="loadGoalDetail(\'' + g.id + '\')"><td><span class="badge" style="background:' + sc + '">' + escHtml(g.status) + '</span> ' + escHtml(g.title) +
+          (goalsAlleProjecten && g.project ? ' <span style="font-size:10px;color:#94a3b8">&middot; ' + escHtml(g.project) + '</span>' : '') +
+          (g.status==='failed'?' <button onclick="event.stopPropagation();retryFailedGoal(\'' + g.id + '\')" style="padding:2px 8px;background:#ef4444;color:#fff;border:none;border-radius:4px;font-size:10px;cursor:pointer">\u2728 Los het op met AI</button>':'') + '</td>' +
+          '<td>' + escHtml(g.status) + '</td><td><div style="display:flex;align-items:center;gap:6px" title="' + done + ' voltooid, ' + failed + ' mislukt van ' + total + ' taken">' +
+          '<div style="flex:1;height:4px;background:#e2e8f0;border-radius:2px;overflow:hidden;display:flex">' +
+          '<div style="height:100%;width:' + pctDone + '%;background:' + barColor + '"></div>' +
+          '<div style="height:100%;width:' + pctFail + '%;background:#ef4444"></div></div>' +
+          '<span style="font-size:10px;color:#64748b;white-space:nowrap">' + counter + '</span></div></td>' +
           '<td style="font-size:11px;color:#94a3b8">' + (g.created_at ? g.created_at.slice(0,10) : '') + '</td></tr>';
       }).join('') +
       '</tbody></table></div>';
   } else {
-    html += '<div class="section-card"><div class="empty-state"><p style="font-size:14px;font-weight:600;color:#475569;margin-bottom:4px">Nog geen doelen</p>' +
-      '<p style="color:#94a3b8">Stel een langetermijndoel in. Hermes splitst het op in taken en voert ze autonoom uit.</p></div></div>';
+    html += '<div class="section-card"><div class="empty-state"><p style="font-size:14px;font-weight:600;color:#475569;margin-bottom:4px">Nog geen doelen voor ' + scopeLabel + '</p>' +
+      '<p style="color:#94a3b8">Stel een langetermijndoel in. Hermes splitst het op in taken en voert ze autonoom uit.' +
+      (scope ? ' Andere projecten kunnen wél doelen hebben — zie <a href="#" onclick="event.preventDefault();toggleGoalScope()" style="color:#4f46e5">alle projecten</a>.' : '') +
+      '</p></div></div>';
   }
 
   el.innerHTML = html;

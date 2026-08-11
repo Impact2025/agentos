@@ -67,6 +67,20 @@ def _resolve_site(ref: str) -> Optional[dict]:
     return optimizer.resolve_site((ref or "").strip())
 
 
+# Boven deze stapel is schrijven geen productie meer maar verstopping. Bewust
+# per site: één project met een volle Wachtrij mag de contentmotor van een
+# ander project niet stilzetten.
+_QUEUE_JAM = 10
+
+
+def _pending_review_count(site_id: str) -> int:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM content_jobs WHERE site_id = ? AND status = 'pending_review'",
+            (site_id,),
+        ).fetchone()[0]
+
+
 async def content_run(site_ref: str, count: Any, reason: str) -> Optional[str]:
     """Start de contentmotor voor één site; jobs landen in de Wachtrij."""
     site = _resolve_site(site_ref)
@@ -80,6 +94,18 @@ async def content_run(site_ref: str, count: Any, reason: str) -> Optional[str]:
         # 'Mislukt' (HTTP 400) zetten (zie seo_refresh). Meld het als uitkomst.
         return (f"Contentmotor voor {site['name']} draaide vandaag al — geen tweede "
                 f"run (dedup houdt de Wachtrij en LLM-kosten in toom). Reden: {reason}")
+    # Doorvoer-rem: schrijven terwijl de Wachtrij vastloopt levert per definitie
+    # niets op. Het artikel komt op dezelfde stapel, kost LLM-budget, en maakt
+    # de review-berg waar de opbrengst vandaan moet komen alleen hoger. Een
+    # actie die niets kan opleveren hoort niet te draaien — ook niet als de
+    # cijfers "te weinig content" zeggen.
+    wachtrij = _pending_review_count(site["id"])
+    if wachtrij >= _QUEUE_JAM:
+        logger.info("[iris] content_run voor %s overgeslagen — %d concepten in de Wachtrij",
+                    site["name"], wachtrij)
+        return (f"Contentmotor voor {site['name']} NIET gestart: er wachten al {wachtrij} "
+                "concepten op goedkeuring. Nog een artikel schrijven maakt die stapel "
+                "groter zonder één klik op te leveren — beoordeel eerst de Wachtrij.")
     try:
         import asyncio
         from ..publish import content_pipeline

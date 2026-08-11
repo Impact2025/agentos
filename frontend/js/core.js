@@ -6,8 +6,30 @@
 const PROJECTS = ['WeAreImpact', 'IctusGo', 'Pootgelukkig', 'BewaardVoorJou', 'Kappersassistent', 'DatingAssistent', 'Finance Expert', 'Bijeen', 'Brickme', 'Vrijwilligersmatch', 'Skillkaart', 'Steentjeapp', 'Zorgblik', 'Teambuildingmetimpact', 'Daar'];
 const COLORS = { WeAreImpact: ['from-indigo-500 to-indigo-600','indigo'], Pootgelukkig: ['from-emerald-500 to-emerald-600','emerald'], BewaardVoorJou: ['from-amber-500 to-amber-600','amber'], Kappersassistent: ['from-violet-500 to-violet-600','violet'], DatingAssistent: ['from-red-500 to-red-600','red'], 'Finance Expert': ['from-rose-500 to-rose-600','rose'], Bijeen: ['from-cyan-500 to-cyan-600','cyan'], Brickme: ['from-orange-500 to-orange-600','orange'], Vrijwilligersmatch: ['from-teal-500 to-teal-600','teal'], Skillkaart: ['from-pink-500 to-pink-600','pink'], Steentjeapp: ['from-sky-500 to-sky-600','sky'], Zorgblik: ['from-lime-500 to-lime-600','lime'], Teambuildingmetimpact: ['from-amber-500 to-amber-600','amber'], IctusGo: ['from-cyan-700 to-emerald-600','emerald'] };
 const DESCS = { WeAreImpact: 'AI en innovatie voor zorg, welzijn en gemeenten', Pootgelukkig: 'Adoptieplatform voor asieldieren', BewaardVoorJou: 'Digitaal levensboek voor 65-plussers', Kappersassistent: 'Project kappersbranche (in opstart)', DatingAssistent: 'AI dating coach & datingadvies', 'Finance Expert': 'Financiele rapportage en analyse', Bijeen: 'Sociale verbinding & bijeenkomsten', Brickme: 'Bouw & constructie', Vrijwilligersmatch: 'Vrijwilligers matching platform', Skillkaart: 'Vaardigheden & competenties', Steentjeapp: 'Mobiele app Steentjebijsteentje', Zorgblik: 'Zorginnovatie & inzicht', Teambuildingmetimpact: 'Bedrijfsvrijwilligerswerk, impact days & LEGO Serious Play', IctusGo: 'GPS teambuilding met sociale impact (Hoofddorp/Schiphol)' };
-const TABS = ['Dashboard', 'Content', 'Kansen', 'Optimalisatie', 'Wachtrij', 'Concurrentie', 'Radar', 'Keywords', 'Doelen', 'Geheugen', 'Leads', 'Links', 'Opdrachten', 'Technisch', 'Activiteit', 'Social Creatie', 'Helpdesk', 'Instellingen'];
-const TAB_ICONS = { Dashboard: 'D', Content: 'C', Kansen: 'K', Optimalisatie: '↗', Wachtrij: 'Q', Concurrentie: 'R', Radar: '✦', Keywords: 'W', Doelen: 'G', Geheugen: 'I', Leads: 'L', Links: '🔗', Opdrachten: 'O', Technisch: 'T', Activiteit: 'A', 'Social Creatie': 'S', Helpdesk: '✉', Instellingen: 'S' };
+const TABS = ['Dashboard', 'Postvak', 'Kansen', 'Optimalisatie', 'Wachtrij', 'Concurrentie', 'Radar', 'Doelen', 'Geheugen', 'Leads', 'Links', 'Opdrachten', 'Technisch', 'Activiteit', 'Social Creatie', 'Helpdesk', 'Instellingen'];
+// Menu-iconen. Bewust één monochrome familie (geometrische vormen + pijlen) en
+// géén emoji: emoji krijgen op Windows een eigen kleur en een eigen optische
+// maat, waardoor een menu van zeventien regels zeventien verschillende hoogtes
+// krijgt. Tot 10 aug 2026 stonden hier losse hoofdletters ('D', 'K', 'Q') —
+// leesbaar als afkorting náást het woord dat er al stond, dus ruis; en
+// 'Social Creatie' en 'Instellingen' deelden allebei de 'S'.
+const TAB_ICONS = { Dashboard: '▦', Postvak: '✉︎', Kansen: '◎', Optimalisatie: '↗', Wachtrij: '◷', Concurrentie: '⧉', Radar: '✦', Doelen: '◉', Geheugen: '❖', Leads: '⊕', Links: '⇄', Opdrachten: '▤', Technisch: '◫', Activiteit: '⟳', 'Social Creatie': '◐', Helpdesk: '↩', Instellingen: '⚙︎' };
+// Welk backend-domein een tab nodig heeft (zie shared/config.py:domain_enabled).
+// Geen entry = kerntab, altijd zichtbaar. Op de hoofdinstallatie is
+// window.__enabledDomains altijd null (geen whitelist) dus verandert hier niets.
+// Postvak hoort bij 'outlook_legacy' (Graph/OAuth), niet bij 'mail' — dat laatste
+// is het generieke POP3-mailboxen-domein achter de Helpdesk-tab, een ander
+// systeem met een andere auth-vorm (zie domains/outlook/service.py-docstring).
+const TAB_DOMAIN = { Postvak: 'outlook_legacy', Kansen: 'seo', Optimalisatie: 'seo', Wachtrij: 'publish', Concurrentie: 'seo', Radar: 'radar', Doelen: 'goal', Leads: 'prospecting', Links: 'linkbuilding', Opdrachten: 'vacancies', Technisch: 'seo', 'Social Creatie': 'social', Helpdesk: 'mail' };
+// Eén check voor "hoort dit domein bij deze instance" — gebruikt door de
+// tab-filter én door de Control Room-secties die verwijzen naar routes die op
+// een beperkte instance niet gemonteerd zijn (Linkbuilding, Strategist/Doelen).
+function domainOn(d) {
+  return !window.__enabledDomains || window.__enabledDomains.indexOf(d) >= 0;
+}
+function visibleTabs() {
+  return TABS.filter(function(t) { return !TAB_DOMAIN[t] || domainOn(TAB_DOMAIN[t]); });
+}
 
 let currentProject = null, currentTab = 'Dashboard', weSuggestions = [], oppStatusFilter = 'open', scanningInProgress = false, chartInstances = {};
 let _agentStatusTimer = null;
@@ -115,9 +137,21 @@ function pollAgentStatus() {
     else if (h.status === 'warning') { color = '#d97706'; dot = '#f59e0b'; label = 'Let op'; }
     else { color = '#16a34a'; dot = '#22c55e'; label = 'Gezond'; }
 
+    // Noem de backend die het wérk doet, niet de probe die toevallig antwoordde.
+    // Tot 4 aug 2026 stond hier 'local·Ollama' zodra de lokale tier leefde —
+    // óók als al het denkwerk via de OpenModel-gateway liep. Het badge meldde
+    // dan een motor die niet draaide, náást een 'Degraded' zonder reden, en
+    // suggereerde zo een LLM-storing waar de agenda-sync het probleem was.
     var extra = active;
     if (b.local && b.local.live === false && active === 'local') extra = active + ' (DOOD)';
-    else if (b.local && b.local.live) extra = 'local·Ollama';
+    var reden = h.reden || '';
+
+    // Op een telefoon is de projectkop verborgen (de mobiele balk vervangt hem),
+    // dus zou de gezondheidsstatus daar helemaal wegvallen. Eén stip met een
+    // tooltip is genoeg om te zien dát er iets mis is — de volle regel staat op
+    // de Control Room.
+    var mob = document.getElementById('agent-status-indicator-mobile');
+    if (mob) mob.innerHTML = '<span title="' + escHtml((h.summary || label)) + '" style="display:block;width:9px;height:9px;border-radius:50%;background:' + dot + '"></span>';
 
     var el = document.getElementById('agent-status-indicator');
     if (!el) return;
@@ -127,7 +161,9 @@ function pollAgentStatus() {
       + escHtml(h.summary || '') + '">'
       + '<span style="width:6px;height:6px;border-radius:50%;background:' + dot
       + (h.status==='ok' ? ';animation:pulse 1.5s infinite' : '')
-      + '"></span> ' + label + ' · ' + escHtml(extra)
+      + '"></span> ' + label
+      + (reden ? ' · ' + escHtml(reden) : '')
+      + ' · ' + escHtml(extra)
       + (pct != null ? ' · ' + pct + '% tokens' : '') + '</span>';
 
     // Mislukte doelen tonen nog steeds de Oplossen-knop (bestaand gedrag).
@@ -233,10 +269,18 @@ function showChoiceModal(opts) {
   });
 }
 
-function kpiBox(label, val, change, sub) {
+// `foot` is de recente reeks onder de periode-delta. Die twee kunnen elkaar
+// tegenspreken — een 28-daags gemiddelde kan verbeteren terwijl de laatste week
+// wegzakt — en dan is alleen de delta tonen misleidend: het dashboard meldt
+// vooruitgang midden in een terugval (WeAreImpact, 2 aug 2026).
+function kpiBox(label, val, change, sub, foot, footTone) {
   var extra = '';
   if (change !== undefined && change !== '') { var cls = change >= 0 ? 'pos' : 'neg'; extra = '<p class="change ' + cls + '">' + (change >= 0 ? '+' : '') + change + '</p>'; }
   else if (sub) { extra = '<p style="font-size:11px;color:#94a3b8;margin-top:1px">' + sub + '</p>'; }
+  if (foot) {
+    var kleur = footTone === 'bad' ? '#b91c1c' : footTone === 'good' ? '#15803d' : '#64748b';
+    extra += '<p style="font-size:10px;color:' + kleur + ';margin-top:2px;line-height:1.35">' + foot + '</p>';
+  }
   return '<div class="kpi-card"><p class="label">' + label + '</p><p class="value">' + val + '</p>' + extra + '</div>';
 }
 function togglePrint() { window.print(); }

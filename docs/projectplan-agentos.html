@@ -1,0 +1,407 @@
+<title>Projectplan — Agent OS &amp; Iris Remote</title>
+<style>
+  :root {
+    --paper:#f5f7f8; --card:#ffffff; --ink:#14181b; --ink-2:#3d474e; --muted:#6a757d;
+    --rule:#dbe1e5; --rule-strong:#c3ccd2; --accent:#0d6a8c; --accent-soft:#e6f1f6;
+    --ok:#2c6e4b; --ok-soft:#e6f2eb; --warn:#8a6300; --warn-soft:#f8f0dc; --risk:#9c3a2d; --risk-soft:#f8e9e6;
+    --serif: Cambria,"Iowan Old Style",Charter,Georgia,ui-serif,serif;
+    --sans: ui-sans-serif,"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
+    --mono: "Cascadia Mono",Consolas,ui-monospace,"SF Mono","JetBrains Mono",monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:#0f1315; --card:#161b1e; --ink:#e6eaec; --ink-2:#b6c0c6; --muted:#8a959c;
+      --rule:#262d31; --rule-strong:#39434a; --accent:#6ec5e6; --accent-soft:#14282f;
+      --ok:#64c68d; --ok-soft:#132520; --warn:#d9a63a; --warn-soft:#241d0e;
+      --risk:#e08b7d; --risk-soft:#2a1714;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#0f1315; --card:#161b1e; --ink:#e6eaec; --ink-2:#b6c0c6; --muted:#8a959c;
+    --rule:#262d31; --rule-strong:#39434a; --accent:#6ec5e6; --accent-soft:#14282f;
+    --ok:#64c68d; --ok-soft:#132520; --warn:#d9a63a; --warn-soft:#241d0e;
+    --risk:#e08b7d; --risk-soft:#2a1714;
+  }
+
+  * { box-sizing:border-box; }
+  body {
+    background:var(--paper); color:var(--ink); font-family:var(--sans);
+    font-size:16px; line-height:1.62; margin:0; padding:0 24px 96px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:820px; margin:0 auto; }
+
+  /* ── Titelblad ─────────────────────────────────────────── */
+  .cover { padding:72px 0 40px; border-bottom:2px solid var(--ink); }
+  .eyebrow {
+    font-family:var(--mono); font-size:11.5px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--accent); margin:0 0 20px;
+  }
+  h1 {
+    font-family:var(--serif); font-weight:600; font-size:clamp(34px,6vw,52px);
+    line-height:1.1; letter-spacing:-.015em; margin:0 0 14px; text-wrap:balance;
+  }
+  .lede { font-size:19px; line-height:1.55; color:var(--ink-2); max-width:60ch; margin:0; text-wrap:pretty; }
+  .meta {
+    display:flex; flex-wrap:wrap; gap:8px 28px; margin-top:30px;
+    font-family:var(--mono); font-size:12px; color:var(--muted);
+  }
+  .meta b { color:var(--ink-2); font-weight:500; }
+
+  /* ── Secties ───────────────────────────────────────────── */
+  section { padding-top:44px; }
+  h2 {
+    font-family:var(--serif); font-weight:600; font-size:26px; line-height:1.25;
+    letter-spacing:-.01em; margin:0 0 6px; text-wrap:balance;
+    padding-bottom:10px; border-bottom:1px solid var(--rule-strong);
+  }
+  h2 .num {
+    font-family:var(--mono); font-size:13px; font-weight:400; color:var(--accent);
+    margin-right:12px; letter-spacing:.02em;
+  }
+  h3 {
+    font-family:var(--sans); font-weight:650; font-size:16.5px; line-height:1.35;
+    margin:30px 0 4px; color:var(--ink); text-wrap:balance;
+  }
+  h3 .sub { font-family:var(--mono); font-size:12px; color:var(--muted); font-weight:400; margin-right:9px; }
+  p { margin:12px 0; max-width:68ch; text-wrap:pretty; }
+  a { color:var(--accent); }
+  code, .m { font-family:var(--mono); font-size:.88em; }
+  code {
+    background:var(--accent-soft); color:var(--ink); padding:1px 5px;
+    border-radius:3px; border:1px solid var(--rule);
+  }
+  ul { margin:12px 0; padding-left:20px; max-width:68ch; }
+  li { margin:6px 0; }
+  li::marker { color:var(--accent); }
+  .lead-in { font-weight:650; color:var(--ink); }
+
+  /* ── Cijferband ────────────────────────────────────────── */
+  .stats {
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(122px,1fr)); gap:1px;
+    background:var(--rule); border:1px solid var(--rule); margin:26px 0 6px;
+  }
+  .stat { background:var(--card); padding:15px 16px; }
+  .stat .n {
+    font-family:var(--mono); font-size:23px; font-weight:600; color:var(--ink);
+    font-variant-numeric:tabular-nums; line-height:1.15; display:block;
+  }
+  .stat .l { font-size:11.5px; color:var(--muted); line-height:1.35; display:block; margin-top:5px; }
+  .caption { font-size:12.5px; color:var(--muted); margin:8px 0 0; font-style:italic; }
+
+  /* ── Tabellen ──────────────────────────────────────────── */
+  .tw { overflow-x:auto; margin:18px 0; border:1px solid var(--rule); background:var(--card); }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { text-align:left; padding:9px 14px; border-bottom:1px solid var(--rule); vertical-align:top; }
+  th {
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--muted); font-weight:500; background:var(--paper); white-space:nowrap;
+  }
+  td:first-child { font-weight:600; white-space:nowrap; }
+  td.n { font-family:var(--mono); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  tbody tr:last-child td { border-bottom:0; }
+
+  /* ── Kaders ────────────────────────────────────────────── */
+  .box {
+    border:1px solid var(--rule); border-left:3px solid var(--accent);
+    background:var(--card); padding:16px 20px; margin:22px 0;
+  }
+  .box.ok   { border-left-color:var(--ok);   background:var(--ok-soft); }
+  .box.warn { border-left-color:var(--warn); background:var(--warn-soft); }
+  .box.risk { border-left-color:var(--risk); background:var(--risk-soft); }
+  .box h4 {
+    margin:0 0 6px; font-size:13px; font-family:var(--mono); font-weight:600;
+    letter-spacing:.06em; text-transform:uppercase; color:var(--accent);
+  }
+  .box.ok h4{color:var(--ok);} .box.warn h4{color:var(--warn);} .box.risk h4{color:var(--risk);}
+  .box p:last-child, .box ul:last-child { margin-bottom:0; }
+  .box p:first-of-type { margin-top:0; }
+
+  .pill {
+    display:inline-block; font-family:var(--mono); font-size:10.5px; font-weight:600;
+    letter-spacing:.05em; text-transform:uppercase; padding:2px 8px; border-radius:99px;
+    border:1px solid currentColor; white-space:nowrap;
+  }
+  .p-ok{color:var(--ok);} .p-warn{color:var(--warn);} .p-risk{color:var(--risk);} .p-plan{color:var(--muted);}
+
+  hr.soft { border:0; border-top:1px solid var(--rule); margin:34px 0; }
+
+  /* ── Print ─────────────────────────────────────────────── */
+  .noprint { position:sticky; top:0; z-index:5; padding:14px 0 0; text-align:right; }
+  .noprint button {
+    font-family:var(--mono); font-size:12px; padding:8px 15px; cursor:pointer;
+    background:var(--card); color:var(--accent); border:1px solid var(--accent); border-radius:4px;
+  }
+  .noprint button:hover { background:var(--accent-soft); }
+  button:focus-visible, a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+  @page { size:A4; margin:18mm 16mm; }
+  @media print {
+    body { background:#fff; color:#000; font-size:10.5pt; padding:0; }
+    .wrap { max-width:none; }
+    .noprint { display:none; }
+    .cover { padding-top:0; }
+    section { page-break-inside:auto; padding-top:26px; }
+    h2 { page-break-after:avoid; }
+    h3 { page-break-after:avoid; }
+    .box, .stats, .tw, table { page-break-inside:avoid; }
+    tr { page-break-inside:avoid; }
+    a { color:#000; text-decoration:none; }
+  }
+  @media (prefers-reduced-motion:reduce) { * { animation:none !important; transition:none !important; } }
+</style>
+
+<div class="wrap">
+
+<div class="noprint"><button onclick="window.print()">Opslaan als PDF</button></div>
+
+<header class="cover">
+  <p class="eyebrow">Projectplan &middot; Interne systeemdocumentatie</p>
+  <h1>Agent OS &amp; Iris&nbsp;Remote</h1>
+  <p class="lede">Een lokaal AI-besturingssysteem voor een portfolio van websites en merken — gebouwd rond één principe: het systeem mag nooit werk claimen dat het niet heeft gedaan.</p>
+  <div class="meta">
+    <span><b>Versie</b> 1.0</span>
+    <span><b>Datum</b> 8 augustus 2026</span>
+    <span><b>Auteur</b> Vincent Munster</span>
+    <span><b>Status</b> In productie, één gebruiker</span>
+  </div>
+</header>
+
+<section>
+  <h2><span class="num">01</span>Managementsamenvatting</h2>
+  <p>Agent OS is een zelfgebouwd, lokaal draaiend systeem dat het dagelijkse werk achter een portfolio van twaalf websites automatiseert: content schrijven en publiceren, zoekprestaties bewaken, leads zoeken en benaderen, e-mail triëren, agenda-afspraken voorbereiden en marktsignalen volgen. Een manager-agent (<span class="m">Iris</span>) beoordeelt elke ochtend hoe elk project ervoor staat, stuurt de andere agents bij en legt falsifieerbare voorspellingen vast waarop ze later wordt afgerekend.</p>
+  <p><span class="lead-in">Iris Remote</span> is de cloud-metgezel: een mobiele webapp waarmee dezelfde beslissingen onderweg genomen worden, zonder dat de lokale machine bereikbaar hoeft te zijn vanaf internet.</p>
+  <p>Wat het systeem onderscheidt van de gangbare AI-assistenten is niet de automatisering, maar de <span class="lead-in">bewijslast</span>. Elke agent-run levert een uitkomstkaart met een verwijzing naar het echte resultaat. Elke publicatie passeert een menselijke poort. Een dagelijkse waarheidsaudit zoekt actief naar dingen die stil kapot zijn gegaan — gevallen waarin het systeem succes meldde terwijl het effect nooit plaatsvond.</p>
+
+  <div class="stats">
+    <div class="stat"><span class="n">60.062</span><span class="l">regels backend-code</span></div>
+    <div class="stat"><span class="n">32</span><span class="l">functionele domeinen</span></div>
+    <div class="stat"><span class="n">68</span><span class="l">databasetabellen</span></div>
+    <div class="stat"><span class="n">74</span><span class="l">testbestanden</span></div>
+    <div class="stat"><span class="n">37</span><span class="l">geplande taken</span></div>
+    <div class="stat"><span class="n">12</span><span class="l">aangesloten sites</span></div>
+  </div>
+  <p class="caption">Gemeten op 8 augustus 2026, exclusief afhankelijkheden en gegenereerde bestanden.</p>
+</section>
+
+<section>
+  <h2><span class="num">02</span>Aanleiding en probleemstelling</h2>
+  <p>Het beheer van een portfolio van kleine merken bestaat grotendeels uit werk dat te klein is voor personeel en te repetitief voor aandacht: elke week iets publiceren, zoekwoorden bijhouden, leads verzamelen, e-mail beantwoorden. Generieke AI-tools lossen dat maar half op. Ze produceren tekst, maar leveren geen effect: er wordt niets gepubliceerd, niets gemeten, en niemand kan achteraf zien of het iets heeft opgeleverd.</p>
+  <p>Dat gat — tussen <em>activiteit</em> en <em>effect</em> — is het probleem waar Agent OS omheen is gebouwd. De ontwerpvraag was niet "hoe laat ik AI werk doen", maar <span class="lead-in">"hoe zorg ik dat ik kan controleren of het werk daadwerkelijk gebeurd is"</span>.</p>
+  <div class="box">
+    <h4>Kernstelling</h4>
+    <p>Een agent die zegt dat hij klaar is, maar geen artefact kan tonen, heeft niets gedaan. Elk mechanisme in dit systeem is een variant op die regel.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">03</span>Ontwerpprincipes</h2>
+  <p>Deze principes zijn niet achteraf opgeschreven; ze zijn stuk voor stuk het gevolg van een concreet incident waarin het systeem zichzelf verkeerd voorstelde. Ze bepalen hoe elke nieuwe functie wordt gebouwd.</p>
+
+  <h3><span class="sub">3.1</span>Activiteit is geen effect</h3>
+  <p>Een taak die zijn echte actie niet kon uitvoeren mag niet "voltooid" heten. De publicatie-agent faalt hard wanneer er niets te publiceren viel, in plaats van een LLM-tekst als resultaat te presenteren. In juli 2026 bleek dat 78 doelen als "voltooid" waren afgesloten op louter conceptteksten; die historie is retroactief gecorrigeerd naar 202 gefaalde taken.</p>
+
+  <h3><span class="sub">3.2</span>Niets gaat naar buiten zonder menselijke tik</h3>
+  <p>Publiceren, e-mail versturen, afspraken boeken en beursorders uitvoeren gebeuren uitsluitend na expliciete goedkeuring. Agents produceren <em>voorstellen</em>; de poort is de enige plek waar iets de buitenwereld raakt. Dit geldt ook voor de cloud-app en voor de AI-assistent daarin: die mag werk aanzwengelen, maar nooit een poort passeren.</p>
+
+  <h3><span class="sub">3.3</span>Een stille storing repareer je twee keer</h3>
+  <p>Eén keer in de code, en één keer als toetsbare <em>invariant</em> — een uitspraak die het systeem impliciet over zichzelf doet en die dagelijks gecontroleerd wordt. Een regel in een document toetst niets; een invariant wel.</p>
+
+  <h3><span class="sub">3.4</span>Vergelijk twee werelden, niet twee velden</h3>
+  <p>Een toets die over de buitenwereld oordeelt moet de buitenwereld raadplegen. Een controle die alleen de eigen administratie las, meldde negen pagina's als "afgewezen" terwijl ze gewoon online stonden — en meldde acht gezonde pagina's als kapot. Controles halen sindsdien de echte URL op.</p>
+
+  <h3><span class="sub">3.5</span>Poortwachters werken zonder AI</h3>
+  <p>Kwaliteits- en filtercontroles zijn deterministisch. Een toets die zelf een AI-gateway nodig heeft, valt stil op precies het moment dat de gateway plat ligt — en dan lijkt alles in orde.</p>
+
+  <h3><span class="sub">3.6</span>Niets verdwijnt stil</h3>
+  <p>Weggefilterde kansen, geweerde signalen en overgeslagen taken blijven zichtbaar met de reden erbij en een knop om ze alsnog op te pakken. "Geen resultaten" leest als "niets te doen", en dat is een gevaarlijker leugen dan een dubbel resultaat.</p>
+</section>
+
+<section>
+  <h2><span class="num">04</span>Systeemarchitectuur</h2>
+
+  <h3><span class="sub">4.1</span>Technologiestack</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Laag</th><th>Keuze</th><th>Overweging</th></tr></thead>
+    <tbody>
+      <tr><td>Backend</td><td>Python 3 &middot; FastAPI &middot; Uvicorn</td><td>Async endpoints naast langlopende agent-taken</td></tr>
+      <tr><td>Database</td><td>SQLite (WAL-modus)</td><td>Eén gebruiker, geen serverbeheer; migraties idempotent per kolom</td></tr>
+      <tr><td>Frontend</td><td>Vanilla JS &middot; voorgecompileerde Tailwind</td><td>Geen buildstap, geen frameworkveroudering</td></tr>
+      <tr><td>Planning</td><td>APScheduler</td><td>37 taken, gedeclareerd in één specificatielijst</td></tr>
+      <tr><td>Cloud-app</td><td>Vercel &middot; Neon Postgres</td><td>Serverless functies; alleen uitgaand verkeer vanaf thuis</td></tr>
+      <tr><td>AI-gateway</td><td>OpenModel.ai (Anthropic-formaat)</td><td>Eén sleutel, twee modelklassen</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="sub">4.2</span>Domeinstructuur</h3>
+  <p>De backend is opgedeeld in 32 domeinen (<code>backend/domains/&lt;domein&gt;</code>), elk met een eigen router en service. Gedeelde voorzieningen — database, configuratie, uitkomstkaarten, foutclassificatie, de agent-lus — staan in <code>backend/shared</code>. Externe gereedschappen (websearch, Google Analytics, Obsidian, marktdata) staan apart in <code>backend/tools</code>.</p>
+
+  <h3><span class="sub">4.3</span>De AI-keten</h3>
+  <p>Al het modelverkeer loopt via één gateway, met een bewuste tweedeling: <span class="lead-in">denkwerk</span> (het oordeel van Iris, de kwaliteitsbeoordeling, doel-decompositie) gaat naar een sterk model; <span class="lead-in">bulkwerk</span> (gereedschapsgebruik, verrijking) naar een goedkoop, snel model. Verbruik wordt per aanroeper gelabeld weggeschreven — inmiddels 10.937 geregistreerde aanroepen.</p>
+  <p>Twee remmen bewaken de kosten. Een interne dagbudgetgrens, en een zelfuitlijnende quota-rem: zodra de gateway een quota-fout geeft, pauzeren autonome runs automatisch 45 minuten in plaats van eindeloos tegen een dode limiet te blijven aanlopen.</p>
+
+  <h3><span class="sub">4.4</span>Bedrijfszekerheid bij een machine die uitstaat</h3>
+  <p>De machine is een werkstation, geen server: hij staat regelmatig dagen uit. Dat vroeg om expliciete voorzieningen, want een geplande taak die overgaat terwijl de machine uit staat, wordt door de planner nooit alsnog uitgevoerd.</p>
+  <ul>
+    <li><span class="lead-in">Inhaalslag bij start.</span> Gemiste taken van vandaag worden chronologisch alsnog gedraaid, vóórdat de normale planning hervat — zodat afhankelijkheden in de juiste volgorde blijven.</li>
+    <li><span class="lead-in">Stilstand wordt geteld en gemeld.</span> Taken waarvan de opbrengst niet vanzelf veroudert, krijgen een kaart met een knop "nu alsnog draaien"; taken die morgen vanzelf weer vers zijn, worden geregistreerd maar niet gemeld.</li>
+    <li><span class="lead-in">Ontwaken uit slaapstand.</span> Een hartslag van 60 seconden leest een kloksprong groter dan vijf minuten als ontwaken en start dezelfde geordende inhaalronde.</li>
+    <li><span class="lead-in">Dagslot.</span> Een inhaalbare taak draait hooguit één keer per dag succesvol, ongeacht hoeveel mechanismen hem tegelijk aanroepen.</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="num">05</span>Functionaliteit</h2>
+
+  <h3><span class="sub">5.1</span>Het Actiecentrum</h3>
+  <p>Eén inbox met alles wat op een menselijke beslissing wacht: artikelen ter goedkeuring, e-mailconcepten, outreach-voorstellen, agendavoorstellen, beleggingsvoorstellen, publicatiefouten, hooggescoorde vacatures, nieuwe leads en gemiste taken. Elk item draagt zijn eigen knoppen, die één-op-één de bestaande servicefuncties aanroepen.</p>
+  <p>Daaronder ligt de <span class="lead-in">uitkomstkaart</span>: elke agent-run schrijft weg wát er gedaan is, wáár het resultaat staat (URL of bestandspad), en wat de mens nu moet doen. Een kaart met foutstatus verschijnt automatisch in het Actiecentrum. Er staan inmiddels 7.308 van deze kaarten in het logboek.</p>
+
+  <h3><span class="sub">5.2</span>De contentmotor</h3>
+  <p>Een meertrapsproces van zoekwoord naar gepubliceerd artikel:</p>
+  <ul>
+    <li><span class="lead-in">Vraagbepaling.</span> Zoekwoorden komen uit Search Console (pagina's net buiten de top&nbsp;10) of, voor sites zonder posities, uit een profielgebaseerd onderzoek.</li>
+    <li><span class="lead-in">Kansenpoort.</span> Een deterministische filter verwijdert kansen die al beschikbaar zijn, die bestaande pagina's kannibaliseren, of die ruis zijn. Van 32 openstaande kansen werden er 13 op deze gronden geweerd. De filter begrijpt Nederlandse woordvormen: samenstellingen, scheidbare werkwoorden en de f/v- en s/z-wisseling.</li>
+    <li><span class="lead-in">Schrijven.</span> Opzet, secties, opmaak, gevalideerde interne en externe links, en een kwaliteitscontrole op AI-taalgebruik.</li>
+    <li><span class="lead-in">Kwaliteitspoort.</span> Een beoordelaar scoort het artikel; onder de 80 punten gaat het maximaal drie verbeterrondes in en anders naar "vergt werk". Publiceren wordt hard geweigerd.</li>
+    <li><span class="lead-in">Publiceren.</span> Na menselijke goedkeuring: website, sitemap, Search Console en IndexNow — met een controle die verifieert dat de pagina daadwerkelijk rendert.</li>
+  </ul>
+  <p>Er staan 112 gepubliceerde artikelen tegenover 150 aangemaakte opdrachten; het verschil is werk dat de poorten bewust hebben tegengehouden.</p>
+
+  <h3><span class="sub">5.3</span>Acquisitie als meetbare formule</h3>
+  <p>De verkooptrechter is een gesloten meetlus: <span class="m">nieuw &rarr; verrijkt &rarr; geldig &rarr; ter review &rarr; benaderd &rarr; gereageerd &rarr; gesprek &rarr; gewonnen</span>. Elke overgang krijgt een tijdstempel, waardoor conversieratio's echt berekend worden in plaats van geschat. Een dagelijkse batch zet concepten klaar; versturen kan uitsluitend via de goedkeuringsknop. Er staan 230 leads in het systeem.</p>
+
+  <h3><span class="sub">5.4</span>E-mail en agenda</h3>
+  <p>Binnenkomende e-mail wordt getrieerd op urgentie en samengevat. Voor de belangrijkste openstaande berichten schrijft het systeem vooraf een conceptantwoord, klaar om te bekijken, bij te werken en te versturen. Berichten die als afspraak worden herkend, gaan naar een regelgebaseerde agenda-agent die datum, duur, locatie en reistijd afleidt, het slot op conflicten toetst en een voorstel klaarzet — nooit een boeking.</p>
+  <div class="box warn">
+    <h4>Ontwerpbesluit met een geschiedenis</h4>
+    <p>Google's beschikbaarheidscontrole geeft bij een agenda zónder toegang geen foutmelding, maar een lege agenda. Dat leest als "helemaal vrij" en is precies hoe je stil dubbel boekt. Eén onbereikbare agenda maakt daarom de hele controle ongeldig, en goedkeuren wordt geweigerd.</p>
+  </div>
+
+  <h3><span class="sub">5.5</span>Iris, de manager-agent</h3>
+  <p>Elke ochtend om 06:45 stelt Iris per project deterministische rapportcijfers vast (content, SEO, uitvoering, hygiëne), leest ze de trends over twee tijdschalen, en velt een LLM-oordeel over wat er moet gebeuren. Binnen strikte grenzen stuurt ze de andere agents bij en pakt ze werk zelf op — altijd landend achter een poort.</p>
+  <p>Het bijzondere is de <span class="lead-in">gesloten leerlus</span>. Iris legt per briefing maximaal drie falsifieerbare voorspellingen vast, met meetwaarde, richting, horizon en een nulmeting uit de echte cijfers. Verlopen voorspellingen worden afgerekend vóórdat ze een nieuw oordeel velt. Klopt een voorspelling, dan wint de bijbehorende les vertrouwen; een les die na drie metingen onder de 34% blijft, wordt ingetrokken. Zo weegt bewijs, niet herhaling: 46 voorspellingen en 78 lessen tot nu toe.</p>
+  <div class="box">
+    <h4>Zelfcorrectie als voorbeeld</h4>
+    <p>Iris' gerapporteerde trefkans stond op 42,9%. Bij controle bleek de drempelvolgorde in de beoordeling ervoor te zorgen dat gemiste doelen als "onbeslist" werden geboekt in plaats van als misser. De werkelijke score was 30%. Er is een invariant toegevoegd die aanslaat zodra meer dan 35% van de uitslagen onbeslist is.</p>
+  </div>
+
+  <h3><span class="sub">5.6</span>Marktradar en linkbuilding</h3>
+  <p>Elke vier uur worden zoekwoorden, concurrentendomeinen en RSS-bronnen afgezocht op wat er in de markt beweegt. Een vormpoort — deterministisch, op basis van de woordenschat van het URL-pad — scheidt publicaties van vacatures, dienstpagina's en eigen content, en weert daarmee 47% van de aanvoer vóórdat er AI-budget aan wordt besteed. Wat overblijft, voedt de contentmotor. Linkbuilding volgt hetzelfde patroon: prospectie, concept, menselijke goedkeuring, en een monitor die controleert of een geplaatste link blijft staan.</p>
+
+  <h3><span class="sub">5.7</span>Beursmeester</h3>
+  <p>Een beleggingsagent die het bestaande financiële advies afrekenbaar maakt. Koershistorie wordt vastgelegd, kenmerken worden deterministisch berekend, en een analist-agent moet elk idee <em>backtesten</em> vóórdat hij het mag voorstellen. Een voorstel zonder backtest-artefact, met een niet-bestaand symbool of zonder stop-loss wordt geweigerd. Uitvoering gebeurt op de koers van de vólgende dag, inclusief kosten en slippage — een backtest die op de eigen instapkoers vult, verslaat elke index op papier en levert in werkelijkheid niets op. De benchmark ligt vast bij aanvang, zodat "we verslaan de index" achteraf niet naar de gewenste uitkomst te rekenen valt. Status: uitsluitend op papier.</p>
+</section>
+
+<section>
+  <h2><span class="num">06</span>Iris Remote</h2>
+
+  <h3><span class="sub">6.1</span>Architectuur</h3>
+  <p>Iris Remote is een progressieve webapp op Vercel met een Neon-database, bedoeld om de goedkeuringspoorten onderweg te bedienen. De architectuur is bewust een <span class="lead-in">pull-model</span>: de thuismachine belt elke drie minuten zelf naar buiten, duwt de actuele stand omhoog en haalt genomen besluiten op. Er staat geen poort open, er loopt geen tunnel, en de cloud kan de thuismachine niet benaderen.</p>
+  <p>Besluiten worden thuis uitgevoerd via een whitelist die exact dezelfde servicefuncties aanroept als de knoppen in de lokale interface. De cloud kan dus per definitie geen poort omzeilen en publiceert of verstuurt zelf nooit.</p>
+
+  <h3><span class="sub">6.2</span>Functies</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Scherm</th><th>Inhoud</th></tr></thead>
+    <tbody>
+      <tr><td>Vandaag</td><td>Agenda met deelnemers en aandachtspunten per afspraak, postvak met achterstand en klaarstaande conceptantwoorden, een deterministisch oordeel over wat goed en slecht gaat, en knoppen om werk aan te zwengelen</td></tr>
+      <tr><td>Besluiten</td><td>De volledige inbox met filters; goedkeuren, bewerken, versturen, afwijzen</td></tr>
+      <tr><td>Briefings</td><td>Iris' analyse, cijfers per project, haar trefkans, plus een chat die over de actuele momentopname beschikt</td></tr>
+      <tr><td>Notities</td><td>Losse gedachten die bij de volgende synchronisatie in de kennisbank landen</td></tr>
+      <tr><td>Systeem</td><td>Verbindingsstatus, klaargezette besluiten, ingelogde apparaten, meldingen</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="sub">6.3</span>Beveiliging en betrouwbaarheid</h3>
+  <ul>
+    <li>Wachtwoord met minimumlengte, brute-force-rem per IP met oplopende blokkade, en intrekbare sessies per apparaat.</li>
+    <li>Geen scripts of lettertypen van derden op de pagina waar publicaties worden goedgekeurd; alles wordt lokaal meegeleverd.</li>
+    <li>Elke contextsectie draagt een eigen status. "Niet geconfigureerd" wordt nooit als "alles rustig" getoond.</li>
+    <li>De lijst zegt zélf wanneer hij bevroren is. Een half ingevulde configuratie meldt zich onmiddellijk als fout — in juli 2026 lag de brug zeven dagen stil doordat één instelling leeg was, en het enige spoor stond op de telefoon.</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="num">07</span>Kwaliteitsborging</h2>
+
+  <h3><span class="sub">7.1</span>Zelfherstel</h3>
+  <p>Fouten worden ingedeeld naar wie ze kan oplossen: een tijdelijke storing, een authenticatie- of configuratieprobleem dat een mens vereist, of een quota-limiet die vanzelf overgaat. Een tijdelijke fout wordt pas een inbox-item na drie mislukte pogingen; een mens-vereiste fout escaleert onmiddellijk, want wachten helpt daar niet.</p>
+  <p>Elke tien minuten draait een herstelronde die niet gokt maar <em>bewijst</em>: de bewerking wordt echt opnieuw uitgevoerd. Lukt het, dan sluit de kaart met een verantwoording. Blijkt uit de poging een oorzaak die een mens vereist, dan wordt de kaarttekst aangevuld met de echte bevinding. Een herstelpoging passeert nooit een goedkeuringspoort.</p>
+
+  <h3><span class="sub">7.2</span>De waarheidsaudit</h3>
+  <p>De tegenhanger van zelfherstel: waar dat opruimt wat luid faalt, zoekt de audit het gevaarlijker geval — een systeem dat succes meldt terwijl het effect nooit plaatsvond. Elke invariant codeert een storing die daadwerkelijk is voorgekomen, met het incident erbij vastgelegd; een controle waarvan niemand de herkomst kent, wordt weggeklikt zodra hij een keer ongelegen komt.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Ernst</th><th>Betekenis</th><th>Escalatie</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill p-risk">Blokkerend</span></td><td>Er staat nu iets verkeerds naar buiten</td><td>Onmiddellijk een kaart</td></tr>
+      <tr><td><span class="pill p-warn">Stil</span></td><td>Een mechanisme doet niets meer</td><td>Na drie dagen</td></tr>
+      <tr><td><span class="pill p-plan">Hygiëne</span></td><td>Voorraadvervuiling</td><td>Nooit een kaart</td></tr>
+    </tbody>
+  </table></div>
+  <p>Er zijn 234 bevindingen geregistreerd. Een bevinding sluit niet omdat iemand zegt dat het opgelost is, maar omdat de toets hem niet meer vindt.</p>
+
+  <h3><span class="sub">7.3</span>Geautomatiseerde tests</h3>
+  <p>74 testbestanden draaien tegen een wegwerpdatabase, verplicht vóór elke herstart. Ze dekken de poorten, de trechterlogica, de Nederlandse taalregels in de kansenfilter, de budgetremmen en de inhaalmechanismen.</p>
+</section>
+
+<section>
+  <h2><span class="num">08</span>Huidige stand</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Onderdeel</th><th class="n">Omvang</th><th>Toelichting</th></tr></thead>
+    <tbody>
+      <tr><td>Aangesloten sites</td><td class="n">12</td><td>Verdeeld over 14 projectnamen</td></tr>
+      <tr><td>Gepubliceerde artikelen</td><td class="n">112</td><td>Van 150 aangemaakte opdrachten</td></tr>
+      <tr><td>Zoekdata</td><td class="n">8.310</td><td>Dagmetingen in de historiereeks</td></tr>
+      <tr><td>Leads</td><td class="n">230</td><td>Alle trechterfasen</td></tr>
+      <tr><td>Doelen &amp; taken</td><td class="n">128 / 1.393</td><td>Autonoom uitgevoerd, met uitkomstkaart</td></tr>
+      <tr><td>Uitkomstkaarten</td><td class="n">7.308</td><td>Volledige uitvoeringshistorie</td></tr>
+      <tr><td>Briefings</td><td class="n">24</td><td>Met 46 voorspellingen en 78 lessen</td></tr>
+      <tr><td>AI-aanroepen</td><td class="n">10.937</td><td>Met verbruik en kosten per aanroeper</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2><span class="num">09</span>Bekende zwaktes</h2>
+  <p>Deze sectie hoort in dit document thuis. Een projectplan dat alleen functies opsomt, doet precies wat dit systeem bestrijdt.</p>
+
+  <div class="box risk">
+    <h4>Onderscheidend vermogen van de content</h4>
+    <p>De kennisbank bevat vier casestudies, op één van de twaalf sites. Van 138 artikelen met een kwaliteitsrapport gebruikten er zeven daadwerkelijk eigen bewijsmateriaal. Daarmee is het overgrote deel reproduceerbare AI-tekst die een concurrent met hetzelfde model ook krijgt. De kwaliteitspoort ziet dit niet: die meet vorm, en generieke tekst scoort probleemloos 84 punten. De meting is inmiddels ingebouwd, maar blokkeert bewust niet — de oplossing vraagt om materiaal dat alleen een mens kan aanleveren.</p>
+  </div>
+
+  <div class="box warn">
+    <h4>Openstaande auditbevindingen</h4>
+    <p>168 van de 234 bevindingen staan open. Dat is deels bewust (hygiëne-klassen escaleren nooit), maar het aantal vraagt om een opruimronde en om strengere sluiting van de blokkerende klasse.</p>
+  </div>
+
+  <div class="box warn">
+    <h4>Afhankelijkheid van één AI-gateway</h4>
+    <p>Een uitgeputte quota legt triage, contentproductie en de conceptantwoorden tegelijk stil. De remmen werken en de gevolgen zijn zichtbaar gemaakt, maar er is geen tweede leverancier ingericht.</p>
+  </div>
+
+  <div class="box warn">
+    <h4>Eén gebruiker, één machine</h4>
+    <p>Het systeem kent geen scheiding tussen klanten, geen rollen en geen facturatie. Alle koppelingen draaien op persoonlijke accounts. Voor eigen gebruik is dat de juiste keuze; voor gebruik door derden is het een herontwerp.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">10</span>Vervolg</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Prioriteit</th><th>Onderwerp</th><th>Doel</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill p-risk">Hoog</span></td><td>Kennisbank vullen</td><td>Casestudies en cijfers per site, zodat gepubliceerde content iets bevat dat alleen wij kunnen schrijven</td></tr>
+      <tr><td><span class="pill p-risk">Hoog</span></td><td>Eén aantoonbaar resultaat</td><td>Eén site, één meetwaarde, negentig dagen — de meetinfrastructuur ligt er al</td></tr>
+      <tr><td><span class="pill p-warn">Midden</span></td><td>Bewijs-export</td><td>Klantklaar rapport uit de bestaande reeksen, inclusief wat er niet werkte</td></tr>
+      <tr><td><span class="pill p-warn">Midden</span></td><td>Auditschuld inlopen</td><td>Blokkerende bevindingen naar nul</td></tr>
+      <tr><td><span class="pill p-plan">Laag</span></td><td>Tweede AI-leverancier</td><td>Uitwijk bij quota-uitval</td></tr>
+      <tr><td><span class="pill p-plan">Later</span></td><td>Meerdere gebruikers</td><td>Alleen relevant bij verkoop als product</td></tr>
+    </tbody>
+  </table></div>
+
+  <hr class="soft">
+  <p class="caption">Alle cijfers in dit document zijn op 8 augustus 2026 rechtstreeks uit de productiedatabase gelezen, niet geschat.</p>
+</section>
+
+</div>

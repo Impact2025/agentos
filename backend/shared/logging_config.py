@@ -19,7 +19,9 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-_LOG_DIR = Path(__file__).parent.parent.parent / "logs"
+_LOG_DIR = Path(os.environ["AGENTOS_LOG_DIR"]) if os.getenv("AGENTOS_LOG_DIR") else (
+    Path(__file__).parent.parent.parent / "logs"
+)
 
 # Endpoints die de SPA elke paar seconden pollt. Een geslaagde poll is geen
 # informatie; een mislukte wel — die blijft dus staan.

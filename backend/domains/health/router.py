@@ -101,9 +101,10 @@ def _probe_ollama() -> dict:
 
 def _probe_calendar() -> dict:
     from ...domains.calendar import service as cal
+    from ...shared.config import CALENDAR_CALENDAR_ID
     if not cal.is_configured():
         return {"configured": False, "live": None,
-                "note": "Google Calendar niet geconfigureerd"}
+                "note": "Google Agenda niet geconfigureerd"}
     try:
         with get_conn() as conn:
             row = conn.execute(
@@ -111,11 +112,23 @@ def _probe_calendar() -> dict:
                 "WHERE job_id='calendar_sync'"
             ).fetchone()
         last = dict(row) if row else None
+        # 'missed' is GEEN storing: APScheduler markeert zo een run die niet
+        # vuurde omdat de machine sliep of de server heropstartte. De job
+        # herstelt zichzelf bij de volgende fire. Dat als 'degraded' tonen
+        # maakte het dashboard rood na elke slaapstand van de laptop
+        # (04-08-2026) en leert de gebruiker de statusbadge te negeren.
+        # Alleen een echte 'error' is een storing.
+        status = (last or {}).get("status")
         return {
             "configured": True,
-            "calendar_id": cal._cal_id(),
+            # calendar_id rechtstreeks uit config (geen _cal_id()-call die
+            # in de dispatcher-laag niet bestaat en de probe liet crashen).
+            "calendar_id": CALENDAR_CALENDAR_ID or "primary",
             "last_sync": last,
-            "live": bool(last and last["status"] == "ok"),
+            "live": status in ("ok", "missed"),
+            "note": ("laatste run overgeslagen (machine sliep of server lag stil) "
+                     "— draait vanzelf bij de volgende geplande run"
+                     if status == "missed" else None),
         }
     except Exception as e:
         return {"configured": True, "live": None, "error": str(e)[:160]}
@@ -176,22 +189,38 @@ def _overall(items: dict) -> str:
 @router.get("")
 def healthcheck():
     # Parallel proben zodat een hangende provider het endpoint niet blokkeert.
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        f_loc = ex.submit(_probe_local)
-        f_om = ex.submit(_probe_openmodel)
-        f_ol = ex.submit(_probe_ollama)
-        f_cal = ex.submit(_probe_calendar)
-        f_work = ex.submit(_active_work)
-        local = f_loc.result()
-        openmodel = f_om.result()
-        ollama = f_ol.result()
-        calendar = f_cal.result()
-        active = f_work.result()
+    # Harde overall-timeout (HEALTHCHECK_TIMEOUT): dit endpoint wordt bij elke
+    # pagina-load én elke auto-refresh aangeroepen — als een externe provider
+    # hangt, mag de hele Control Room niet 15s blijven laden. Na de timeout
+    # krijgen niet-voltooide probes een nette "timeout"-status.
+    HEALTHCHECK_TIMEOUT = 3.0
+    quota_backoff = llm_quota_backoff_active()
+
+    def _run(fn):
+        try:
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                return ex.submit(fn).result(timeout=HEALTHCHECK_TIMEOUT)
+        except Exception as e:  # timeout of crash → niet-blokkerend
+            return {"live": None, "error": f"timeout/{type(e).__name__}"}
+
+    local = _run(_probe_local)
+    # OpenModel-cloud-probe: alleen doen als er geen quota-backoff loopt én
+    # de key gezet is. Bij backoff is de cloud toch niet bruikbaar en spaart
+    # dit ~2s netwerklatentie per healthcheck-call.
+    if quota_backoff or not OPENMODEL_API_KEY:
+        openmodel = {"configured": bool(OPENMODEL_API_KEY), "live": None,
+                     "note": "overgeslagen (quota-backoff actief)" if quota_backoff
+                     else "geen OPENMODEL_API_KEY"}
+    else:
+        openmodel = _run(_probe_openmodel)
+    ollama = _run(_probe_ollama)
+    calendar = _run(_probe_calendar)
+    active = _run(_active_work)
 
     backend_now = hermes_backend()
     llm = llm_usage_summary(days=1)
     # markeer quota-markers expliciet in de summary
-    llm["quota_backoff_active"] = llm_quota_backoff_active()
+    llm["quota_backoff_active"] = quota_backoff
     llm["quota_backoff_minutes"] = LLM_QUOTA_BACKOFF_MINUTES
 
     scheduler = get_scheduler_status()
@@ -228,8 +257,36 @@ def healthcheck():
     return {
         "status": status,
         "summary": _summary_line(items, status),
+        "reden": _status_reden(items, status),
         **items,
     }
+
+
+def _status_reden(items: dict, status: str) -> str:
+    """De ene oorzaak die deze status verklaart, in drie woorden.
+
+    4 aug 2026: het badge toonde 'Degraded · local·Ollama · 14% tokens'. Waaróm
+    stond er nergens — alleen in de `title`-tooltip, die niemand opent. Een rode
+    stip zonder reden leert de gebruiker precies één ding: de statusbadge
+    negeren. De volgorde hieronder volgt `_overall()`, zodat de reden altijd de
+    tak noemt die de status daadwerkelijk heeft gezet.
+    """
+    if status == "ok":
+        return ""
+    b = items["backend"]
+    if not b["local"]["live"] and not b["ollama"]["live"] and (
+            items["llm"]["quota_backoff_active"] or not b["openmodel"]["live"]):
+        return "geen enkele LLM-route bereikbaar"
+    if b["active"] == "local" and not b["local"]["live"]:
+        return "primaire backend (local) is dood"
+    cal = items["calendar"]
+    if cal.get("configured") and not cal.get("live"):
+        return "agenda-sync faalt"
+    if items["llm"]["quota_backoff_active"]:
+        return "quota-rem actief"
+    if items["llm"]["today"]["errors"]:
+        return f"{items['llm']['today']['errors']} LLM-fouten vandaag"
+    return "onbekende oorzaak"
 
 
 def _summary_line(items: dict, status: str) -> str:
@@ -244,7 +301,11 @@ def _summary_line(items: dict, status: str) -> str:
         parts.append("quota-backoff ACTIEF (autonoom gepauzeerd)")
     cal = items["calendar"]
     if cal.get("configured"):
-        parts.append("agenda-sync " + ("ok" if cal.get("live") else "FOUT"))
+        cal_status = (cal.get("last_sync") or {}).get("status")
+        if cal_status == "missed":
+            parts.append("agenda-sync run overgeslagen (herstelt zichzelf)")
+        else:
+            parts.append("agenda-sync " + ("ok" if cal.get("live") else "FOUT"))
     t = items["llm"]["today"]
     if items["llm"]["budget"]:
         parts.append(f"{t['total_tokens']:,}/{items['llm']['budget']:,} tokens ({t['budget_pct']}%)")

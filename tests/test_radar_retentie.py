@@ -61,11 +61,36 @@ class TestOpruimen:
         radar.prune_stale_signals()
         assert _bestaat(sid)
 
-    def test_topsignaal_blijft_ook_als_het_oud_is(self):
-        """Een hoog signaal dat niemand oppakte is een gemiste kans, geen ruis."""
-        sid = _signaal(status="new", score=85.0, dagen_oud=90)
+    def test_topsignaal_krijgt_langer_de_tijd(self):
+        """Een hoog signaal dat niemand oppakte is een gemiste kans, geen ruis —
+        maar niet eeuwig."""
+        sid = _signaal(status="new", score=85.0, dagen_oud=30)
         radar.prune_stale_signals()
-        assert _bestaat(sid)
+        assert _bestaat(sid), "binnen de topsignaal-termijn blijft het staan"
+
+    def test_topsignaal_verloopt_uiteindelijk_ook(self):
+        """Na de topsignaal-termijn is het geen kans meer maar archeologie.
+
+        Deze grens bestond niet, waardoor de signalen ≥70 monotoon groeiden —
+        201 stuks op 3 aug 2026, en de opruiming had er in vier weken nul
+        verwijderd terwijl de invariant `radar_signaal_verlopen` al bij 21 dagen
+        aansloeg. Een opruiming die pas begint negen dagen ná het alarm is geen
+        opruiming maar een belofte.
+        """
+        sid = _signaal(status="new", score=85.0,
+                       dagen_oud=radar.TOPSIGNAL_RETENTION_DAYS + 5)
+        radar.prune_stale_signals()
+        assert not _bestaat(sid)
+
+    def test_geweerd_signaal_is_bewijs_geen_voorraad(self):
+        """Uitgefilterde signalen blijven kort staan zodat de poort te
+        controleren is, en verdwijnen daarna — het is bewijs, geen werkvoorraad."""
+        vers = _signaal(status="uitgefilterd", score=40.0, dagen_oud=2)
+        oud = _signaal(status="uitgefilterd", score=40.0,
+                       dagen_oud=radar.UITGEFILTERD_RETENTION_DAYS + 3)
+        radar.prune_stale_signals()
+        assert _bestaat(vers)
+        assert not _bestaat(oud)
 
     @pytest.mark.parametrize("status", ["targeted", "converted", "dismissed"])
     def test_besluiten_blijven_staan(self, status):

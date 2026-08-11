@@ -12,6 +12,7 @@ review-gate:
   lead_search_run -> actions.lead_search_run -> nieuwe leads als 'new' (geen mail)
   gsc_connect  -> logt een concreet "koppel GSC"-kaart (menselijke stap)
   goal_draft  -> actions/_apply_draft_goal -> concept-doel in Actiecentrum
+  run_job    -> scheduler.run_job_now     -> gemiste geplande taak alsnog
 
 Geen enkele actie publiceert of verstuurt iets zelf. Dedupe:
 een actie die al 'applied'/'approved'/'rejected' is, wordt nooit
@@ -33,7 +34,7 @@ logger = logging.getLogger(__name__)
 # is GEEN agent-actie: het is een menselijke stap (de property koppelen
 # in Search Console). Die logt alleen een heldere kaart met next_step.
 _ALLOWED_TYPES = {"content_run", "seo_refresh", "outreach_run", "linkbuilding_run",
-                  "lead_search_run", "goal_draft", "gsc_connect"}
+                  "lead_search_run", "goal_draft", "gsc_connect", "run_job"}
 
 
 def _now_iso() -> str:
@@ -230,6 +231,20 @@ async def apply(sid: str) -> Dict[str, Any]:
                 # dubbele, tegenstrijdige kaart toont (zie database-migratie).
                 return _result(sid, done.get("detail", ""), typ, target, done.get("goal_id", ""))
             return _result(sid, None, typ, target)
+        if typ == "run_job":
+            # Een gemiste geplande taak alsnog draaien. Zelfde grenzen als de
+            # knop in het Actiecentrum (`scheduler.run_job_now`): alleen jobs
+            # met catch_up, en geen enkele daarvan publiceert of verstuurt.
+            from ...scheduler import run_job_now
+            job_id = str(payload.get("job_id") or target or "")
+            res = await run_job_now(job_id)
+            if not res.get("ok"):
+                return _result(sid, None, typ, job_id)
+            detail = (f"Gemiste taak '{res.get('label') or job_id}' alsnog gestart — "
+                      "de kaart sluit zodra hij slaagt.")
+            log_outcome("Scheduler", "iris_actie", detail,
+                        next_step="Niets — controleer morgen of de taak geslaagd is.")
+            return _result(sid, detail, typ, job_id)
         if typ == "gsc_connect":
             # GEEN agent-actie: dit is een menselijke stap. Log een
             # heldere kaart met de property die gekoppeld moet worden.

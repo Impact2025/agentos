@@ -204,6 +204,39 @@ def _error_resolved(conn, row: Dict[str, Any]) -> bool:
             (created,),
         ).fetchone()
         return bool(hit)
+    # Stilstand: de kaart is opgelost zodra de taak weer geslaagd is. De
+    # levensloop staat in `scheduler_gaps` respectievelijk `scheduler_runs`,
+    # niet in de kaarttekst — dus vraag het daar. Zonder deze regel blijft een
+    # gemiste run Iris' hygiëne-pijler drukken nadat het werk allang is
+    # ingehaald, en dat is precies de ruis die stilstand-melden moest oplossen.
+    if action == "gemiste_runs":
+        # Deze kaarten worden niet meer gemaakt: het Actiecentrum rendert de
+        # stilstand rechtstreeks uit `scheduler_gaps`, inclusief de inhaalknop
+        # (zie shared/downtime.py, 2 aug 2026). De rijen die er nog liggen zijn
+        # dus per definitie een dubbeling van een kaart die er al staat — niet
+        # "onopgelost", maar overbodig. Ze blijven in het logboek als historie
+        # en verdwijnen uit de inbox en uit de hygiëne-pijler.
+        return True
+    if action == "job_nooit_geslaagd":
+        job_id = detail.split("|")[0].strip()
+        if not job_id:
+            return False
+        rij = conn.execute(
+            "SELECT last_run_at, last_ok_at FROM scheduler_runs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if not rij:
+            return False
+        # Twee manieren waarop deze kaart klaar is. De eerste is de bedoelde: de
+        # taak is inmiddels geslaagd. De tweede is dat de bewering zelf niet
+        # klopt — de taak heeft nog nóóit uitgevoerd, en dan is "is nog nooit
+        # geslaagd" geen defect maar een taak die nog niet aan de beurt is
+        # geweest. Tot 2 aug 2026 zette een misfire `last_run_at`, waardoor elke
+        # taak die tijdens een uitgezette machine overging als defect werd
+        # gemeld; die kaarten horen te sluiten, niet te blijven staan naast de
+        # stilstand-kaart die het wél goed vertelt.
+        return bool(rij["last_ok_at"]) or not rij["last_run_at"]
+
     m = _re.search(r"'([^']{8,})'", detail)
     if not m:
         return False
@@ -336,17 +369,55 @@ def global_metrics() -> Dict[str, Any]:
     except Exception:
         funnel, inputs = {}, {}
 
+    # 'Voorraad' moet betekenen: leads waar de outreach-batch vandaag een concept
+    # voor kan schrijven. Op `new + enriched` tellen las 47 waar er 7 mailbaar
+    # waren — generieke info@-adressen worden door de outreach-zeef geweigerd —
+    # en dat verschil bepaalt welke knop eronder komt (zoeken vs. klaarzetten).
+    # Dezelfde functie als de batch zelf gebruikt: twee antwoorden op dezelfde
+    # vraag is precies hoe de funnel weken droog kon staan bij een volle voorraad.
+    if funnel:
+        try:
+            from ..prospecting.outreach import count_mailable_leads
+            funnel["mailable"] = count_mailable_leads()
+        except Exception:  # noqa: BLE001 — een kapotte zeef velt de briefing niet
+            logger.exception("[iris] kon mailbare voorraad niet tellen")
+
     try:
         from ..linkbuilding import service as lb_service
         linkbuilding = lb_service.funnel_stats()
     except Exception:
         linkbuilding = {}
 
+    # Stilstand: geplande runs die overgingen terwijl de machine uit stond.
+    # Dit hoort in het cijferbeeld omdat het de vérklaring is onder andere
+    # cijfers: een droge funnel na vier dagen zonder outreach-batch is geen
+    # acquisitieprobleem maar een uptime-probleem, en dan is "zet meer
+    # concepten klaar" het behandelen van een symptoom.
+    try:
+        from ...shared import downtime
+        gaps = downtime.summary()
+    except Exception:
+        gaps = []
+
+    # Het trage zoekbeeld: 28 dagen tegen de 28 daarvóór, per project, uit het
+    # weekrapport. De projectcijfers hierboven dragen het snelle beeld (7 vs. 7
+    # uit `gsc_history`); pas met beide horizonnen naast elkaar is te zien of een
+    # daling ruis is of een lijn. Vóór 4 aug 2026 bestond dit rapport alleen als
+    # mail — Iris stuurde dus wekelijks op de ruwste van de twee horizonnen.
+    try:
+        from ..analytics import insights
+        weekrapport = insights.summary()
+    except Exception:
+        logger.exception("[iris] weekrapport-samenvatting mislukt")
+        weekrapport = {"state": "geen", "projects": [], "structureel_dalend": []}
+
     return {
         "errors_24h": errors_24h,
         "delivered_24h": delivered_24h,
         "pending_review_total": pending_review_total,
         "scheduler_failures": scheduler_failures,
+        "downtime_gaps": gaps,
+        "weekrapport": weekrapport,
         "funnel": funnel,
         "inputs_7d": inputs,
         "linkbuilding": linkbuilding,
@@ -370,20 +441,59 @@ def bottlenecks(snap: Dict[str, Any]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     prio = 1
 
+    # 0. Stilstand gaat vóór alles. Een agent die niet gedraaid heeft is geen
+    # slecht presterende agent — hij heeft niet bestaan die dag. Zolang dat
+    # niet bovenaan staat, verklaart Iris de gevolgen (droge funnel, lege
+    # Wachtrij) als inhoudelijke problemen en stuurt ze agents bij die niets
+    # verkeerd deden. Vier werkdagen zonder outreach-batch, 28-31 jul 2026.
+    gaps = glob.get("downtime_gaps") or []
+    inhaalbaar = [g for g in gaps if g.get("recoverable")]
+    if inhaalbaar:
+        ernstigste = max(inhaalbaar, key=lambda g: g.get("missed", 0))
+        out.append({
+            "prio": prio,
+            "issue": "stilstand",
+            "actie": ("Haal gemiste geplande taken in — "
+                      + "; ".join(f"{g['label']} ({g['missed']}×)" for g in inhaalbaar[:3])),
+            "waarom": (ernstigste.get("detail") or "")
+                      + " — dit werk gebeurt niet vanzelf alsnog",
+            "suggestion": {
+                "type": "run_job", "scope": "all", "target": ernstigste["job_id"],
+                "title": f"Draai '{ernstigste['label']}' alsnog",
+                "detail": ernstigste.get("detail") or "",
+                "priority": prio, "payload": {"job_id": ernstigste["job_id"]},
+            },
+        })
+        prio += 1
+
     # 1. Acquisitie-funnel droog: input is de enige knop waar sales op draait.
     target = inputs.get("outreach_target") or 0
     sent = inputs.get("outreach_sent") or 0
     ready = inputs.get("outreach_drafts_ready") or 0
     by_status = funnel.get("by_status") or {}
-    stock = (by_status.get("new") or 0) + (by_status.get("enriched") or 0)
+    ruwe_voorraad = (by_status.get("new") or 0) + (by_status.get("enriched") or 0)
+    # `mailable` telt alleen de leads waar de outreach-batch écht een concept voor
+    # kan schrijven (zie global_metrics). Ontbreekt het veld — oudere snapshot,
+    # zeef onbereikbaar — dan is de ruwe voorraad de eerlijkste schatting die er is.
+    stock = funnel.get("mailable")
+    if stock is None:
+        stock = ruwe_voorraad
     if target and (sent + ready) < target * 0.5:
+        # Draaide de batch überhaupt? Zo niet, dan is de funnel niet droog maar
+        # ongevuld, en dat is een ander probleem met een andere oplossing.
+        batch_gap = next((g for g in gaps if g["job_id"] == "daily_outreach_batch"), None)
         item: Dict[str, Any] = {
             "prio": prio,
             "issue": "funnel_droog",
             "actie": f"Vul de acquisitie-funnel — {sent} verstuurd + {ready} klaar "
                      f"tegen een weekdoel van {target}",
             "waarom": f"outreach 7d: {sent} verstuurd, {ready} concepten klaar, "
-                      f"{stock} bruikbare lead(s) op voorraad",
+                      f"{stock} mailbare lead(s) op voorraad"
+                      + (f" (van {ruwe_voorraad} in totaal — de rest heeft geen "
+                         "bruikbaar adres)" if ruwe_voorraad > stock else "")
+                      + (f" — LET OP: de outreach-batch draaide {batch_gap['missed']}× niet, "
+                         "dus dit is stilstand en geen acquisitieprobleem"
+                         if batch_gap else ""),
         }
         if stock:
             item["suggestion"] = {
@@ -433,9 +543,56 @@ def bottlenecks(snap: Dict[str, Any]) -> List[Dict[str, Any]]:
         })
         prio += 1
 
+    # 1c. Structurele daling uit het weekrapport (28 dagen vs. de 28 daarvóór).
+    # Dit staat bewust náást de 7-vs-7-trend per project en niet in plaats
+    # daarvan: één week omlaag is ruis, vier weken omlaag is een lijn. Zolang
+    # alleen de snelle horizon meetelde, reageerde Iris op ruis en zag ze de
+    # lijn niet — het weekrapport dat dit al berekende ging alleen naar de mail.
+    week = glob.get("weekrapport") or {}
+    dalend = week.get("structureel_dalend") or []
+    if dalend:
+        details = {p["project"]: p for p in (week.get("projects") or [])}
+        eerste = details.get(dalend[0], {})
+        item = {
+            "prio": prio, "issue": "structurele_daling",
+            "actie": f"Herstel de wegzakkende zichtbaarheid van {', '.join(dalend[:3])}",
+            "waarom": (f"weekrapport {week.get('week')}: over 28 dagen zowel minder "
+                       f"klikken als een slechtere positie — dit is geen weekruis "
+                       f"maar een lijn"
+                       + (f" ({eerste.get('clicks_pct')}% klikken, positie "
+                          f"{eerste.get('position_delta')})" if eerste else "")),
+        }
+        # Meer produceren bij een verstopte Wachtrij maakt het probleem groter;
+        # dan blijft de diagnose staan zonder knop (zie het doorvoer-knelpunt).
+        if eerste.get("site_id") and (glob.get("pending_review_total") or 0) < 20:
+            item["suggestion"] = {
+                "type": "seo_refresh", "scope": eerste.get("project") or "all",
+                "target": eerste["site_id"],
+                "title": f"Ververs de wegzakkende pagina's van {eerste.get('project')}",
+                "detail": ("Structurele daling over 28 dagen. De agent actualiseert "
+                           "de sterkste dalers; het resultaat landt in de Wachtrij."),
+                "priority": prio, "payload": {"aantal": 2},
+            }
+        out.append(item)
+        prio += 1
+
     # 2. Wachtrij die ligt te wachten: gemaakte waarde die niet live gaat.
+    # Boven een bepaalde stapel is dit geen achterstand meer maar een
+    # doorvoerprobleem, en dan is nóg meer schrijven schadelijk: het verstopt
+    # precies de plek waar de opbrengst vandaan moet komen. Iris moet dat
+    # verschil kunnen zien, anders blijft ze content_run voorstellen bij een
+    # Wachtrij van 53 (WeAreImpact, 2 aug 2026).
     pending = glob.get("pending_review_total") or 0
-    if pending:
+    if pending >= 20:
+        out.append({
+            "prio": prio, "issue": "doorvoer",
+            "actie": f"Doorvoer zit vast — {pending} concepten wachten op goedkeuring",
+            "waarom": ("dit is geen productieprobleem maar een doorvoerprobleem: "
+                       "meer schrijven maakt de stapel groter en levert geen klik op. "
+                       "Stel géén content_run voor zolang dit staat"),
+        })
+        prio += 1
+    elif pending:
         out.append({
             "prio": prio, "issue": "wachtrij",
             "actie": f"Keur de Wachtrij goed — {pending} stuk(s) wachten op jouw klik",

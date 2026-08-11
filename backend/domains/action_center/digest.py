@@ -105,6 +105,25 @@ def build_digest() -> Dict[str, Any]:
         lines.append("- (geen opgeleverde resultaten in de afgelopen 24 uur)")
     lines.append("")
 
+    # ── 3a. Stilstand: wat er niet gebeurde ──
+    # Hoort direct ná "gisteren opgeleverd", want het is de tegenhanger: dit is
+    # het werk dat níet is opgeleverd omdat de machine uit stond. Zonder dit
+    # blok leest een lege oplever-lijst als een rustige dag, terwijl er vier
+    # geplande taken zijn overgeslagen (28-31 jul 2026).
+    try:
+        from ...shared import downtime
+        gaps = [g for g in downtime.summary() if g["recoverable"]]
+        if gaps:
+            lines.append(f"## ⏸️ Niet gedraaid ({len(gaps)} taak/taken)")
+            for g in gaps[:6]:
+                lines.append(f"- {g['detail']}")
+            lines.append("")
+            lines.append("  _Deze taken zijn in te halen via het Actiecentrum "
+                         "('Nu alsnog draaien') — ze gebeuren niet vanzelf alsnog._")
+            lines.append("")
+    except Exception:
+        logger.exception("[digest] Kon stilstand-sectie niet bouwen")
+
     # ── 3b. De formule: input → output, gemeten ──
     # Sales als conversieformule — je stuurt op de input (verstuurde outreach,
     # gepubliceerde content) en dit blok laat zien of de cijfers al werken.
@@ -165,7 +184,44 @@ def build_digest() -> Dict[str, Any]:
     except Exception:
         logger.exception("Linkbuilding-sectie in ochtendrapport mislukt")
 
+    # ── 3b3. Beursmeester: de portefeuille náást de index ──
+    # Het rendement staat hier nooit alleen. Zonder de benchmark ernaast is
+    # "+4%" geen prestatie maar een getal — en precies dat maakte het oude
+    # finance-dagrapport tot een advies dat nooit werd afgerekend.
+    try:
+        from ..invest import portfolio as invest_portfolio
+        from ..invest import service as invest_service
+        pf = invest_portfolio.get()
+        if pf:
+            r = invest_portfolio.rendement()
+            open_v = invest_service.open_voorstellen()
+            lines.append("## 📈 Beursmeester")
+            if r["rendement_pct"] is None:
+                lines.append(f"- Rendement nog niet te bepalen — {r['onvolledig_reden']}")
+            elif r["benchmark_pct"] is None:
+                lines.append(f"- Portefeuille {r['rendement_pct']:+.2f}% sinds {r['sinds']} "
+                             "(geen benchmark om tegen af te zetten)")
+            else:
+                oordeel = "vóór" if (r["alpha_pct"] or 0) >= 0 else "achter op"
+                lines.append(
+                    f"- Portefeuille {r['rendement_pct']:+.2f}% vs. {r['benchmark_symbol']} "
+                    f"{r['benchmark_pct']:+.2f}% → **{abs(r['alpha_pct']):.2f}%-punt {oordeel} de index**"
+                )
+            trefkans = invest_service.track_record(invest_service.AGENT)
+            if trefkans["accuracy"] is not None:
+                lines.append(f"- Trefkans: {trefkans['accuracy']}% over "
+                             f"{trefkans['correct'] + trefkans['wrong']} afgerekende voorspellingen")
+            if open_v:
+                lines.append(f"- ✋ {len(open_v)} beleggingsvoorstel(len) wachten op je beoordeling")
+            lines.append("")
+    except Exception:
+        logger.exception("Beursmeester-sectie in ochtendrapport mislukt")
+
     # ── 3c. Iris' advies van vandaag (de 06:45-manageranalyse) ──
+    #
+    # Dat de briefing er ís, wordt afgedwongen in `run_daily_digest` — hier
+    # lezen we alleen. `build_digest` is synchroon en wordt óók door de
+    # on-demand-endpoint aangeroepen; die mag geen LLM-run aanzwengelen.
     try:
         from ..iris import service as iris_service
         iris_report = iris_service.latest_report()
@@ -211,6 +267,23 @@ def build_digest() -> Dict[str, Any]:
 async def run_daily_digest() -> None:
     """Scheduler entry-point: bouw het rapport, log het, mail het indien mogelijk."""
     from ...shared.outcomes import log_outcome
+
+    # Het rapport hangt aan Iris' briefing van vandáág (`build_digest` vergelijkt
+    # op datum). Op 7 aug 2026 werd de laptop om 08:33 uit slaapstand gewekt en
+    # speelde APScheduler de gemiste vuurmomenten in zijn eigen volgorde af: het
+    # rapport om 08:33:49, de briefing pas om 08:38:49 — dus ging het rapport
+    # zonder haar advies de deur uit. De chronologie stond alleen vast in de
+    # inhaalslag bij een kóude start; dit pad kende die bescherming niet.
+    # Daarom hier, waar de afhankelijkheid echt zit: doet niets als de briefing
+    # er al is of nog niet aan de beurt was, en wacht op het dagslot als hij op
+    # dit moment elders draait.
+    try:
+        from ...scheduler import ensure_ran_today
+        await ensure_ran_today("iris_briefing")
+    except Exception:
+        logger.exception("Kon Iris' briefing niet garanderen — het rapport gaat "
+                         "door met wat er wél is")
+
     digest = build_digest()
     c = digest["counts"]
     summary = (

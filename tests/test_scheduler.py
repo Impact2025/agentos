@@ -86,9 +86,15 @@ def test_boot_na_iris_haalt_gsc_en_briefing_in_op_volgorde():
 
     pending = S._pending_catchups(BOOT)
 
-    # Chronologisch: Iris hoort de GSC-cijfers van vanochtend te zien.
-    assert _ids(pending) == ["gsc_sync", "iris_briefing"]
-    assert pending[0][0] < pending[1][0]
+    # Chronologisch: Iris hoort de GSC-cijfers van vanochtend te zien, en de
+    # waarheidsaudit (06:40) hoort vóór haar briefing te draaien zodat stille
+    # bevindingen in het oordeel van vandaag meewegen. (Er kunnen jobs van
+    # eerdere dagen vóór staan — zie de sectie over `gap_cost` hieronder — dus
+    # we toetsen de kéten, niet de hele lijst.)
+    vandaag = [spec.id for fire, spec in pending if fire.date() == BOOT.date()]
+    assert vandaag == ["gsc_sync", "waarheidsaudit", "iris_briefing"]
+    momenten = [fire for fire, _ in pending]
+    assert momenten == sorted(momenten)
 
 
 def test_run_van_gisteren_wordt_niet_ingehaald():
@@ -102,25 +108,141 @@ def test_late_boot_haalt_de_hele_ochtendketen_in():
     _baseline(BOOT - dt.timedelta(days=7))
     laat = S._TZ.localize(dt.datetime(2026, 7, 10, 10, 0))
 
-    ids = _ids(S._pending_catchups(laat))
+    pending = S._pending_catchups(laat)
+    ids = _ids(pending)
+    vandaag = [spec.id for fire, spec in pending if fire.date() == laat.date()]
 
-    assert ids[:3] == ["gsc_sync", "iris_briefing", "daily_digest"]
+    # De keten moet in deze volgorde staan; jobs met `priority=0` (finance,
+    # beurs, kennisronde) mogen ervóór springen, want die zijn onafhankelijk en
+    # anders de eerste slachtoffers van de 20-minutengrens.
+    keten = [j for j in vandaag
+             if j in ("gsc_sync", "waarheidsaudit", "iris_briefing", "daily_digest")]
+    assert keten == ["gsc_sync", "waarheidsaudit", "iris_briefing", "daily_digest"]
     assert "biweekly_content" in ids  # vrijdag 09:00 hoort erbij
 
 
 def test_al_gedraaide_run_wordt_niet_herhaald():
     _baseline(BOOT - dt.timedelta(days=7))
     _set_last_ok("gsc_sync", S._TZ.localize(dt.datetime(2026, 7, 10, 6, 30, 12)))
+    _set_last_ok("waarheidsaudit", S._TZ.localize(dt.datetime(2026, 7, 10, 6, 40, 3)))
     _set_last_ok("iris_briefing", S._TZ.localize(dt.datetime(2026, 7, 10, 6, 45, 9)))
 
-    assert S._pending_catchups(BOOT) == []
+    ids = _ids(S._pending_catchups(BOOT))
+    assert "gsc_sync" not in ids
+    assert "waarheidsaudit" not in ids
+    assert "iris_briefing" not in ids
 
 
 def test_runs_van_voor_de_nulmeting_tellen_niet_mee():
-    # Nulmeting om 06:40: de GSC-sync (06:30) lag ervóór en telt niet mee;
-    # Iris (06:45) lag erna en wordt wel ingehaald.
-    _baseline(S._TZ.localize(dt.datetime(2026, 7, 10, 6, 40)))
+    # Nulmeting om 06:42: de GSC-sync (06:30) en de waarheidsaudit (06:40) lagen
+    # ervóór en tellen niet mee; Iris (06:45) lag erna en wordt wel ingehaald.
+    _baseline(S._TZ.localize(dt.datetime(2026, 7, 10, 6, 42)))
     assert _ids(S._pending_catchups(BOOT)) == ["iris_briefing"]
+
+
+# ── Inhalen over meerdere dagen (`gap_cost`) ───────────────────────────────
+#
+# Aanleiding: de machine stond 28-31 juli 2026 vier werkdagen uit. De
+# outreach-batch vuurde vier keer niet en de vacaturescan sloeg over; dat werd
+# wél geteld, maar er gebeurde pas iets als iemand de knop "Nu alsnog draaien"
+# aanklikte. Voor werk waarvan de dag niet terugkomt is dat te weinig — en voor
+# een rapport dat per dag veroudert is inhalen juist schadelijk.
+
+ZATERDAG = S._TZ.localize(dt.datetime(2026, 7, 11, 10, 0))  # machine uit sinds do
+
+
+def test_gemiste_dag_van_gisteren_wordt_ingehaald_als_de_dag_niet_terugkomt():
+    """De content-batch draait di/vr 09:00. Boot je zaterdag, dan komt vrijdag
+    niet meer terug — die batch is werk dat anders nooit gebeurt."""
+    _baseline(ZATERDAG - dt.timedelta(days=14))
+    pending = dict((spec.id, fire) for fire, spec in S._pending_catchups(ZATERDAG))
+
+    assert "biweekly_content" in pending
+    assert pending["biweekly_content"].date() == dt.date(2026, 7, 10)  # vrijdag
+
+
+def test_rapport_van_gisteren_blijft_liggen():
+    """Zonder `gap_cost` veroudert de opbrengst per dag: het ochtendrapport van
+    vrijdag op zaterdag mailen maakt de inbox onbetrouwbaar."""
+    _baseline(ZATERDAG - dt.timedelta(days=14))
+    pending = S._pending_catchups(ZATERDAG)
+    # Zaterdag 10:00: het rapport van vandaag (07:00) is gemist en wordt terecht
+    # ingehaald. Wat er níét mag gebeuren is dat van vrijdag alsnog versturen.
+    for fire, spec in pending:
+        if not spec.gap_cost:
+            assert fire.date() == ZATERDAG.date(), f"{spec.id} haalt een oudere dag in"
+
+
+def test_job_die_vandaag_toch_nog_vuurt_wordt_niet_ingehaald():
+    """Boot om 06:57: het laatste vuurmoment van de outreach-batch is gisteren
+    07:15, maar die van vandaag komt over achttien minuten. Inhalen zou twee
+    batches binnen het uur betekenen."""
+    _baseline(BOOT - dt.timedelta(days=7))
+    assert "daily_outreach_batch" not in _ids(S._pending_catchups(BOOT))
+
+
+def test_vier_gemiste_dagen_leveren_een_inhaalrun_op():
+    """Vier keer niet gedraaid is niet vier keer inhalen: dat is vier stapels
+    concepten en vier keer LLM-kosten voor werk dat één keer hoort te gebeuren."""
+    _baseline(ZATERDAG - dt.timedelta(days=30))
+    ids = _ids(S._pending_catchups(ZATERDAG))
+    assert ids.count("biweekly_content") == 1
+    assert ids.count("vacancy_scan") == 1
+
+
+def test_inhalen_stopt_bij_het_terugkijkvenster():
+    """Twee weken is de grens; wie langer weg was, krijgt geen stapel werk van
+    een maand geleden alsnog over zich heen."""
+    lang_weg = ZATERDAG + dt.timedelta(days=40)
+    _baseline(lang_weg - dt.timedelta(days=90))
+    for fire, spec in S._pending_catchups(lang_weg):
+        assert fire >= lang_weg - S._GAP_CATCHUP_WINDOW
+
+
+def test_nieuwe_job_haalt_niets_in_van_voor_zijn_bestaan():
+    """Wat voor een verse installatie geldt, geldt per job: een JobSpec die
+    gisteren is toegevoegd hoort geen week aan gemiste runs op te halen."""
+    _baseline(ZATERDAG - dt.timedelta(days=30))
+    S._record_run("biweekly_content", "ok", None, source="seed")
+    with get_conn() as c:
+        c.execute(
+            "UPDATE scheduler_runs SET first_seen_at = ?, last_run_at = '', last_ok_at = '' "
+            "WHERE job_id = 'biweekly_content'",
+            (ZATERDAG.isoformat(),),
+        )
+    assert "biweekly_content" not in _ids(S._pending_catchups(ZATERDAG))
+
+
+def test_afgekapte_inhaalslag_wordt_gemeld(monkeypatch):
+    """De tijdgrens blijft — onbeperkt wachten houdt de planning van de hele dag
+    op — maar afkappen zonder melden is een taak die stil overgeslagen wordt."""
+    from backend.shared.database import get_conn as _conn
+    with _conn() as c:
+        c.execute("DELETE FROM activity_log WHERE action = 'inhaalslag_afgekapt'")
+    S._catchup_rest.clear()
+    S._catchup_rest.extend(["Outreach-batch", "Finance dagrapport"])
+    S._meld_afgekapte_inhaalslag()
+    with _conn() as c:
+        rij = c.execute(
+            "SELECT detail, status, next_step FROM activity_log "
+            "WHERE action = 'inhaalslag_afgekapt'").fetchone()
+    assert rij is not None
+    assert rij["status"] == "error"          # dit hoort in het Actiecentrum
+    assert "Outreach-batch" in rij["detail"]  # mét wat er dus níét is gebeurd
+    assert rij["next_step"]
+    with _conn() as c:
+        c.execute("DELETE FROM activity_log WHERE action = 'inhaalslag_afgekapt'")
+
+
+def test_zonder_rest_geen_melding():
+    """Een inhaalslag die gewoon klaar was, meldt niets."""
+    from backend.shared.database import get_conn as _conn
+    S._catchup_rest.clear()
+    S._meld_afgekapte_inhaalslag()
+    with _conn() as c:
+        n = c.execute("SELECT COUNT(*) FROM activity_log "
+                      "WHERE action = 'inhaalslag_afgekapt'").fetchone()[0]
+    assert n == 0
 
 
 def test_jobs_met_blijvend_neveneffect_halen_nooit_in():
@@ -374,3 +496,125 @@ def test_echte_fout_blijft_altijd_een_aandachtspunt():
 def test_geslaagde_job_is_geen_aandachtspunt():
     from backend.domains.strategist.service import _job_needs_attention
     assert not _job_needs_attention(_job("ok", dt.timedelta(minutes=1)))
+
+
+# ── Eén uitvoer-poort: dagslot, ontwaken, ketenafhankelijkheid ─────────────
+#
+# Aanleiding (7 aug 2026): de laptop stond in slaapstand en werd om 08:33
+# gewekt. Geen koude start, dus geen beschermde inhaalslag — APScheduler
+# speelde de gemiste vuurmomenten in zijn eigen volgorde af en het
+# ochtendrapport (08:33:49) ging de deur uit vóór Iris' briefing (08:38:49).
+
+def _spec(job_id: str):
+    return S._BY_ID[job_id]
+
+
+def test_dagslot_laat_een_inhaalbare_job_maar_een_keer_slagen():
+    """Twee mechanismen die allebei werken (misfire-herhaling én inhaalslag)
+    zijn anders twee LLM-briefings en twee ochtendrapporten."""
+    _set_last_ok("iris_briefing", S._now())
+    gedraaid = []
+
+    async def nep():
+        gedraaid.append(1)
+
+    import dataclasses
+    spec = dataclasses.replace(_spec("iris_briefing"), func=nep)
+
+    assert asyncio.run(S.run_spec_once(spec, source="test")) is False
+    assert gedraaid == []
+
+
+def test_de_menselijke_knop_negeert_het_dagslot():
+    """Wie bewust op 'Nu alsnog draaien' klikt, krijgt hem — de rem is er tegen
+    mechanismen die elkaar dubbelen, niet tegen Vincent."""
+    import dataclasses
+    _set_last_ok("iris_briefing", S._now())
+    gedraaid = []
+
+    async def nep():
+        gedraaid.append(1)
+
+    spec = dataclasses.replace(_spec("iris_briefing"), func=nep)
+    assert asyncio.run(S.run_spec_once(spec, source="test", force=True)) is True
+    assert gedraaid == [1]
+
+
+def test_job_die_vandaag_nog_niet_slaagde_draait_gewoon():
+    import dataclasses
+    gedraaid = []
+
+    async def nep():
+        gedraaid.append(1)
+
+    spec = dataclasses.replace(_spec("iris_briefing"), func=nep)
+    assert asyncio.run(S.run_spec_once(spec, source="test")) is True
+    assert gedraaid == [1]
+
+
+def test_ochtendrapport_zorgt_zelf_dat_de_briefing_er_is(monkeypatch):
+    """De ketenbreuk van 7 aug 2026, omgedraaid: het rapport wacht op de
+    briefing in plaats van te hopen op de juiste volgorde."""
+    import dataclasses
+    _baseline(S._now() - dt.timedelta(days=7))
+    gedraaid = []
+
+    async def nep_briefing():
+        gedraaid.append("briefing")
+
+    monkeypatch.setitem(S._BY_ID, "iris_briefing",
+                        dataclasses.replace(_spec("iris_briefing"), func=nep_briefing))
+    # Ná 06:45 op een gewone werkdag: de briefing was aan de beurt.
+    monkeypatch.setattr(S, "_now", lambda: S._TZ.localize(dt.datetime(2026, 7, 10, 8, 33)))
+
+    assert asyncio.run(S.ensure_ran_today("iris_briefing")) is True
+    assert gedraaid == ["briefing"]
+
+
+def test_afhankelijkheid_trekt_niets_naar_voren_dat_nog_niet_aan_de_beurt_was(monkeypatch):
+    """Om 05:00 het rapport opvragen hoort geen briefing van 06:45 te starten."""
+    import dataclasses
+    gedraaid = []
+
+    async def nep_briefing():
+        gedraaid.append("briefing")
+
+    monkeypatch.setitem(S._BY_ID, "iris_briefing",
+                        dataclasses.replace(_spec("iris_briefing"), func=nep_briefing))
+    monkeypatch.setattr(S, "_now", lambda: S._TZ.localize(dt.datetime(2026, 7, 10, 5, 0)))
+    monkeypatch.setattr(S, "_last_fire_before", lambda *a, **k: None)
+
+    assert asyncio.run(S.ensure_ran_today("iris_briefing")) is False
+    assert gedraaid == []
+
+
+def test_hartslag_merkt_een_slaapstand_en_start_de_inhaalslag(monkeypatch):
+    gestart = []
+    monkeypatch.setattr(S, "_start_catchup_ronde", lambda: gestart.append(1))
+    monkeypatch.setattr(S, "_catchup_task", None)
+    tijden = iter([
+        S._TZ.localize(dt.datetime(2026, 7, 9, 22, 30)),   # laatste tik voor het dichtklappen
+        S._TZ.localize(dt.datetime(2026, 7, 10, 8, 33)),   # eerste tik na het ontwaken
+    ])
+    monkeypatch.setattr(S, "_now", lambda: next(tijden))
+    S._laatste_hartslag = None
+
+    asyncio.run(S._hartslag())      # eerste tik: alleen vastleggen
+    assert gestart == []
+    asyncio.run(S._hartslag())      # tien uur later: dat is een ontwaken
+    assert gestart == [1]
+
+
+def test_hartslag_zwijgt_bij_een_normale_tik(monkeypatch):
+    gestart = []
+    monkeypatch.setattr(S, "_start_catchup_ronde", lambda: gestart.append(1))
+    tijden = iter([
+        S._TZ.localize(dt.datetime(2026, 7, 10, 8, 33, 0)),
+        S._TZ.localize(dt.datetime(2026, 7, 10, 8, 34, 2)),   # 62 seconden later
+    ])
+    monkeypatch.setattr(S, "_now", lambda: next(tijden))
+    S._laatste_hartslag = None
+
+    asyncio.run(S._hartslag())
+    asyncio.run(S._hartslag())
+    assert gestart == []

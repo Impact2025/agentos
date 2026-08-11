@@ -98,6 +98,16 @@ def outreach_review():
     return service.list_prospects(status="outreach_review")
 
 
+@router.post("/auto-approve")
+async def auto_approve(site_id: str = Query("")):
+    """Goldie-modus: stuur de hele review-wachtrij in één keer verstuurt.
+
+    Alleen effectief als LINKBUILD_AUTO_APPROVE=1 in .env staat; anders rapporteert
+    hij neutraal dat de gate uit staat. Verstuurt niets wat email_ok() afkeurt."""
+    from .outreach import auto_approve_review_queue
+    return await auto_approve_review_queue(site_id=site_id)
+
+
 @router.post("/{prospect_id}/outreach-approve")
 async def approve_outreach(prospect_id: str,
                            body: OutreachApproveRequest = OutreachApproveRequest()):
