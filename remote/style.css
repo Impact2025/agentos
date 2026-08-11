@@ -750,3 +750,54 @@ details[open] > summary .mail-note-caret { transform: rotate(180deg); }
 
 .mail-leeg, .mail-voet { font-size: 12px; color: var(--on-surface-variant); opacity: 0.7; }
 .mail-voet { padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.05); }
+
+/* ── Rituelen (eigen module) ──────────────────────────────────────────────
+ * Bewust géén data-cmd/quick-card hergebruik: die knoppen zetten agents aan
+ * het werk achter een review-gate, dit is een dagboek dat direct opslaat. */
+.rit-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: 9999px; font-size: 11px; font-weight: 600;
+  background: rgba(255, 255, 255, 0.04); color: var(--on-surface-variant);
+  border: 1px solid var(--surface-1-line);
+}
+.rit-badge.is-done { background: rgba(74, 222, 128, 0.12); color: var(--ok); border-color: rgba(74, 222, 128, 0.25); }
+
+.rit-quote {
+  font-size: 13px; font-style: italic; line-height: 1.5; color: var(--on-surface);
+  padding: 10px 12px; border-radius: 10px;
+  background: rgba(142, 213, 255, 0.06); border: 1px solid rgba(142, 213, 255, 0.15);
+}
+
+.rit-btn {
+  padding: 9px 14px; border-radius: 10px; font-size: 13px; font-weight: 600;
+  background: rgba(255, 255, 255, 0.05); color: var(--on-surface);
+  border: 1px solid var(--surface-1-line);
+  transition: background 0.15s, transform 0.1s;
+}
+.rit-btn:hover { background: rgba(255, 255, 255, 0.09); }
+.rit-btn:active { transform: scale(0.98); }
+.rit-btn.is-primair { background: var(--primary, #8ed5ff); color: var(--on-primary, #00354a); border: none; }
+.rit-btn.is-primair:hover { opacity: 0.9; }
+.rit-btn.is-secundair { background: transparent; color: var(--primary, #8ed5ff); border-color: rgba(142, 213, 255, 0.3); }
+.rit-btn:disabled { opacity: 0.5; }
+
+.rit-mini {
+  padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: 600;
+  background: rgba(255, 255, 255, 0.04); color: var(--on-surface-variant);
+  border: 1px solid var(--surface-1-line);
+}
+.rit-mini:hover { color: var(--on-surface); background: rgba(255, 255, 255, 0.08); }
+.rit-mini:active { transform: scale(0.96); }
+
+.rit-goal { padding: 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--surface-1-line); }
+.rit-bar { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.06); margin-top: 6px; overflow: hidden; }
+.rit-bar > div { height: 100%; border-radius: 3px; background: var(--primary, #8ed5ff); transition: width 0.2s var(--ease); }
+
+.rit-label { display: block; font-size: 11px; color: var(--on-surface-variant); margin: 10px 0 4px; }
+.rit-label:first-child { margin-top: 0; }
+.rit-field {
+  width: 100%; background: #020617; border: none; border-radius: 8px;
+  padding: 9px 11px; color: var(--on-surface); font-size: 13px; resize: none;
+}
+.rit-field:focus { outline: none; box-shadow: 0 0 0 2px rgba(142, 213, 255, 0.35); }
+.rit-field::placeholder { color: rgba(167, 177, 185, 0.4); }

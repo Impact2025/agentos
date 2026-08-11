@@ -268,6 +268,86 @@ async def _cmd_context_refresh(payload: Dict) -> Tuple[bool, str]:
     return True, f"Context ververst bij de volgende sync ({', '.join(map(str, keys))})"
 
 
+async def _cmd_ritual_morning_save(payload: Dict) -> Tuple[bool, str]:
+    """Ochtendritueel loggen vanaf de telefoon — intentie, energie, dankbaarheid.
+
+    Merge-not-overwrite: `save_morning` is een upsert op datum die élk veld
+    vervangt (ook de velden die de telefoon niet meestuurt, zoals de
+    focusblokken die je 's ochtends achter je bureau al invulde). Een quick-log
+    onderweg mag dat niet wegvegen — dus vult dit eerst de bestaande rij aan
+    met wat er al lag, vóór het opslaat.
+    """
+    from ..rituals import service as rituals
+    svc = rituals.get_service()
+    date = str(payload.get("date") or "").strip() or rituals._today()
+    existing = svc.get_morning(date) or {}
+    data = {
+        "intentie": payload.get("intentie", existing.get("intentie", "")),
+        "affirmatie": payload.get("affirmatie", existing.get("affirmatie", "")),
+        "dankbaarheid": payload.get("dankbaarheid", existing.get("dankbaarheid", [])),
+        "energyLevel": payload.get("energyLevel", existing.get("energy_level", 7)),
+        "sleepQuality": payload.get("sleepQuality", existing.get("sleep_quality", 7)),
+        "sleepTime": payload.get("sleepTime", existing.get("sleep_time", "")),
+        "wakeTime": payload.get("wakeTime", existing.get("wake_time", "")),
+        "focusBlok1": payload.get("focusBlok1", existing.get("focus_blok1", {})),
+        "focusBlok2": payload.get("focusBlok2", existing.get("focus_blok2", {})),
+    }
+    svc.save_morning(date, data)
+    return True, f"Ochtendritueel vastgelegd voor {date}"
+
+
+async def _cmd_ritual_evening_save(payload: Dict) -> Tuple[bool, str]:
+    """Avondritueel loggen vanaf de telefoon. Zelfde merge-regel als de ochtend."""
+    from ..rituals import service as rituals
+    svc = rituals.get_service()
+    date = str(payload.get("date") or "").strip() or rituals._today()
+    existing = svc.get_evening(date) or {}
+    data = {
+        "whatWentWell": payload.get("whatWentWell", existing.get("what_went_well", "")),
+        "biggestWin": payload.get("biggestWin", existing.get("biggest_win", "")),
+        "whatLearned": payload.get("whatLearned", existing.get("what_learned", "")),
+        "challenges": payload.get("challenges", existing.get("challenges", "")),
+        "energyLevel": payload.get("energyLevel", existing.get("energy_level", 5)),
+        "tomorrowTop3": payload.get("tomorrowTop3", existing.get("tomorrow_top3", [])),
+        "gratitude": payload.get("gratitude", existing.get("gratitude", "")),
+        "adhdScores": payload.get("adhdScores", existing.get("adhd_scores", {})),
+    }
+    svc.save_evening(date, data)
+    return True, f"Avondritueel vastgelegd voor {date}"
+
+
+async def _cmd_ritual_win_add(payload: Dict) -> Tuple[bool, str]:
+    from ..rituals import service as rituals
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        return False, "Geen titel meegegeven"
+    rituals.get_service().add_win({
+        "title": title,
+        "description": payload.get("description", ""),
+        "category": payload.get("category", "personal"),
+        "impactLevel": payload.get("impactLevel", 3),
+    })
+    return True, f"Win vastgelegd: {title}"
+
+
+async def _cmd_ritual_goal_progress(payload: Dict) -> Tuple[bool, str]:
+    from ..rituals import service as rituals
+    gid = payload.get("goal_id")
+    if gid is None:
+        return False, "Geen doel meegegeven"
+    patch: Dict[str, Any] = {}
+    if "progress" in payload:
+        patch["progress"] = payload["progress"]
+    if "completed" in payload:
+        patch["completed"] = payload["completed"]
+    if not patch:
+        return False, "Niets om bij te werken"
+    result = rituals.get_service().update_goal(int(gid), patch)
+    if not result:
+        return False, f"Doel #{gid} niet gevonden"
+    return True, f"Voortgang bijgewerkt: '{result['title']}' → {result['progress']}%"
+
+
 async def _cmd_digest(payload: Dict) -> Tuple[bool, str]:
     from ..action_center import digest
     await digest.run_daily_digest()
@@ -410,6 +490,10 @@ _COMMANDS = {
     "context_refresh": _cmd_context_refresh,
     "digest": _cmd_digest,
     "calendar_add": _cmd_calendar_add,
+    "ritual_morning_save": _cmd_ritual_morning_save,
+    "ritual_evening_save": _cmd_ritual_evening_save,
+    "ritual_win_add": _cmd_ritual_win_add,
+    "ritual_goal_progress": _cmd_ritual_goal_progress,
 }
 
 

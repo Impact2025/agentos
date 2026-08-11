@@ -61,6 +61,31 @@ const COMMANDS = {
   // keyField=text zodat twee verschillende opdrachten niet op dezelfde
   // dedupe-sleutel botsen (elke zin is een eigen besluit).
   calendar_add: { label: 'Afspraak inplannen', fields: ['text'], keyField: 'text' },
+  // Rituelen: eigen dagboek, geen review-gate (zie backend/domains/bridge/actions.py).
+  // `nonce` als keyField — zonder dat blokkeert de partial-unique-index een
+  // tweede log van dezelfde soort vóórdat de eerste gesynct is (bv. twee wins
+  // na elkaar), en dat is precies de faalmodus die `mail_archive` hierboven al
+  // met een keyField oplost.
+  ritual_morning_save: {
+    label: 'Ochtendritueel vastgelegd',
+    fields: ['date', 'intentie', 'affirmatie', 'dankbaarheid', 'energyLevel', 'sleepQuality', 'nonce'],
+    keyField: 'nonce',
+  },
+  ritual_evening_save: {
+    label: 'Avondritueel vastgelegd',
+    fields: ['date', 'whatWentWell', 'biggestWin', 'energyLevel', 'tomorrowTop3', 'gratitude', 'nonce'],
+    keyField: 'nonce',
+  },
+  ritual_win_add: {
+    label: 'Win vastgelegd',
+    fields: ['title', 'description', 'category', 'impactLevel', 'nonce'],
+    keyField: 'nonce',
+  },
+  ritual_goal_progress: {
+    label: 'Doel bijgewerkt',
+    fields: ['goal_id', 'progress', 'completed'],
+    keyField: 'goal_id',
+  },
 };
 
 export default async function handler(req, res) {

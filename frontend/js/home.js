@@ -42,6 +42,14 @@ function renderHome(main) {
       '<summary style="cursor:pointer;font-size:12px;font-weight:600;color:#7c3aed">\u{1F4DA} Kennisbank — voed Iris met onderzoek (GEO, SEO, ...)</summary>' +
       '<div id="iris-knowledge-panel" style="margin-top:8px;font-size:12px"><div style="color:#64748b">Klik om te laden...</div></div></details></div>';
 
+    // ── Rituelen — ochtend/avond, week, wins, doelen (persoonlijk, niet ──
+    // projectgebonden — vandaar hier op de Control Room i.p.v. een tab).
+    if (domainOn('rituals')) {
+      html += '<details class="section-card" style="margin-bottom:16px;padding:10px 16px" ontoggle="if(this.open)loadRituelenSection()">' +
+        '<summary style="cursor:pointer;font-size:13px;font-weight:700;color:#334155">\u{1F31E} Rituelen — ochtend · avond · week · wins · doelen</summary>' +
+        '<div id="rituelen-panel" style="margin-top:10px;font-size:12px"><div style="color:#64748b">Klik om te laden...</div></div></details>';
+    }
+
     // ── Postvak — gesorteerd naar wat een mail van jou nodig heeft ──
     html += '<div class="section-card" style="margin-bottom:16px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
       '<h4 style="font-size:13px;font-weight:700">\u{1F4E8} Postvak — gesorteerd</h4>' +

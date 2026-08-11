@@ -653,6 +653,17 @@ async def gather_context(snapshot: Optional[Dict[str, Any]] = None,
         agenda_proposals = len(agenda_agent.pending_proposals())
     except Exception:
         pass
+    # Persoonlijke rituelen (ochtend/avond/weekstart/weekreview/wins/doelen):
+    # context, geen actiepunt. Iris mag er haar tóón op afstemmen (niet
+    # aandringen op een zware run als de energie al dagen laag staat of het
+    # ochtendritueel een week is overgeslagen) maar dit hoort nooit in het
+    # Actiecentrum — dat is een inbox van beslissingen, dit is geen besluit.
+    rituals_context = None
+    try:
+        from ...domains.rituals import service as rituals_service
+        rituals_context = rituals_service.get_service().get_briefing_context()
+    except Exception:
+        logger.warning("[iris] rituelen-context ophalen mislukt", exc_info=True)
     return {
         "snapshot": snapshot if snapshot is not None else metrics.snapshot(),
         "yesterday_activity": _yesterday_activity(),
@@ -663,6 +674,7 @@ async def gather_context(snapshot: Optional[Dict[str, Any]] = None,
         "weekrapport": _weekrapport_blok(),
         "agenda": agenda_summary,
         "agenda_proposals": agenda_proposals,
+        "rituals": rituals_context,
         "track_record": predictions.track_record(),
         "previous": {
             "date": prev["report_date"],
@@ -773,6 +785,13 @@ def _build_prompt(ctx: Dict[str, Any]) -> str:
                   "voorstellen klaargezet (met reistijd + conflict-check). Die wachten in het "
                   "Actiecentrum op Vincents goedkeuring voordat ze in Google Agenda landen. "
                   "Noem ze kort in je briefing zodat hij ze niet vergeet goed te keuren."]
+    if ctx.get("rituals"):
+        parts += ["", "## Persoonlijk (ochtend/avond-ritueel, week, wins, doelen)",
+                  "Dit is context, geen actiepunt — er hoort geen kaart of aanbeveling uit voort "
+                  "te komen. Gebruik het alleen om je tóón te kalibreren: bij een lage energie of "
+                  "een ritueel dat al dagen wordt overgeslagen, dring niet aan op een extra zware "
+                  "run (content/outreach/seo_refresh); noem het hooguit vriendelijk in je briefing.",
+                  json.dumps(ctx["rituals"], ensure_ascii=False, default=str)]
     parts += [
         "",
         "Geef je dagbriefing als JSON met exact deze sleutels:",

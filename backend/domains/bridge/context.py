@@ -15,11 +15,16 @@ telefoon "niet geconfigureerd" nooit als "alles rustig" toont:
     agenda     vandaag + 7 dagen, vrije blokken, reistijd-waarschuwingen
     analytics  GA4 laatste 7 dagen vs. de 7 daarvoor, bronnen, top-pagina's
     seo        per site: GSC-trend, stijgers en dalers
+    rituals    ochtend/avond-ritueel vandaag, streaks, weekintentie, wins,
+               persoonlijke doelen — puur lokale SQLite-lezing, geen cache nodig
 
 Plus `pulse`: een deterministische "wat gaat goed / wat gaat slecht"-lijst,
 afgeleid uit bovenstaande. Bewust zónder LLM — een oordeel dat wegvalt zodra
 de gateway hapert is geen oordeel, en de chat-Iris krijgt deze lijst juist als
-grondstof mee zodat ze niet hoeft te gokken.
+grondstof mee zodat ze niet hoeft te gokken. `rituals` doet bewust NIET mee in
+de pulse: het is context om Iris' tóón te kalibreren (zie iris/service.py),
+geen actiepunt — een overgeslagen ochtendritueel hoort nooit als "vraagt
+aandacht" op het scherm te staan.
 
 Caching is geen optimalisatie maar een vereiste: `bridge_sync` draait elke drie
 minuten en zou anders per dag honderden GA4-, Graph- en Agenda-calls doen. Per
@@ -535,6 +540,50 @@ def build_seo() -> Dict[str, Any]:
     return {"sites": out}
 
 
+# ── Rituelen ────────────────────────────────────────────────────────────────
+
+def build_rituals() -> Dict[str, Any]:
+    """Persoonlijk: ochtend/avond-ritueel, week, wins, doelen.
+
+    Puur een lokale SQLite-lezing (geen externe API, geen LLM), dus geen TTL-
+    cache nodig — wordt élke sync vers opgebouwd, net als pulse. Dit is de
+    telefoon-versie van `rituals.service.get_briefing_context()` die Iris'
+    lokale briefing al voedt: rijker (ook morning/evening van vandaag, de
+    weekintentie) omdat de telefoon het ook moet kunnen tekenen, niet alleen
+    in een prompt proppen.
+    """
+    try:
+        from ..rituals import service as rituals
+    except Exception:  # noqa: BLE001
+        return {"status": "off", "reason": "Rituelen-domein niet geladen"}
+    try:
+        svc = rituals.get_service()
+        status = svc.get_today_status()
+        morning = svc.get_morning(status["date"])
+        evening = svc.get_evening(status["date"])
+        weekly_start = svc.get_weekly_start(status["year"], status["week_number"])
+        # Avond-dankbaarheid is specifieker (vrije tekst over de hele dag) dan
+        # de 3 ochtend-steekwoorden; de eerste beschikbare wint, nooit allebei
+        # samengeplakt — dat leest als een tekst die niemand zo typte.
+        gratitude = (evening or {}).get("gratitude") or ""
+        if not gratitude and morning:
+            gratitude = "; ".join(g for g in (morning.get("dankbaarheid") or []) if g)
+        return {
+            "today": status,
+            "streaks": svc.get_streaks(),
+            "morning": morning,
+            "evening": evening,
+            "weekly_start": weekly_start,
+            "gratitude_today": gratitude,
+            "energy_today": (evening or morning or {}).get("energy_level"),
+            "recent_wins": svc.get_recent_wins(limit=5),
+            "open_goals": svc.get_open_goals(),
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Bridge-context: rituelen ophalen mislukt: %s", e)
+        return {"status": "error", "error": str(e)[:200]}
+
+
 # ── Pulse: wat gaat goed, wat gaat slecht ───────────────────────────────────
 
 def _pulse_mail(mail: Dict, good: List, bad: List) -> None:
@@ -669,5 +718,15 @@ async def build_context() -> Dict[str, Any]:
         "analytics": await _section("analytics", TTL_ANALYTICS, build_analytics),
         "seo": await _section("seo", TTL_SEO, build_seo),
     }
+    # Geen _section()/cache: rituals is een goedkope lokale lezing en moet
+    # binnen de sync-cyclus zelf al vers zijn als je onderweg net iets logde.
+    try:
+        rituals_sec = build_rituals()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Bridge-context: rituals-sectie mislukt: %s", e)
+        rituals_sec = {"status": "error", "error": str(e)[:200]}
+    rituals_sec.setdefault("status", "ok")
+    rituals_sec["generated_at"] = _iso(_now())
+    sections["rituals"] = rituals_sec
     sections["pulse"] = build_pulse(sections)
     return sections

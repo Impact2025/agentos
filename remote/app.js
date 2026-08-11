@@ -97,7 +97,7 @@
   }
 
   // ── Views + nav ──────────────────────────────────────────────────────────
-  const views = ['login', 'today', 'inbox', 'briefing', 'note', 'system'];
+  const views = ['login', 'today', 'inbox', 'briefing', 'rituals', 'note', 'system'];
 
   // Historie: op Android is de terugknop (of de veeg vanaf de rand) het eerste
   // wat iemand probeert. Zonder deze koppeling sloot dat de hele app af in
@@ -139,6 +139,7 @@
     if (view === 'today') { refresh(myToken).then(() => loadToday(myToken)); }
     if (view === 'inbox') refresh(myToken);
     if (view === 'briefing') loadBriefing(myToken);
+    if (view === 'rituals') loadRituals(myToken);
     if (view === 'note') loadNotes();
     if (view === 'system') loadSystem(myToken);
   }
@@ -150,6 +151,7 @@
     if (active === 'today') { await refresh(); loadToday(); }
     else if (active === 'inbox') refresh();
     else if (active === 'briefing') loadBriefing();
+    else if (active === 'rituals') loadRituals();
     else if (active === 'note') loadNotes();
     else if (active === 'system') loadSystem();
   }
@@ -1178,6 +1180,225 @@
         };
       });
     } catch (e) { /* login afgehandeld */ }
+  }
+
+  // ── Rituelen — eigen module: ochtend/avond, week, wins, doelen ────────────
+  // Los van Vandaag (werk) en los van Cijfers (projecten): dit is Vincents
+  // persoonlijke kant, en Iris leest 'm alleen voor tóón (zie system prompt
+  // in api/iris.js) — hij levert hier dus bewust geen commando-knoppen op.
+  let ritualsCache = null;
+
+  async function loadRituals(token = loadToken) {
+    const el = $('rituals-body');
+    if (token === loadToken && !ritualsCache) el.innerHTML = skeletons(3);
+    try {
+      const data = await api('context');
+      if (token !== loadToken) return;
+      const ctx = data.payload;
+      const r = ctx && ctx.rituals;
+      if (!r) {
+        el.innerHTML = `<div class="glass-panel rounded-xl p-10 text-center">
+          <span class="material-symbols-outlined text-primary text-4xl mb-2">cloud_off</span>
+          <p class="font-body-lg text-body-lg text-on-surface-variant">Nog geen context gesynchroniseerd.<br>Draait AgentOS?</p></div>`;
+        return;
+      }
+      ritualsCache = r;
+      el.innerHTML = ritualsHtml(r);
+      bindRituals(el);
+    } catch (e) {
+      if (e.message === 'login') return;
+      el.innerHTML = `<div class="glass-panel rounded-xl p-6 text-error font-body-md">Kon rituelen niet laden: ${esc(e.message)}</div>`;
+    }
+  }
+
+  function ritualsHtml(r) {
+    if (r.status && r.status !== 'ok') return sectionOff('self_improvement', 'Rituelen', r);
+    const t = r.today || {};
+    const streaks = r.streaks || {};
+    const ws = r.weekly_start || {};
+    const goals = r.open_goals || [];
+    const wins = r.recent_wins || [];
+    const gratitude = (r.gratitude_today || '').trim();
+
+    const rbadge = (done, label) => `<span class="rit-badge${done ? ' is-done' : ''}">${done ? '✓' : '–'} ${esc(label)}</span>`;
+
+    return `
+    <div class="glass-panel rounded-xl p-4 space-y-3">
+      <div class="card-head">
+        <div class="card-head-icon"><span class="material-symbols-outlined">self_improvement</span></div>
+        <div class="min-w-0 flex-1">
+          <p class="card-head-title">Vandaag</p>
+          <p class="card-head-meta">${streaks.morning || 0}d ochtend · ${streaks.evening || 0}d avond op rij</p>
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-1.5">
+        ${rbadge(t.morning_done, 'Ochtend')}${rbadge(t.evening_done, 'Avond')}
+        ${rbadge(t.weekly_start_done, 'Weekstart')}${rbadge(t.weekly_review_done, 'Weekreview')}
+      </div>
+      ${r.energy_today != null ? `<p class="font-body-md text-[12px] text-on-surface-variant">Energie: <span class="text-on-surface">${esc(r.energy_today)}/10</span></p>` : ''}
+      ${gratitude ? `<div class="rit-quote">"${esc(gratitude)}"</div>` : ''}
+      <div class="grid grid-cols-2 gap-2">
+        <button data-rit-open="morning" class="rit-btn">${t.morning_done ? 'Ochtend bekijken' : 'Ochtend loggen'}</button>
+        <button data-rit-open="evening" class="rit-btn">${t.evening_done ? 'Avond bekijken' : 'Avond loggen'}</button>
+      </div>
+    </div>
+
+    ${ws.week_intention || (ws.main_goals || []).length ? `<div class="glass-panel rounded-xl p-4 space-y-2">
+      <p class="font-label-caps text-label-caps text-primary uppercase">Deze week</p>
+      ${ws.week_intention ? `<p class="font-body-lg text-[14px] text-on-surface">${esc(ws.week_intention)}</p>` : ''}
+      ${(ws.main_goals || []).filter(Boolean).length ? `<ul class="space-y-1 mt-1">
+        ${ws.main_goals.filter(Boolean).map((g) => `<li class="font-body-md text-[12px] text-on-surface-variant flex gap-2"><span class="text-primary">•</span>${esc(g)}</li>`).join('')}
+      </ul>` : ''}
+    </div>` : ''}
+
+    <div class="glass-panel rounded-xl p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <p class="font-label-caps text-label-caps text-primary uppercase">Persoonlijke doelen</p>
+      </div>
+      ${goals.length ? `<div class="space-y-3">${goals.slice(0, 6).map((g) => `
+        <div class="rit-goal" data-goal-id="${esc(g.id)}">
+          <div class="flex justify-between gap-2 font-body-md text-[12px]">
+            <span class="text-on-surface truncate">${esc(g.title)}</span>
+            <span class="text-primary shrink-0">${esc(g.progress)}%</span>
+          </div>
+          <div class="rit-bar"><div style="width:${Math.max(0, Math.min(100, g.progress))}%"></div></div>
+          <div class="flex gap-1.5 mt-1.5">
+            <button class="rit-mini" data-goal-step="-10">−10%</button>
+            <button class="rit-mini" data-goal-step="10">+10%</button>
+            ${g.progress < 100 ? `<button class="rit-mini" data-goal-done="1">Afgerond</button>` : ''}
+          </div>
+        </div>`).join('')}</div>`
+        : `<p class="font-body-md text-[12px] text-on-surface-variant">Geen open persoonlijke doelen.</p>`}
+    </div>
+
+    <div class="glass-panel rounded-xl p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <p class="font-label-caps text-label-caps text-primary uppercase">Wins (cookie jar)</p>
+        <button data-rit-open="win" class="rit-btn is-secundair !py-1.5 !px-3 !text-[12px]">+ Win</button>
+      </div>
+      ${wins.length ? `<ul class="space-y-1.5">${wins.map((w) => `
+        <li class="flex justify-between gap-3 font-body-md text-[12px]">
+          <span class="text-on-surface truncate">${esc(w.title)}</span>
+          <span class="text-on-surface-variant shrink-0">${esc(w.date)}</span>
+        </li>`).join('')}</ul>`
+        : `<p class="font-body-md text-[12px] text-on-surface-variant">Nog geen wins gelogd.</p>`}
+    </div>`;
+  }
+
+  function ritInput(id, label, value, opts = {}) {
+    const tag = opts.textarea
+      ? `<textarea id="${id}" rows="${opts.rows || 2}" class="rit-field" placeholder="${esc(opts.placeholder || '')}">${esc(value || '')}</textarea>`
+      : `<input id="${id}" class="rit-field" type="${opts.type || 'text'}" ${opts.min !== undefined ? `min="${opts.min}"` : ''} ${opts.max !== undefined ? `max="${opts.max}"` : ''} value="${esc(value ?? '')}" placeholder="${esc(opts.placeholder || '')}">`;
+    return `<label class="rit-label">${esc(label)}</label>${tag}`;
+  }
+
+  function openMorningSheet(r) {
+    const m = r.morning || {};
+    const dank = (m.dankbaarheid && m.dankbaarheid.length) ? m.dankbaarheid : ['', '', ''];
+    const body = `
+      ${ritInput('rit-m-intentie', 'Intentie voor vandaag', m.intentie, { textarea: true, placeholder: 'Vandaag focus ik op...' })}
+      <label class="rit-label">Energie (1-10)</label>
+      <input id="rit-m-energy" class="rit-field" type="number" min="1" max="10" value="${m.energy_level || 7}">
+      <label class="rit-label">3× dankbaarheid</label>
+      <div class="space-y-2">
+        ${[0, 1, 2].map((i) => `<input id="rit-m-dank${i}" class="rit-field" value="${esc(dank[i] || '')}" placeholder="Ik ben dankbaar voor...">`).join('')}
+      </div>
+      <button id="rit-m-save" class="rit-btn is-primair w-full mt-1">Opslaan</button>`;
+    const card = openSheet('Rituelen', 'Ochtendritueel', body);
+    card.querySelector('#rit-m-save').onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const payload = {
+        nonce: String(Date.now()),
+        intentie: $('rit-m-intentie').value,
+        energyLevel: parseInt($('rit-m-energy').value, 10) || 7,
+        dankbaarheid: [0, 1, 2].map((i) => $(`rit-m-dank${i}`).value).filter(Boolean),
+      };
+      await sendCommand('ritual_morning_save', payload);
+      closeDetail();
+      loadRituals();
+    };
+  }
+
+  function openEveningSheet(r) {
+    const e0 = r.evening || {};
+    const top3 = (e0.tomorrow_top3 && e0.tomorrow_top3.length) ? e0.tomorrow_top3 : ['', '', ''];
+    const body = `
+      ${ritInput('rit-e-goed', 'Wat ging goed vandaag?', e0.what_went_well, { textarea: true })}
+      <label class="rit-label">Energie nu (1-10)</label>
+      <input id="rit-e-energy" class="rit-field" type="number" min="1" max="10" value="${e0.energy_level || 5}">
+      <label class="rit-label">Top 3 voor morgen</label>
+      <div class="space-y-2">
+        ${[0, 1, 2].map((i) => `<input id="rit-e-top${i}" class="rit-field" value="${esc(top3[i] || '')}" placeholder="Prioriteit ${i + 1}">`).join('')}
+      </div>
+      ${ritInput('rit-e-dank', 'Waar ben je dankbaar voor vandaag?', e0.gratitude, { textarea: true })}
+      <button id="rit-e-save" class="rit-btn is-primair w-full mt-1">Opslaan</button>`;
+    const card = openSheet('Rituelen', 'Avondritueel', body);
+    card.querySelector('#rit-e-save').onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const payload = {
+        nonce: String(Date.now()),
+        whatWentWell: $('rit-e-goed').value,
+        energyLevel: parseInt($('rit-e-energy').value, 10) || 5,
+        tomorrowTop3: [0, 1, 2].map((i) => $(`rit-e-top${i}`).value).filter(Boolean),
+        gratitude: $('rit-e-dank').value,
+      };
+      await sendCommand('ritual_evening_save', payload);
+      closeDetail();
+      loadRituals();
+    };
+  }
+
+  function openWinSheet() {
+    const body = `
+      ${ritInput('rit-w-title', 'Titel', '', { placeholder: 'Wat heb je bereikt?' })}
+      ${ritInput('rit-w-desc', 'Omschrijving (optioneel)', '', { textarea: true })}
+      <button id="rit-w-save" class="rit-btn is-primair w-full mt-1">Toevoegen</button>`;
+    const card = openSheet('Rituelen', 'Nieuwe win', body);
+    card.querySelector('#rit-w-save').onclick = async (e) => {
+      const title = $('rit-w-title').value.trim();
+      if (!title) { toast('Titel is verplicht', 'err'); return; }
+      e.currentTarget.disabled = true;
+      await sendCommand('ritual_win_add', {
+        nonce: String(Date.now()), title, description: $('rit-w-desc').value,
+      });
+      closeDetail();
+      loadRituals();
+    };
+  }
+
+  function bindRituals(el) {
+    el.querySelectorAll('[data-rit-open]').forEach((btn) => {
+      btn.onclick = () => {
+        const kind = btn.dataset.ritOpen;
+        if (kind === 'morning') openMorningSheet(ritualsCache || {});
+        else if (kind === 'evening') openEveningSheet(ritualsCache || {});
+        else if (kind === 'win') openWinSheet();
+      };
+    });
+    // Doel-voortgang: optimistisch bijgewerkt in de kaart, echt commando erna.
+    el.querySelectorAll('[data-goal-step]').forEach((btn) => {
+      btn.onclick = async () => {
+        const card = btn.closest('[data-goal-id]');
+        const gid = Number(card.dataset.goalId);
+        const bar = card.querySelector('.rit-bar > div');
+        const cur = Math.max(0, Math.min(100, parseInt(bar.style.width, 10) || 0));
+        const next = Math.max(0, Math.min(100, cur + Number(btn.dataset.goalStep)));
+        bar.style.width = `${next}%`;
+        card.querySelector('.text-primary').textContent = `${next}%`;
+        await sendCommand('ritual_goal_progress', { goal_id: gid, progress: next });
+      };
+    });
+    el.querySelectorAll('[data-goal-done]').forEach((btn) => {
+      btn.onclick = async () => {
+        const card = btn.closest('[data-goal-id]');
+        const gid = Number(card.dataset.goalId);
+        card.style.opacity = '0.4';
+        await sendCommand('ritual_goal_progress', { goal_id: gid, progress: 100, completed: true });
+        setTimeout(() => loadRituals(), 800);
+      };
+    });
   }
 
   // ── Systeem ──────────────────────────────────────────────────────────────

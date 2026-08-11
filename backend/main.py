@@ -66,6 +66,7 @@ from .infinite_context import router as infinite_context_router
 from .domains.strategist import router as strategist_router
 from .domains.seo import optimizer as seo_optimizer
 from .domains.radar import router as radar_router
+from .domains.rituals import router as rituals_router
 from .domains.action_center import router as action_center_router
 from .domains.iris import router as iris_router
 from .domains.researcher import router as researcher_router
@@ -232,6 +233,8 @@ if domain_enabled("goal"):
     app.include_router(goal_router.router)
 if domain_enabled("radar"):
     app.include_router(radar_router.router)
+if domain_enabled("rituals"):
+    app.include_router(rituals_router.router)
 if domain_enabled("iris"):
     app.include_router(iris_router.router)
 if domain_enabled("researcher"):

@@ -41,12 +41,14 @@ const TOOLS = [
       'vrije blokken en agendaproblemen. "mail" = achterstand, urgente berichten, ' +
       'afzenderpatronen. "analytics" = GA4 laatste 7 dagen vs. de 7 daarvoor, bronnen, ' +
       'top-pagina\'s. "seo" = GSC-trend, stijgers en dalers per site. "pulse" = de ' +
-      'deterministische lijst wat goed en slecht gaat. Gebruik dit vóór je iets beweert ' +
-      'over cijfers — gok nooit.',
+      'deterministische lijst wat goed en slecht gaat. "rituals" = zijn ochtend/avond-' +
+      'ritueel van vandaag, streaks, energie, waar hij dankbaar voor is, weekintentie en ' +
+      'persoonlijke doelen met voortgang. Gebruik dit vóór je iets beweert over cijfers ' +
+      'of over hoe zijn dag/week gaat — gok nooit.',
     input_schema: {
       type: 'object',
       properties: {
-        sectie: { type: 'string', enum: ['agenda', 'mail', 'analytics', 'seo', 'pulse'] },
+        sectie: { type: 'string', enum: ['agenda', 'mail', 'analytics', 'seo', 'pulse', 'rituals'] },
       },
       required: ['sectie'],
     },
@@ -126,6 +128,31 @@ const TOOLS = [
         waarom: { type: 'string', description: 'Eén zin: waarom raad je dit aan?' },
       },
       required: ['item_key', 'actie', 'waarom'],
+    },
+  },
+  {
+    name: 'ritueel_vastleggen',
+    description:
+      'Legt een moment uit Vincents persoonlijke ritueel vast — ochtend, avond, of een ' +
+      'win. Dit is GEEN werk-commando en passeert geen review-gate: het is zijn eigen ' +
+      'dagboek, direct opgeslagen. Gebruik dit zodra hij dat in het gesprek noemt (bv. ' +
+      '"ik ben dankbaar voor...", "mijn intentie voor vandaag is...", "grote win: ..."), ' +
+      'niet alleen als hij er expliciet om vraagt. Vul alleen de velden die hij noemde; ' +
+      'verzin nooit een intentie of dankbaarheid die hij niet uitsprak.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        soort: { type: 'string', enum: ['ochtend', 'avond', 'win'] },
+        intentie: { type: 'string', description: 'Alleen bij soort=ochtend.' },
+        dankbaarheid: { type: 'array', items: { type: 'string' }, description: 'Alleen bij soort=ochtend, max 3.' },
+        energie: { type: 'integer', description: '1-10, bij ochtend of avond.' },
+        wat_ging_goed: { type: 'string', description: 'Alleen bij soort=avond.' },
+        top3_morgen: { type: 'array', items: { type: 'string' }, description: 'Alleen bij soort=avond.' },
+        gratitude: { type: 'string', description: 'Dankbaarheid vandaag, alleen bij soort=avond.' },
+        win_titel: { type: 'string', description: 'Verplicht bij soort=win.' },
+        win_beschrijving: { type: 'string', description: 'Alleen bij soort=win.' },
+      },
+      required: ['soort'],
     },
   },
 ];
@@ -250,6 +277,37 @@ async function runTool(name, input, effects, tenant) {
     });
     return `Voorstel klaargezet voor Vincent: ${input.actie} op "${item.title}". ` +
       'Hij ziet nu een knop; jij hebt niets uitgevoerd.';
+  }
+
+  if (name === 'ritueel_vastleggen') {
+    const soort = input.soort;
+    const map = { ochtend: 'ritual_morning_save', avond: 'ritual_evening_save', win: 'ritual_win_add' };
+    const action = map[soort];
+    if (!action) return `Onbekende soort '${soort}' (verwacht ochtend/avond/win).`;
+    const payload = { nonce: String(Date.now()) };
+    if (soort === 'ochtend') {
+      if (input.intentie) payload.intentie = String(input.intentie);
+      if (Array.isArray(input.dankbaarheid)) payload.dankbaarheid = input.dankbaarheid.slice(0, 3).map(String);
+      if (input.energie !== undefined) payload.energyLevel = input.energie;
+    } else if (soort === 'avond') {
+      if (input.wat_ging_goed) payload.whatWentWell = String(input.wat_ging_goed);
+      if (Array.isArray(input.top3_morgen)) payload.tomorrowTop3 = input.top3_morgen.slice(0, 3).map(String);
+      if (input.gratitude) payload.gratitude = String(input.gratitude);
+      if (input.energie !== undefined) payload.energyLevel = input.energie;
+    } else {
+      if (!input.win_titel) return 'Geen titel voor de win meegegeven.';
+      payload.title = String(input.win_titel);
+      if (input.win_beschrijving) payload.description = String(input.win_beschrijving);
+    }
+    const rows = await sql`
+      INSERT INTO decisions (tenant, item_key, item_kind, item_id, action, payload)
+      VALUES (${tenant}, ${`cmd:${action}:${payload.nonce}`}, 'command', ${action}, ${action},
+              ${JSON.stringify(payload)}::jsonb)
+      RETURNING id`;
+    effects.commands.push({ action, label: `Ritueel vastgelegd (${soort})`, queued: rows.length > 0 });
+    return rows.length
+      ? `Vastgelegd. Landt bij de volgende sync in zijn rituelen — geen goedkeuring nodig, het is zijn eigen dagboek.`
+      : 'Kon het niet vastleggen.';
   }
 
   return `Onbekende tool '${name}'.`;
@@ -395,6 +453,17 @@ function systemPrompt(snapshotAt, pulse, openCount) {
     '  volledige zin zodra hij iets in zijn agenda wil (blokken, reserveren, plannen).',
     '  Je zet het als voorstel in het Actiecentrum; het daadwerkelijke boeken in Google',
     '  Agenda blijft zijn tik. Zeg dus NOOIT dat je geen agenda-tool hebt.',
+    '',
+    '## Zijn persoonlijke ritueel',
+    '- `lees_context` met sectie "rituals" laat zien hoe zijn dag/week gaat: ochtend- en',
+    '  avondritueel, streaks, energie, waar hij dankbaar voor is, zijn weekintentie en zijn',
+    '  persoonlijke doelen met voortgang. Gebruik dit om mee te leven, niet om te sturen —',
+    '  het is GEEN actiepunt. Bij lage energie of een dagenlang overgeslagen ritueel dring',
+    '  je nooit aan op een zware werk-run (content/outreach/seo_refresh); noem het hooguit',
+    '  vriendelijk, en pas je tóón aan.',
+    '- Noemt hij zijn intentie, een dankbaarheidsmoment of een win in het gesprek, leg dat',
+    '  dan vast met `ritueel_vastleggen`. Dat is zijn eigen dagboek en passeert geen gate —',
+    '  je hoeft niet te vragen of het mag, alleen zeggen dat je het hebt vastgelegd.',
     '',
     '## Wat je zeker weet',
     `- De snapshot is van ${snapshotAt || 'onbekend'}. Staat de pc uit, dan is dit het`,
