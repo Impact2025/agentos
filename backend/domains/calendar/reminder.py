@@ -2,13 +2,16 @@
 
 Voor elke geboekte afspraak (calendar_proposals.status='booked') waarvan de
 start precies morgen valt, én voor wekelijkse blokken (recur_weekday) waarvan
-de volgende occurrence morgen is, stuurt Iris een korte herinneringsmail via
-de geconfigureerde SMTP (email_service). Elke herinnering wordt één keer
-gestuurd (reminder_sent-vlag), zodat een terugkerend blok per week één mail
-krijgt.
+de volgende occurrence morgen is, stuurt Iris een korte herinneringsmail.
 
-Draait via de scheduler (calendar_reminder-job, elke ochtend). Stil als SMTP
-niet is geconfigureerd (geen side-effects, geen crash).
+Verzending: primair via de gekoppelde Outlook/Office365
+(v.munster@weareimpact.nl, Graph /me/sendMail) — de herinnering komt uit je
+eigen mailbox. Valt terug op SMTP zodra Graph niet beschikbaar is. Elke
+herinnering wordt één keer verstuurd (reminder_sent-vlag), zodat een
+terugkerend blok per week één mail krijgt.
+
+Draait via de scheduler (calendar_reminder-job, elke ochtend). Stil als geen
+van beide verzendkanalen is geconfigureerd (geen side-effects, geen crash).
 """
 import logging
 from datetime import datetime, timedelta, timezone
@@ -87,26 +90,21 @@ def build_message(item: Dict) -> str:
 
 
 def run_reminders() -> int:
-    """Stuur herinneringen voor morgen. Retourneert aantal verstuurde mails."""
+    """Stuur herinneringen voor morgen. Retourneert aantal verstuurde mails.
+
+    Primair via de gekoppelde Outlook/Office365 (v.munster@weareimpact.nl) —
+    de herinnering komt dan uit je eigen mailbox. Valt terug op SMTP zodra
+    Graph niet beschikbaar is. Stil als geen van beide is geconfigureerd.
+    """
     due = collect_due()
     if not due:
         return 0
     sent = 0
-    try:
-        from ...shared import email_service
-        if not email_service.is_configured():
-            log.info("[agenda-reminder] SMTP niet geconfigureerd — geen mail verstuurd")
-            return 0
-    except Exception as e:
-        log.warning("[agenda-reminder] email_service niet beschikbaar: %s", e)
-        return 0
-
     with get_conn() as conn:
         for item in due:
             try:
                 body = build_message(item)
-                ok = email_service.send_report(
-                    f"Herinnering: {item['title']}", body)
+                ok = _send_reminder(item["title"], body)
                 if ok:
                     conn.execute(
                         "UPDATE calendar_proposals SET reminder_sent=1 WHERE id=?",
@@ -116,3 +114,62 @@ def run_reminders() -> int:
             except Exception as e:
                 log.warning("[agenda-reminder] kon herinnering niet sturen: %s", e)
     return sent
+
+
+def _run_async(coro):
+    """Draai een coroutine vanuit sync-code (zelfde patroon als calendar/agent)."""
+    import asyncio
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(1) as ex:
+        return ex.submit(asyncio.run, coro).result()
+
+
+def _own_address() -> str:
+    """Eigen Outlook-adres (v.munster@weareimpact.nl) uit de token-cache."""
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT email FROM outlook_tokens ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
+        return row["email"] if row and row["email"] else ""
+    except Exception:
+        return ""
+
+
+def _send_reminder(title: str, body_md: str) -> bool:
+    """Verstuur de herinnering: Outlook Graph eerst, anders SMTP."""
+    subject = f"Herinnering: {title}"
+    # Outlook Graph (eigen mailbox) — herkbaar, geen aparte SMTP-server.
+    try:
+        from ...domains.outlook import service as outlook
+        if outlook.is_configured():
+            to = _own_address() or (outlook._OWN_EMAIL if hasattr(outlook, "_OWN_EMAIL") else "")
+            if to:
+                res = _run_async(
+                    outlook.send_new_email(to, subject, _md_to_html(body_md)))
+                if res.get("success"):
+                    return True
+                log.warning("[agenda-reminder] Graph zond niet: %s", res.get("error"))
+    except Exception as e:
+        log.warning("[agenda-reminder] Outlook Graph niet beschikbaar: %s", e)
+    # Fallback: SMTP (email_service).
+    try:
+        from ...shared import email_service
+        if email_service.is_configured():
+            return bool(email_service.send_report(subject, body_md))
+    except Exception as e:
+        log.warning("[agenda-reminder] SMTP fallback mislukt: %s", e)
+    return False
+
+
+def _md_to_html(md: str) -> str:
+    """Minimale markdown->HTML voor de Outlook-body (alleen **vet** + \n)."""
+    html = md.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    html = html.replace("\n", "<br>")
+    import re
+    html = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html)
+    return f"<p style='font-family:system-ui,sans-serif;font-size:14px'>{html}</p>"
