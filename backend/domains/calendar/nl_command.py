@@ -46,6 +46,16 @@ _MONTHS = {
 # Stopwoorden die aangeven dat we met een terugkerend blok te maken hebben.
 _RECUR_TOKENS = ("elke", "alle", "ieder", "iedere", "wekelijks", "om de week",
                  "elk", "ieder")
+# "hele dag" / "whole day" / "de hele dag" / "niet beschikbaar" (zonder tijd) →
+# een heel-dagblok (00:00–24:00). Zonder dit word "blok hele dag vrijdag" een
+# 30-minuten-afspraak om 10:00 (de default), terwijl de gebruiker expliciet om
+# een vrije dag vraagt. Gemeten 11 aug 2026: "aanstaande vrijdag niet
+# beschikbaar, blok hele dag" leverde 14 aug 10:00–10:30 op — volkomen fout.
+_WHOLE_DAY_RE = re.compile(
+    r"\b(hele\s*dag|whole\s*day|de\s*hele\s*dag|volledige\s*dag|hele\s*dagen|"
+    r"niet\s*beschikbaar|niet\s*beschikbaar\s*zijn|onbeschikbaar|vrij\s*houden|"
+    r"vrijhouden|vrij\s*dag|vrije\s*dag|vrijedag)\b",
+    re.IGNORECASE)
 # "de komende 6 weken op maandag" / "de volgende 4 weken op vrijdag" is óók een
 # terugkerend blok, maar mét een einde. Zonder dit patroon las de parser alleen
 # "op maandag" en maakte er één losse afspraak van (gemeten 11 aug 2026 op de
@@ -79,6 +89,7 @@ class ParsedCommand:
     raw: str = ""
     error: Optional[str] = None
     conflict: Optional[dict] = None       # {'status','overlaps'} na check
+    all_day: bool = False                 # heel-dagblok (00:00–24:00)
 
 
 def _amsterdam_now() -> datetime:
@@ -347,6 +358,11 @@ def parse_command(text: str) -> ParsedCommand:
         wd = _weekday_from_text(low)
         if wd is not None:
             target_date = _next_weekday(wd, now)
+            # "volgende/komende/next <dag>" = de week dáárna, niet de eerstvolgende.
+            # Zonder dit schoof "volgende vrijdag" naar de vrijdag van deze week
+            # (gemeten 11 aug 2026: werd 14 aug i.p.v. 21 aug).
+            if re.search(r"\b(volgende|komende|next)\b", low):
+                target_date = target_date + timedelta(days=7)
         elif "overmorgen" in low:
             target_date = (now + timedelta(days=2)).replace(hour=0, minute=0, second=0, microsecond=0)
         elif "morgen" in low:
@@ -361,8 +377,18 @@ def parse_command(text: str) -> ParsedCommand:
                   "of 'morgen 14.00').")
 
     base = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Hele-dagblok ALLEEN als er géén expliciete tijd in de zin staat (anders
+    # zou "blok vrijdag van 09.00 tot 17.00" een 24u-event worden). De
+    # whole-day-woorden ("hele dag", "niet beschikbaar", "vrijhouden") plus het
+    # ontbreken van een kloktijd is de enige valide trigger.
+    all_day = bool(_WHOLE_DAY_RE.search(low)) and t is None
     if t:
         base = base.replace(hour=t[0], minute=t[1])
+    elif all_day:
+        # Hele-dagblok: 00:00–24:00. `end` wordt hieronder op 24:00 gezet; de
+        # boekingsketen zet een all_day-event in Google als datum (niet als
+        # tijdslot), dus het verschijnt als échte vrije dag zonder 00:00-label.
+        base = base.replace(hour=0, minute=0)
     else:
         base = base.replace(hour=10, minute=0)  # default 10:00
 
@@ -381,14 +407,47 @@ def parse_command(text: str) -> ParsedCommand:
         # weekdag in het verleden -> schuif een week op
         base = base + timedelta(days=7)
 
-    end = base + timedelta(minutes=duration)
+    # Expliciete eindtijd in een enkele afspraak: "van 09.00 tot 17.00" of
+    # "tussen 09.00 en 17.00". Zonder dit werd de default-duur (30 min) gebruikt
+    # en bleef de genoemde eindtijd ongebruikt (gemeten: 09.00–09.30 i.p.v. 17.00).
+    if t and not all_day and not is_recur:
+        et = re.search(r"(?:tot|t\/m|en)\s*(\d{1,2})[:.](\d{2})", low)
+        if et:
+            eh, em = int(et.group(1)), int(et.group(2))
+            if 0 <= eh <= 23 and 0 <= em <= 59:
+                end_cand = base.replace(hour=eh, minute=em)
+                if end_cand > base:
+                    end = end_cand
+                    duration = int((end_cand - base).total_seconds() // 60)
+    if all_day:
+        # Een hele dag loopt tot 24:00 (exclusief) — dat is de Google-conventie
+        # voor een all-day event (start.date = die datum, end.date = volgende
+        # dag). Bij een expliciete begin-/eindtijd (bv. "blok hele dag van 09.00
+        # tot 17.00") vervalt all_day en rekenen we gewoon op de kloktijden.
+        end = base + timedelta(days=1)
+        duration = 24 * 60
+    else:
+        end = base + timedelta(minutes=duration)
     title = _infer_title(raw, attendees) or "Afspraak"
     title = title[:80]
+    # "niet beschikbaar" / "vrijhouden" / "hele dag" zonder concreet onderwerp ->
+    # leesbare default. _infer_title plukt anders het stopwoord zelf ("Aanstaande",
+    # "Hele", "Volgende") als titel, wat in de agenda onleesbaar is.
+    _wd_hits = ("afspraak", "afspraak:", "aanstaande", "heledag", "hele", "volgende",
+                "vrijdag", "maandag", "dinsdag", "woensdag", "donderdag", "zaterdag",
+                "zondag", "komende", "volgende")
+    if not title or title.lower() in _wd_hits:
+        if all_day:
+            # "voor <onderwerp>" wint als het er staat (bv. "blok hele dag voor vakantie")
+            m = re.search(r"\bvoor\s+([A-Za-z0-9 ]{2,40})$", raw, flags=re.IGNORECASE)
+            title = (m.group(1).strip().capitalize() if m else "Niet beschikbaar")
+        else:
+            title = "Afspraak"
 
     return ParsedCommand(
         kind="single", title=title, start=base, end=end,
         is_remote=is_remote, attendees=attendees,
-        duration_min=duration, raw=raw,
+        duration_min=duration, raw=raw, all_day=all_day,
     )
 
 

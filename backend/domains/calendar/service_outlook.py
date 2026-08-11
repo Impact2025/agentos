@@ -257,6 +257,7 @@ async def block_time(
     end: datetime,
     description: str = "",
     calendar_id: Optional[str] = None,
+    all_day: bool = False,
 ) -> dict:
     """Blokkeer een tijdslot in de eigen Outlook-agenda. `calendar_id` bestaat
     alleen voor signatuur-compatibiliteit met service_google — Outlook-auth is
@@ -268,6 +269,7 @@ async def block_time(
         "start": {"dateTime": start.astimezone(timezone.utc).isoformat(), "timeZone": "UTC"},
         "end": {"dateTime": end.astimezone(timezone.utc).isoformat(), "timeZone": "UTC"},
         "showAs": "busy",
+        "isAllDay": bool(all_day),
     }
     result = await _graph("POST", "/me/events", token, json=body)
     return {

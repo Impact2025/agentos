@@ -751,6 +751,7 @@ def _migrate(conn) -> None:
             ("recur_weekday", "ALTER TABLE calendar_proposals ADD COLUMN recur_weekday INTEGER DEFAULT -1"),
             ("reminder_sent", "ALTER TABLE calendar_proposals ADD COLUMN reminder_sent INTEGER DEFAULT 0"),
             ("recur_count", "ALTER TABLE calendar_proposals ADD COLUMN recur_count INTEGER DEFAULT -1"),
+            ("all_day", "ALTER TABLE calendar_proposals ADD COLUMN all_day INTEGER DEFAULT 0"),
         ):
             if col not in cp_cols:
                 conn.execute(ddl)

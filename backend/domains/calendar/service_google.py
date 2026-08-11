@@ -403,22 +403,37 @@ async def block_time(
     end: datetime,
     description: str = "",
     calendar_id: Optional[str] = None,
+    all_day: bool = False,
 ) -> dict:
-    """Blokkeer een tijdslot in de agenda (transparantie = busy)."""
+    """Blokkeer een tijdslot in de agenda (transparantie = busy).
+
+    `all_day=True` schrijft een heel-dagevent (Google verwacht dan een
+    `date`, niet `dateTime` — anders komt er een event met start 00:00 en
+    eind 00:00, wat Google als 0 minuten leest)."""
     cid = calendar_id or _cal_id()
-    body = {
-        "summary": title,
-        "description": description or "Geblokkeerd via Agent OS",
-        "start": {
-            "dateTime": start.isoformat(),
-            "timeZone": "Europe/Amsterdam",
-        },
-        "end": {
-            "dateTime": end.isoformat(),
-            "timeZone": "Europe/Amsterdam",
-        },
-        "transparency": "opaque",
-    }
+    if all_day:
+        # Google all-day: start.date = dag, end.date = volgende dag.
+        body = {
+            "summary": title,
+            "description": description or "Geblokkeerd via Agent OS",
+            "start": {"date": start.strftime("%Y-%m-%d")},
+            "end": {"date": end.strftime("%Y-%m-%d")},
+            "transparency": "opaque",
+        }
+    else:
+        body = {
+            "summary": title,
+            "description": description or "Geblokkeerd via Agent OS",
+            "start": {
+                "dateTime": start.isoformat(),
+                "timeZone": "Europe/Amsterdam",
+            },
+            "end": {
+                "dateTime": end.isoformat(),
+                "timeZone": "Europe/Amsterdam",
+            },
+            "transparency": "opaque",
+        }
     result = await _api("POST", f"/calendars/{cid}/events", json=body)
     return {
         "success": True,

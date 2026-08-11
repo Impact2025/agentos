@@ -297,6 +297,30 @@ async def _cmd_calendar_add(payload: Dict) -> Tuple[bool, str]:
         return False, cmd.error or "Kon de opdracht niet lezen"
     cmd = nlc.check_conflict(cmd)
 
+    # Dezelfde opdracht twee keer indienen (dubbele tik op de knop, of een
+    # spraakopname die twee keer binnenkomt) mag geen twee voorstellen
+    # opleveren. Gemeten 11 aug 2026: "blok alle dinsdagen tussen 09.00 en
+    # 10.00" werd 2 minuten na elkaar ingediend, allebei goedgekeurd 11
+    # seconden na elkaar — een wekelijkse dinsdagblokkade staat sindsdien
+    # dubbel geboekt. Zelfde doelvenster (start/eind/weekdag) binnen een
+    # kwartier = hetzelfde voorstel, ongeacht kleine tekstverschillen.
+    with get_conn() as conn:
+        dup = conn.execute(
+            "SELECT id, title, status FROM calendar_proposals "
+            "WHERE mailbox_id='iris-command' AND status IN ('pending_review','booked') "
+            "AND created_at >= datetime('now', '-15 minutes') "
+            "AND proposed_start = ? AND proposed_end = ? "
+            "AND COALESCE(recur_weekday, -1) = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (cmd.start.isoformat(), cmd.end.isoformat(),
+             cmd.recur_weekday if cmd.recur_weekday is not None else -1),
+        ).fetchone()
+    if dup:
+        stand = "al geboekt" if dup["status"] == "booked" else "wacht nog op jouw goedkeuring"
+        return False, (f"Dit voorstel bestaat al (#{dup['id']} '{dup['title']}', {stand}). "
+                        "Nog een keer indienen zou hetzelfde moment dubbel boeken — "
+                        "keur het bestaande voorstel goed/af in plaats van dit te herhalen.")
+
     # Bouw rationale (conflict-analyse voor de mens).
     conflict_txt = ""
     if cmd.conflict:
@@ -314,10 +338,14 @@ async def _cmd_calendar_add(payload: Dict) -> Tuple[bool, str]:
 
     recur = cmd.recur_weekday
     recur_count = cmd.recur_count
+    if cmd.all_day:
+        tijdvak = "hele dag (00:00-24:00)"
+    else:
+        tijdvak = f"{cmd.start.strftime('%H:%M')}-{cmd.end.strftime('%H:%M')} ({cmd.duration_min} min)"
     rationale = (
-        f"Spraak/tekst-opdracht: \"{cmd.raw}\". "
-        f"Voorgesteld: {cmd.start.strftime('%a %d-%m %H:%M')}–{cmd.end.strftime('%H:%M')} "
-        f"({cmd.duration_min} min). Locatie: {'Online' if cmd.is_remote else (cmd.location or 'niet genoemd')}. "
+        f'Spraak/tekst-opdracht: "{cmd.raw}". '
+        f"Voorgesteld: {cmd.start.strftime('%a %d-%m')} {tijdvak} "
+        f"Locatie: {'Online' if cmd.is_remote else (cmd.location or 'niet genoemd')}. "
         + (f"Terugkerend: elke {_wd_nl(recur)}" + (f" ({recur_count} keer)" if recur_count else "") + "." if recur is not None else "")
         + (f" {conflict_txt}" if conflict_txt else " Geen conflict gevonden.")
     )
@@ -333,16 +361,17 @@ async def _cmd_calendar_add(payload: Dict) -> Tuple[bool, str]:
                (mailbox_id, inbox_id, from_addr, subject, title,
                 proposed_start, proposed_end, location, is_remote,
                 duration_min, travel_buffer_min, priority, conflict_note,
-                conflict_checked, rationale, recur_weekday, recur_count, status, created_at)
+                conflict_checked, rationale, recur_weekday, recur_count, all_day, status, created_at)
                VALUES ('iris-command', 0, 'iris-command', ?, ?, ?, ?, ?, ?,
-                       ?, 0, 'normal', ?, ?, ?, ?, ?, 'pending_review', datetime('now'))""",
+                       ?, 0, 'normal', ?, ?, ?, ?, ?, ?, 'pending_review', datetime('now'))""",
             (text[:120], title,
              cmd.start.isoformat(), cmd.end.isoformat(),
              "Online" if cmd.is_remote else (cmd.location or ""),
              1 if cmd.is_remote else 0, cmd.duration_min,
              conflict_txt, cmd.conflict.get("status") if cmd.conflict else "ok",
              rationale, recur if recur is not None else -1,
-             recur_count if recur_count is not None else -1),
+             recur_count if recur_count is not None else -1,
+             1 if cmd.all_day else 0),
         )
         pid = cur.lastrowid
 

@@ -21,11 +21,13 @@ Stroom per g detective mail (classify=='appointment'):
 import asyncio
 import logging
 import re
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from ...shared.database import get_conn
+from ...shared.mail_text import strip_quoted_history
 
 log = logging.getLogger(__name__)
 
@@ -65,26 +67,11 @@ def _amsterdam_now() -> datetime:
     return datetime.now(timezone.utc).astimezone(_TZ)
 
 
-# Markeert het begin van een geciteerde eerdere mail (Outlook/Gmail-stijl,
-# NL en EN). Alles ná de eerste treffer is iemand anders' oude bericht, niet
-# de nieuwe tekst — een datum/tijd/locatie daaruit is metadata van de
-# aanhef, niet een afspraakwens. Gemeten 9 aug 2026: een "Sent: ... 20:11:04"
-# regel in een geciteerde header leverde een afspraakvoorstel op om 20:11.
-_QUOTE_MARKERS = re.compile(
-    r"(-{2,}\s*(oorspronkelijk bericht|original message)\s*-{2,}"
-    r"|^\s*van\s*:.{0,120}$"
-    r"|^\s*from\s*:.{0,120}$"
-    r"|^\s*sent\s*:.{0,120}$"
-    r"|^\s*verzonden\s*:.{0,120}$"
-    r"|^\s*op .{0,80} schreef .{0,80}\s*:\s*$"
-    r"|^\s*on .{0,80} wrote\s*:\s*$)",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-
-def _strip_quoted_history(body: str) -> str:
-    m = _QUOTE_MARKERS.search(body)
-    return body[: m.start()] if m else body
+# Citaat-stripping (_QUOTE_MARKERS/_strip_quoted_history) verhuisde naar
+# shared/mail_text.py — mail/classify.py heeft precies dezelfde knip nodig
+# vóórdat het een mail classificeert, en twee losse implementaties van
+# "waar begint het citaat" is hoe dit soort fout twee keer wordt gemaakt.
+_strip_quoted_history = strip_quoted_history
 
 
 def extract_appointment(subject: str, body: str, from_addr: str = "") -> Dict:
@@ -392,6 +379,48 @@ def create_proposal(mailbox_id: str, inbox_id: int, subject: str, from_addr: str
         return None
 
 
+def _lokale_overlap(conn, proposal_id: int, start: datetime, end: datetime,
+                    recur_weekday: Optional[int]) -> List[sqlite3.Row]:
+    """Vergelijk tegen al GEBOEKTE voorstellen in onze eigen tabel — instant en
+    consistent, in tegenstelling tot Google's freeBusy die na een schrijving
+    even kan achterlopen (gemeten 10 aug 2026: twee voorstellen voor exact
+    hetzelfde tijdslot, 8 seconden na elkaar goedgekeurd, allebei geboekt —
+    de live-check bij de tweede vond de eerste kennelijk nog niet).
+
+    Wekelijkse blokken bewaren maar één (proposed_start, proposed_end) — de
+    eerste week — dus die kunnen niet op absolute datum vergeleken worden.
+    Zodra één van de twee kanten terugkerend is, vergelijken we op weekdag +
+    tijdstip-op-de-dag; anders op de absolute datum/tijd zelf."""
+    rows = conn.execute(
+        "SELECT id, title, proposed_start, proposed_end, recur_weekday "
+        "FROM calendar_proposals WHERE status='booked' AND id != ?",
+        (proposal_id,),
+    ).fetchall()
+    cand_wd = recur_weekday if recur_weekday is not None and recur_weekday >= 0 else None
+    conflicts = []
+    for row in rows:
+        rs, re_ = _parse_iso(row["proposed_start"]), _parse_iso(row["proposed_end"])
+        if not rs or not re_:
+            continue
+        try:
+            row_wd = int(row["recur_weekday"]) if row["recur_weekday"] is not None else -1
+        except (TypeError, ValueError):
+            row_wd = -1
+        row_wd = row_wd if row_wd >= 0 else None
+        if cand_wd is not None or row_wd is not None:
+            # Eén (of beide) kant is terugkerend: alleen weekdag + tijdstip
+            # tellen, de kalenderdatum van de opgeslagen rij is toeval (week 1).
+            eff_row_wd = row_wd if row_wd is not None else rs.weekday()
+            eff_cand_wd = cand_wd if cand_wd is not None else start.weekday()
+            if eff_row_wd != eff_cand_wd:
+                continue
+            if rs.time() < end.time() and start.time() < re_.time():
+                conflicts.append(row)
+        elif rs < end and start < re_:
+            conflicts.append(row)
+    return conflicts
+
+
 def approve_proposal(proposal_id: int) -> Dict:
     """Mens keurt goed → schrijf naar Google Calendar via block_time."""
     with get_conn() as conn:
@@ -405,6 +434,18 @@ def approve_proposal(proposal_id: int) -> Dict:
                     "error": f"status is '{r['status']}', niet pending"}
         start = _parse_iso(r["proposed_start"])
         end = _parse_iso(r["proposed_end"])
+        all_day = bool(r["all_day"]) if "all_day" in r.keys() else False
+        if start and end:
+            try:
+                r_wd = int(r["recur_weekday"]) if "recur_weekday" in r.keys() and r["recur_weekday"] is not None else -1
+            except (TypeError, ValueError):
+                r_wd = -1
+            lokale_conflicten = _lokale_overlap(conn, proposal_id, start, end, r_wd)
+            if lokale_conflicten:
+                namen = "; ".join(f"#{c['id']} '{(c['title'] or '')[:40]}'" for c in lokale_conflicten[:2])
+                return {"ok": False, "code": "conflict_found", "blocked": True,
+                        "error": (f"Dit slot overlapt met al geboekte voorstel(len) {namen}. "
+                                  "Wijs dit af (of het andere) — anders staat hetzelfde moment dubbel.")}
         # Nooit boeken op een slot dat we niet tegen de agenda's konden toetsen:
         # dan is "vrij" een aanname, geen feit. Maar de opgeslagen uitslag kan
         # verouderd zijn — een agenda die tijdens het maken onbereikbaar was, kan
@@ -449,17 +490,32 @@ def approve_proposal(proposal_id: int) -> Dict:
                 return {"ok": False, "error": "Google Agenda niet geconfigureerd"}
             # Terugkerend blok? recur_weekday >= 0 markeert een wekelijkse reeks.
             # recur_count telt hoeveel weken (bv. "de komende 6 weken op maandag");
-            # -1/0/1 = één losse afspraak. We boeken elke week apart in plaats van
+            # -1 = open/eindeloos ("elke dinsdag", "blok alle dinsdagen" — géén
+            # expliciet aantal genoemd). We boeken elke week apart in plaats van
             # via één RRULE: dan verschijnt elk blok als een eigen event dat los
             # verplaatst of verwijderd kan worden, en de titel/omschrijving blijft
             # per week identiek.
+            #
+            # Bug tot 11 aug 2026: recur_weekday wordt door de parser ALLEEN gezet
+            # als er expliciet om herhaling is gevraagd (elke/alle/wekelijks, of
+            # 'komende N weken') — een losse afspraak krijgt nooit een
+            # recur_weekday. Toch behandelde deze functie recur_count=-1 als "dus
+            # één losse afspraak", in tegenspraak met nl_command.py's eigen
+            # docstring ("None = open/eindeloos"). Gevolg: "blok alle dinsdagen
+            # tussen 09.00 en 10.00" boekte precies één dinsdag, niet alle
+            # dinsdagen — het tegenovergestelde van de opdracht, zonder foutmelding.
+            # Open/eindeloos krijgt nu dezelfde grens als een expliciet genoemd
+            # aantal (_MAX_RECUR_COUNT weken, ~een half jaar) in plaats van 1.
+            from .nl_command import _MAX_RECUR_COUNT
             recur_wd = r["recur_weekday"] if "recur_weekday" in r.keys() else -1
             recur_n = r["recur_count"] if "recur_count" in r.keys() else -1
             try:
                 recur_n = int(recur_n)
             except (TypeError, ValueError):
                 recur_n = -1
-            if recur_wd is not None and int(recur_wd) >= 0 and recur_n > 1:
+            if recur_wd is not None and int(recur_wd) >= 0 and recur_n <= 0:
+                recur_n = _MAX_RECUR_COUNT
+            if recur_wd is not None and int(recur_wd) >= 0 and recur_n >= 1:
                 links, event_ids, errors = [], [], []
                 for i in range(recur_n):
                     s_i = start + timedelta(days=7 * i)
@@ -467,7 +523,7 @@ def approve_proposal(proposal_id: int) -> Dict:
                     try:
                         res_i = _run_async(cal.block_time(
                             title=r["title"], start=s_i, end=e_i,
-                            description=r["rationale"],
+                            description=r["rationale"], all_day=all_day,
                         ))
                         if res_i.get("event_id"):
                             event_ids.append(res_i.get("event_id"))
@@ -493,7 +549,7 @@ def approve_proposal(proposal_id: int) -> Dict:
             result = _run_async(cal.block_time(
                 title=r["title"],
                 start=start, end=end,
-                description=r["rationale"],
+                description=r["rationale"], all_day=all_day,
             ))
             conn.execute(
                 "UPDATE calendar_proposals SET status='booked', booked_event_id=?, "

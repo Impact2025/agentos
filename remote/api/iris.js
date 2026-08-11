@@ -130,6 +130,39 @@ const TOOLS = [
   },
 ];
 
+// ── NL datum/tijd-resolver voor agenda-bevestigingen ───────────────────
+// Gespiegeld van backend/domains/calendar/nl_command.py zodat de chat nooit een
+// verkeerde datum "gokt": de bevestiging spelt exact wat de parser straks boekt.
+// ("aanstaande vrijdag niet beschikbaar" -> 14 aug, niet 15 aug.) Bij twijfel
+// geeft het '' terug en zegt de tool "ik heb het in het Actiecentrum gezet".
+function resolveNlDate(opdracht) {
+  const NL = ['zondag','maandag','dinsdag','woensdag','donderdag','vrijdag','zaterdag'];
+  const MONTHS = {jan:1,januari:1,feb:2,februari:2,mrt:3,maart:3,apr:4,april:4,mei:5,jun:6,juni:6,jul:7,juli:7,aug:8,augustus:8,sep:9,september:9,okt:10,oktober:10,nov:11,november:11,dec:12,december:12};
+  const now = new Date();
+  const tz = 'Europe/Amsterdam';
+  const strip = (d) => d.toLocaleDateString('nl-NL', { timeZone: tz, weekday:'long', day:'numeric', month:'long' });
+  const low = opdracht.toLowerCase();
+  // expliciete "dd month" of "dd-month"
+  const dm = low.match(/\b(\d{1,2})[\s-]+(jan|feb|mrt|apr|mei|jun|jul|aug|sep|okt|nov|dec|januari|februari|maart|april|mei|juni|juli|augustus|september|oktober|november|december)\b/);
+  if (dm) {
+    const d = parseInt(dm[1],10), m = MONTHS[dm[2].slice(0,3)];
+    let y = now.getFullYear(); if (m < now.getMonth()+1) y += 1;
+    const dt = new Date(y, m-1, d);
+    if (!isNaN(dt)) return strip(dt);
+  }
+  const wd = NL.findIndex((d) => new RegExp('\\b'+d+'(s|en|se)?\\b').test(low));
+  if (wd >= 0) {
+    let diff = (wd - now.getDay() + 7) % 7; if (diff === 0) diff = 7;
+    if (/volgende|komende|next/.test(low)) diff += 7;
+    if (/over\s*\d+\s*we(e|e)k/.test(low)) { const n = parseInt(low.match(/over\s*(\d+)\s*we(e|e)k/)[1],10); diff += 7*n; }
+    const dt = new Date(now); dt.setDate(now.getDate()+diff);
+    return strip(dt);
+  }
+  if (/morgen/.test(low)) { const dt = new Date(now); dt.setDate(now.getDate()+1); return strip(dt); }
+  if (/overmorgen/.test(low)) { const dt = new Date(now); dt.setDate(now.getDate()+2); return strip(dt); }
+  return '';
+}
+
 // ── Tool-uitvoering (leest Neon, schrijft hooguit een commando) ─────────────
 
 async function runTool(name, input, effects, tenant) {
@@ -200,8 +233,10 @@ async function runTool(name, input, effects, tenant) {
               ${JSON.stringify({ text: opdracht })}::jsonb)
       RETURNING id`;
     effects.commands.push({ action: 'calendar_add', label: 'Afspraak in agenda plannen', queued: rows.length > 0 });
+    const wanneer = resolveNlDate(opdracht);
+    const tijd = /\b\d{1,2}[:.]\d{2}\b/.test(opdracht) ? ' op de genoemde tijd' : (/hele\s*dag|whole\s*day|niet\s*beschikbaar|vrije\s*dag/.test(opdracht.toLowerCase()) ? ' als hele dag' : ' (tijd nog in te vullen)');
     return rows.length
-      ? `Agenda-voorstel aangemaakt uit "${opdracht.slice(0, 80)}". AgentOS parseert het en zet het in het Actiecentrum; met één tik van Vincent staat het in Google Agenda (inclusief conflict- en reistijdcheck).`
+      ? `Agenda-voorstel klaargezet${wanneer ? ' voor ' + wanneer + tijd : ''} uit "${opdracht.slice(0, 80)}". Je ziet het in het Actiecentrum; met één tik van Vincent staat het in Google Agenda (conflictcheck inbegrepen).`
       : 'Kon het agenda-commando niet in de rij zetten.';
   }
 
@@ -344,6 +379,10 @@ function systemPrompt(snapshotAt, pulse, openCount) {
     '  de eerstvolgende stap is. Niet opsommen wat hij al ziet.',
     '- Antwoord in het Nederlands, kort en concreet. Geen inleidingen, geen excuses.',
     '  Cijfers met hun vergelijking erbij ("412 sessies, 22% minder dan vorige week").',
+    '- NOOIT een datum of tijdstip uit je hoofd noemen bij agenda-zaken. Roep altijd',
+    '  plan_agenda aan en herhaal exact de datum die de tool teruggeeft in je antwoord.',
+    '  Een verkeerde dag (bv. "vrijdag 15 augustus" terwijl het de 14e is) is erger',
+    '  dan helemaal geen datum noemen.',
     '',
     '## Wat je zelf mag doen',
     '- `start_werk` zet agents aan het werk. Alles wat daaruit komt landt in een',
