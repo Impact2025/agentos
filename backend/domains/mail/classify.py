@@ -92,6 +92,16 @@ APPOINTMENT_STRONG = (
     "zou het lukken", "hebben we", "zullen we bellen", "een belafspraak",
     "een gesprek inplannen", "wanneer kunnen we", "wanneer hebben we",
 )
+# Een afspraak AFZEGGEN gebruikt dezelfde woorden ('afspraak', 'teams',
+# 'kennismaking') als een verzoek — zonder deze check wint 'afspraak' altijd
+# en maakt de agenda-agent een voorstel voor een moment dat juist niet
+# doorgaat (gemeten 9 aug 2026: "we gaan er derhalve van uit dat de Teams
+# afspraak ... geen doorgang kan vinden" leverde een voorstel op mét tijd).
+CANCEL_HINTS = (
+    "geen doorgang", "gaat niet door", "kan niet doorgaan", "afgezegd",
+    "afzeggen", "geannuleerd", "annuleren", "niet meer nodig",
+    "trekken we in", "stellen we uit", "uitgesteld", "helaas geen reactie",
+)
 
 # ── Échte vraag-signalen (menselijke inhoud) ───────────────────────────────
 QUESTION_HINTS = (
@@ -102,10 +112,69 @@ QUESTION_HINTS = (
 )
 
 
+# ── Vendor / geen-potentiële-klant ruis (direct archief) ──────────────────
+# Webshops, marktplaatsen, vacature-platforms, deal-sites en retailer-promo's
+# zijn nooit een potentiële klant. Vincent wil die niet in de inbox zien.
+# Substring-match op het volledige afzenderadres (niet alleen domein) zodat
+# 'info@aliexpress.com' en 'promo@aliexpress-mail.nl' allebei raken.
+VENDOR_NOISE_DOMAINS = (
+    # Webshops / marketplaces / deals
+    "aliexpress", "aliexpress", "amazon", "bol.com", "bolcom", "wish.com",
+    "shein", "temu", "dhgate", "ibood", "zalando", "wehkamp", "coolblue",
+    "coolblue.nl", "mediamarkt", "bcc.nl", "fonq", "beslist", "marktplaats",
+    "shop-canda", "canda", "aboutyou", "otto", "hEMA", "hema.nl", "action",
+    "xelebra", "trendshopping", "shopping", "shop.", "store.",
+    # Vacature / recruitment-platforms (geen klant, wel kandidatenstroom)
+    "indeed", "nationalevacaturebank", "vacaturebank", "vacatures", "jobbird",
+    "werkzoeken", "monsterboard", "stepstone", "randstad", "tempo-team",
+    "tempoteam", "uitzend", "recruit", "jobmail", "kandidaten@",
+    # Social / community digests
+    "facebookmail.com", "friendupdates", "linkedin.com/e/", "skool.com",
+    "community", "digest",
+    # Systeemnotificaties / rapportages (DMARC, CI, monitoring)
+    "dmarcreport", "dmarc", "getsentry.com", "sentry", "neon.tech",
+    "noreply", "no-reply", "mailer-daemon", "postmaster", "bounce",
+    "googlealerts", "googlealerts-noreply",
+)
+# Losse afzenders die wél op naam-mailen maar géén klant zijn (eigen
+# automatische mailingen, nieuwsbrieven van eigen projecten). Worden herkend
+# op (sub)string in het adres.
+VENDOR_NOISE_SENDERS = (
+    "shop-canda.com", "bewaardvoorjou.nl", "weareimpact.nl",
+)
+
+
+def is_inbox_noise(from_addr: str = "", subject: str = "", body: str = "") -> bool:
+    """True als de mail géén potentiële klant is en direct gearchiveerd mag
+    worden: webshops, marktplaatsen, vacature-sites, deal-promo's, social/
+    community digests, systeemrapportages en eigen geautomatiseerde mailingen.
+
+    Whistelisted vertrouwde domeinen (zie _is_trusted) blijven overeind — zo
+    glipt een echte klant die toevallig 'shop' in zijn domein heeft er niet uit.
+    """
+    frm = (from_addr or "").lower()
+    if not frm:
+        return False
+    # Google Alerts / vergelijkbare geautomatiseerde digest van een anderszins
+    # vertrouwd domein (google.com) zijn wél noise — die mogen de trusted-check
+    # niet overschrijven.
+    if "googlealerts" in frm:
+        return True
+    if _is_trusted(_sender_domain(from_addr)):
+        return False
+    if any(d in frm for d in VENDOR_NOISE_DOMAINS if d):
+        return True
+    # Eigen geautomatiseerde mailingen (v.munster@weareimpact.nl ochtendritueel
+    # etc.) — herkenbaar aan de bekende project-domeinen in het adres.
+    if any(s in frm for s in VENDOR_NOISE_SENDERS if s):
+        return True
+    return False
+
+
 def _sender_domain(from_addr: str) -> str:
     if not from_addr:
         return ""
-    m = re.search(r"@([^>)\s]+)", from_addr)
+    m = re.search(r"@([^>)\\s]+)", from_addr)
     return (m.group(1) if m else from_addr).lower()
 
 
@@ -175,6 +244,10 @@ def classify(subject: str, body: str, from_addr: str = "", headers=None) -> str:
     # om de lat hoger te leggen voordat we een ANTWOORD of AFSPRAAK in gang
     # zetten. Een mailing die toevallig een vraagteken bevat is geen vraag.
     marketing = bulk_mod.looks_like_marketing_sender(from_addr)
+
+    # 4b) Afzegging/annulering wint van elk afspraak-signaal — zie CANCEL_HINTS.
+    if _count_words(s + " " + b, CANCEL_HINTS) >= 1:
+        return "other"
 
     # 5) Afspraak-verzoek → agenda-agent. Sterk signaal volstaat alleen;
     #    zwak signaal + dag/tijd-context ook. De zwakke routes gelden niet

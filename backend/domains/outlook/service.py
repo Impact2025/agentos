@@ -6,13 +6,20 @@ Setup in Azure portal:
   1. App registrations → New registration → naam "Agent OS"
   2. Supported account types: "Accounts in any organizational directory and personal Microsoft accounts"
   3. Redirect URI: Public client/native → https://login.microsoftonline.com/common/oauth2/nativeclient
-  4. API permissions (Delegated): Mail.Read, Mail.ReadWrite, Mail.Send, User.Read
+  4. API permissions (Delegated): Mail.Read, Mail.ReadWrite, Mail.Send, User.Read,
+     Calendars.ReadWrite (nodig zodra CALENDAR_BACKEND=outlook — zie
+     domains/calendar/service_outlook.py, dat hergebruikt dezelfde login)
   5. Kopieer Application (client) ID → OUTLOOK_CLIENT_ID in .env
 
 Flow:
   POST /api/outlook/auth/start   → {user_code, verification_uri}
   [User opent URL, voert code in]
   GET  /api/outlook/auth/status  → {status: "done", email, name}
+
+Een token dat vóór het toevoegen van Calendars.ReadWrite is aangevraagd dekt
+die scope niet met terugwerkende kracht — opnieuw device-code inloggen is dan
+nodig (dezelfde `_clear_token_cache`/opnieuw-inloggen-route als elke
+scope-uitbreiding).
 """
 from __future__ import annotations
 
@@ -33,6 +40,7 @@ from ...shared.database import get_conn
 # frontend deze endpoints aanroept (zie bridge/context.py's nieuwe
 # ensure_suggested_replies, die dit pad als eerste echt gebruikt).
 from ...shared import agent_runner as agent_service
+from ..mail.classify import is_inbox_noise
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +50,11 @@ GRAPH_SCOPES = [
     "https://graph.microsoft.com/Mail.ReadWrite",
     "https://graph.microsoft.com/Mail.Send",
     "https://graph.microsoft.com/User.Read",
+    # Alleen nodig voor CALENDAR_BACKEND=outlook, maar altijd aanvragen: één
+    # device-code-login moet zowel mail als agenda dekken (zie service_outlook.py) —
+    # apart per functie inloggen is precies het soort dubbele login-vraag die
+    # een "eigen omgeving"-gevoel ondermijnt.
+    "https://graph.microsoft.com/Calendars.ReadWrite",
 ]
 
 # Module-level auth state
@@ -593,6 +606,50 @@ def list_emails_db(
     return [dict(r) for r in rows]
 
 
+# De triage kent al vijf labels (urgent/actie/wacht/info/archief, zie
+# _TRIAGE_SYSTEM); dit is puur een presentatie-groepering erbovenop, geen
+# nieuwe classificatie. 'archief' (nieuwsbrief/spam/notificatie) hoort hier
+# nooit in — dat is precies het spul dat een gesorteerde inbox moet wegfilteren.
+_SORT_BUCKETS = {
+    "needs_reply": ("urgent", "actie"),
+    "waiting": ("wacht",),
+    "fyi": ("info",),
+}
+
+
+def list_sorted_db(limit_per_bucket: int = 20) -> dict:
+    """Inbox gegroepeerd naar wat hij van jou nodig heeft — needs_reply/fyi/waiting.
+
+    Alleen `folder='inbox'`; 'needs_reply' toont enkel wat nog niet beantwoord
+    is (anders blijft een afgehandelde mail voor altijd in de lijst staan).
+    Ongetrieerde mail (triage_label='') zit in geen van de buckets — die telt
+    apart mee zodat "leeg" niet als "niets te doen" leest terwijl er nog een
+    triage-achterstand is (zelfde les als scheduler_runs: stilte ≠ rust).
+    """
+    with get_conn() as conn:
+        buckets = {}
+        for name, labels in _SORT_BUCKETS.items():
+            placeholders = ",".join("?" for _ in labels)
+            clause = f"folder='inbox' AND triage_label IN ({placeholders})"
+            params = list(labels)
+            if name != "fyi":
+                clause += " AND is_replied=0"
+            rows = conn.execute(
+                f"SELECT id, subject, from_name, from_email, received_at, priority, "
+                f"       triage_label, ai_summary, ai_action, suggested_reply, is_read "
+                f"FROM outlook_emails WHERE {clause} "
+                f"ORDER BY priority DESC, received_at DESC LIMIT ?",
+                params + [limit_per_bucket],
+            ).fetchall()
+            buckets[name] = [dict(r) for r in rows]
+
+        untriaged = conn.execute(
+            "SELECT COUNT(*) c FROM outlook_emails WHERE folder='inbox' AND triage_label=''"
+        ).fetchone()["c"]
+
+    return {**buckets, "untriaged": untriaged}
+
+
 def get_email_db(email_id: str) -> Optional[dict]:
     with get_conn() as conn:
         row = conn.execute(
@@ -638,6 +695,26 @@ async def triage_single(email_id: str) -> AsyncGenerator[dict, None]:
         f"Belang: {email.get('importance','normal')}\n\n"
         f"Inhoud:\n{email['body_preview']}"
     )
+
+    # Snelle, deterministische noise-filter vóór de LLM-triage: webshops,
+    # marktplaatsen, vacature-sites, social/community digests, systeemrapporten
+    # en eigen geautomatiseerde mailingen zijn geen potentiële klant en gaan
+    # direct naar 'archief' (daarmee uit de gesorteerde inbox op de telefoon).
+    # Zo bespaar je de trage LLM-triage én de review-ruis voor spul dat je toch
+    # weg zou klikken. Echte klanten blijven overeind (zie is_inbox_noise).
+    if is_inbox_noise(from_addr=email.get("from_email", ""), subject=email.get("subject", "")):
+        now = datetime.now(timezone.utc).isoformat()
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE outlook_emails SET triage_label=?, priority=0, "
+                "ai_summary=?, triaged_at=? WHERE id=?",
+                ("archief", "Automatisch gearchiveerd: geen potentiële klant "
+                 "(webshop / vacature / digest / systeemmelding).", now, email_id),
+            )
+        yield {"type": "triage_done", "email_id": email_id, "label": "archief",
+               "priority": 0, "summary": "geen potentiële klant", "action": "",
+               "reply_hint": "", "auto_archived": True}
+        return
 
     messages = [{"role": "user", "content": f"Triageer deze e-mail:\n\n{content}"}]
 
