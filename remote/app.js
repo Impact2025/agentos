@@ -1370,11 +1370,27 @@
   // Eén regel in het postvak. `tapbaar` is niet cosmetisch: alleen een mail met
   // conceptantwoord kan iets openen, en dus krijgt alleen díé regel een
   // aanwijzing (chevron + hover). De rest is tekst en ziet er ook zo uit.
+  // Op het volle scherm krijgt elke regel drie handelingen in plaats van één.
+  // Tot 11 aug 2026 kon een mailregel precies één ding: opengaan als er toevallig
+  // een conceptantwoord onder lag. Zeven regels, één werkende tik — de rest was
+  // een lijst om naar te kijken. Archiveren en blokkeren zijn bewust twee
+  // knoppen: "ik ben klaar met dit bericht" en "ik wil deze afzender nooit meer"
+  // zijn verschillende besluiten, en ze op één knop leggen is hoe je per
+  // ongeluk een klant wegfiltert.
   function mailRow(u, { compact = false } = {}) {
     const who = u.from_name || u.from_email || 'Onbekend';
     const tapbaar = !!u.suggested_reply;
     const ongelezen = u.is_read === 0 || u.is_read === false;
     const samenvatting = u.ai_summary || u.ai_action || '';
+    const acties = compact ? '' : `<div class="mail-acties">
+        <button class="mail-actie" data-mail-archive="${esc(u.id)}"
+          aria-label="Archiveren" title="Deze mail hoeft niets van je">
+          <span class="material-symbols-outlined">inbox</span></button>
+        ${u.from_email ? `<button class="mail-actie is-blok" data-mail-block="${esc(u.from_email)}"
+          data-mail-id="${esc(u.id)}" aria-label="Afzender blokkeren"
+          title="Nooit meer van ${esc(u.from_email)}">
+          <span class="material-symbols-outlined">block</span></button>` : ''}
+      </div>`;
     return `<li class="mail-row${tapbaar ? ' is-tapbaar' : ''}"${tapbaar ? ` data-open-mail="${esc(u.id)}" role="button" tabindex="0"` : ''}>
       <span class="mail-avatar" style="background:${avatarTint(who)}">${esc(initials(u.from_name, u.from_email))}</span>
       <div class="min-w-0 flex-1">
@@ -1386,7 +1402,38 @@
         ${!compact && samenvatting ? `<p class="mail-summary">${esc(samenvatting)}</p>` : ''}
       </div>
       ${tapbaar ? `<span class="mail-draft-hint"><span class="material-symbols-outlined">edit_note</span></span>` : ''}
+      ${acties}
     </li>`;
+  }
+
+  // Wat de afzenderregels weghielden, mét de reden en een weg terug. Dit blok
+  // is de tegenprestatie voor strenger filteren: zonder zichtbare uitgefilterde
+  // bak is "0 urgent" niet te onderscheiden van "alles weggegooid", en dat is
+  // een gevaarlijker leugen dan een dubbele mail (zelfde afweging als de
+  // Uitgefilterd-lijst bij de SEO-kansen). Ingeklapt, want het is naslag.
+  function filteredNote(m) {
+    const n = m.filtered_week || 0;
+    const lijst = m.filtered_recent || [];
+    if (!n && !lijst.length) return '';
+    return `<details class="mail-note is-stil">
+      <summary>
+        <span class="material-symbols-outlined">shield</span>
+        <span class="flex-1 min-w-0">${n} weggehouden deze week</span>
+        <span class="material-symbols-outlined mail-note-caret">expand_more</span>
+      </summary>
+      <ul class="mail-blocklist">
+        ${lijst.map((u) => `<li>
+          <div class="min-w-0 flex-1">
+            <p class="mail-blocked-from">${esc(u.from_name || u.from_email || 'Onbekend')}</p>
+            <p class="mail-blocked-sub">${esc(u.subject || '(geen onderwerp)')}</p>
+            <p class="mail-blocked-why">${esc(u.filter_reason || 'afzenderregel')}</p>
+          </div>
+          ${u.from_email ? `<button class="mail-actie" data-mail-allow="${esc(u.from_email)}"
+            aria-label="Toch toelaten" title="Deze afzender voortaan tonen">
+            <span class="material-symbols-outlined">undo</span></button>` : ''}
+        </li>`).join('')}
+      </ul>
+    </details>`;
   }
 
   // Een leeg urgent-blok is niet hetzelfde als een rustige mailbox. Urgentie
@@ -1449,7 +1496,11 @@
     const w = m.week || {};
     const old = m.oldest_open;
     const bits = [`<span><b>${m.backlog}</b> open</span>`];
-    if (w.reply_rate != null) bits.push(`<span><b>${w.reply_rate}%</b> beantwoord (7d)</span>`);
+    // Alleen tonen als het waargenomen ís. `is_replied` kwam tot 11 aug 2026
+    // uitsluitend van onze eigen verstuurknop, dus stond er permanent "0%
+    // beantwoord" — een cijfer dat nooit iets anders kón worden leest als een
+    // oordeel over jou, en dat was het niet.
+    if (w.measured && w.reply_rate != null) bits.push(`<span><b>${w.reply_rate}%</b> beantwoord (7d)</span>`);
     if (old && old.days != null) {
       bits.push(`<span class="${old.days >= 3 ? 'is-warn' : ''}">oudste <b>${old.days}d</b></span>`);
     }
@@ -1492,6 +1543,7 @@
     return `
       ${draftsCta(m)}
       ${triageNote(m)}
+      ${filteredNote(m)}
       ${mailMeta(m)}
       ${secties.length ? secties.map((key) => {
         const rows = sorted[key];
@@ -1523,6 +1575,46 @@
   // Eén bindfunctie voor kaart én scherm: twee plekken die dezelfde regel
   // anders openen is precies hoe ze uit elkaar gaan lopen.
   function bindMailRows(root, viaSheet) {
+    // Blokkeren/archiveren/toelaten lopen via het commando-pad en niet via
+    // `decide`: alleen mail mét conceptantwoord bestaat als besluit-item in de
+    // cloud, en juist de rest van het postvak moest handelingen krijgen.
+    // De regel verdwijnt meteen uit de lijst — de bridge is een pull-model, dus
+    // wachten op bevestiging zou drie minuten "er gebeurt niets" betekenen. Wat
+    // er werkelijk gebeurde komt terug in de volgende sync (en de uitgefilterde
+    // bak eronder), dus dit is optimistisch, niet ongecontroleerd.
+    const weg = (btn) => { const li = btn.closest('li'); if (li) li.remove(); };
+
+    root.querySelectorAll('[data-mail-archive]').forEach((btn) => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        btn.disabled = true;
+        weg(btn);
+        await sendCommand('mail_archive', { email_id: btn.dataset.mailArchive });
+      };
+    });
+    root.querySelectorAll('[data-mail-block]').forEach((btn) => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        const adres = btn.dataset.mailBlock;
+        if (!confirm(`Nooit meer mail van ${adres}?\n\nAlles wat er al ligt van deze afzender wordt opgeruimd. Terugdraaien kan via "weggehouden deze week".`)) return;
+        btn.disabled = true;
+        weg(btn);
+        await sendCommand('mail_rule', {
+          email_id: btn.dataset.mailId, email: adres, scope: 'adres', action: 'spam',
+        });
+      };
+    });
+    root.querySelectorAll('[data-mail-allow]').forEach((btn) => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        btn.disabled = true;
+        weg(btn);
+        await sendCommand('mail_rule', {
+          email: btn.dataset.mailAllow, scope: 'adres', action: 'altijd-tonen',
+        });
+      };
+    });
+
     root.querySelectorAll('[data-open-mail]').forEach((row) => {
       const open = () => {
         const it = items.find((i) => i.dismiss_kind === 'personal_mail'
@@ -1750,6 +1842,53 @@
     });
     el.scrollTop = el.scrollHeight;
   }
+  // ── Agenda-opdracht (spraak/tekst -> calendar_add) ────────────────────────
+  // Vrije zin of ingesproken commando -> parser in de backend -> agenda-voorstel
+  // (review-gate: boeken gebeurt pas als Vincent het in Iris Remote goedkeurt).
+  $('agenda-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const input = $('agenda-input');
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    try {
+      const r = await api('command', 'POST', { action: 'calendar_add', payload: { text } });
+      toast(r.queued ? `Klaargezet: ${r.label || 'Afspraak'}` : 'Stond al in de wachtrij',
+        r.queued ? 'ok' : '', r.queued ? 'event_available' : 'schedule');
+    } catch (err) {
+      if (err.message !== 'login') toast(err.message, 'err');
+    }
+  };
+
+  // Microfoon: gebruik de browser Web Speech API (geen API-key nodig). Bij
+  // geen ondersteuning blijft het veld gewoon typbaar.
+  (function setupMic() {
+    const mic = $('agenda-mic');
+    const icon = $('agenda-mic-icon');
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { mic.title = 'Spraak niet ondersteund in deze browser — typ je opdracht'; return; }
+    const rec = new SR();
+    rec.lang = 'nl-NL';
+    rec.interimResults = false;
+    rec.continuous = false;
+    let listening = false;
+    rec.onresult = (ev) => {
+      const txt = ev.results[0][0].transcript;
+      $('agenda-input').value = txt;
+    };
+    rec.onend = () => { listening = false; icon.textContent = 'mic'; mic.classList.remove('bg-primary'); };
+    rec.onerror = () => { listening = false; icon.textContent = 'mic'; mic.classList.remove('bg-primary'); };
+    mic.onclick = () => {
+      if (listening) { rec.stop(); return; }
+      try {
+        rec.start();
+        listening = true;
+        icon.textContent = 'stop';
+        mic.classList.add('bg-primary');
+      } catch (_) { /* al actief — negeer */ }
+    };
+  })();
+
   $('chat-form').onsubmit = async (e) => {
     e.preventDefault();
     const input = $('chat-input');

@@ -84,6 +84,19 @@
         </div>
       </div>
       <div id="chat-messages" class="space-y-3 max-h-[45dvh] overflow-y-auto custom-scrollbar"></div>
+      <!-- Agenda-opdracht: spraak of tekst -> directe afspraak in je agenda (review-gate) -->
+      <form id="agenda-form" class="flex gap-2 items-center chat-composer border-t border-white/10 pt-2 mt-2">
+        <button type="button" id="agenda-mic" aria-label="Spraakopname"
+          class="shrink-0 w-10 h-10 rounded-full bg-surface-container-lowest text-on-surface-variant
+                 flex items-center justify-center active:scale-95 transition-all">
+          <span class="material-symbols-outlined" id="agenda-mic-icon">mic</span>
+        </button>
+        <input id="agenda-input" placeholder="Spraak of typ: 'dinsdag 18 aug 12.15 tandarts'…" autocomplete="off"/>
+        <button type="submit" id="agenda-send" aria-label="Agenda-opdracht"
+          class="shrink-0 w-10 h-10 rounded-full bg-primary text-on-primary flex items-center justify-center active:scale-95 transition-all">
+          <span class="material-symbols-outlined">event_available</span>
+        </button>
+      </form>
       <form id="chat-form" class="flex gap-2 items-center chat-composer">
         <input id="chat-input" placeholder="Vraag me iets, of zeg wat ik moet doen…" autocomplete="off"/>
         <button type="submit" id="chat-send" aria-label="Versturen">

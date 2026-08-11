@@ -33,6 +33,12 @@ const ALLOWED = {
 // blijft de fout bij de gebruiker in plaats van drie minuten later in een
 // foutkaart. `fields` bepaalt welke payload-velden overleven; `label` is wat
 // de UI en de chat terugmelden.
+//
+// `keyField` is er voor commando's die ergens ópslaan: twee keer "blokkeer deze
+// afzender" op twee verschillende mails zijn twee besluiten, geen dubbele tik.
+// Zonder dit veld deelt elk commando van dezelfde soort één dedupe-sleutel
+// (`cmd:<action>`) en verdwijnt de tweede stilzwijgend — precies de faalmodus
+// die dit systeem elders 'stil verdwijnen' noemt.
 const COMMANDS = {
   content_run: { label: 'Artikelen schrijven → Wachtrij', fields: ['site', 'count'] },
   seo_refresh: { label: 'Wegzakkende pagina’s verrijken → Wachtrij', fields: ['site', 'count'] },
@@ -40,10 +46,20 @@ const COMMANDS = {
   lead_search: { label: 'Nieuwe leads zoeken', fields: ['queries', 'template'] },
   linkbuilding_run: { label: 'Linkbuilding-concepten klaarzetten', fields: ['count'] },
   mail_sync: { label: 'Mail ophalen en triëren', fields: ['triage'] },
+  mail_rule: {
+    label: 'Afzender blokkeren', fields: ['email_id', 'email', 'scope', 'action'],
+    keyField: 'email',
+  },
+  mail_archive: { label: 'Mail archiveren', fields: ['email_id'], keyField: 'email_id' },
   helpdesk_run: { label: 'Helpdesk-concepten schrijven', fields: [] },
   iris_briefing: { label: 'Iris opnieuw laten analyseren', fields: [] },
   context_refresh: { label: 'Cijfers verversen', fields: ['sections'] },
   digest: { label: 'Ochtendrapport draaien', fields: [] },
+  // Agenda-opdracht: vrije tekst/spraak -> afspraak-voorstel (review-gate).
+  // 'text' bevat de volledige zin; de backend parsed datum/tijd/wie.
+  // keyField=text zodat twee verschillende opdrachten niet op dezelfde
+  // dedupe-sleutel botsen (elke zin is een eigen besluit).
+  calendar_add: { label: 'Afspraak inplannen', fields: ['text'], keyField: 'text' },
 };
 
 export default async function handler(req, res) {
@@ -174,7 +190,11 @@ async function command(req, res, tenant) {
   }
   // Eén pending commando van dezelfde soort tegelijk (partial unique index op
   // tenant+item_key): twee keer tikken op "Schrijf artikelen" moet één run geven.
-  const key = `cmd:${action}`;
+  // Commando's mét `keyField` richten zich op iets concreets (déze afzender,
+  // déze mail) — die krijgen hun doelwit in de sleutel, anders is de tweede
+  // blokkade een stille no-op.
+  const doelwit = spec.keyField ? String(clean[spec.keyField] || '').slice(0, 120) : '';
+  const key = doelwit ? `cmd:${action}:${doelwit}` : `cmd:${action}`;
   const rows = await sql`
     INSERT INTO decisions (tenant, item_key, item_kind, item_id, action, payload)
     VALUES (${tenant}, ${key}, 'command', ${action}, ${action}, ${JSON.stringify(clean)}::jsonb)
