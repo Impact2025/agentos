@@ -1701,16 +1701,45 @@
         e.target.disabled = true;
         await sendCommand('onboarding_step4', { site_id: site.site_id, preset: chosen }, 'Werk-grenzen');
         await sendCommand('onboarding_complete', { site_id: site.site_id }, 'Onboarding afgerond');
-        const host2 = $('onboarding-wizard');
-        host2.innerHTML = `<div class="glass-panel rounded-xl p-8 text-center">
-          <span class="material-symbols-outlined text-primary text-5xl mb-3">check_circle</span>
-          <h2 class="font-display-lg-mobile text-display-lg-mobile mb-2">${esc(site.project)} is bijna onboard.</h2>
-          <p class="font-body-md text-body-md text-on-surface-variant mb-6">De laatste stappen worden binnen enkele minuten verwerkt zodra AgentOS synchroniseert.</p>
-          <button id="onb-to-system" class="bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm">Naar Systeem</button>
-        </div>`;
-        $('onb-to-system').onclick = () => show('system');
+        renderOnboardingTour($('onboarding-wizard'), site);
       };
     }
+  }
+
+  // Welkomsttour: vijf schermen met de eigen data van de klant. Draait
+  // volledig op wat al lokaal in de browser staat (site.steps is bij elke
+  // stap optimistisch bijgewerkt) — geen wachten op een sync nodig, in
+  // tegenstelling tot "is dit al écht toegepast?" (dat duurt wél een paar
+  // minuten, zie het bevestigingsschermpje in stap 3 hierboven).
+  function renderOnboardingTour(host, site) {
+    const profile = (site.steps['1_bedrijfsdoel'].profile || '').trim();
+    const screens = [
+      { n: 1, h: `Iris weet nu wat ${esc(site.project)} doet.`,
+        p: `"${esc(profile.slice(0, 220))}${profile.length > 220 ? '…' : ''}"` },
+      { n: 2, h: 'De Control Room',
+        p: 'Elk project heeft daar een kaart: content, SEO-score, doelen en Iris\' laatste oordeel in één oogopslag. Zodra Iris begint te werken, vult die kaart zich vanzelf.' },
+      { n: 3, h: 'Het Actiecentrum',
+        p: 'De inbox van alles wat op jóu wacht — een concept klaar om te versturen, een artikel om goed te keuren. Niets verdwijnt hier stil, en het staat ook hier in Iris Remote onder Vandaag/Inbox.' },
+      { n: 4, h: 'Iris publiceert nooit zelf',
+        p: 'Alles wat ze schrijft of voorstelt landt in de Wachtrij en wacht op jouw klik. Pas na jouw goedkeuring gaat er iets live of de deur uit.' },
+      { n: 5, h: 'Morgen om 06:45 komt haar eerste briefing',
+        p: `Daarin staan haar cijfers, wat ze van plan is, en — zodra er genoeg te melden is — haar advies voor ${esc(site.project)}.` },
+    ];
+    host.innerHTML = `
+      <p class="font-label-caps text-label-caps text-primary mb-1">KLAAR</p>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile mb-6">${esc(site.project)} is onboard.</h2>
+      <div class="space-y-4 mb-6">
+        ${screens.map((s) => `
+          <div class="glass-panel rounded-xl p-4 flex gap-3">
+            <div class="w-7 h-7 shrink-0 rounded-full bg-primary/15 text-primary flex items-center justify-center font-headline-sm">${s.n}</div>
+            <div class="min-w-0">
+              <p class="font-headline-sm text-headline-sm mb-1">${s.h}</p>
+              <p class="font-body-md text-body-md text-on-surface-variant">${s.p}</p>
+            </div>
+          </div>`).join('')}
+      </div>
+      <button id="onb-to-system" class="w-full bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm">Naar Systeem</button>`;
+    $('onb-to-system').onclick = () => show('system');
   }
 
   function renderOnboardingDone(host, site) {
