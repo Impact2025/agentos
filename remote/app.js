@@ -208,6 +208,10 @@
     } catch (e) { if (e.message !== 'login') toast(e.message, 'err'); }
   };
 
+  // "Hi 👋"-knop in de chat-header: korte, persoonlijke teruggroet van Iris
+  // (lokaal gescript — geen backend-call nodig, het is een begroeting).
+  $('chat-hi').onclick = () => { irisHi(); };
+
   // ── Realtime polling ──────────────────────────────────────────────────────
   async function refreshRaw() {
     try {
@@ -1682,16 +1686,40 @@
   }
 
   // Iris opent het gesprek: bij de eerste keer dat Vandaag laadt, plaatst ze
-  // een welkomst-bubble (met de live besluit-count uit #today-sub). Zo voelt
-  // ze aanwezig vóórdat je iets typt — niet een leeg invoerveld.
+  // een welkomst-bubble (met de live besluit-count + top-3 urgente besluiten)
+  // zodat ze aanwezig voelt vóórdat je iets typt — niet een leeg invoerveld.
   let irisGreeted = false;
+  function topDecisions(n = 3) {
+    return items
+      .filter((it) => !it.decision_status || it.decision_status === 'failed')
+      .sort((a, b) => rankOf(a) - rankOf(b))
+      .slice(0, n)
+      .map((it) => it.title)
+      .filter(Boolean);
+  }
   function irisGreet() {
     if (irisGreeted) return;
     irisGreeted = true;
     const sub = ($('today-sub') && $('today-sub').textContent || '').trim();
-    const line = sub ? `${sub}. Waar wil je mee beginnen — of zal ik de belangrijkste even voor je op een rij zetten?`
-                     : 'Ik ben er. Waar wil je mee beginnen?';
+    const tops = topDecisions(3);
+    let line = sub ? `${sub}.` : 'Ik ben er.';
+    if (tops.length) {
+      line += ' De belangrijkste nu: ' + tops.map((t) => `“${t}”`).join(', ') + '.';
+    }
+    line += ' Waar wil je mee beginnen — of zal ik er een voor je afhandelen?';
     chatHistory.push({ role: 'assistant', content: line, greeting: true });
+    renderChat();
+  }
+  // Persoonlijke teruggroet op de "Hi 👋"-knop: kort, warm, met de stand van
+  // de dag — alsof Iris opkijkt als je binnenkomt.
+  function irisHi() {
+    if (chatHistory.some((m) => m.hi)) return;
+    chatHistory.push({ role: 'user', content: 'Hi 👋' });
+    const open = items.filter((it) => !it.decision_status || it.decision_status === 'failed').length;
+    const line = open
+      ? `Hoi Vincent 👋 Fijn dat je er bent. ${open} besluit(en) wachten, ik hou ze voor je vast — zeg het als ik er eentje voor je moet uitvoeren.`
+      : `Hoi Vincent 👋 Fijn dat je er bent. Niets wacht op je — rustig ritje vandaag.`;
+    chatHistory.push({ role: 'assistant', content: line, hi: true });
     renderChat();
   }
 
