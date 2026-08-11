@@ -1686,16 +1686,15 @@
   }
 
   // Iris opent het gesprek: bij de eerste keer dat Vandaag laadt, plaatst ze
-  // een welkomst-bubble (met de live besluit-count + top-3 urgente besluiten)
-  // zodat ze aanwezig voelt vóórdat je iets typt — niet een leeg invoerveld.
+  // een welkomst-bubble (met de live besluit-count + de top-3 urgente
+  // besluiten als klikbare bullets) zodat ze aanwezig voelt vóórdat je iets
+  // typt — niet een leeg invoerveld.
   let irisGreeted = false;
   function topDecisions(n = 3) {
     return items
       .filter((it) => !it.decision_status || it.decision_status === 'failed')
       .sort((a, b) => rankOf(a) - rankOf(b))
-      .slice(0, n)
-      .map((it) => it.title)
-      .filter(Boolean);
+      .slice(0, n);
   }
   function irisGreet() {
     if (irisGreeted) return;
@@ -1703,11 +1702,23 @@
     const sub = ($('today-sub') && $('today-sub').textContent || '').trim();
     const tops = topDecisions(3);
     let line = sub ? `${sub}.` : 'Ik ben er.';
-    if (tops.length) {
-      line += ' De belangrijkste nu: ' + tops.map((t) => `“${t}”`).join(', ') + '.';
-    }
     line += ' Waar wil je mee beginnen — of zal ik er een voor je afhandelen?';
-    chatHistory.push({ role: 'assistant', content: line, greeting: true });
+    // De top-3 als klikbare bullets: elke tik opent de detailweergave
+    // (net als in de Besluiten-lijst). We bewaren de index in items[] zodat
+    // de handler openDetail(items[idx]) kan aanroepen.
+    let bullets = '';
+    if (tops.length) {
+      bullets = '<ul class="iris-greet-list">';
+      tops.forEach((it) => {
+        const idx = items.indexOf(it);
+        const tag = it.project ? `${esc(it.project)} · ` : '';
+        bullets += `<li><button type="button" class="iris-greet-item" data-greet-idx="${idx}">`
+          + `<span class="material-symbols-outlined">chevron_right</span>`
+          + `<span class="iris-greet-txt">${tag}${esc(it.title)}</span></button></li>`;
+      });
+      bullets += '</ul>';
+    }
+    chatHistory.push({ role: 'assistant', content: line, greeting: true, greetHtml: bullets });
     renderChat();
   }
   // Persoonlijke teruggroet op de "Hi 👋"-knop: kort, warm, met de stand van
@@ -1879,7 +1890,7 @@
     chatHistory.forEach((m, i) => { m.idx = i; });
     el.innerHTML = chatHistory.map((m) => m.role === 'user'
       ? `<div class="flex justify-end fade-up"><div class="chat-msg me">${esc(m.content)}</div></div>`
-      : `<div class="flex justify-start fade-up"><div class="chat-msg iris${m.greeting ? ' is-greeting' : ''}">${mdLite(m.content)}${effectsHtml(m)}</div></div>`).join('')
+      : `<div class="flex justify-start fade-up"><div class="chat-msg iris${m.greeting ? ' is-greeting' : ''}">${mdLite(m.content)}${m.greetHtml || ''}${effectsHtml(m)}</div></div>`).join('')
       // Levendige typing-indicator i.p.v. een statische "IRIS DENKT NA…" —
       // drie stippen die stuiteren, zodat je ziet dat Iris écht aan het
       // schrijven is (niet een vast label dat altijd aanstaat).
@@ -1898,6 +1909,13 @@
         } catch (e) {
           if (e.message !== 'login') { toast(e.message, 'err'); btn.disabled = false; }
         }
+      };
+    });
+    // Klikbare bullets in Iris' openingsgroet → open de detailweergave.
+    el.querySelectorAll('[data-greet-idx]').forEach((btn) => {
+      btn.onclick = () => {
+        const it = items[Number(btn.dataset.greetIdx)];
+        if (it) openDetail(it);
       };
     });
     el.scrollTop = el.scrollHeight;
