@@ -144,30 +144,25 @@
   <section id="view-note" hidden class="space-y-stack-lg">
     <div class="space-y-stack-sm">
       <h2 class="font-display-lg-mobile text-display-lg-mobile">Notities</h2>
-      <p class="font-body-md text-body-md text-on-surface-variant">Vang vluchtige ideeën op. Elke notitie landt bij de volgende sync in je vault.</p>
+      <p class="font-body-md text-body-md text-on-surface-variant">Vang vluchtige ideeën op — ze landen als markdown in je vault, zodra AgentOS weer synct.</p>
     </div>
-    <div class="glass-panel rounded-xl p-4 flex flex-col gap-4">
-      <label class="font-label-caps text-label-caps text-on-surface-variant">Nieuwe instructie of gedachte</label>
-      <textarea id="note-text" rows="5" placeholder="Typ hier je 'thought-dump'..."
-        class="w-full bg-[#020617] border-none rounded-lg p-4 text-on-surface font-body-lg focus:ring-2 focus:ring-primary/50 placeholder:text-on-surface-variant/40"></textarea>
+    <div class="glass-panel rounded-xl p-4 flex flex-col gap-3">
+      <textarea id="note-text" rows="3" placeholder="Typ hier je 'thought-dump'..."
+        class="w-full resize-none bg-[#020617] border-none rounded-lg p-4 text-on-surface font-body-lg focus:ring-2 focus:ring-primary/50 placeholder:text-on-surface-variant/40 transition-[height]"></textarea>
       <div class="flex justify-between items-center">
         <span class="font-label-caps text-label-caps text-on-surface-variant/60" id="charCount">0 tekens</span>
         <button id="saveBtn"
-          class="bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm flex items-center gap-2 hover:opacity-90 active:scale-95 transition-all">
+          class="bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm flex items-center gap-2 hover:opacity-90 active:scale-95 transition-all disabled:opacity-50">
           <span class="material-symbols-outlined">cloud_upload</span> Opslaan voor sync
         </button>
       </div>
     </div>
-    <div class="bg-primary-container/10 border border-primary/20 rounded-lg p-4 flex items-start gap-3">
-      <span class="material-symbols-outlined text-primary mt-0.5">info</span>
-      <p class="font-body-md text-body-md text-primary">Wordt ingeladen door <span class="font-bold">AgentOS</span> bij de volgende sync.</p>
-    </div>
     <div>
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="font-headline-sm text-headline-sm">Recente Logs</h3>
-        <span class="font-label-caps text-label-caps text-on-surface-variant">Tabel: notes</span>
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-headline-sm text-headline-sm">Recent vastgelegd</h3>
       </div>
-      <div id="notes-list" class="space-y-4"></div>
+      <div id="note-sync-hint" class="mb-4"></div>
+      <div id="notes-list" class="space-y-3"></div>
     </div>
   </section>
 

@@ -109,6 +109,25 @@ body.sheet-open {
   border-left: 2px solid rgba(251, 191, 36, 0.45);
   padding-left: 10px;
 }
+
+/* ── Notitie-status chip ──────────────────────────────────────────────────
+ * Twee toestanden, elk met eigen kleur én icoon — tekst alleen ("PENDING")
+ * is op een klein scherm makkelijk te missen naast een tijdstempel. */
+.note-status {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 3px 8px; border-radius: 999px;
+  white-space: nowrap;
+}
+.note-status.is-pending { color: var(--iris-blue); background: rgba(142, 213, 255, 0.1); }
+.note-status.is-synced { color: var(--ok); background: rgba(74, 222, 128, 0.1); }
+
+/* Generieke kaart-verdwijn-animatie (notitie verwijderen). */
+.glass-panel.leaving, .glass-card.leaving {
+  animation: cardLeave 0.2s var(--ease) forwards;
+}
+@keyframes cardLeave { to { opacity: 0; transform: scale(0.97) translateY(-4px); } }
 @keyframes pulse-glow {
   0% { box-shadow: 0 0 0 0 rgba(142, 213, 255, 0.4); }
   70% { box-shadow: 0 0 0 10px rgba(142, 213, 255, 0); }

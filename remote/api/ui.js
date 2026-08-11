@@ -8,6 +8,7 @@
 //   GET  /api/ui?op=briefing  → laatste briefing (Iris + funnel)
 //   POST /api/ui?op=decide    {item_key, action, payload}
 //   POST /api/ui?op=note      {text}
+//   POST /api/ui?op=note-delete {id}  → alleen nog-niet-gesyncte notities
 import {
   sql, json, tenantFromHost, checkPassword, tenantConfigError, startSession, clearCookie,
   requireSession, endSession, endAllSessions, listSessions,
@@ -113,6 +114,7 @@ export default async function handler(req, res) {
     if (op === 'decide' && req.method === 'POST') return await decide(req, res, sessionTenant);
     if (op === 'command' && req.method === 'POST') return await command(req, res, sessionTenant);
     if (op === 'note' && req.method === 'POST') return await note(req, res, sessionTenant);
+    if (op === 'note-delete' && req.method === 'POST') return await noteDelete(req, res, sessionTenant);
     if (op === 'notes' && req.method === 'GET') return await notesList(res, sessionTenant);
     if (op === 'outbox' && req.method === 'GET') return await outbox(res, sessionTenant);
     if (op === 'vapid' && req.method === 'GET') {
@@ -242,4 +244,16 @@ async function note(req, res, tenant) {
   if (!text) return json(res, 400, { error: 'Lege notitie' });
   await sql`INSERT INTO notes (tenant, text) VALUES (${tenant}, ${text})`;
   return json(res, 200, { ok: true });
+}
+
+// Alleen 'pending' is te verwijderen: eenmaal 'synced' staat de tekst al als
+// markdown in de vault, en de rij hier is dan het enige bewijs dát dat
+// gebeurde — die laten we met rust, ook al is hij verder nutteloos.
+async function noteDelete(req, res, tenant) {
+  const id = Number((req.body || {}).id);
+  if (!id) return json(res, 400, { error: 'Ontbrekend notitie-id' });
+  const rows = await sql`
+    DELETE FROM notes WHERE tenant = ${tenant} AND id = ${id} AND status = 'pending'
+    RETURNING id`;
+  return json(res, 200, { ok: true, deleted: rows.length > 0 });
 }

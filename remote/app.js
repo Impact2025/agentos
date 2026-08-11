@@ -5,6 +5,7 @@
   let items = [];
   let polling = false;
   let loadToken = 0; // breekt verouderde async loads bij tab-wissel
+  let lastPushAt = null; // laatste geslaagde bridge-sync — ook het notitie-ophaalmoment
 
   // ── API ──────────────────────────────────────────────────────────────────
   async function api(op, method = 'GET', body = null) {
@@ -57,6 +58,7 @@
 
   // ── Sync-status pill (header) ─────────────────────────────────────────────
   function setSyncPill(lastPush) {
+    lastPushAt = lastPush;
     const pill = $('sync-pill');
     const txt = $('sync-pill-txt');
     if (!pill || !txt) return;
@@ -148,6 +150,7 @@
     if (active === 'today') { await refresh(); loadToday(); }
     else if (active === 'inbox') refresh();
     else if (active === 'briefing') loadBriefing();
+    else if (active === 'note') loadNotes();
     else if (active === 'system') loadSystem();
   }
 
@@ -1070,17 +1073,28 @@
   }
 
   // ── Notities ─────────────────────────────────────────────────────────────
-  $('note-text').addEventListener('input', () => { $('charCount').textContent = `${$('note-text').value.length} tekens`; });
+  const noteText = $('note-text');
+  // Start klein (3 regels) en groeit mee met de inhoud — een lege textarea van
+  // vijf regels is vooral veel leeg glas op een telefoonscherm, en een vaste
+  // hoogte knipt een langere thought-dump af achter een scrollbalkje.
+  function autoGrowNote() {
+    noteText.style.height = 'auto';
+    noteText.style.height = `${Math.min(noteText.scrollHeight, 320)}px`;
+  }
+  noteText.addEventListener('input', () => {
+    $('charCount').textContent = `${noteText.value.length} tekens`;
+    autoGrowNote();
+  });
   $('saveBtn').onclick = async () => {
-    const text = $('note-text').value.trim();
+    const text = noteText.value.trim();
     if (!text) return;
     const btn = $('saveBtn');
     btn.disabled = true;
-    btn.innerHTML = '<span class="material-symbols-outlined animate-spin">progress_activity</span> Syncen...';
+    btn.innerHTML = '<span class="material-symbols-outlined animate-spin">progress_activity</span> Opslaan...';
     try {
       await api('note', 'POST', { text });
       btn.innerHTML = '<span class="material-symbols-outlined">check_circle</span> Opgeslagen';
-      $('note-text').value = ''; $('charCount').textContent = '0 tekens';
+      noteText.value = ''; $('charCount').textContent = '0 tekens'; autoGrowNote();
       toast('Notitie klaargezet voor sync', 'ok', 'cloud_done');
       loadNotes();
     } catch (e) {
@@ -1089,20 +1103,80 @@
     }
     setTimeout(() => { btn.innerHTML = '<span class="material-symbols-outlined">cloud_upload</span> Opslaan voor sync'; btn.disabled = false; }, 1600);
   };
+
+  // De belofte "landt bij de volgende sync" is alleen waar als de sync ook
+  // écht draait. Dezelfde leeftijdsgrenzen als de sync-pill in de kop, zodat
+  // de twee elkaar nooit tegenspreken.
+  function noteSyncHint(pendingCount) {
+    const el = $('note-sync-hint');
+    if (!pendingCount) { el.innerHTML = ''; return; }
+    const label = pendingCount === 1 ? '1 notitie wacht op sync' : `${pendingCount} notities wachten op sync`;
+    if (!lastPushAt) {
+      el.innerHTML = `<div class="flex items-start gap-2 text-warn font-body-md text-body-md">
+        <span class="material-symbols-outlined text-[18px] mt-0.5">warning</span>
+        <span>${label} — AgentOS heeft nog nooit gesynchroniseerd. Controleer of de lokale machine draait.</span></div>`;
+      return;
+    }
+    const age = Math.round((Date.now() - new Date(lastPushAt)) / 60000);
+    if (age < 180) {
+      el.innerHTML = `<div class="flex items-start gap-2 text-on-surface-variant font-body-md text-body-md">
+        <span class="material-symbols-outlined text-[18px] mt-0.5 text-primary">schedule</span>
+        <span>${label} — AgentOS haalt ze elke ~3 min op, laatste sync ${age < 1 ? 'net' : `${age}m geleden`}.</span></div>`;
+    } else {
+      el.innerHTML = `<div class="flex items-start gap-2 text-warn font-body-md text-body-md">
+        <span class="material-symbols-outlined text-[18px] mt-0.5">warning</span>
+        <span>${label} — AgentOS lijkt al ${Math.round(age / 60)}u offline. Ze staan veilig te wachten en landen zodra de machine terug is.</span></div>`;
+    }
+  }
+
+  async function deleteNote(id, cardEl) {
+    try {
+      const r = await api('note-delete', 'POST', { id });
+      if (r.deleted) {
+        cardEl.classList.add('leaving');
+        setTimeout(() => loadNotes(), 200);
+      } else {
+        toast('Al gesynct — deze staat al in je vault', '', 'info');
+        loadNotes();
+      }
+    } catch (e) { toast(e.message, 'err', 'error'); }
+  }
+
   async function loadNotes() {
     try {
       const data = await api('notes');
       const el = $('notes-list');
       const notes = data.notes || [];
-      el.innerHTML = notes.length ? notes.map((n) => `
-        <div class="glass-panel rounded-lg p-4 group hover:border-primary/40 transition-colors fade-up">
-          <div class="flex justify-between items-start mb-2">
+      const pending = notes.filter((n) => n.status !== 'synced').length;
+      noteSyncHint(pending);
+      el.innerHTML = notes.length ? notes.map((n) => {
+        const synced = n.status === 'synced';
+        return `
+        <div class="glass-panel rounded-lg p-4 group hover:border-primary/40 transition-colors fade-up" data-note-id="${n.id}">
+          <div class="flex justify-between items-start mb-2 gap-2">
             <span class="font-label-caps text-label-caps text-on-surface-variant">${esc(fmtDate(n.created_at))}</span>
-            <span class="font-label-caps text-label-caps ${n.status === 'synced' ? 'text-green-400' : 'text-primary'}">${n.status === 'synced' ? 'GESYNCT' : 'PENDING'}</span>
+            <div class="flex items-center gap-2 shrink-0">
+              <span class="note-status ${synced ? 'is-synced' : 'is-pending'}">
+                <span class="material-symbols-outlined text-[14px]">${synced ? 'cloud_done' : 'schedule'}</span>
+                ${synced ? 'In vault' : 'Wacht op sync'}
+              </span>
+              ${synced ? '' : `<button class="note-delete tap-target text-on-surface-variant hover:text-error transition-colors" title="Verwijderen" aria-label="Notitie verwijderen">
+                <span class="material-symbols-outlined text-[18px]">delete</span></button>`}
+            </div>
           </div>
-          <p class="font-body-md text-body-md text-on-surface line-clamp-2">${esc(n.text)}</p>
-        </div>`).join('')
-        : `<p class="font-body-md text-body-md text-on-surface-variant">Nog geen notities.</p>`;
+          <p class="font-body-md text-body-md text-on-surface line-clamp-3">${esc(n.text)}</p>
+        </div>`;
+      }).join('')
+        : `<div class="glass-panel rounded-xl p-8 text-center fade-up">
+             <span class="material-symbols-outlined text-on-surface-variant text-3xl mb-2">sticky_note_2</span>
+             <p class="font-body-md text-body-md text-on-surface-variant">Nog geen notities — typ hierboven je eerste thought-dump.</p>
+           </div>`;
+      el.querySelectorAll('.note-delete').forEach((btn) => {
+        btn.onclick = () => {
+          const card = btn.closest('[data-note-id]');
+          deleteNote(Number(card.dataset.noteId), card);
+        };
+      });
     } catch (e) { /* login afgehandeld */ }
   }
 
@@ -2087,6 +2161,7 @@
       const onInbox = !$('view-inbox').hidden;
       const onSystem = !$('view-system').hidden;
       const onToday = !$('view-today').hidden;
+      const onNote = !$('view-note').hidden;
       if (hidden) return; // batterij/CPU besparen in achtergrond
       tick += 1;
       const data = await refreshRaw();
@@ -2098,6 +2173,10 @@
       // De context ververst lokaal hooguit elke paar minuten; hem elke 20
       // seconden ophalen kost alleen data zonder nieuwe informatie.
       else if (onToday && tick % 3 === 0) loadToday();
+      // Zonder deze tak bleef een notitie op dit scherm eeuwig op "PENDING"
+      // staan totdat je wegnavigeerde en terugkwam — de achtergrondpoll liep
+      // overal behalve hier, dus de klok tikte wél maar het scherm loog erover.
+      else if (onNote) loadNotes();
     }, 20000);
   }
   show('today');
