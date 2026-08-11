@@ -171,12 +171,15 @@ def build_mail() -> Dict[str, Any]:
             "WHERE folder='inbox' AND is_replied=0 AND is_read=0 "
             "ORDER BY received_at ASC LIMIT 1"
         ).fetchone()
-        # Urgent = wat de triage hoog scoorde en nog openstaat.
+        # Urgent = wat de triage hoog scoorde en nog openstaat. Archief
+        # (geen potentiële klant: webshop/vacature/digest/systeem) valt er
+        # expliciet uit — net als in list_sorted_db — zodat gearchiveerde
+        # noise nooit in het urgent-blok op de telefoon belandt.
         urgent = conn.execute(
             "SELECT id, subject, from_name, from_email, received_at, priority, "
             "       triage_label, ai_summary, ai_action, suggested_reply "
             "FROM outlook_emails WHERE folder='inbox' AND is_replied=0 "
-            "AND priority >= 70 AND received_at >= ? "
+            "AND priority >= 70 AND triage_label != 'archief' AND received_at >= ? "
             "ORDER BY priority DESC, received_at DESC LIMIT 8",
             (month_ago,),
         ).fetchall()
@@ -225,6 +228,11 @@ def build_mail() -> Dict[str, Any]:
         except (ValueError, TypeError):
             oldest_days = None
 
+    # Kai-stijl groepering (needs_reply/fyi/waiting) bovenop dezelfde triage die
+    # 'urgent' en 'by_label' al voeden — geen nieuwe classificatie, alleen een
+    # andere presentatie die de telefoon rechtstreeks kan renderen als pills.
+    sorted_inbox = outlook.list_sorted_db(limit_per_bucket=8)
+
     return {
         "backlog": backlog,
         "unread": stats.get("unread", 0),
@@ -241,6 +249,7 @@ def build_mail() -> Dict[str, Any]:
                          "days": oldest_days} if oldest else None),
         "urgent": [dict(r) for r in urgent],
         "top_senders": [dict(r) for r in senders],
+        "sorted": sorted_inbox,
     }
 
 
