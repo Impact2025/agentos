@@ -1702,7 +1702,7 @@
     const sub = ($('today-sub') && $('today-sub').textContent || '').trim();
     const tops = topDecisions(3);
     let line = sub ? `${sub}.` : 'Ik ben er.';
-    line += ' Waar wil je mee beginnen — of zal ik er een voor je afhandelen?';
+    line += ' Waarmee kan ik je helpen? Of zal ik er meteen een voor je afhandelen?';
     // De top-3 als klikbare bullets: elke tik opent de detailweergave
     // (net als in de Besluiten-lijst). We bewaren de index in items[] zodat
     // de handler openDetail(items[idx]) kan aanroepen.
@@ -1737,7 +1737,12 @@
   async function loadToday(token = loadToken) {
     const el = $('today-body');
     if (token === loadToken && !contextCache) el.innerHTML = skeletons(3);
-    $('today-greeting').textContent = greeting();
+    // Topbar toont de live begroeting ("Goedemiddag"); de grote body-titel
+    // wordt de naam zodat de begroeting niet dubbel staat.
+    const g = greeting();
+    $('today-greeting').textContent = 'Vincent';
+    const tbGreet = $('topbar-greeting');
+    if (tbGreet) tbGreet.textContent = g;
     try {
       const data = await api('context');
       if (token !== loadToken) return;
