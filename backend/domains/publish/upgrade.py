@@ -62,6 +62,11 @@ logger = logging.getLogger(__name__)
 # is dit goed genoeg voor ons?) en horen los te kunnen bewegen.
 WORLDCLASS_TARGET = 85
 
+# Publicéérbaarheidsgrens (gedeeld met de content-pipeline-gate). Hier als
+# module-niveau import zodat recover_stuck_jobs() hem als default-argument kan
+# gebruiken zonder dat de importert binnen een functie hoeft te hangen.
+from ...shared.config import CONTENT_MIN_SCORE  # noqa: E402
+
 # Statussen waarin een artikel nog te verbeteren valt. 'published' staat live —
 # dat doorverbeteren vraagt om herpublicatie en is een andere operatie met een
 # ander risico. 'rejected' is een menselijk besluit; dat overrulen we niet.
@@ -256,4 +261,61 @@ async def upgrade_batch(target: int = WORLDCLASS_TARGET,
                    "Bekijk waarom de lat niet gehaald werd."),
         status="ok" if reached or not todo else "error",
     )
+    return summary
+
+
+async def recover_stuck_jobs(target: int = CONTENT_MIN_SCORE,
+                             limit: int = 10) -> Dict:
+    """Blinde-vlek-herstel: 'stuck'-artikelen publiceren nooit meer tenzij een
+    mens de upgrade-api met de hand aanroept. De content_improver (elke 30
+    min) slaat ze bewust over (cross-run cap), dus ze hangen voorgoed in een
+    limbo en leveren 0 clicks op. Deze routine pakt ze alsnog op — met een
+    harde bovengrens zodat een onoplosbaar artikel niet eindeloos LLM-tokens
+    verbrandt.
+
+    Idempotent: na één succesvolle upgrade valt het artikel uit de 'stuck'-
+    selectie en wordt het de volgende run niet meer meegenomen.
+    """
+    from ...shared.outcomes import llm_budget_exceeded, log_outcome
+    stuck = [j for j in cp.list_jobs(status="stuck")
+             if float(j.get("seo_score") or 0) < target]
+    stuck.sort(key=lambda j: float(j.get("seo_score") or 0), reverse=True)
+    if limit:
+        stuck = stuck[:limit]
+
+    recovered, failed, still_stuck = [], [], []
+    for i, job in enumerate(stuck, 1):
+        if llm_budget_exceeded():
+            logger.warning("[upgrade] Quota/budget op bij stuck-herstel na %s/%s.",
+                           i - 1, len(stuck))
+            break
+        logger.info("[upgrade] stuck-herstel %s/%s — '%s' (nu %s)",
+                    i, len(stuck), (job.get("title") or "")[:70], job.get("seo_score"))
+        try:
+            # upgrade_job zet al bij >=CONTENT_MIN_SCORE de status op
+            # 'pending_review' (zie upgrade_job: needs_work/stuck + score>=grens).
+            rep = await upgrade_job(job["id"], target=target)
+        except Exception as e:
+            logger.exception("[upgrade] stuck-herstel mislukt voor %s", job.get("id"))
+            failed.append({"job_id": job.get("id"), "title": job.get("title"),
+                           "error": str(e)[:200]})
+            continue
+        if rep.get("status") == "pending_review":
+            recovered.append(rep.get("title"))
+        elif rep.get("status") == "needs_work":
+            still_stuck.append(rep.get("title"))
+        else:
+            still_stuck.append(rep.get("title"))
+
+    summary = {"considered": len(stuck), "recovered": len(recovered),
+               "still_stuck": len(still_stuck), "failed": len(failed),
+               "recovered_titles": recovered,
+               "results": recovered + still_stuck}
+    detail = (f"Stuck-herstel: {len(recovered)} van {len(stuck)} artikelen "
+              f"terug naar de Wachtrij (pending_review).")
+    if still_stuck:
+        detail += f" {len(still_stuck)} bleven onder de grens."
+    log_outcome("content", "stuck-herstel", detail, artifact="/wachtrij",
+                next_step="Beoordeel de Wachtrij (deze artikelen publiceren nu wél).",
+                status="ok" if recovered else "warning")
     return summary

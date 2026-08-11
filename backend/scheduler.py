@@ -53,6 +53,7 @@ from .domains.publish.content_pipeline import (
     run_biweekly_content_job,
     run_content_improver_job,
 )
+from .domains.publish.upgrade import recover_stuck_jobs
 from .domains.publish.content_learning import run_content_learning_eval
 from .domains.vacancies.service import run_vacancy_scan_job
 from .domains.seo.optimizer import run_weekly_optimizer_job
@@ -524,6 +525,10 @@ _SPECS: list[JobSpec] = [
     JobSpec(
         "content_improver", "Content-verbeteraar (onder-85 artikelen zelf bijschaven, elke 30 min)",
         run_content_improver_job, IntervalTrigger(minutes=30), domain="publish",
+    ),
+    JobSpec(
+        "stuck_recovery", "Stuck-herstel (verloren artikelen terug naar de Wachtrij, elke 60 min)",
+        recover_stuck_jobs, IntervalTrigger(minutes=60), domain="publish",
     ),
     JobSpec(
         "goal_autoheal", "Doelen-zelfreparatie (verweesde/dubbele doelen)",
