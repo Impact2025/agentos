@@ -226,8 +226,17 @@ class BudgetExceeded(RuntimeError):
 
 def llm_budget_exceeded() -> bool:
     """True zodra het geschatte dagverbruik de DAILY_TOKEN_BUDGET overschrijdt,
-    óf de provider recent zelf 403 quota-exceeded zei (de zelf-uitlijnende rem)."""
+    óf de provider recent zelf 403 quota-exceeded zei (de zelf-uitlijnende rem).
+
+    Uitzondering (2026-08-10): draait de actieve backend lokaal (Ollama), dan
+    kost elke LLM-call niets aan cloud-quota — de pauze is dan zinloos en zou
+    de gratis lokale triage/concepten onnodig stilleggen. In dat geval blijft de
+    budget-guard uit, zodat Iris gewoon door blijft schrijven op de lokale LLM.
+    """
     try:
+        from .config import hermes_backend
+        if hermes_backend() in ("local", "ollama"):
+            return False
         if llm_quota_backoff_active():
             return True
         from .config import DAILY_TOKEN_BUDGET

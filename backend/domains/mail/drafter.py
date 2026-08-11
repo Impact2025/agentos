@@ -18,6 +18,7 @@ import httpx
 
 from ...shared.config import (
     OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL,
+    OLLAMA_BASE_URL, OLLAMA_MODEL,
 )
 
 MAIL_DRAFT_BACKEND = os.getenv("MAIL_DRAFT_BACKEND", "openmodel").strip().lower()
@@ -131,6 +132,30 @@ def _sync_openmodel(system: str, user: str) -> str:
     return data.get("text", "")
 
 
+def _sync_ollama(system: str, user: str) -> str:
+    """Lokale Ollama-vangnet (gratis, geen cloud-quota nodig).
+
+    Wordt gebruikt als OpenModel/Claude allebei op zijn (403 quota) maar de
+    lokale Ollama wel draait — zo blijft Iris alsnog stijl-antwoorden
+    schrijven. Geen SEO/clickbait-prompt, dus llama3.1 weigert niet.
+
+    BELANGRIJK: alleen de NATIEVE /api/generate-route werkt hier betrouwbaar.
+    De OpenAI-compat /v1/chat/completions hangt in deze omgeving (lege response,
+    zie incident 2026-08-10) — dus niet die gebruiken.
+    """
+    if not OLLAMA_BASE_URL or not OLLAMA_MODEL:
+        return ""
+    base = OLLAMA_BASE_URL.rstrip("/").replace("/v1", "")
+    url = base + "/api/generate"
+    prompt = f"{system}\n\n{user}"
+    payload = {"model": OLLAMA_MODEL, "prompt": prompt, "stream": False}
+    with httpx.Client(timeout=180) as client:
+        resp = client.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+    return (data.get("response") or "").strip()
+
+
 def _sync_claude_fallback(system: str, user: str) -> str:
     from ..chat import claude
 
@@ -198,4 +223,16 @@ def draft_reply(
             # niet stilzwijgend falen — loggen en dan terugvallen
             log.warning("OpenModel draft mislukt: %s", e)
     # Terugval op Claude-agent (Anthropic / OpenRouter)
-    return _sync_claude_fallback(system, user).strip()
+    claude_out = _sync_claude_fallback(system, user).strip()
+    if claude_out and not claude_out.startswith("[Kon geen antwoord genereren"):
+        return claude_out
+    # Laatste vangnet: lokale Ollama — draait gratis lokaal, ook als de
+    # cloud-quota op is. Zonder dit bleef Iris stil bij een OpenModel-403.
+    if OLLAMA_BASE_URL and OLLAMA_MODEL:
+        try:
+            o = _sync_ollama(system, user).strip()
+            if o:
+                return o
+        except Exception as e:
+            log.warning("Ollama draft mislukt: %s", e)
+    return claude_out  # leesbare placeholder — review-gate vangt dit op
