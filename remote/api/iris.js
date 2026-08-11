@@ -88,6 +88,31 @@ const TOOLS = [
     },
   },
   {
+    name: 'plan_agenda',
+    description:
+      'Maak een agenda-afspraak of terugkerend blok aan uit een vrije Nederlandse zin. ' +
+      'Gebruik dit zodra Vincent iets in zijn agenda wil zetten, blokken, reserveren of ' +
+      'plannen (bv. "blok de komende 6 weken op maandag van 08.30 tot 10.00 voor Focustijd", ' +
+      '"dinsdag 18 augustus 12.15 tandarts", "online meeting met Thijs op 19 augustus 10.00"). ' +
+      'AgentOS parseert de zin, checkt reistijd en conflicten, en zet het als voorstel in het ' +
+      'Actiecentrum — Vincent boekt het met één tik. Zeg dus NOOIT dat je geen agenda-tool ' +
+      'hebt of dat Vincent het zelf in Google Calendar moet zetten: roep deze tool aan met ' +
+      'zijn volledige zin.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        opdracht: {
+          type: 'string',
+          description:
+            'De volledige zin van Vincent met dag/datum, tijd(vak) en onderwerp. Geef zo ' +
+            'compleet mogelijk door; de parser haalt datum, tijd, duur, locatie, deelnemers ' +
+            'en eventuele wekelijkse herhaling er zelf uit.',
+        },
+      },
+      required: ['opdracht'],
+    },
+  },
+  {
     name: 'stel_besluit_voor',
     description:
       'Stel een besluit vóór dat een review-gate passeert (goedkeuren, versturen, boeken, ' +
@@ -164,6 +189,20 @@ async function runTool(name, input, effects, tenant) {
     return rows.length
       ? `In de rij gezet: ${COMMANDS[action]}. AgentOS voert dit uit bij de volgende sync; het resultaat komt achter de review-gate.`
       : `Stond al in de rij: ${COMMANDS[action]}. Niet dubbel gestart.`;
+  }
+
+  if (name === 'plan_agenda') {
+    const opdracht = (input.opdracht || '').toString().trim();
+    if (!opdracht) return 'Geen opdracht meegegeven — geef de volledige zin door.';
+    const rows = await sql`
+      INSERT INTO decisions (tenant, item_key, item_kind, item_id, action, payload)
+      VALUES (${tenant}, ${`cmd:calendar_add:${Date.now()}`}, 'command', ${'calendar_add'}, ${'calendar_add'},
+              ${JSON.stringify({ text: opdracht })}::jsonb)
+      RETURNING id`;
+    effects.commands.push({ action: 'calendar_add', label: 'Afspraak in agenda plannen', queued: rows.length > 0 });
+    return rows.length
+      ? `Agenda-voorstel aangemaakt uit "${opdracht.slice(0, 80)}". AgentOS parseert het en zet het in het Actiecentrum; met één tik van Vincent staat het in Google Agenda (inclusief conflict- en reistijdcheck).`
+      : 'Kon het agenda-commando niet in de rij zetten.';
   }
 
   if (name === 'stel_besluit_voor') {
@@ -310,9 +349,13 @@ function systemPrompt(snapshotAt, pulse, openCount) {
     '- `start_werk` zet agents aan het werk. Alles wat daaruit komt landt in een',
     '  review-gate, dus je mag dit gebruiken zonder eerst te vragen als het duidelijk',
     '  volgt uit wat Vincent vraagt. Zeg er altijd bij wat je gestart hebt.',
-    '- Publiceren, mailen en agendaboekingen doe je NOOIT. Die gates zijn van Vincent.',
-    '  Vind je dat er iets goedgekeurd of verstuurd moet worden, gebruik dan',
-    '  `stel_besluit_voor` — hij krijgt een knop en beslist zelf.',
+    '- Publiceren en mailen doe je NOOIT zelf: die gates zijn van Vincent. Vind je dat er',
+    '  iets goedgekeurd of verstuurd moet worden, gebruik dan `stel_besluit_voor` — hij',
+    '  krijgt een knop en beslist zelf.',
+    '- Het AGENDA-voorstel mág je wél zelf aanmaken: roep `plan_agenda` aan met Vincents',
+    '  volledige zin zodra hij iets in zijn agenda wil (blokken, reserveren, plannen).',
+    '  Je zet het als voorstel in het Actiecentrum; het daadwerkelijke boeken in Google',
+    '  Agenda blijft zijn tik. Zeg dus NOOIT dat je geen agenda-tool hebt.',
     '',
     '## Wat je zeker weet',
     `- De snapshot is van ${snapshotAt || 'onbekend'}. Staat de pc uit, dan is dit het`,

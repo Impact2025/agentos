@@ -36,10 +36,16 @@
     <h1 class="font-headline-md text-headline-md font-bold text-on-surface">Iris Remote</h1>
     <span id="sync-pill" class="recent"><span class="dot"></span><span id="sync-pill-txt">…</span></span>
   </div>
-  <button class="tap-target text-primary hover:opacity-80 active:scale-95 transition-transform" id="syncTrigger"
-    title="Verversen" aria-label="Verversen">
-    <span class="material-symbols-outlined">sync</span>
-  </button>
+  <div class="flex items-center gap-1">
+    <button class="tap-target text-primary hover:opacity-80 active:scale-95 transition-transform" id="syncTrigger"
+      title="Verversen" aria-label="Verversen">
+      <span class="material-symbols-outlined">sync</span>
+    </button>
+    <button class="tap-target text-on-surface-variant hover:text-error hover:opacity-80 active:scale-95 transition-transform" id="logoutIconBtn"
+      title="Uitloggen" aria-label="Uitloggen">
+      <span class="material-symbols-outlined">logout</span>
+    </button>
+  </div>
 </header>
 
 <!-- Pull-to-refresh indicator -->
@@ -86,9 +92,12 @@
       <div id="chat-messages" class="space-y-3 max-h-[45dvh] overflow-y-auto custom-scrollbar"></div>
       <!-- Agenda-opdracht: spraak of tekst -> directe afspraak in je agenda (review-gate) -->
       <form id="agenda-form" class="flex gap-2 items-center chat-composer border-t border-white/10 pt-2 mt-2">
+        <!-- `is-secundair` i.p.v. Tailwind-kleurklassen: `.chat-composer button`
+             in style.css is specifieker en overschreef die stil, waardoor de
+             microfoon dezelfde accentkleur kreeg als de verstuurknop — twee
+             even harde knoppen om één invoerveld, terwijl opnemen de bijrol is. -->
         <button type="button" id="agenda-mic" aria-label="Spraakopname"
-          class="shrink-0 w-10 h-10 rounded-full bg-surface-container-lowest text-on-surface-variant
-                 flex items-center justify-center active:scale-95 transition-all">
+          class="is-secundair shrink-0 flex items-center justify-center">
           <span class="material-symbols-outlined" id="agenda-mic-icon">mic</span>
         </button>
         <input id="agenda-input" placeholder="Spraak of typ: 'dinsdag 18 aug 12.15 tandarts'…" autocomplete="off"/>

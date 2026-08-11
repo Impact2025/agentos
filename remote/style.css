@@ -477,6 +477,34 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .chat-composer button:disabled { opacity: 0.4; }
 .chat-composer .material-symbols-outlined { font-size: 19px; }
 
+/* Begint de balk met een knop (de microfoon), dan hoort de linkerinspringing
+   van 16px daar niet — die is er voor tekst die direct tegen de rand begint. */
+.chat-composer:has(> button:first-child) { padding-left: 5px; }
+
+/* De bijrol. Opnemen is een hulpmiddel bij het invoerveld, versturen is het
+   besluit; twee identiek gekleurde cirkels maken die volgorde onleesbaar. */
+.chat-composer button.is-secundair {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--on-surface-variant);
+}
+.chat-composer button.is-secundair:hover { background: rgba(255, 255, 255, 0.1); }
+
+/* Luisteren moet je kunnen zíén — anders weet je niet of je al praat. De
+   JS zette hiervoor `bg-primary`, maar die Tailwind-klasse verloor het van
+   `.chat-composer button` en deed dus niets. */
+.chat-composer button.is-luistert {
+  background: var(--err);
+  color: #2a0b08;
+  animation: mic-pulse 1.4s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 156, 146, 0.45); }
+  50%      { box-shadow: 0 0 0 6px rgba(255, 156, 146, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-composer button.is-luistert { animation: none; }
+}
+
 /* Chatbubbels: Iris links (neutraal), jij rechts (accent) — zonder dit oogde
    het gesprek als een lijst identieke paragrafen zonder afzender. */
 .chat-msg { max-width: 88%; padding: 9px 13px; border-radius: 14px; font-size: 13.5px; line-height: 1.5; }

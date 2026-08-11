@@ -46,6 +46,14 @@ function usedIcons() {
   // niet, en zo'n icoon rendert stil als tekst ("EVENT_BUSY") zodra een sectie
   // uitstaat, precies de plek waar niemand tijdens de bouw op let.
   for (const m of src.matchAll(/sectionOff\(\s*'([a-z_]+)'/g)) names.add(m[1]);
+  // Iconen die pas tijdens gebruik worden omgezet (`icon.textContent = 'stop'`
+  // op de microfoonknop) staan nergens als markup en werden dus niet gevonden.
+  // Zichtbaar wordt dat pas ná de eerste tik — de knop toont dan het woord
+  // "STOP" — en dat is precies het moment waarop niemand meer een build draait.
+  // De regex eist minstens één letter, dus `textContent = ''` (leegmaken) valt
+  // erbuiten; zou hier ooit een gewoon woord binnenglippen, dan faalt de build
+  // luid op Google's 400 in plaats van stil op de telefoon.
+  for (const m of src.matchAll(/textContent\s*=\s*'([a-z_]+)'/g)) names.add(m[1]);
   return [...names].sort();
 }
 

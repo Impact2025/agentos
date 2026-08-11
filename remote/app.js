@@ -197,6 +197,17 @@
 
   $('logoutBtn').onclick = async () => { await api('logout', 'POST', {}); toast('Uitgelogd'); show('login'); };
 
+  // Logout-icoon rechtsboven in de hoofdheader — snelle uitweg zonder naar
+  // het Systeem-scherm te gaan. Bevestiging voorkomt een onbedoelde klik.
+  $('logoutIconBtn').onclick = async () => {
+    if (!confirm('Uitloggen uit Iris Remote?')) return;
+    try {
+      await api('logout', 'POST', {});
+      toast('Uitgelogd', 'ok', 'logout');
+      show('login');
+    } catch (e) { if (e.message !== 'login') toast(e.message, 'err'); }
+  };
+
   // ── Realtime polling ──────────────────────────────────────────────────────
   async function refreshRaw() {
     try {
@@ -1876,15 +1887,25 @@
       const txt = ev.results[0][0].transcript;
       $('agenda-input').value = txt;
     };
-    rec.onend = () => { listening = false; icon.textContent = 'mic'; mic.classList.remove('bg-primary'); };
-    rec.onerror = () => { listening = false; icon.textContent = 'mic'; mic.classList.remove('bg-primary'); };
+    // `is-luistert` i.p.v. `bg-primary`: die Tailwind-klasse verloor het van
+    // `.chat-composer button` in style.css, dus zag je niet dát hij opnam —
+    // bij spraak is dat het enige signaal dat je hebt.
+    const stoppen = () => {
+      listening = false;
+      icon.textContent = 'mic';
+      mic.classList.remove('is-luistert');
+      mic.setAttribute('aria-label', 'Spraakopname');
+    };
+    rec.onend = stoppen;
+    rec.onerror = stoppen;
     mic.onclick = () => {
       if (listening) { rec.stop(); return; }
       try {
         rec.start();
         listening = true;
         icon.textContent = 'stop';
-        mic.classList.add('bg-primary');
+        mic.classList.add('is-luistert');
+        mic.setAttribute('aria-label', 'Opname stoppen');
       } catch (_) { /* al actief — negeer */ }
     };
   })();

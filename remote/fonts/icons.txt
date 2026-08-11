@@ -19,6 +19,7 @@ drafts
 edit_document
 edit_note
 error
+event_available
 event_busy
 expand_more
 flag
@@ -34,6 +35,7 @@ lock_open
 logout
 mail
 mark_email_read
+mic
 notifications
 notifications_active
 pending_actions
@@ -47,6 +49,7 @@ security
 send
 settings_input_component
 shield
+stop
 support_agent
 sync
 task_alt
