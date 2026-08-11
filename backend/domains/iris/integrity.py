@@ -2398,6 +2398,40 @@ def _project_van_goal(goal_id: str) -> str:
         return ""
 
 
+def _check_onboarding_onvolledig_maar_actief() -> List[Bevinding]:
+    """Preventieve invariant (Iris-onboarding, 11 aug 2026) — nog geen incident,
+    geschreven vóórdat het kan gebeuren in plaats van erna.
+
+    seo/engine.py:cold_start_opportunities eist al een profiel van >=40 tekens
+    ('zonder profiel wordt keyword-onderzoek giswerk'); dezelfde drempel geldt
+    hier. Een site die al draait (auto_content_enabled, of een gekoppeld
+    OAuth-account) terwijl `sites.onboarded_at` leeg is of het profiel te kort
+    is, produceert stil generieke content — de kwaliteitsgate meet vorm en ziet
+    daar niets van (zie information-gain-bevinding `artikel_zonder_eigen_bewijs`,
+    dezelfde faalvorm in een ander domein: 95% van gepubliceerde content bleek
+    reproduceerbare AI-tekst zonder dat één gate het opmerkte)."""
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT s.id, s.name, s.profile, s.onboarded_at FROM sites s "
+            "WHERE COALESCE(s.is_test, 0) = 0 AND ("
+            "  s.auto_content_enabled = 1"
+            "  OR EXISTS (SELECT 1 FROM oauth_accounts oa WHERE oa.site_id = s.id)"
+            ") AND (s.onboarded_at IS NULL OR s.onboarded_at = '' "
+            "       OR LENGTH(COALESCE(s.profile, '')) < 40)"
+        ).fetchall()
+    uit: List[Bevinding] = []
+    for r in rijen:
+        reden = "geen onboarding afgerond" if not r["onboarded_at"] else "profiel korter dan 40 tekens"
+        uit.append(Bevinding(
+            subject=f"sites:{r['id']}:onboarding",
+            detail=(f"{r['name']} draait actief (auto-content of een gekoppeld account) "
+                    f"terwijl de onboarding-intake niet compleet is ({reden}) — de "
+                    f"contentmotor schrijft hier zonder bedrijfsdoel of merkstem."),
+            project=r["name"] or "",
+        ))
+    return uit
+
+
 # ── Het register ───────────────────────────────────────────────────────────
 #
 # Dit is de institutionele herinnering van het systeem: elke regel is een
@@ -3072,6 +3106,21 @@ INVARIANTEN: List[Invariant] = [
         stap="Draai de triage tot de achterstand leeg is (POST /api/outlook/triage/batch) "
              "en controleer of de LLM-quota-rem actief staat.",
         check=_check_postvak_triage_achterstand,
+    ),
+    Invariant(
+        key="onboarding_onvolledig_maar_actief",
+        titel="Site draait al, maar de Iris-intake is niet compleet",
+        incident="Preventief (11 aug 2026, Iris-onboarding) — nog geen incident. Dezelfde "
+                 "faalvorm bestaat al elders: `artikel_zonder_eigen_bewijs` mat dat 95% van "
+                 "de gepubliceerde content generiek was omdat de kwaliteitsgate vorm meet, "
+                 "niet herkomst. Een site zonder ingevuld profiel/schrijfstijl heeft "
+                 "hetzelfde lot, alleen via een leeg intake-formulier i.p.v. een lege "
+                 "kennisbank — deze toets vangt het vóór de eerste publicatie i.p.v. erna.",
+        severity=STIL,
+        stap="Doorloop de onboarding-wizard voor deze site (bedrijfsdoel + schrijfstijl); "
+             "zonder profiel schrijft de contentmotor generieke tekst die niemand als de "
+             "stem van dit bedrijf herkent.",
+        check=_check_onboarding_onvolledig_maar_actief,
     ),
 ]
 

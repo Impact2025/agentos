@@ -133,6 +133,10 @@ SMTP_USER: str = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
 REPORT_EMAIL_TO: str = os.getenv("REPORT_EMAIL_TO", "v.munster@weareimpact.nl")
 
+# Resend (transactionele mail: herinneringen, dagafsluitingen, klant-app)
+RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
+RESEND_FROM_EMAIL: str = os.getenv("RESEND_FROM_EMAIL", "")
+
 # Google Indexing API (urlNotifications.publish) voor directe indexering na
 # publicatie. Default uit: officieel alleen voor JobPosting/Livestream-content
 # en het service-account moet Owner zijn in Search Console. De nette route
@@ -407,6 +411,28 @@ CALENDAR_BUSY_CALENDAR_IDS: list = [
 #   Redirect URI: https://login.microsoftonline.com/common/oauth2/nativeclient
 OUTLOOK_CLIENT_ID: str = os.getenv("OUTLOOK_CLIENT_ID", "")
 OUTLOOK_TENANT_ID: str = os.getenv("OUTLOOK_TENANT_ID", "common")
+
+# Per-klant OAuth (Iris-onboarding, domains/onboarding/) — losstaand van de
+# device-flow hierboven, die een public client is (geen secret) en één
+# globaal account levert. De browser-redirect authorization-code-uitwisseling
+# zelf loopt sinds de verhuizing naar Iris Remote (CLAUDE.md 14) via
+# `remote/api/oauth.js` op Vercel — dezelfde client_id/secret staan dus ook
+# in de Vercel-omgevingsvariabelen. Hier lokaal blijven ze nodig voor de
+# ná-koppeling: het ververs-token-endpoint aanroepen
+# (`oauth_google.py`/`oauth_microsoft.py:_refresh`) gebeurt wél lokaal, dus
+# zonder deze twee waarden hier kan een gekoppeld account niet blijven werken
+# nadat het eerste access-token verloopt.
+OUTLOOK_CLIENT_SECRET: str = os.getenv("OUTLOOK_CLIENT_SECRET", "")
+
+# Google OAuth-client voor per-klant GSC/Calendar-koppeling (Iris-onboarding).
+# Los van GSC_SERVICE_ACCOUNT_PATH hierboven: dat is één gedeeld service-account
+# voor het hele systeem, dit is een OAuth 2.0-client (Google Cloud Console >
+# APIs & Services > Credentials > OAuth client ID > type Web application)
+# waarmee elke klant zijn eigen account koppelt. Zelfde verhaal als
+# OUTLOOK_CLIENT_SECRET hierboven: de uitwisseling zelf gebeurt op Vercel,
+# het lokale ververs-token-endpoint gebruikt deze waarden nog wel.
+GOOGLE_OAUTH_CLIENT_ID: str = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET: str = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
 
 # Agenda-backend per instance: 'google' (serviceaccount, default — WeAreImpact)
 # of 'outlook' (Microsoft Graph via dezelfde delegated OAuth-login als Mail —

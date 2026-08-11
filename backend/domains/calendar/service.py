@@ -27,6 +27,7 @@ if CALENDAR_BACKEND == "outlook":
         get_today_summary,
         verify_access,
         explain_error,
+        client_email,
     )
 else:
     from .service_google import (
@@ -38,6 +39,7 @@ else:
         get_today_summary,
         verify_access,
         explain_error,
+        client_email,
     )
 
 __all__ = [
@@ -49,4 +51,5 @@ __all__ = [
     "get_today_summary",
     "verify_access",
     "explain_error",
+    "client_email",
 ]

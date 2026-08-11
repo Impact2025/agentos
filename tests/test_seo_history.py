@@ -137,7 +137,7 @@ def test_record_site_daily_backfill_en_upsert(conn, hist_clean, monkeypatch):
 
     calls = {"days": []}
 
-    def fake_daily(prop, days=28, end_offset=0):
+    def fake_daily(prop, days=28, end_offset=0, site_id=None):
         calls["days"].append(days)
         return [
             {"date": day1, "clicks": 10, "impressions": 100, "ctr": 10.0, "position": 5.0},

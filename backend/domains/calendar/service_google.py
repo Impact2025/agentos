@@ -33,6 +33,7 @@ from ...shared.config import (
     GSC_SERVICE_ACCOUNT_PATH,
 )
 from ...shared.database import get_conn
+from ...shared.settings_store import get_setting
 
 log = logging.getLogger(__name__)
 
@@ -47,14 +48,27 @@ def is_configured() -> bool:
     return bool(CALENDAR_SERVICE_ACCOUNT_PATH or GSC_SERVICE_ACCOUNT_PATH)
 
 
-def _creds():
-    """Build google.oauth2 service-account credentials (lazy import).
+def _creds(site_id: Optional[str] = None):
+    """Build google.oauth2 credentials (lazy import).
 
-    Ondersteunt twee leveringen:
+    `site_id`: probeer eerst een per-klant gekoppelde OAuth-credential
+    (Iris-onboarding, domains/onboarding/resolve.py) vóór het gedeelde
+    service-account hieronder. Vandaag heeft nog geen aanroeper in dit
+    bestand een site_id bij de hand (agenda is nog systeembreed, niet per
+    site georganiseerd) — dit is het aansluitpunt voor zodra dat verandert.
+
+    Zonder per-klant koppeling, ondersteunt twee leveringen voor het globale
+    service-account:
       A) Inline: CALENDAR_CLIENT_EMAIL + CALENDAR_PRIVATE_KEY
       B) JSON-bestand: CALENDAR_SERVICE_ACCOUNT_PATH (default GSC/GA4-JSON)
     Bij Domain-Wide Delegation (CALENDAR_SUB) handelen we namens de eigenaar.
     """
+    if site_id:
+        from ..onboarding import resolve
+        per_client = resolve.google_credentials_for(site_id)
+        if per_client:
+            return per_client
+
     from google.oauth2 import service_account
 
     # A) Inline credentials (kopie uit WeAreImpact .env.local)
@@ -91,7 +105,10 @@ def _token() -> str:
 
 
 def _cal_id() -> str:
-    return CALENDAR_CALENDAR_ID or "primary"
+    # DB-override wint: zo werkt "agenda koppelen" in de Instellingen-hub
+    # direct, zonder herstart. .env blijft de fallback voor installaties
+    # (zoals WeAreImpact) die nog niets in de settings-hub hebben gezet.
+    return get_setting("calendar_calendar_id") or CALENDAR_CALENDAR_ID or "primary"
 
 
 def _client_email() -> str:
@@ -106,6 +123,12 @@ def _client_email() -> str:
         except Exception:
             pass
     return ""
+
+
+def client_email() -> str:
+    """Publieke wrapper — de Instellingen-hub toont dit adres zodat de klant
+    weet met wie ze hun agenda moeten delen."""
+    return _client_email()
 
 
 def _http_status_error(code: int) -> httpx.HTTPStatusError:
@@ -328,6 +351,11 @@ def _cache_events(events: List[dict]) -> None:
 
 def _busy_cal_ids() -> List[str]:
     """Agenda's die meetellen voor conflict-detectie."""
+    override = get_setting("calendar_busy_ids")
+    if override:
+        ids = [c.strip() for c in override.split(",") if c.strip()]
+        if ids:
+            return ids
     return CALENDAR_BUSY_CALENDAR_IDS or [_cal_id()]
 
 

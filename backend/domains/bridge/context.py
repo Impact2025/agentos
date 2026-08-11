@@ -707,6 +707,37 @@ def build_pulse(sections: Dict[str, Dict]) -> Dict[str, Any]:
             "generated_at": _iso(_now())}
 
 
+# ── Iris-onboarding (wizard verhuisd naar Iris Remote) ──────────────────────
+
+def build_onboarding() -> Dict[str, Any]:
+    """Per-site onboardingstatus voor de wizard in Iris Remote.
+
+    De wizard-UI staat sinds de verhuizing (zie CLAUDE.md 14) in
+    `remote/app.js`, dat nooit rechtstreeks met déze backend praat — alleen
+    via de push/pull-sync. Alles wat de wizard nodig heeft om stap 1/2/3/4 +
+    de welkomsttour te tonen (profiel, schrijfstijl-status, kanaal-koppeling,
+    autonomie-presets) moet dus hierin zitten. Puur lokale SQLite-lezingen
+    (`onboarding.service.get_status` doet zelf geen LLM-/netwerkcalls), dus
+    geen TTL-cache nodig, net als rituals hierboven.
+    """
+    try:
+        from ..seo import sites as sites_service
+        from ..onboarding import service as onboarding_service
+    except Exception:  # noqa: BLE001
+        return {"status": "off", "reason": "Onboarding-domein niet geladen"}
+
+    sites_out = []
+    for site in sites_service.list_sites():
+        if site.get("is_test"):
+            continue
+        try:
+            sites_out.append(onboarding_service.get_status(site["id"]))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Bridge-context: onboardingstatus voor site %s mislukt: %s",
+                            site.get("id"), e)
+    return {"sites": sites_out}
+
+
 # ── Samenstellen ────────────────────────────────────────────────────────────
 
 async def build_context() -> Dict[str, Any]:
@@ -728,5 +759,15 @@ async def build_context() -> Dict[str, Any]:
     rituals_sec.setdefault("status", "ok")
     rituals_sec["generated_at"] = _iso(_now())
     sections["rituals"] = rituals_sec
+
+    try:
+        onboarding_sec = build_onboarding()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Bridge-context: onboarding-sectie mislukt: %s", e)
+        onboarding_sec = {"status": "error", "error": str(e)[:200]}
+    onboarding_sec.setdefault("status", "ok")
+    onboarding_sec["generated_at"] = _iso(_now())
+    sections["onboarding"] = onboarding_sec
+
     sections["pulse"] = build_pulse(sections)
     return sections

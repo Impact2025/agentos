@@ -175,7 +175,7 @@ async def run_daily_report() -> dict:
         obsidian_subfolder="Financieel/Dagrapporten",
         obsidian_title=f"Dagrapport {today}",
         obsidian_tags=["financieel", "rapport", "dagrapport", "beleggen"],
-        email_subject=f"📈 Finance Dagrapport — {today}",
+        email_subject=f"Finance Dagrapport — {today}",
     )
 
 
@@ -198,5 +198,5 @@ async def run_weekly_report() -> dict:
         obsidian_subfolder="Financieel/Weekrapporten",
         obsidian_title=f"Weekrapport {week_label}",
         obsidian_tags=["financieel", "rapport", "weekrapport", "macro", "liquiditeit"],
-        email_subject=f"🌊 Finance Weekrapport (macro & liquiditeit) — {week_label}",
+        email_subject=f"Finance Weekrapport (macro & liquiditeit) — {week_label}",
     )

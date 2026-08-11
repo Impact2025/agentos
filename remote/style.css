@@ -1,12 +1,16 @@
 /* Iris Remote — custom laag bovenop Tailwind (kaarten, scrollbar, animaties). */
 :root {
-  --iris-blue: #8ed5ff;
-  --iris-blue-deep: #38bdf8;
-  --surface-bg: #0c0e10;
-  --surface-1: #15181b;
+  /* Iris-violet — dezelfde identiteit als de aperture-mascotte in de
+     desktop-onboarding, niet het Google-blauw waar deze app mee begon.
+     Namen blijven --iris-blue* (hernoemen zou elke gebruiksplek in dit
+     bestand moeten meeveranderen) maar de waarden zijn nu violet. */
+  --iris-blue: #9c8fff;
+  --iris-blue-deep: #7c6fe8;
+  --surface-bg: #121118;
+  --surface-1: #1a1820;
   --surface-1-line: rgba(255, 255, 255, 0.07);
-  --on-surface: #edf0f2;
-  --on-surface-variant: #a7b1b9;
+  --on-surface: #e3e0e6;
+  --on-surface-variant: #aba4b8;
   --ok: #4ade80;
   --warn: #fbbf24;
   --err: #ff9c92;
@@ -40,7 +44,7 @@ body {
   box-shadow: 0 1px 0 rgba(255,255,255,0.05), 0 12px 24px -16px rgba(0,0,0,0.55);
 }
 #topbar .material-symbols-outlined.text-primary {
-  background: rgba(142, 213, 255, 0.12);
+  background: rgba(156, 143, 255, 0.12);
   border-radius: 8px;
   padding: 4px;
 }
@@ -88,12 +92,12 @@ body.sheet-open {
   box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset, 0 8px 20px -12px rgba(0,0,0,0.45);
 }
 .glass-panel:focus-within {
-  border-color: rgba(142, 213, 255, 0.35);
+  border-color: rgba(156, 143, 255, 0.35);
 }
 /* Primaire call-to-action-knoppen mogen wél een klein beetje gloeien — dat is
    het enige gloed-gebruik in de app, gereserveerd voor "dit is de belangrijke
    knop", niet uitgesmeerd over elke kaart. */
-.iris-glow, .active-glow { box-shadow: 0 4px 16px -4px rgba(142, 213, 255, 0.35); }
+.iris-glow, .active-glow { box-shadow: 0 4px 16px -4px rgba(156, 143, 255, 0.35); }
 
 .status-dot {
   width: 6px; height: 6px; border-radius: 50%;
@@ -120,7 +124,7 @@ body.sheet-open {
   padding: 3px 8px; border-radius: 999px;
   white-space: nowrap;
 }
-.note-status.is-pending { color: var(--iris-blue); background: rgba(142, 213, 255, 0.1); }
+.note-status.is-pending { color: var(--iris-blue); background: rgba(156, 143, 255, 0.1); }
 .note-status.is-synced { color: var(--ok); background: rgba(74, 222, 128, 0.1); }
 
 /* Generieke kaart-verdwijn-animatie (notitie verwijderen). */
@@ -129,9 +133,9 @@ body.sheet-open {
 }
 @keyframes cardLeave { to { opacity: 0; transform: scale(0.97) translateY(-4px); } }
 @keyframes pulse-glow {
-  0% { box-shadow: 0 0 0 0 rgba(142, 213, 255, 0.4); }
-  70% { box-shadow: 0 0 0 10px rgba(142, 213, 255, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(142, 213, 255, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(156, 143, 255, 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(156, 143, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(156, 143, 255, 0); }
 }
 .material-symbols-outlined {
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
@@ -139,7 +143,7 @@ body.sheet-open {
 .custom-scrollbar::-webkit-scrollbar { width: 4px; }
 .custom-scrollbar::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.02); }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(142, 213, 255, 0.2); border-radius: 10px;
+  background: rgba(156, 143, 255, 0.2); border-radius: 10px;
 }
 
 /* Actieve tab in de bottom-nav (JS zet .nav-active) */
@@ -147,7 +151,7 @@ body.sheet-open {
 .nav-btn:hover { color: var(--iris-blue); }
 .nav-btn.nav-active {
   color: var(--iris-blue);
-  background: rgba(142, 213, 255, 0.1);
+  background: rgba(156, 143, 255, 0.1);
   border-radius: 0.75rem;
   padding: 4px 16px;
 }
@@ -176,6 +180,19 @@ body.sheet-open {
 .stagger > *:nth-child(4) { animation-delay: 0.18s; }
 .stagger > *:nth-child(5) { animation-delay: 0.23s; }
 .stagger > *:nth-child(n+6) { animation-delay: 0.28s; }
+
+/* ── Het Iris-merkteken (topbar-logo, sync-pill, chat-avatar) ────────────────
+ * Eén rustige, doorlopende rotatie op de spaken — geen decoratie maar een
+ * teken van leven, dezelfde taal als "Iris denkt mee" in de desktop-wizard.
+ * Alleen de topbar-variant (.spin) draait; de kleine varianten (sync-pill,
+ * chat-avatar) staan stil zodat een lijst met meerdere berichten niet
+ * knippert van rondjes. */
+.aperture-mark .aperture-spokes { transform-origin: 12px 12px; }
+.aperture-mark.spin .aperture-spokes { animation: apertureSpin 22s linear infinite; }
+@keyframes apertureSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .aperture-mark.spin .aperture-spokes { animation: none; }
+}
 
 /* ── Bottom-sheet ───────────────────────────────────────────────────────────
  * De animatie hing eerst aan `:not([hidden])`. Dat draaide nooit: het overlay
@@ -271,7 +288,9 @@ body.sheet-open {
 #sync-pill.recent { color: var(--on-surface-variant); }
 #sync-pill.stale { color: var(--warn); background: rgba(251, 191, 36, 0.09); border-color: rgba(251, 191, 36, 0.18); }
 #sync-pill.dead { color: var(--err); background: rgba(255, 156, 146, 0.09); border-color: rgba(255, 156, 146, 0.18); }
-#sync-pill .dot { width:6px; height:6px; border-radius:50%; background: currentColor; }
+/* De dot is nu een mini-aperture (SVG, currentColor) i.p.v. een gevuld
+   bolletje — dezelfde vorm als het topbar-merkteken, alleen stilstaand. */
+#sync-pill .dot { display: inline-flex; }
 #sync-pill.stale .dot, #sync-pill.dead .dot { animation: blink 1.4s infinite; }
 @keyframes blink { 50% { opacity: 0.25; } }
 
@@ -293,7 +312,7 @@ body.sheet-open {
 
 /* Card hover op desktop: alleen de rand reageert, geen lift/schaduw. */
 @media (hover:hover) {
-  .item:hover { border-color: rgba(142,213,255,0.35); }
+  .item:hover { border-color: rgba(156,143,255,0.35); }
 }
 .item { transition: border-color 0.2s; }
 
@@ -313,16 +332,16 @@ body.sheet-open {
 .chip:active { transform: scale(0.96); }
 .chip-on {
   color: var(--iris-blue);
-  border-color: rgba(142, 213, 255, 0.4);
-  background: rgba(142, 213, 255, 0.1);
-  box-shadow: 0 2px 10px -4px rgba(142, 213, 255, 0.3);
+  border-color: rgba(156, 143, 255, 0.4);
+  background: rgba(156, 143, 255, 0.1);
+  box-shadow: 0 2px 10px -4px rgba(156, 143, 255, 0.3);
 }
 .chip-count {
   font-family: 'JetBrains Mono', monospace; font-size: 11px;
   background: rgba(255, 255, 255, 0.06); border-radius: 9999px;
   padding: 0 6px; min-width: 20px; text-align: center;
 }
-.chip-on .chip-count { background: rgba(142, 213, 255, 0.16); }
+.chip-on .chip-count { background: rgba(156, 143, 255, 0.16); }
 
 /* ── Markdown-blokken (Iris' analyse) ──────────────────────────────────── */
 .markdown { font-size: 14px; line-height: 1.6; color: var(--on-surface-variant); }
@@ -332,7 +351,7 @@ body.sheet-open {
 .markdown ul.md-list { list-style: disc; }
 .markdown ol.md-list { list-style: decimal; }
 .markdown .md-list li { margin-bottom: 4px; }
-.markdown .md-list li::marker { color: rgba(142, 213, 255, 0.6); }
+.markdown .md-list li::marker { color: rgba(156, 143, 255, 0.6); }
 .markdown .md-hr { border: 0; border-top: 1px solid rgba(255, 255, 255, 0.08); margin: 14px 0; }
 /* Tabellen mogen breed zijn — ze scrollen in hun eigen container, de pagina niet. */
 .md-table-wrap {
@@ -383,7 +402,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   width: 34px; height: 34px; flex: none;
   display: flex; align-items: center; justify-content: center;
   border-radius: 10px;
-  background: rgba(142, 213, 255, 0.10);
+  background: rgba(156, 143, 255, 0.10);
   color: var(--iris-blue);
 }
 .card-head-icon .material-symbols-outlined { font-size: 19px; }
@@ -410,7 +429,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 #today-greeting::before {
   content: ''; position: absolute; left: 0; top: 4px; bottom: 4px; width: 3px;
   border-radius: 9999px;
-  background: linear-gradient(180deg, var(--iris-blue), rgba(142,213,255,0.15));
+  background: linear-gradient(180deg, var(--iris-blue), rgba(156,143,255,0.15));
 }
 #today-sub {
   display: inline-flex; align-items: center; gap: 6px;
@@ -438,8 +457,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 }
 .quick-card:hover {
   background: rgba(255, 255, 255, 0.045);
-  border-color: rgba(142, 213, 255, 0.28);
-  box-shadow: 0 6px 16px -8px rgba(142, 213, 255, 0.25);
+  border-color: rgba(156, 143, 255, 0.28);
+  box-shadow: 0 6px 16px -8px rgba(156, 143, 255, 0.25);
 }
 .quick-card:active { transform: scale(0.98); }
 .quick-card:disabled { opacity: 0.5; }
@@ -455,15 +474,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 }
 .nav-btn.nav-active {
   transform: translateY(-1px);
-  box-shadow: 0 4px 14px -6px rgba(142, 213, 255, 0.4);
+  box-shadow: 0 4px 14px -6px rgba(156, 143, 255, 0.4);
 }
 .nav-btn .material-symbols-outlined { font-size: 22px; }
 .nav-btn .font-label-caps { font-weight: 600; }
 
 /* ── Chat-panel (Vandaag) ──────────────────────────────────────────────── */
 .chat-panel {
-  border-color: rgba(142, 213, 255, 0.14);
-  background: linear-gradient(180deg, rgba(142,213,255,0.05), rgba(255,255,255,0) 50%), var(--surface-1);
+  border-color: rgba(156, 143, 255, 0.14);
+  background: linear-gradient(180deg, rgba(156,143,255,0.05), rgba(255,255,255,0) 50%), var(--surface-1);
 }
 .chat-panel #chat-messages:empty { display: none; }
 
@@ -476,8 +495,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 .chat-composer:focus-within {
-  border-color: rgba(142, 213, 255, 0.4);
-  box-shadow: 0 0 0 3px rgba(142, 213, 255, 0.12);
+  border-color: rgba(156, 143, 255, 0.4);
+  box-shadow: 0 0 0 3px rgba(156, 143, 255, 0.12);
 }
 .chat-composer input {
   flex: 1; background: transparent; border: none; outline: none;
@@ -487,7 +506,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .chat-composer input::placeholder { color: rgba(167, 177, 185, 0.45); }
 .chat-composer button {
   width: 38px; height: 38px; flex: none; border-radius: 9999px;
-  background: var(--iris-blue); color: #00354a;
+  background: var(--iris-blue); color: #15161c;
   display: flex; align-items: center; justify-content: center;
   transition: opacity 0.15s, transform 0.12s var(--ease);
 }
@@ -522,13 +541,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 }
 @media (prefers-reduced-motion: reduce) {
   .chat-composer button.is-luistert { animation: none; }
+  .fade-up, .stagger > * { animation: none; opacity: 1; }
 }
 
 /* Chatbubbels: Iris links (neutraal), jij rechts (accent) — zonder dit oogde
    het gesprek als een lijst identieke paragrafen zonder afzender. */
 .chat-msg { max-width: 88%; padding: 9px 13px; border-radius: 14px; font-size: 13.5px; line-height: 1.5; }
 .chat-msg.me {
-  margin-left: auto; background: rgba(142, 213, 255, 0.14); color: var(--on-surface);
+  margin-left: auto; background: rgba(156, 143, 255, 0.14); color: var(--on-surface);
   border-bottom-right-radius: 4px;
 }
 .chat-msg.iris {
@@ -540,7 +560,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .chat-typing { display: inline-flex; gap: 4px; align-items: center; padding: 3px 2px; }
 .chat-typing span {
   width: 7px; height: 7px; border-radius: 50%;
-  background: var(--primary, #8ed5ff);
+  background: var(--primary, #9c8fff);
   opacity: 0.5;
   animation: chatBounce 1.2s infinite ease-in-out;
 }
@@ -552,22 +572,32 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 }
 
 /* Zachte "Iris is aanwezig"-glow op de eerste Iris-bubble. */
-.chat-msg.iris.is-greeting { box-shadow: 0 4px 18px -6px rgba(142, 213, 255, 0.4); }
+.chat-msg.iris.is-greeting { box-shadow: 0 4px 18px -6px rgba(156, 143, 255, 0.4); }
+
+/* Iris' avatar naast elk van haar berichten (incl. de typing-indicator) —
+   zonder dit was er geen enkel visueel spoor van wíé er links in het gesprek
+   staat, alleen een neutrale bubbel. */
+.chat-avatar {
+  flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(156, 143, 255, 0.14); color: var(--primary);
+  margin-bottom: 1px;
+}
 
 /* Klikbare top-3 besluiten in Iris' openingsgroet. */
 .iris-greet-list { list-style: none; margin: 8px 0 2px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .iris-greet-item {
   display: flex; align-items: center; gap: 6px; width: 100%;
   text-align: left; padding: 7px 10px; border-radius: 10px;
-  background: rgba(142, 213, 255, 0.06);
-  border: 1px solid rgba(142, 213, 255, 0.16);
+  background: rgba(156, 143, 255, 0.06);
+  border: 1px solid rgba(156, 143, 255, 0.16);
   color: var(--on-surface); cursor: pointer;
   font-size: 13px; line-height: 1.4;
   transition: background 0.15s var(--ease), border-color 0.15s var(--ease), transform 0.1s var(--ease);
 }
-.iris-greet-item:hover { background: rgba(142, 213, 255, 0.14); border-color: rgba(142, 213, 255, 0.4); }
+.iris-greet-item:hover { background: rgba(156, 143, 255, 0.14); border-color: rgba(156, 143, 255, 0.4); }
 .iris-greet-item:active { transform: scale(0.99); }
-.iris-greet-item .material-symbols-outlined { font-size: 18px; color: var(--primary, #8ed5ff); flex-shrink: 0; }
+.iris-greet-item .material-symbols-outlined { font-size: 18px; color: var(--primary, #9c8fff); flex-shrink: 0; }
 .iris-greet-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Postvak ──────────────────────────────────────────────────────────────
@@ -589,11 +619,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .mail-head-main:active { opacity: 0.7; }
 .mail-head-btn {
   flex: none; font-size: 12px; font-weight: 500; color: var(--iris-blue);
-  border: 1px solid rgba(142, 213, 255, 0.28); border-radius: 9px;
+  border: 1px solid rgba(156, 143, 255, 0.28); border-radius: 9px;
   padding: 7px 11px; background: transparent; cursor: pointer;
   transition: background 0.15s var(--ease);
 }
-.mail-head-btn:hover { background: rgba(142, 213, 255, 0.08); }
+.mail-head-btn:hover { background: rgba(156, 143, 255, 0.08); }
 
 /* Regels raken elkaar via een haarlijn in plaats van via witruimte: dat leest
    als één lijst, niet als losse kaartjes, en scheelt verticale ruimte op een
@@ -643,7 +673,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .mail-draft-hint {
   flex: none; width: 26px; height: 26px; border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(142, 213, 255, 0.12); color: var(--iris-blue); margin-top: 2px;
+  background: rgba(156, 143, 255, 0.12); color: var(--iris-blue); margin-top: 2px;
 }
 .mail-draft-hint .material-symbols-outlined { font-size: 16px; }
 
@@ -664,11 +694,11 @@ details.mail-sectie > summary.mail-sectie-kop { cursor: pointer; }
 .mail-cta {
   display: flex; align-items: center; gap: 10px; width: 100%;
   padding: 11px 12px; border-radius: 11px; cursor: pointer;
-  background: rgba(142, 213, 255, 0.09); border: 1px solid rgba(142, 213, 255, 0.24);
+  background: rgba(156, 143, 255, 0.09); border: 1px solid rgba(156, 143, 255, 0.24);
   color: var(--iris-blue); font-size: 13px; font-weight: 500;
   transition: background 0.15s var(--ease);
 }
-.mail-cta:hover { background: rgba(142, 213, 255, 0.14); }
+.mail-cta:hover { background: rgba(156, 143, 255, 0.14); }
 .mail-cta .material-symbols-outlined { font-size: 18px; }
 
 .mail-open-all {
@@ -765,7 +795,7 @@ details[open] > summary .mail-note-caret { transform: rotate(180deg); }
 .rit-quote {
   font-size: 13px; font-style: italic; line-height: 1.5; color: var(--on-surface);
   padding: 10px 12px; border-radius: 10px;
-  background: rgba(142, 213, 255, 0.06); border: 1px solid rgba(142, 213, 255, 0.15);
+  background: rgba(156, 143, 255, 0.06); border: 1px solid rgba(156, 143, 255, 0.15);
 }
 
 .rit-btn {
@@ -776,9 +806,9 @@ details[open] > summary .mail-note-caret { transform: rotate(180deg); }
 }
 .rit-btn:hover { background: rgba(255, 255, 255, 0.09); }
 .rit-btn:active { transform: scale(0.98); }
-.rit-btn.is-primair { background: var(--primary, #8ed5ff); color: var(--on-primary, #00354a); border: none; }
+.rit-btn.is-primair { background: var(--primary, #9c8fff); color: var(--on-primary, #15161c); border: none; }
 .rit-btn.is-primair:hover { opacity: 0.9; }
-.rit-btn.is-secundair { background: transparent; color: var(--primary, #8ed5ff); border-color: rgba(142, 213, 255, 0.3); }
+.rit-btn.is-secundair { background: transparent; color: var(--primary, #9c8fff); border-color: rgba(156, 143, 255, 0.3); }
 .rit-btn:disabled { opacity: 0.5; }
 
 .rit-mini {
@@ -791,7 +821,7 @@ details[open] > summary .mail-note-caret { transform: rotate(180deg); }
 
 .rit-goal { padding: 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--surface-1-line); }
 .rit-bar { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.06); margin-top: 6px; overflow: hidden; }
-.rit-bar > div { height: 100%; border-radius: 3px; background: var(--primary, #8ed5ff); transition: width 0.2s var(--ease); }
+.rit-bar > div { height: 100%; border-radius: 3px; background: var(--primary, #9c8fff); transition: width 0.2s var(--ease); }
 
 .rit-label { display: block; font-size: 11px; color: var(--on-surface-variant); margin: 10px 0 4px; }
 .rit-label:first-child { margin-top: 0; }
@@ -799,5 +829,5 @@ details[open] > summary .mail-note-caret { transform: rotate(180deg); }
   width: 100%; background: #020617; border: none; border-radius: 8px;
   padding: 9px 11px; color: var(--on-surface); font-size: 13px; resize: none;
 }
-.rit-field:focus { outline: none; box-shadow: 0 0 0 2px rgba(142, 213, 255, 0.35); }
+.rit-field:focus { outline: none; box-shadow: 0 0 0 2px rgba(156, 143, 255, 0.35); }
 .rit-field::placeholder { color: rgba(167, 177, 185, 0.4); }

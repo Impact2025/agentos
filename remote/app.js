@@ -97,7 +97,7 @@
   }
 
   // ── Views + nav ──────────────────────────────────────────────────────────
-  const views = ['login', 'today', 'inbox', 'briefing', 'rituals', 'note', 'system'];
+  const views = ['login', 'today', 'inbox', 'briefing', 'rituals', 'note', 'system', 'onboarding'];
 
   // Historie: op Android is de terugknop (of de veeg vanaf de rand) het eerste
   // wat iemand probeert. Zonder deze koppeling sloot dat de hele app af in
@@ -129,6 +129,11 @@
     const myToken = ++loadToken;
     if (push) pushView(view);
     views.forEach((v) => { $(`view-${v}`).hidden = v !== view; });
+    // Een tab-wissel was een harde snap (hidden -> zichtbaar zonder overgang).
+    // .fade-up opnieuw triggeren vergt een geforceerde reflow — anders ziet de
+    // browser dezelfde klasse en speelt de animatie niet opnieuw af.
+    const shown = $(`view-${view}`);
+    shown.classList.remove('fade-up'); void shown.offsetWidth; shown.classList.add('fade-up');
     document.querySelectorAll('.nav-btn').forEach((b) => {
       const on = b.dataset.view === view;
       b.classList.toggle('nav-active', on);
@@ -696,9 +701,9 @@
     const li = vals.length - 1;
     return `<div class="relative mt-3" data-spark="${id}">
       <svg viewBox="0 0 ${W} ${H}" class="w-full h-14 block" preserveAspectRatio="none" aria-label="Clicks per dag, laatste ${series.length} dagen">
-        <path d="${area}" fill="rgba(142,213,255,0.12)"></path>
-        <path d="${line}" fill="none" stroke="#8ed5ff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"></path>
-        <circle cx="${x(li).toFixed(1)}" cy="${y(vals[li]).toFixed(1)}" r="3.5" fill="#8ed5ff" stroke="#101415" stroke-width="2"></circle>
+        <path d="${area}" fill="rgba(156,143,255,0.12)"></path>
+        <path d="${line}" fill="none" stroke="#9c8fff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"></path>
+        <circle cx="${x(li).toFixed(1)}" cy="${y(vals[li]).toFixed(1)}" r="3.5" fill="#9c8fff" stroke="#121118" stroke-width="2"></circle>
         <text x="${(x(li) + 7).toFixed(1)}" y="${Math.min(H - 6, Math.max(11, y(vals[li]) + 4)).toFixed(1)}" fill="#e0e3e5" font-size="11" font-family="JetBrains Mono, monospace">${vals[li]}</text>
       </svg>
       <div class="spark-tip absolute pointer-events-none bg-surface-container-high border border-white/10 rounded px-2 py-1 font-label-caps text-[10px] text-on-surface z-10 whitespace-nowrap" style="display:none"></div>
@@ -1456,7 +1461,295 @@
             <p class="font-body-md text-body-md text-on-surface-variant">Laatst actief ${fmtDate(s.last_seen)}</p>
           </div>
         </div>`).join('');
+      renderOnboardingList();
     } catch (e) { /* login afgehandeld */ }
+  }
+
+  // ── Iris-onboarding-wizard ───────────────────────────────────────────────
+  // Verhuisd hierheen vanaf de lokale AgentOS-SPA (localhost:1250, onbereik-
+  // baar voor een klant zoals Nicole) — zie backend/domains/bridge/context.py:
+  // build_onboarding voor de databron en backend/domains/bridge/actions.py:
+  // _cmd_onboarding_* voor wat er met een ingediende stap gebeurt. Alles hier
+  // is *asynchroon*: een tik op "Volgende" zet een commando klaar (net als
+  // elke andere knop in deze app) dat pas bij de eerstvolgende lokale sync
+  // (standaard elke paar minuten) echt wordt toegepast — er is bewust geen
+  // live round-trip naar de lokale backend, die praat deze app nooit direct.
+  const ONBOARDING_PRESETS = {
+    laag: ['Laag', 'Iris start voorzichtig, weinig per dag'],
+    normaal: ['Normaal', 'een gezond dagelijks tempo'],
+    hoog: ['Hoog', 'Iris mag flink doorpakken'],
+  };
+
+  async function ensureContext(force = false) {
+    if (contextCache && !force) return contextCache;
+    try {
+      const data = await api('context');
+      contextCache = data.payload || null;
+    } catch (e) { if (e.message !== 'login') console.warn('ensureContext', e); }
+    return contextCache;
+  }
+
+  function onboardingSite(ctx, siteId) {
+    const sites = (ctx && ctx.onboarding && ctx.onboarding.sites) || [];
+    return sites.find((s) => s.site_id === siteId) || null;
+  }
+
+  async function renderOnboardingList() {
+    const host = $('onboarding-list');
+    if (!host) return;
+    const ctx = await ensureContext();
+    const sites = (ctx && ctx.onboarding && ctx.onboarding.sites) || [];
+    if (!sites.length) {
+      host.innerHTML = '<p class="font-body-md text-body-md text-on-surface-variant">Nog geen klanten.</p>';
+      return;
+    }
+    host.innerHTML = sites.map((s) => {
+      const done = [s.steps['1_bedrijfsdoel'].done, s.steps['2_schrijfstijl'].done, s.steps['4_autonomie'].done]
+        .filter(Boolean).length;
+      const label = s.onboarded_at ? 'Onboard' : `${done}/3 stappen`;
+      return `<div class="flex items-center justify-between gap-3 py-2 border-b border-white/5 last:border-0">
+        <div class="min-w-0">
+          <p class="font-body-lg text-body-lg text-on-surface truncate">${esc(s.project)}</p>
+          <p class="font-body-md text-body-md text-on-surface-variant">${esc(label)}</p>
+        </div>
+        <button class="font-label-caps text-label-caps text-primary shrink-0" data-onb-open="${esc(s.site_id)}">
+          ${s.onboarded_at ? 'BEKIJK' : 'DOORGAAN'}</button>
+      </div>`;
+    }).join('');
+    host.querySelectorAll('[data-onb-open]').forEach((b) => {
+      b.onclick = () => openOnboarding(b.dataset.onbOpen);
+    });
+  }
+
+  $('onboardingNewBtn').onclick = async () => {
+    const name = prompt('Naam van de nieuwe klant (zoals hij overal in Agent OS moet heten):');
+    if (!name || !name.trim()) return;
+    await sendCommand('onboarding_new_client', { name: name.trim() }, name.trim());
+    toast('Verschijnt hieronder zodra AgentOS gesynchroniseerd heeft.', '', 'hourglass_top');
+  };
+
+  $('onboardingBack').onclick = () => show('system');
+
+  let onbNotice = null; // {step:'3', kind:'connecting'|'error', text} — ná OAuth-redirect
+  const onbProgress = (step) => Array.from({ length: 4 }, (_, i) =>
+    `<span class="h-[3px] flex-1 rounded-full ${i < step ? 'bg-primary' : 'bg-white/10'}"></span>`).join('');
+
+  async function openOnboarding(siteId, step = 1) {
+    show('onboarding');
+    const host = $('onboarding-wizard');
+    host.innerHTML = skeletons(1);
+    const ctx = await ensureContext(true);
+    const site = onboardingSite(ctx, siteId);
+    if (!site) {
+      host.innerHTML = `<div class="glass-panel rounded-xl p-6"><p class="font-body-md text-body-md text-on-surface-variant">
+        Deze klant is nog niet gesynchroniseerd — probeer over een paar minuten opnieuw.</p></div>`;
+      return;
+    }
+    if (site.onboarded_at) { renderOnboardingDone(host, site); return; }
+    renderOnboardingStep(host, site, step);
+  }
+
+  function renderOnboardingStep(host, site, step) {
+    const notice = onbNotice && onbNotice.step === String(step)
+      ? `<p class="font-body-md text-body-md ${onbNotice.kind === 'error' ? 'text-error' : 'text-primary'} mt-3">${esc(onbNotice.text)}</p>`
+      : '';
+    let body = '';
+    if (step === 1) body = onbStep1(site);
+    else if (step === 2) body = onbStep2(site);
+    else if (step === 3) body = onbStep3(site);
+    else body = onbStep4(site);
+    host.innerHTML = `
+      <div class="flex gap-1.5 mb-6">${onbProgress(step)}</div>
+      ${body}${notice}`;
+    bindOnboardingStep(host, site, step);
+  }
+
+  function onbStep1(site) {
+    const min = site.steps['1_bedrijfsdoel'].min_length;
+    const val = site.steps['1_bedrijfsdoel'].profile || '';
+    return `
+      <p class="font-label-caps text-label-caps text-primary mb-1">STAP 1 VAN 4</p>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile mb-2">Vertel Iris wat ${esc(site.project)} doet.</h2>
+      <p class="font-body-md text-body-md text-on-surface-variant mb-4">Waar het bedrijf voor staat, voor wie, en wat nu de belangrijkste prioriteit is.</p>
+      <textarea id="onb-profile" rows="7" class="w-full bg-[#020617] border-none rounded-lg p-4 text-on-surface font-body-lg focus:ring-2 focus:ring-primary/50"
+        placeholder="Bijv.: Wij helpen zelfstandige coaches aan hun eerste 10 klanten via LinkedIn...">${esc(val)}</textarea>
+      <p class="font-label-caps text-label-caps text-on-surface-variant mt-2" id="onb-count">${val.trim().length}/${min} tekens</p>
+      <div class="flex justify-end mt-6">
+        <button id="onb-next" class="bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm disabled:opacity-40" ${val.trim().length >= min ? '' : 'disabled'}>Volgende</button>
+      </div>`;
+  }
+
+  function onbStep2(site) {
+    return `
+      <p class="font-label-caps text-label-caps text-primary mb-1">STAP 2 VAN 4</p>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile mb-2">Hoe klinkt ${esc(site.project)}?</h2>
+      <p class="font-body-md text-body-md text-on-surface-variant mb-4">Formeel of informeel, kort of uitgebreid, wat wel/nooit gezegd wordt.</p>
+      <textarea id="onb-tone" rows="7" class="w-full bg-[#020617] border-none rounded-lg p-4 text-on-surface font-body-lg focus:ring-2 focus:ring-primary/50"
+        placeholder="Bijv.: Informeel maar deskundig, je-vorm, korte zinnen..."></textarea>
+      <p class="font-label-caps text-label-caps text-on-surface-variant mt-2" id="onb-count">min. 20 tekens</p>
+      <div class="flex justify-between mt-6">
+        <button id="onb-back" class="font-headline-sm text-on-surface-variant">Terug</button>
+        <button id="onb-next" class="bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm disabled:opacity-40" disabled>Volgende</button>
+      </div>`;
+  }
+
+  function onbStep3(site) {
+    const ch = site.steps['3_kanalen'];
+    function row(label, info, configured, provider) {
+      const connected = !!info;
+      const right = connected
+        ? '<span class="font-label-caps text-label-caps text-primary">GEKOPPELD</span>'
+        : configured
+          ? `<a href="/api/oauth?provider=${provider}&op=authorize&site=${encodeURIComponent(site.site_id)}"
+               class="font-label-caps text-label-caps text-primary border border-primary/30 rounded-lg px-3 py-1.5">KOPPELEN</a>`
+          : '<span class="font-label-caps text-label-caps text-on-surface-variant/50">NIET GECONFIGUREERD</span>';
+      return `<div class="flex items-center justify-between gap-3 py-3 border-b border-white/5 last:border-0">
+        <div class="min-w-0"><p class="font-body-lg text-body-lg text-on-surface">${label}</p>
+        ${connected ? `<p class="font-body-md text-body-md text-on-surface-variant truncate">${esc(info.account_email)}</p>` : ''}</div>
+        ${right}</div>`;
+    }
+    return `
+      <p class="font-label-caps text-label-caps text-primary mb-1">STAP 3 VAN 4</p>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile mb-2">Koppel de kanalen van ${esc(site.project)}.</h2>
+      <p class="font-body-md text-body-md text-on-surface-variant mb-4">Iris draaft en agendeert alleen in wat je hier koppelt — nooit in jouw eigen account. Overslaan mag.</p>
+      <div class="glass-panel rounded-xl p-2">
+        ${row('Outlook (mail + agenda)', ch.microsoft, ch.microsoft_configured, 'microsoft')}
+        ${row('Google (Search Console + agenda)', ch.google, ch.google_configured, 'google')}
+      </div>
+      <div class="flex justify-between mt-6">
+        <button id="onb-back" class="font-headline-sm text-on-surface-variant">Terug</button>
+        <button id="onb-next" class="bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm">Volgende</button>
+      </div>`;
+  }
+
+  function onbStep4(site) {
+    const current = site.steps['4_autonomie'].current;
+    const presets = site.steps['4_autonomie'].presets;
+    let selected = 'normaal';
+    if (current) {
+      for (const key in presets) {
+        if (JSON.stringify(presets[key]) === JSON.stringify({
+          content_run_max: current.content_run_max, outreach_max: current.outreach_max,
+          seo_refresh_max: current.seo_refresh_max, linkbuild_max: current.linkbuild_max,
+        })) selected = key;
+      }
+    }
+    const presetHtml = ['laag', 'normaal', 'hoog'].map((key) => `
+      <button type="button" data-preset="${key}"
+        class="onb-preset-btn w-full text-left glass-panel rounded-xl p-4 mb-2 ${key === selected ? 'border border-primary' : ''}">
+        <span class="font-headline-sm text-headline-sm">${ONBOARDING_PRESETS[key][0]}</span>
+        <span class="font-body-md text-body-md text-on-surface-variant"> — ${ONBOARDING_PRESETS[key][1]}</span>
+      </button>`).join('');
+    return `
+      <p class="font-label-caps text-label-caps text-primary mb-1">STAP 4 VAN 4</p>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile mb-2">Hoeveel mag Iris zelf klaarzetten?</h2>
+      <p class="font-body-md text-body-md text-on-surface-variant mb-4">Iris publiceert nooit zelf — alles wacht in de Wachtrij op jouw goedkeuring. Dit bepaalt alleen hóéveel ze per dag maximaal vóórbereidt.</p>
+      <div id="onb-presets">${presetHtml}</div>
+      <div class="flex justify-between mt-6">
+        <button id="onb-back" class="font-headline-sm text-on-surface-variant">Terug</button>
+        <button id="onb-finish" class="bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm">Onboarding afronden</button>
+      </div>`;
+  }
+
+  function bindOnboardingStep(host, site, step) {
+    const back = $('onb-back');
+    if (back) back.onclick = () => renderOnboardingStep(host, site, step - 1);
+
+    if (step === 1) {
+      const ta = $('onb-profile'), count = $('onb-count'), next = $('onb-next');
+      const min = site.steps['1_bedrijfsdoel'].min_length;
+      ta.addEventListener('input', () => {
+        const n = ta.value.trim().length;
+        count.textContent = `${n}/${min} tekens`;
+        next.disabled = n < min;
+      });
+      next.onclick = async () => {
+        next.disabled = true;
+        await sendCommand('onboarding_step1', { site_id: site.site_id, profile: ta.value.trim() }, 'Bedrijfsdoel');
+        site.steps['1_bedrijfsdoel'] = { ...site.steps['1_bedrijfsdoel'], profile: ta.value.trim(), done: true };
+        renderOnboardingStep(host, site, 2);
+      };
+    }
+    if (step === 2) {
+      const ta = $('onb-tone'), count = $('onb-count'), next = $('onb-next');
+      ta.addEventListener('input', () => {
+        const n = ta.value.trim().length;
+        count.textContent = `${n} tekens (min. 20)`;
+        next.disabled = n < 20;
+      });
+      next.onclick = async () => {
+        next.disabled = true;
+        await sendCommand('onboarding_step2', { site_id: site.site_id, tone_text: ta.value.trim() }, 'Schrijfstijl');
+        site.steps['2_schrijfstijl'] = { done: true };
+        renderOnboardingStep(host, site, 3);
+      };
+    }
+    if (step === 3) {
+      const next = $('onb-next');
+      if (next) next.onclick = () => renderOnboardingStep(host, site, 4);
+    }
+    if (step === 4) {
+      let chosen = (host.querySelector('.onb-preset-btn[data-preset].border-primary') || {}).dataset?.preset || 'normaal';
+      host.querySelectorAll('.onb-preset-btn').forEach((btn) => {
+        btn.onclick = () => {
+          host.querySelectorAll('.onb-preset-btn').forEach((b) => b.classList.remove('border', 'border-primary'));
+          btn.classList.add('border', 'border-primary');
+          chosen = btn.dataset.preset;
+        };
+      });
+      $('onb-finish').onclick = async (e) => {
+        e.target.disabled = true;
+        await sendCommand('onboarding_step4', { site_id: site.site_id, preset: chosen }, 'Werk-grenzen');
+        await sendCommand('onboarding_complete', { site_id: site.site_id }, 'Onboarding afgerond');
+        const host2 = $('onboarding-wizard');
+        host2.innerHTML = `<div class="glass-panel rounded-xl p-8 text-center">
+          <span class="material-symbols-outlined text-primary text-5xl mb-3">check_circle</span>
+          <h2 class="font-display-lg-mobile text-display-lg-mobile mb-2">${esc(site.project)} is bijna onboard.</h2>
+          <p class="font-body-md text-body-md text-on-surface-variant mb-6">De laatste stappen worden binnen enkele minuten verwerkt zodra AgentOS synchroniseert.</p>
+          <button id="onb-to-system" class="bg-primary text-on-primary px-6 py-3 rounded-lg font-headline-sm">Naar Systeem</button>
+        </div>`;
+        $('onb-to-system').onclick = () => show('system');
+      };
+    }
+  }
+
+  function renderOnboardingDone(host, site) {
+    host.innerHTML = `<div class="glass-panel rounded-xl p-8 text-center">
+      <span class="material-symbols-outlined text-primary text-5xl mb-3">verified</span>
+      <h2 class="font-display-lg-mobile text-display-lg-mobile mb-2">${esc(site.project)} is onboard.</h2>
+      <p class="font-body-md text-body-md text-on-surface-variant">Sinds ${fmtDate(site.onboarded_at)}. Wil je iets aanpassen? Doorloop de wizard opnieuw via de knoppen hieronder.</p>
+      <div class="flex flex-col gap-2 mt-6">
+        <button data-onb-step="1" class="glass-panel rounded-lg px-4 py-3 font-body-lg text-body-lg">Bedrijfsdoel</button>
+        <button data-onb-step="2" class="glass-panel rounded-lg px-4 py-3 font-body-lg text-body-lg">Schrijfstijl</button>
+        <button data-onb-step="3" class="glass-panel rounded-lg px-4 py-3 font-body-lg text-body-lg">Kanalen</button>
+        <button data-onb-step="4" class="glass-panel rounded-lg px-4 py-3 font-body-lg text-body-lg">Werk-grenzen</button>
+      </div>
+    </div>`;
+    host.querySelectorAll('[data-onb-step]').forEach((b) => {
+      b.onclick = () => renderOnboardingStep(host, site, parseInt(b.dataset.onbStep, 10));
+    });
+  }
+
+  // Ná een Google/Microsoft-consent-redirect stuurt remote/api/oauth.js de
+  // browser terug naar #onboarding?site=..&step=3&connecting=<provider> (of
+  // &connect_error=...). Alleen de hash overleeft die rondreis (zelfde reden
+  // als de oude lokale wizard) — dit is dus bewust de ENE plek waar deze app
+  // de hash leest, verder is alles knop-gedreven.
+  function handleOnboardingRedirect() {
+    const h = location.hash || '';
+    if (h.indexOf('#onboarding') !== 0) return;
+    const q = new URLSearchParams(h.slice(h.indexOf('?') + 1));
+    const site = q.get('site');
+    const step = parseInt(q.get('step') || '3', 10) || 3;
+    if (!site) return;
+    if (q.get('connecting')) {
+      onbNotice = { step: String(step), kind: 'connecting',
+        text: `Bezig met koppelen — dit duurt tot een paar minuten (wacht op de volgende AgentOS-sync).` };
+    } else if (q.get('connect_error')) {
+      onbNotice = { step: String(step), kind: 'error', text: `Koppelen mislukt: ${q.get('connect_error')}` };
+    }
+    history.replaceState(null, '', location.pathname);
+    openOnboarding(site, step);
   }
 
   $('logoutAllBtn').onclick = async () => {
@@ -1501,6 +1794,20 @@
   }
 
   const SEV = { hoog: 'sev-hoog', midden: 'sev-midden', laag: 'sev-laag' };
+
+  // Het #1 signaal voor de Vandaag-kop: het zwaarste 'bad'-item (severity
+  // hoog eerst), anders het eerste 'good'-item, anders niets. Bewust géén
+  // mail/agenda-filter zoals pulsePanel(excludeAreas) — dit is de kop van het
+  // hele scherm, dus een urgente mail mag hier best de opener zijn.
+  function topPulseSignal(pulse) {
+    if (!pulse) return null;
+    const bad = pulse.bad || [];
+    const worst = bad.find((b) => b.severity === 'hoog') || bad[0];
+    if (worst) return { icon: '⚠', text: worst.what, color: 'var(--err)' };
+    const good = (pulse.good || [])[0];
+    if (good) return { icon: '✓', text: good.what, color: 'var(--ok)' };
+    return null;
+  }
 
   function pulsePanel(pulse, excludeAreas = []) {
     if (!pulse) return '';
@@ -1592,7 +1899,7 @@
           </li>`).join('')}</ul>`;
     return `
       ${a.unreachable && a.unreachable.length ? `<p class="font-body-md text-[12px] text-error">⚠ Niet alle agenda's leesbaar (${esc(a.unreachable.map((u) => u.id).join(', '))}) — dit overzicht is mogelijk onvolledig.</p>` : ''}
-      ${a.next ? `<div class="rounded-lg p-3" style="background:rgba(142,213,255,0.07); border:1px solid rgba(142,213,255,0.18)">
+      ${a.next ? `<div class="rounded-lg p-3" style="background:rgba(156,143,255,0.07); border:1px solid rgba(156,143,255,0.18)">
         <p class="font-body-md text-[11px] font-semibold uppercase tracking-wide text-primary">Hierna · ${esc(a.next.time)}</p>
         <p class="font-body-lg text-[15px] text-on-surface mt-1">${esc(a.next.summary)}</p>
         ${a.next.location || a.next.online ? `<p class="font-body-md text-[12px] text-on-surface-variant mt-0.5">${a.next.online ? 'online' : esc(a.next.location)}</p>` : ''}
@@ -1641,6 +1948,22 @@
   // "Reageren"). Dat pilletje leek bovendien een knop terwijl alleen regels mét
   // conceptantwoord iets doen — een aanwijzing die vaker liegt dan klopt.
 
+  // ── Het Iris-merkteken: een aperture (spaken + pupil) i.p.v. het generieke
+  // Material-icoon 'hub' dat hier tot nu toe als logo fungeerde. Zelfde
+  // geometrie-taal als de mascotte in de desktop-onboarding
+  // (frontend/js/tabs-onboarding.js:_irisMascot) — hier als kale SVG-string
+  // omdat Iris Remote geen gedeelde JS-module met de hoofd-app heeft.
+  // `currentColor` laat 'm meekleuren met de tekstkleur van zijn context
+  // (topbar: text-primary, sync-pill: de fresh/recent/stale/dead-kleur).
+  function apertureMark(size = 20, cls = '') {
+    const spokes = Array.from({ length: 8 }, (_, i) => {
+      const a = i * 45;
+      return `<line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(${a} 12 12)"></line>`;
+    }).join('');
+    return `<svg class="aperture-mark ${cls}" viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true">` +
+      `<g class="aperture-spokes">${spokes}</g><circle cx="12" cy="12" r="2.6" fill="currentColor"></circle></svg>`;
+  }
+
   function relTime(v) {
     if (!v) return '';
     const t = new Date(v).getTime();
@@ -1660,7 +1983,7 @@
   // scan je op afzender, niet op onderwerp. De kleur komt uit de naam zodat
   // dezelfde afzender altijd dezelfde tint krijgt — herkenning zonder tekst.
   const _AVATAR_TINTS = [
-    'rgba(142,213,255,0.16)', 'rgba(167,181,255,0.16)', 'rgba(134,239,172,0.14)',
+    'rgba(156,143,255,0.16)', 'rgba(125,211,252,0.14)', 'rgba(134,239,172,0.14)',
     'rgba(251,191,36,0.14)', 'rgba(244,164,196,0.14)', 'rgba(153,246,228,0.13)',
   ];
   function initials(name, email) {
@@ -2057,10 +2380,27 @@
       // Iris begroet pas ná de count-update, zodat ze de juiste "N wachten op
       // je" in haar welkomst zet.
       irisGreet();
+      // Het zwaarste signaal uit de pulse als kop, niet alleen een teller:
+      // "3 besluiten wachten" zegt niets over wélk het belangrijkst is. Zelfde
+      // bron als pulsePanel() verderop — dit is een teaser van het #1 item,
+      // geen tweede lijst (die staat al compleet in pulsePanel).
+      const pulseLine = $('today-pulse-line');
+      const top = topPulseSignal(ctx.pulse);
+      if (top) {
+        pulseLine.textContent = `${top.icon} ${top.text}`;
+        pulseLine.style.color = top.color;
+        pulseLine.classList.remove('hidden');
+      } else {
+        pulseLine.classList.add('hidden');
+      }
       // Dit ís de dag — agenda en postvak eerst, precies zo opent een
       // secretaresse het gesprek ook. Pulse (bredere signalen) erna, met
       // mail/agenda eruit gefilterd want die staan al concreet hierboven.
       // Delegeren (snel-starten) komt pas na het overzicht, niet ervoor.
+      // .stagger laat de panelen ná elkaar binnenkomen i.p.v. in één keer te
+      // verschijnen — dezelfde entree-klasse die de rest van de app al
+      // gebruikt (Postvak-rijen, notities), nu ook hier.
+      el.classList.add('stagger');
       el.innerHTML = [
         agendaPanel(ctx.agenda),
         mailPanel(ctx.mail),
@@ -2188,13 +2528,14 @@
   function renderChat(pending = false) {
     const el = $('chat-messages');
     chatHistory.forEach((m, i) => { m.idx = i; });
+    const irisAvatar = `<div class="chat-avatar">${apertureMark(16)}</div>`;
     el.innerHTML = chatHistory.map((m) => m.role === 'user'
       ? `<div class="flex justify-end fade-up"><div class="chat-msg me">${esc(m.content)}</div></div>`
-      : `<div class="flex justify-start fade-up"><div class="chat-msg iris${m.greeting ? ' is-greeting' : ''}">${mdLite(m.content)}${m.greetHtml || ''}${effectsHtml(m)}</div></div>`).join('')
+      : `<div class="flex justify-start items-end gap-1.5 fade-up">${irisAvatar}<div class="chat-msg iris${m.greeting ? ' is-greeting' : ''}">${mdLite(m.content)}${m.greetHtml || ''}${effectsHtml(m)}</div></div>`).join('')
       // Levendige typing-indicator i.p.v. een statische "IRIS DENKT NA…" —
       // drie stippen die stuiteren, zodat je ziet dat Iris écht aan het
       // schrijven is (niet een vast label dat altijd aanstaat).
-      + (pending ? '<div class="flex justify-start fade-up"><div class="chat-msg iris"><div class="chat-typing"><span></span><span></span><span></span></div></div></div>' : '');
+      + (pending ? `<div class="flex justify-start items-end gap-1.5 fade-up">${irisAvatar}<div class="chat-msg iris"><div class="chat-typing"><span></span><span></span><span></span></div></div></div>` : '');
     el.querySelectorAll('[data-prop]').forEach((btn) => {
       btn.onclick = async () => {
         const [mi, pi] = btn.dataset.prop.split(':').map(Number);
@@ -2401,5 +2742,6 @@
     }, 20000);
   }
   show('today');
+  handleOnboardingRedirect();
   startPolling();
 })();

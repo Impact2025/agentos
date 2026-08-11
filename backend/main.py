@@ -44,6 +44,7 @@ from .domains.vacancies import router as vacancies_router
 from .domains.seo import router as demand_router
 from .domains.seo import sites_router
 from .domains.seo import knowledge as knowledge_router
+from .domains.onboarding import router as onboarding_router
 from .domains.delegate import router as delegate_router
 from .domains.loop import router as loops_router
 from .domains.finance import router as finance_router
@@ -180,6 +181,10 @@ app.include_router(health_router.router)
 app.include_router(infinite_context_router.router)
 app.include_router(action_center_router.router)
 app.include_router(auth_router.router)
+# Onboarding is per-klant setup — hoort bij de kern, niet achter een
+# domain-whitelist: elke nieuwe instance moet zijn eerste klant kunnen
+# onboarden, ongeacht welke domeinen daarna zijn afgesproken.
+app.include_router(onboarding_router.router)
 # strategist_router draagt ook /control-room — de databron van de hele Control
 # Room-homepage (project-cards, systeemgezondheid), niet alleen de Doelen-
 # functies. Die hoort dus bij de kern, niet achter de "goal"-whitelist: anders
@@ -196,6 +201,8 @@ if domain_enabled("pipeline"):
     app.include_router(agent_profiles_router.router)
     app.include_router(delegate_router.router)
     app.include_router(loops_router.router)
+    from .domains.gauntlet import router as gauntlet_router
+    app.include_router(gauntlet_router.router)
 if domain_enabled("prospecting"):
     app.include_router(leads_router.router)
 if domain_enabled("learning"):

@@ -58,7 +58,7 @@ def build_digest() -> Dict[str, Any]:
 
     # ── 1. Fouten eerst: die kosten je geld/kansen als ze blijven liggen ──
     if errors or failed:
-        lines.append(f"## ⚠ Ging mis ({len(errors)} open)")
+        lines.append(f"## Ging mis ({len(errors)} open)")
         for e in errors[:5]:
             lines.append(f"- **{e['title']}** — {e['summary'][:140]}")
         for f in failed[:3]:
@@ -68,7 +68,7 @@ def build_digest() -> Dict[str, Any]:
 
     # ── 2. Wat wacht op jou ──
     if waiting:
-        lines.append(f"## ✋ Wacht op jou ({len(waiting)})")
+        lines.append(f"## Wacht op jou ({len(waiting)})")
         by_kind: Dict[str, int] = {}
         for w in waiting:
             by_kind[w["kind"]] = by_kind.get(w["kind"], 0) + 1
@@ -94,7 +94,7 @@ def build_digest() -> Dict[str, Any]:
             lines.append("")
 
     # ── 3. Wat de agents gisteren opleverden ──
-    lines.append(f"## ✓ Gisteren opgeleverd ({len(delivered)})")
+    lines.append(f"## Gisteren opgeleverd ({len(delivered)})")
     if delivered:
         for d in delivered[:10]:
             entry = f"- {d['project']}: {d['detail'][:120]}"
@@ -114,7 +114,7 @@ def build_digest() -> Dict[str, Any]:
         from ...shared import downtime
         gaps = [g for g in downtime.summary() if g["recoverable"]]
         if gaps:
-            lines.append(f"## ⏸️ Niet gedraaid ({len(gaps)} taak/taken)")
+            lines.append(f"## Niet gedraaid ({len(gaps)} taak/taken)")
             for g in gaps[:6]:
                 lines.append(f"- {g['detail']}")
             lines.append("")
@@ -131,7 +131,7 @@ def build_digest() -> Dict[str, Any]:
         from ...domains.prospecting import funnel as funnel_mod
         f = funnel_mod.funnel_stats()
         inp = funnel_mod.input_stats(days=7)
-        lines.append("## 📈 De formule (laatste 7 dagen)")
+        lines.append("## De formule (laatste 7 dagen)")
         lines.append(
             f"- Input: {inp['outreach_sent']}/{inp['outreach_target']} outreach verstuurd · "
             f"{inp['outreach_drafts_ready']} concept(en) wachten op je verzendklik · "
@@ -146,7 +146,7 @@ def build_digest() -> Dict[str, Any]:
             lines.append(f"- **Formule: {f['formula']}**")
         if inp["outreach_sent"] < inp["outreach_target"]:
             lines.append(
-                f"- ⚡ Onder target: keur wachtende concepten goed of draai een extra batch — "
+                f"- Onder target: keur wachtende concepten goed of draai een extra batch — "
                 "de output volgt de input."
             )
         # Outreach-leerlus: toon de sterkste gemeten stijl-les zodra die er is.
@@ -154,7 +154,7 @@ def build_digest() -> Dict[str, Any]:
         best = top_lesson("outreach")
         if best:
             lines.append(
-                f"- 🎓 Geleerd: {best['lesson']} "
+                f"- Geleerd: {best['lesson']} "
                 f"(vertrouwen {round(best['confidence'] * 100)}%, "
                 f"{best['times_confirmed']}× bevestigd)"
             )
@@ -170,14 +170,14 @@ def build_digest() -> Dict[str, Any]:
         review = (lb["by_status"] or {}).get("outreach_review") or 0
         # Alleen tonen zodra de funnel leeft — een rapport vol nullen is ruis.
         if lb["total_prospects"]:
-            lines.append("## 🔗 Linkbuilding")
+            lines.append("## Linkbuilding")
             lines.append(
                 f"- Funnel: {r['contacted']} benaderd → {r['replied']} gereageerd → "
                 f"{r['link_live']} link(s) live ({r['verified']} geverifieerd, "
                 f"{lb['dofollow_live']} dofollow)"
             )
             if review:
-                lines.append(f"- ✋ {review} concept(en) wachten op je verzendklik in het Actiecentrum")
+                lines.append(f"- {review} concept(en) wachten op je verzendklik in het Actiecentrum")
             if lb["formula"]:
                 lines.append(f"- **Formule: {lb['formula']}**")
             lines.append("")
@@ -195,7 +195,7 @@ def build_digest() -> Dict[str, Any]:
         if pf:
             r = invest_portfolio.rendement()
             open_v = invest_service.open_voorstellen()
-            lines.append("## 📈 Beursmeester")
+            lines.append("## Beursmeester")
             if r["rendement_pct"] is None:
                 lines.append(f"- Rendement nog niet te bepalen — {r['onvolledig_reden']}")
             elif r["benchmark_pct"] is None:
@@ -212,7 +212,7 @@ def build_digest() -> Dict[str, Any]:
                 lines.append(f"- Trefkans: {trefkans['accuracy']}% over "
                              f"{trefkans['correct'] + trefkans['wrong']} afgerekende voorspellingen")
             if open_v:
-                lines.append(f"- ✋ {len(open_v)} beleggingsvoorstel(len) wachten op je beoordeling")
+                lines.append(f"- {len(open_v)} beleggingsvoorstel(len) wachten op je beoordeling")
             lines.append("")
     except Exception:
         logger.exception("Beursmeester-sectie in ochtendrapport mislukt")
@@ -228,7 +228,7 @@ def build_digest() -> Dict[str, Any]:
         if iris_report and iris_report["report_date"] == today.strftime("%Y-%m-%d"):
             advice = iris_report.get("advice") or []
             if advice:
-                lines.append("## 🧭 Iris' advies voor vandaag")
+                lines.append("## Iris' advies voor vandaag")
                 for a in sorted(advice, key=lambda x: x.get("prio", 9))[:3]:
                     lines.append(f"- **{a.get('actie', '')}** — {a.get('waarom', '')}")
                 lines.append("")
@@ -244,7 +244,7 @@ def build_digest() -> Dict[str, Any]:
             if j.get("next_run") and j["next_run"][:10] == today.strftime("%Y-%m-%d")
         ]
         if today_jobs:
-            lines.append("## 📅 Vandaag gepland")
+            lines.append("## Vandaag gepland")
             for j in sorted(today_jobs, key=lambda x: x["next_run"]):
                 lines.append(f"- {j['next_run'][11:16]} — {j['label']}")
             lines.append("")

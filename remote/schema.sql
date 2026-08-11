@@ -167,3 +167,20 @@ CREATE TABLE IF NOT EXISTS login_attempts (
   last_fail    TIMESTAMPTZ NOT NULL DEFAULT now(),
   locked_until TIMESTAMPTZ
 );
+
+-- Iris-onboarding stap 3 (OAuth-relay, zie api/oauth.js): kortlevende,
+-- eenmalig te gebruiken CSRF-state. De OAuth `state`-param draagt hier ook
+-- routing-info (welke tenant/site dit is) — zonder een server-side binding
+-- zou een aanvaller een authorize-link met een geraden site_id kunnen delen
+-- en zijn eigen Google/Microsoft-account aan iemand anders' site koppelen.
+-- `authorize` schrijft een rij (na requireSession — alleen een ingelogde
+-- gebruiker van die tenant mag een koppelpoging starten), `callback` leest
+-- 'm op state en verwijdert 'm meteen (eenmalig, dus een herhaalde callback
+-- met dezelfde code faalt in plaats van een tweede keer toe te passen).
+CREATE TABLE IF NOT EXISTS oauth_state (
+  state      TEXT PRIMARY KEY,
+  tenant     TEXT NOT NULL,
+  site_id    TEXT NOT NULL,
+  provider   TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

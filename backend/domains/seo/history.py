@@ -49,7 +49,7 @@ def record_site_daily(site: Dict) -> Dict[str, Any]:
     days = _DAILY_FILL_DAYS if has_history else _FIRST_FILL_DAYS
 
     try:
-        rows = gsc.fetch_daily_performance(prop, days=days)
+        rows = gsc.fetch_daily_performance(prop, days=days, site_id=site["id"])
     except Exception as e:
         return {"ok": False, "reason": f"GSC-fout: {str(e)[:160]}", "rows": 0}
 

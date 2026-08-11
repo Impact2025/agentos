@@ -8,7 +8,7 @@ niet; GSC wel.
 from datetime import date, timedelta
 from pathlib import Path
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from ...shared.config import GSC_SERVICE_ACCOUNT_PATH, BASE_DIR
 
@@ -37,25 +37,36 @@ def _resolve_credentials_path() -> str:
     return resolved
 
 
-def _get_service():
-    from google.oauth2 import service_account
+def _get_service(site_id: Optional[str] = None):
+    """`site_id`: probeer eerst een per-klant gekoppelde OAuth-credential
+    (Iris-onboarding, domains/onboarding/resolve.py) vóór het gedeelde
+    service-account hieronder. Zonder site_id (alle bestaande aanroepen)
+    exact het oude gedrag."""
     from googleapiclient.discovery import build
 
-    creds = service_account.Credentials.from_service_account_file(
-        _resolve_credentials_path(), scopes=SCOPES,
-    )
+    creds = None
+    if site_id:
+        from ..onboarding import resolve
+        creds = resolve.google_credentials_for(site_id)
+
+    if creds is None:
+        from google.oauth2 import service_account
+        creds = service_account.Credentials.from_service_account_file(
+            _resolve_credentials_path(), scopes=SCOPES,
+        )
     # cache_discovery=False voorkomt een file-cache-waarschuwing zonder oauth2client.
     return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
 
 
-def _query(site_url: str, dimensions: List[str], days: int, row_limit: int, end_offset: int = 0) -> List[Dict]:
+def _query(site_url: str, dimensions: List[str], days: int, row_limit: int, end_offset: int = 0,
+           site_id: Optional[str] = None) -> List[Dict]:
     """
     GSC query with configurable end offset.
 
     end_offset=0  : today-28 .. today-2  (standaard, meest recente 'final' data)
     end_offset=28 : today-56 .. today-30 (de periode ervoor — handig voor w-o-w)
     """
-    service = _get_service()
+    service = _get_service(site_id)
     # GSC-data loopt ~2 dagen achter; vraag alleen 'final' data op.
     end = date.today() - timedelta(days=2 + end_offset)
     start = end - timedelta(days=days - 1)
@@ -70,9 +81,10 @@ def _query(site_url: str, dimensions: List[str], days: int, row_limit: int, end_
     return resp.get("rows", [])
 
 
-def fetch_query_performance(site_url: str, days: int = 90, row_limit: int = 1000, end_offset: int = 0) -> List[Dict]:
+def fetch_query_performance(site_url: str, days: int = 90, row_limit: int = 1000, end_offset: int = 0,
+                             site_id: Optional[str] = None) -> List[Dict]:
     """Zoekwoordprestaties voor één site over de afgelopen N dagen."""
-    rows = _query(site_url, ["query"], days, row_limit, end_offset)
+    rows = _query(site_url, ["query"], days, row_limit, end_offset, site_id=site_id)
     out: List[Dict] = []
     for r in rows:
         out.append({
@@ -85,9 +97,10 @@ def fetch_query_performance(site_url: str, days: int = 90, row_limit: int = 1000
     return out
 
 
-def fetch_page_performance(site_url: str, days: int = 90, row_limit: int = 1000, end_offset: int = 0) -> List[Dict]:
+def fetch_page_performance(site_url: str, days: int = 90, row_limit: int = 1000, end_offset: int = 0,
+                            site_id: Optional[str] = None) -> List[Dict]:
     """Paginaprestaties — gebruikt voor groei-terugkoppeling per URL."""
-    rows = _query(site_url, ["page"], days, row_limit, end_offset)
+    rows = _query(site_url, ["page"], days, row_limit, end_offset, site_id=site_id)
     out: List[Dict] = []
     for r in rows:
         out.append({
@@ -101,10 +114,10 @@ def fetch_page_performance(site_url: str, days: int = 90, row_limit: int = 1000,
 
 
 def fetch_page_query_performance(site_url: str, days: int = 28, row_limit: int = 2000,
-                                 end_offset: int = 0) -> List[Dict]:
+                                 end_offset: int = 0, site_id: Optional[str] = None) -> List[Dict]:
     """Prestaties per pagina+zoekwoord-combinatie — nodig om per pagina het
     belangrijkste zoekwoord te kennen (SEO Optimizer: CTR/refresh-advies)."""
-    rows = _query(site_url, ["page", "query"], days, row_limit, end_offset)
+    rows = _query(site_url, ["page", "query"], days, row_limit, end_offset, site_id=site_id)
     out: List[Dict] = []
     for r in rows:
         out.append({
@@ -118,10 +131,10 @@ def fetch_page_query_performance(site_url: str, days: int = 28, row_limit: int =
     return out
 
 
-def submit_sitemap(site_url: str, sitemap_url: str) -> tuple[bool, str]:
+def submit_sitemap(site_url: str, sitemap_url: str, site_id: Optional[str] = None) -> tuple[bool, str]:
     """Dien een sitemap in bij Google Search Console. Returns (succes, detail)."""
     try:
-        service = _get_service()
+        service = _get_service(site_id)
         service.sitemaps().submit(
             siteUrl=site_url,
             feedpath=sitemap_url,
@@ -133,7 +146,7 @@ def submit_sitemap(site_url: str, sitemap_url: str) -> tuple[bool, str]:
         return False, detail
 
 
-def inspect_url(site_url: str, page_url: str) -> Dict:
+def inspect_url(site_url: str, page_url: str, site_id: Optional[str] = None) -> Dict:
     """Vraag de Google URL Inspection API om de échte index-status van één pagina.
 
     Sluit de indexering-loop: we pingen IndexNow/Google bij publish, maar tot nu
@@ -149,7 +162,7 @@ def inspect_url(site_url: str, page_url: str) -> Dict:
     result: Dict = {"indexed": False, "status": "unknown", "detail": "", "fetched_at": ""}
     try:
         from datetime import datetime
-        service = _get_service()
+        service = _get_service(site_id)
         resp = service.urlInspection().index().inspect(
             body={"inspectionUrl": page_url, "siteUrl": site_url}
         ).execute()
@@ -170,9 +183,10 @@ def inspect_url(site_url: str, page_url: str) -> Dict:
     return result
 
 
-def fetch_daily_performance(site_url: str, days: int = 28, end_offset: int = 0) -> List[Dict]:
+def fetch_daily_performance(site_url: str, days: int = 28, end_offset: int = 0,
+                             site_id: Optional[str] = None) -> List[Dict]:
     """Dagelijkse prestaties (clicks, impressies, CTR, positie) voor trendlijnen."""
-    rows = _query(site_url, ["date"], days, row_limit=days, end_offset=end_offset)
+    rows = _query(site_url, ["date"], days, row_limit=days, end_offset=end_offset, site_id=site_id)
     out: List[Dict] = []
     for r in rows:
         out.append({

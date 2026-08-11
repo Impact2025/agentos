@@ -86,6 +86,17 @@ const COMMANDS = {
     fields: ['goal_id', 'progress', 'completed'],
     keyField: 'goal_id',
   },
+  // Iris-onboarding-wizard (zie de onboarding-sectie in app.js). site_id is
+  // het doelwit: twee verschillende klanten die tegelijk stap 1 indienen
+  // mogen elkaar niet blokkeren, dus keyField=site_id i.p.v. de gedeelde
+  // `cmd:<action>`-sleutel. oauth_token_relay staat hier BEWUST niet — die
+  // decision schrijft remote/api/oauth.js rechtstreeks in Neon (na de
+  // Google/Microsoft-consent-redirect), niet de telefoon via dit endpoint.
+  onboarding_step1: { label: 'Bedrijfsdoel opgeslagen', fields: ['site_id', 'profile'], keyField: 'site_id' },
+  onboarding_step2: { label: 'Schrijfstijl opgeslagen', fields: ['site_id', 'tone_text'], keyField: 'site_id' },
+  onboarding_step4: { label: 'Werk-grenzen opgeslagen', fields: ['site_id', 'preset', 'overrides'], keyField: 'site_id' },
+  onboarding_complete: { label: 'Onboarding afgerond', fields: ['site_id'], keyField: 'site_id' },
+  onboarding_new_client: { label: 'Nieuwe klant aangemaakt', fields: ['name'], keyField: 'name' },
 };
 
 export default async function handler(req, res) {

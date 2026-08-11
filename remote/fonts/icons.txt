@@ -1,5 +1,6 @@
 alternate_email
 analytics
+arrow_back
 article
 auto_awesome
 block
@@ -14,6 +15,7 @@ chevron_right
 close
 cloud_off
 cloud_upload
+delete
 devices
 drafts
 edit_document
@@ -25,7 +27,7 @@ expand_more
 flag
 fyi
 group_add
-hub
+hoog
 inbox
 info
 insights
@@ -44,11 +46,14 @@ progress_activity
 radio_button_unchecked
 refresh
 reject
+rocket_launch
 schedule
 security
+self_improvement
 send
 settings_input_component
 shield
+sticky_note_
 stop
 support_agent
 sync

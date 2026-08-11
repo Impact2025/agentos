@@ -11,8 +11,11 @@ iemand moet onthouden.
 
 Draaien:  .venv/Scripts/python.exe remote/build-icons.py
 
-Het motief is het `hub`-symbool uit de header — een centrale knoop met zes
-satellieten: de lokale machine en de plekken waar hij naartoe reikt.
+Het motief is de Iris-aperture — acht spaken rond een pupil, dezelfde
+geometrie als het topbar-merkteken (index.html) en app.js:apertureMark().
+Tot 6 aug 2026 stond hier het generieke `hub`-symbool (een centrale knoop
+met zes satellieten) — geen merk, alleen het eerste Material-icoon dat
+bij de hand was toen het manifest een icoon nodig had.
 """
 from __future__ import annotations
 
@@ -23,22 +26,22 @@ from PIL import Image, ImageDraw
 
 OUT = Path(__file__).parent / "icons"
 
-BG = (16, 20, 21)          # --surface-bg #101415
-BG_GLOW = (24, 37, 45)     # subtiele halo achter de knoop
-IRIS = (142, 213, 255)     # --iris-blue #8ed5ff
-IRIS_DIM = (56, 189, 248)  # --iris-blue-deep, voor de verbindingslijnen
+BG = (18, 17, 24)           # --surface-bg #121118
+BG_GLOW = (30, 26, 40)      # subtiele halo achter de aperture
+IRIS = (156, 143, 255)      # --iris-blue #9c8fff
+IRIS_DIM = (124, 111, 232)  # --iris-blue-deep #7c6fe8, voor de spaken
 
 SS = 4  # supersampling: 4× tekenen en terugschalen = gladde randen zonder AA-code
 
 
-def _draw_hub(img: Image.Image, size: int, glyph_ratio: float) -> None:
-    """Tekent de hub gecentreerd, met een straal van `glyph_ratio` × halve zijde."""
+def _draw_aperture(img: Image.Image, size: int, glyph_ratio: float) -> None:
+    """Tekent de aperture gecentreerd, met een straal van `glyph_ratio` × halve zijde."""
     d = ImageDraw.Draw(img)
     c = size / 2
-    r = c * glyph_ratio          # afstand tot de satellieten
-    r_center = r * 0.30          # centrale knoop
-    r_node = r * 0.17            # satellieten
-    line_w = max(1, int(r * 0.075))
+    r = c * glyph_ratio          # buitenrand van de spaken
+    r_inner = r * 0.42           # binnenrand van de spaken (waar ze beginnen)
+    r_pupil = r * 0.24           # centrale pupil
+    line_w = max(1, int(r * 0.11))
 
     # Halo: geeft diepte op een donker beginscherm zonder een tweede kleur.
     for i in range(14, 0, -1):
@@ -47,21 +50,17 @@ def _draw_hub(img: Image.Image, size: int, glyph_ratio: float) -> None:
         d.ellipse([c - rr, c - rr, c + rr, c + rr],
                   fill=tuple(int(BG[k] + (BG_GLOW[k] - BG[k]) * (1 - f) * 0.5) for k in range(3)))
 
-    nodes = []
-    for i in range(6):
-        a = math.radians(-90 + i * 60)
-        nodes.append((c + r * math.cos(a), c + r * math.sin(a)))
-
-    for x, y in nodes:
-        d.line([c, c, x, y], fill=IRIS_DIM, width=line_w)
-    for x, y in nodes:
-        d.ellipse([x - r_node, y - r_node, x + r_node, y + r_node], fill=IRIS)
-    d.ellipse([c - r_center, c - r_center, c + r_center, c + r_center], fill=IRIS)
+    for i in range(8):
+        a = math.radians(i * 45 - 90)
+        x0, y0 = c + r_inner * math.cos(a), c + r_inner * math.sin(a)
+        x1, y1 = c + r * math.cos(a), c + r * math.sin(a)
+        d.line([x0, y0, x1, y1], fill=IRIS_DIM, width=line_w)
+    d.ellipse([c - r_pupil, c - r_pupil, c + r_pupil, c + r_pupil], fill=IRIS)
 
 
 def render(size: int, glyph_ratio: float) -> Image.Image:
     big = Image.new("RGB", (size * SS, size * SS), BG)
-    _draw_hub(big, size * SS, glyph_ratio)
+    _draw_aperture(big, size * SS, glyph_ratio)
     return big.resize((size, size), Image.LANCZOS)
 
 

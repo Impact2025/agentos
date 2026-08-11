@@ -244,6 +244,58 @@ CREATE TABLE IF NOT EXISTS loop_iterations (
 
 CREATE INDEX IF NOT EXISTS idx_loop_iterations_loop ON loop_iterations(loop_id, iteration);
 
+-- Gauntlet Loop: matcher (lead) splitst opdracht in parallelle deeltaken, elke
+-- deeltaak krijgt een eigen builder + BLINDE criticus die het product hard meet
+-- tegen een echte benchmark. Zie backend/domains/gauntlet/.
+CREATE TABLE IF NOT EXISTS gauntlet_runs (
+    id                  TEXT PRIMARY KEY,
+    objective           TEXT NOT NULL,
+    benchmark           TEXT DEFAULT '',
+    session_id          TEXT DEFAULT '',
+    status              TEXT NOT NULL DEFAULT 'running',  -- running | passed | partial | stopped | stopped_by_user | failed
+    threshold           INTEGER DEFAULT 85,
+    max_iterations      INTEGER DEFAULT 3,
+    subtask_count       INTEGER DEFAULT 0,
+    best_overall_score  INTEGER DEFAULT -1,
+    human_verdict       TEXT DEFAULT '',                  -- menselijke eindjurat (laatste jury)
+    human_note          TEXT DEFAULT '',
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    finished_at         TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS gauntlet_subtasks (
+    id             TEXT PRIMARY KEY,
+    run_id         TEXT NOT NULL,
+    position       INTEGER DEFAULT 0,
+    role           TEXT NOT NULL,
+    goal           TEXT DEFAULT '',
+    status         TEXT NOT NULL DEFAULT 'queued',  -- queued | running | passed | stopped | stopped_by_user | error
+    best_score     INTEGER DEFAULT -1,
+    best_output    TEXT DEFAULT '',
+    iterations_run INTEGER DEFAULT 0,
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES gauntlet_runs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_gauntlet_subtasks_run ON gauntlet_subtasks(run_id, position);
+
+CREATE TABLE IF NOT EXISTS gauntlet_iterations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    subtask_id   TEXT NOT NULL,
+    iteration    INTEGER NOT NULL,
+    draft        TEXT DEFAULT '',
+    score        INTEGER DEFAULT 0,
+    feedback     TEXT DEFAULT '',
+    passed       INTEGER DEFAULT 0,
+    duration_ms  INTEGER DEFAULT 0,
+    created_at   TEXT NOT NULL,
+    FOREIGN KEY (subtask_id) REFERENCES gauntlet_subtasks(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_gauntlet_iterations_subtask ON gauntlet_iterations(subtask_id, iteration);
+
 -- Netlify publisher: gepubliceerde artikelen per site (bron voor de volledige
 -- site-rebuild bij elke deploy). Eén rij per (site_id, slug).
 CREATE TABLE IF NOT EXISTS published_pages (
@@ -496,6 +548,15 @@ CREATE TABLE IF NOT EXISTS bridge_context_cache (
     updated_at TEXT NOT NULL
 );
 
+-- Instance-brede instellingen die self-service via de Instellingen-hub gezet
+-- worden (bv. agenda-ID) i.p.v. via .env+herstart. Alleen voor niet-geheime,
+-- niet-installatietijd config; API-keys/service-account-credentials blijven .env.
+CREATE TABLE IF NOT EXISTS instance_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 -- `last_run_at` mag NULL zijn en betekent dan écht "heeft nog nooit gedraaid".
 -- Een gemist vuurmoment vult alleen `last_missed_at`: er is niets uitgevoerd,
 -- dus er valt niets als run te boeken. Zie scheduler._record_run.
@@ -720,6 +781,28 @@ def _migrate(conn) -> None:
     ):
         if col not in lead_cols:
             conn.execute(ddl)
+
+    # Gauntlet Loop-tabellen: CREATE TABLE IF NOT EXISTS is idempotent, dus ook
+    # veilig om bij elke migrate te draaien — zo zijn ze er ook als de server al
+    # draaide vóórdat dit domein bestond (geen restart nodig voor de eerste run).
+    conn.execute("""CREATE TABLE IF NOT EXISTS gauntlet_runs (
+        id TEXT PRIMARY KEY, objective TEXT NOT NULL, benchmark TEXT DEFAULT '',
+        session_id TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'running',
+        threshold INTEGER DEFAULT 85, max_iterations INTEGER DEFAULT 3,
+        subtask_count INTEGER DEFAULT 0, best_overall_score INTEGER DEFAULT -1,
+        human_verdict TEXT DEFAULT '', human_note TEXT DEFAULT '',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT DEFAULT '')""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS gauntlet_subtasks (
+        id TEXT PRIMARY KEY, run_id TEXT NOT NULL, position INTEGER DEFAULT 0,
+        role TEXT NOT NULL, goal TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'queued',
+        best_score INTEGER DEFAULT -1, best_output TEXT DEFAULT '', iterations_run INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES gauntlet_runs(id) ON DELETE CASCADE)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS gauntlet_iterations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, subtask_id TEXT NOT NULL, iteration INTEGER NOT NULL,
+        draft TEXT DEFAULT '', score INTEGER DEFAULT 0, feedback TEXT DEFAULT '', passed INTEGER DEFAULT 0,
+        duration_ms INTEGER DEFAULT 0, created_at TEXT NOT NULL,
+        FOREIGN KEY (subtask_id) REFERENCES gauntlet_subtasks(id) ON DELETE CASCADE)""")
 
     # Status-funnel migratie: oude generieke waarden → nieuwe funnel-stappen
     _STATUS_MAP = {
@@ -1752,6 +1835,49 @@ def _migrate(conn) -> None:
         "CREATE INDEX IF NOT EXISTS idx_gsc_feedback_analysis "
         "ON gsc_feedback(analysis_id)"
     )
+
+    # Onboarding: per-klant OAuth-koppelingen (Outlook/Google), losstaand van
+    # het bestaande globale account — resolve.py probeert dit eerst en valt
+    # terug op het globale pad als er voor een site geen rij bestaat. Eén
+    # koppeling per (site, provider); opnieuw koppelen overschrijft de oude.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS oauth_accounts (
+            id               TEXT PRIMARY KEY,
+            site_id          TEXT NOT NULL,
+            provider         TEXT NOT NULL,        -- microsoft | google
+            account_email    TEXT DEFAULT '',
+            credentials_json TEXT NOT NULL DEFAULT '{}',
+            scopes           TEXT DEFAULT '',
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL,
+            UNIQUE(site_id, provider),
+            FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_oauth_accounts_site "
+        "ON oauth_accounts(site_id)"
+    )
+
+    # Onboarding: per-project klemmen voor Iris' autonome acties. Ontbreekt
+    # een rij, dan gelden de bestaande globale constanten in iris/actions.py —
+    # deze tabel is een override, geen vervanging.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS project_autonomy (
+            project          TEXT PRIMARY KEY,
+            content_run_max  INTEGER,
+            outreach_max     INTEGER,
+            seo_refresh_max  INTEGER,
+            linkbuild_max    INTEGER,
+            updated_at       TEXT NOT NULL
+        )"""
+    )
+
+    # Onboarding-status per site. NULL = nog niet onboard — het veld dat de
+    # wizard-redirect en de invariant onboarding_onvolledig_maar_actief lezen.
+    site_cols_onboarding = {row["name"] for row in conn.execute("PRAGMA table_info(sites)").fetchall()}
+    if "onboarded_at" not in site_cols_onboarding:
+        conn.execute("ALTER TABLE sites ADD COLUMN onboarded_at TEXT DEFAULT NULL")
 
     _migrate_projectnamen(conn)
     _migrate_postvak(conn)

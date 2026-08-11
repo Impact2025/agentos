@@ -51,6 +51,21 @@ def _clamp(value: Any, lo: int, hi: int, default: int) -> int:
         return default
 
 
+def _autonomy_max(project: str, column: str, fallback: int) -> int:
+    """Iris-onboarding (project_autonomy) laat een klant zelf de bovengrens
+    kiezen — ontbreekt er een rij (of die kolom), dan geldt de globale klem
+    hierboven. Alleen content_run/seo_refresh zijn vandaag per site aan te
+    roepen; outreach_run/linkbuilding_run werken op de héle funnel (geen
+    site/project), dus die blijven op de globale constante."""
+    with get_conn() as conn:
+        row = conn.execute(
+            f"SELECT {column} FROM project_autonomy WHERE project = ?", (project,),
+        ).fetchone()
+    if row and row[column] is not None:
+        return int(row[column])
+    return fallback
+
+
 def _already_done_today(project: str, prefix: str) -> bool:
     """Zelfde actie voor hetzelfde doelwit al gedraaid vandaag? Dan overslaan."""
     with get_conn() as conn:
@@ -87,7 +102,7 @@ async def content_run(site_ref: str, count: Any, reason: str) -> Optional[str]:
     if not site:
         logger.warning("[iris] content_run: site '%s' niet gevonden", site_ref)
         return None
-    n = _clamp(count, 1, _CONTENT_RUN_MAX, 1)
+    n = _clamp(count, 1, _autonomy_max(site["name"], "content_run_max", _CONTENT_RUN_MAX), 1)
     if _already_done_today(site["name"], "Contentmotor gestart"):
         logger.info("[iris] content_run voor %s vandaag al gedraaid — overgeslagen", site["name"])
         # Benigne skip, geen fout: een kale None zou de fix-knop onterecht op
@@ -278,7 +293,7 @@ async def seo_refresh(site_ref: str, count: Any, reason: str) -> Optional[str]:
         # suggesties al verwerkt). Geen None → geen valse HTTP 400.
         return (f"SEO-refresh voor {site['name']}: geen open refresh-kandidaten meer "
                 f"— de wegzakkende pagina's zijn al verrijkt. Reden: {reason}")
-    n = _clamp(count, 1, _SEO_REFRESH_MAX, 1)
+    n = _clamp(count, 1, _autonomy_max(site["name"], "seo_refresh_max", _SEO_REFRESH_MAX), 1)
     job_ids, failed, skipped = [], 0, 0
     # Loop door álle open suggesties tot er n échte refreshes gelukt zijn:
     # een SPA-shell (homepage) mag de poging niet opbranden terwijl er

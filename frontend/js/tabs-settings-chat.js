@@ -18,7 +18,8 @@ async function renderInstellingenTab(el) {
 
   var html = '<h3 style="font-size:15px;font-weight:700;margin-bottom:16px">Instellingen &amp; Beheer</h3>';
 
-  html += renderOutlookSection();
+  if (typeof domainOn === 'undefined' || domainOn('outlook_legacy')) html += renderOutlookSection();
+  if (typeof domainOn === 'undefined' || domainOn('calendar')) html += await renderAgendaSettings();
 
   html += await renderSitePublishSettings();
   html += await renderKennisbankSettings();
@@ -73,7 +74,43 @@ async function renderInstellingenTab(el) {
     '</tbody></table></div>';
 
   el.innerHTML = html;
-  outlookRefreshStatus();
+  if (document.getElementById('outlook-card')) outlookRefreshStatus();
+}
+
+// ── Agenda koppelen: agenda-ID + lees-agenda's zelf zetten, geen herstart
+// nodig (DB-override, zie shared/settings_store.py). ──
+async function renderAgendaSettings() {
+  var status;
+  try { status = await (await fetch('/api/calendar/status')).json(); } catch(e) { return ''; }
+  if (status.backend === 'outlook') return ''; // agenda volgt daar de mail-koppeling hierboven
+  var reach = status.reachable ? '✅ Verbonden — kan de agenda lezen.' :
+    (status.configured ? '⚠️ Geconfigureerd maar niet bereikbaar: ' + escHtml(status.error || 'onbekende fout') : 'ℹ️ Nog niet geconfigureerd.');
+  return '<div class="section-card" style="margin-bottom:16px" id="agenda-card">' +
+    '<h4 style="font-size:13px;font-weight:600;margin-bottom:8px">Agenda koppelen (Google)</h4>' +
+    (status.client_email ? '<p style="font-size:12px;color:#475569;margin-bottom:8px">Deel je agenda met dit adres (bewerkrechten): <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px">' + escHtml(status.client_email) + '</code></p>' : '') +
+    '<div id="agenda-status" style="font-size:12px;color:#475569;margin-bottom:8px">' + reach + '</div>' +
+    '<label style="display:block;margin-bottom:8px"><span style="display:block;font-size:11px;color:#64748b;margin-bottom:2px">Agenda-ID (e-mailadres van de gedeelde agenda, of "primary")</span>' +
+    '<input id="agenda-calendar-id" value="' + escHtml(status.calendar_id || '') + '" placeholder="jij@voorbeeld.nl" style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;box-sizing:border-box" /></label>' +
+    '<label style="display:block;margin-bottom:8px"><span style="display:block;font-size:11px;color:#64748b;margin-bottom:2px">Extra lees-agenda\'s voor conflict-detectie (komma-gescheiden, optioneel)</span>' +
+    '<input id="agenda-busy-ids" value="' + escHtml((status.busy_calendar_ids || []).join(', ')) + '" style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;box-sizing:border-box" /></label>' +
+    '<button onclick="saveAgendaSettings(this)" style="padding:6px 16px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Opslaan &amp; testen</button>' +
+    '</div>';
+}
+
+async function saveAgendaSettings(btn) {
+  var body = {
+    calendar_id: document.getElementById('agenda-calendar-id').value.trim(),
+    busy_calendar_ids: document.getElementById('agenda-busy-ids').value.trim(),
+  };
+  if (btn) { btn.disabled = true; btn.textContent = 'Bezig...'; }
+  try {
+    var resp = await fetch('/api/calendar/settings', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    var st = await resp.json();
+    var statusEl = document.getElementById('agenda-status');
+    if (statusEl) statusEl.innerHTML = st.reachable ? '✅ Verbonden — kan de agenda lezen.' :
+      '⚠️ Opgeslagen, maar nog niet bereikbaar: ' + escHtml(st.error || 'onbekende fout') + '. Heb je de agenda al gedeeld?';
+  } catch(e) { alert('Fout: ' + e.message); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Opslaan & testen'; }
 }
 
 // ── Outlook / Microsoft Graph koppel-sectie (device-code flow) ──

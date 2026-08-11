@@ -79,7 +79,7 @@ def build_message(item: Dict) -> str:
     if item["recur_weekday"] is not None and item["recur_weekday"] >= 0:
         recur = f" (elke {_WD_NL[item['recur_weekday']]})"
     lines = [
-        f"# 📅 Herinnering: {item['title']}",
+        f"# Herinnering: {item['title']}",
         "",
         f"**Wanneer:** {when} · {t0}–{t1}{recur}",
         f"**Waar:** {loc}",

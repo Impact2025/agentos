@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport"/>
-<meta name="theme-color" content="#101415"/>
+<meta name="theme-color" content="#121118"/>
 <title>Iris Remote</title>
 <link rel="manifest" href="/manifest.json"/>
 <!-- iOS zet een screenshot van de pagina op het beginscherm zonder dit icoon, en
@@ -32,9 +32,38 @@
 <!-- TopAppBar -->
 <header id="topbar" class="flex justify-between items-center w-full px-container-padding h-16 fixed top-0 z-50 bg-surface/80 backdrop-blur-xl border-b border-white/10">
   <div class="flex items-center gap-3">
-    <span class="material-symbols-outlined text-primary">hub</span>
+    <!-- Iris' merkteken: een aperture (spaken + pupil) i.p.v. het generieke
+         Material-icoon 'hub' dat hier stond — zelfde motief als app.js:apertureMark(). -->
+    <span class="text-primary" aria-hidden="true">
+      <svg class="aperture-mark spin" viewBox="0 0 24 24" width="22" height="22">
+        <g class="aperture-spokes">
+          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(0 12 12)"></line>
+          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(45 12 12)"></line>
+          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(90 12 12)"></line>
+          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(135 12 12)"></line>
+          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(180 12 12)"></line>
+          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(225 12 12)"></line>
+          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(270 12 12)"></line>
+          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(315 12 12)"></line>
+        </g>
+        <circle cx="12" cy="12" r="2.6" fill="currentColor"></circle>
+      </svg>
+    </span>
     <h1 id="topbar-greeting" class="font-headline-md text-headline-md font-bold text-on-surface">Goedemiddag</h1>
-    <span id="sync-pill" class="recent"><span class="dot"></span><span id="sync-pill-txt">…</span></span>
+    <span id="sync-pill" class="recent">
+      <span class="dot" aria-hidden="true">
+        <svg class="aperture-mark" viewBox="0 0 24 24" width="10" height="10">
+          <g class="aperture-spokes">
+            <line x1="12" y1="2" x2="12" y2="7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" transform="rotate(0 12 12)"></line>
+            <line x1="12" y1="2" x2="12" y2="7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" transform="rotate(90 12 12)"></line>
+            <line x1="12" y1="2" x2="12" y2="7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" transform="rotate(180 12 12)"></line>
+            <line x1="12" y1="2" x2="12" y2="7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" transform="rotate(270 12 12)"></line>
+          </g>
+          <circle cx="12" cy="12" r="3.4" fill="currentColor"></circle>
+        </svg>
+      </span>
+      <span id="sync-pill-txt">…</span>
+    </span>
   </div>
   <div class="flex items-center gap-1">
     <button class="tap-target text-primary hover:opacity-80 active:scale-95 transition-transform" id="syncTrigger"
@@ -78,6 +107,10 @@
     <div class="space-y-1">
       <h2 class="font-display-lg-mobile text-display-lg-mobile" id="today-greeting">Vandaag</h2>
       <p class="font-body-md text-body-md text-on-surface-variant" id="today-sub">Je dag</p>
+      <!-- Het zwaarste signaal uit de pulse (build_pulse in bridge/context.py) als
+           kop i.p.v. alleen een teller — "3 besluiten wachten" zegt niets over
+           wélk het belangrijkst is. Leeg totdat loadToday() 'm vult. -->
+      <p class="font-body-md text-body-md hidden" id="today-pulse-line"></p>
     </div>
 
     <!-- Cloud-Iris chat -->
@@ -181,6 +214,21 @@
       <h2 class="font-display-lg-mobile text-display-lg-mobile">Systeem</h2>
     </div>
     <div id="system-status"></div>
+
+    <!-- Iris-onboarding: wizard verhuisd hierheen (was lokaal op localhost,
+         onbereikbaar voor een klant zoals Nicole). Zie backend/domains/
+         bridge/context.py:build_onboarding voor de databron. -->
+    <div class="glass-panel rounded-xl p-6" id="onboarding-card">
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-primary">rocket_launch</span>
+          <h3 class="font-headline-sm text-headline-sm">Klanten &amp; onboarding</h3>
+        </div>
+        <button id="onboardingNewBtn" class="font-label-caps text-label-caps text-primary hover:opacity-80">+ NIEUWE KLANT</button>
+      </div>
+      <div id="onboarding-list" class="space-y-unit"></div>
+    </div>
+
     <div class="space-y-stack-md">
       <div class="flex items-center justify-between">
         <h3 class="font-label-caps text-label-caps text-outline">KLAARGEZETTE BESLUITEN</h3>
@@ -223,6 +271,15 @@
       </p>
       <button id="logoutBtn" class="mt-4 text-on-surface-variant font-label-caps text-label-caps hover:text-primary transition-colors">UITLOGGEN</button>
     </div>
+  </section>
+
+  <!-- Iris-onboarding-wizard: geen eigen bottom-nav-tab (contextueel geopend
+       vanuit Systeem → Klanten), zie app.js:openOnboarding(). -->
+  <section id="view-onboarding" hidden class="space-y-stack-lg">
+    <button id="onboardingBack" class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary flex items-center gap-1">
+      <span class="material-symbols-outlined text-[18px]">arrow_back</span> Systeem
+    </button>
+    <div id="onboarding-wizard"></div>
   </section>
 </main>
 

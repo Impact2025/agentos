@@ -46,6 +46,9 @@ pc uit, dan stapelen besluiten zich op en voert de eerstvolgende sync ze uit.
    | `OPENROUTER_MODEL` | optioneel, default `anthropic/claude-sonnet-4-5` (of je lokale `CLAUDE_VIA_OPENROUTER`) |
    | `OPENMODEL_API_KEY` | alternatief voor OpenRouter: de OpenModel-gateway (Anthropic-formaat) |
    | `OPENMODEL_SMART_MODEL` | model bij OpenModel, bv. `claude-sonnet-4-6`. Zonder valt ze terug op het bulkmodel — dommere Iris |
+   | **Iris-onboarding — per-klant OAuth** (`api/oauth.js`) | De browser-consentredirect loopt hier (publiek bereikbaar), niet via de lokale instance — zie CLAUDE.md 14. Zelfde client_id/secret horen ook in de lokale `.env` van elke klant-instance (voor het ververs-token-endpoint, ná de eerste koppeling), zie `.env.example`. |
+   | `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` | Google Cloud Console > Credentials > OAuth client ID (Web application). Redirect-URI: `https://<jouw-deploy>/api/oauth?provider=google&op=callback` |
+   | `OUTLOOK_CLIENT_ID` / `OUTLOOK_CLIENT_SECRET` / `OUTLOOK_TENANT_ID` | Zelfde Azure-app als de lokale Outlook-integratie, plus een client secret (App registrations > Certificates & secrets). Redirect-URI: `https://<jouw-deploy>/api/oauth?provider=microsoft&op=callback` |
 
    `BRIDGE_TOKEN` en `APP_PASSWORD` staan **niet** meer als globale env var —
    die zijn per klant en leven als gehashte kolommen in de `tenants`-tabel

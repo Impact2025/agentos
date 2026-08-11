@@ -267,13 +267,20 @@ async def sync_knowledge() -> Dict[str, Any]:
     return report
 
 
-async def add_manual_note(title: str, text: str) -> Optional[str]:
-    """Voeg kennis direct toe (geplakt in het dashboard, zonder vault-bestand)."""
+async def add_manual_note(title: str, text: str, scope: Optional[str] = None) -> Optional[str]:
+    """Voeg kennis direct toe (geplakt in het dashboard, zonder vault-bestand).
+
+    `scope`: forceer een project i.p.v. de LLM te laten gokken of dit voor
+    één project of alle projecten geldt. Gebruikt door de onboarding-intake,
+    waar de klant zelf al zegt voor wélk project dit is — daar is gissen fout.
+    """
     body = (text or "").strip()
     if len(body) < 20:
         return None
     title = (title or _title_from(body, "Notitie")).strip()[:200]
     distilled = await _distill(title, body)
+    if scope:
+        distilled["scope"] = scope.strip()[:60]
     return _upsert("manual", "", title, _hash(body), distilled)
 
 

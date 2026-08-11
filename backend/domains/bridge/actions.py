@@ -354,6 +354,94 @@ async def _cmd_digest(payload: Dict) -> Tuple[bool, str]:
     return True, "Ochtendrapport gedraaid (gemaild als SMTP is ingesteld)"
 
 
+# ── Iris-onboarding vanaf Iris Remote (wizard verhuisd, zie remote/app.js) ──
+# Stap 1/2/4 zijn kale dataschrijvingen — dezelfde servicefuncties als de
+# oude lokale wizard riep, nu alleen via het commando-pad in plaats van een
+# directe HTTP-call vanaf de telefoon (die er nooit was, want Iris Remote kan
+# geen `localhost:1250` bereiken). Stap 3 (OAuth) loopt niet via een commando
+# dat de telefoon indient, maar via `oauth_token_relay` hieronder — dat
+# schrijft ZELF een decision, aangemaakt door remote/api/oauth.js ná de
+# consent-redirect, niet door een tik op de telefoon.
+
+async def _cmd_onboarding_step1(payload: Dict) -> Tuple[bool, str]:
+    from ..onboarding import service as onboarding
+    site_id = str(payload.get("site_id") or "").strip()
+    if not site_id:
+        return False, "Geen site_id meegegeven"
+    onboarding.save_step1(site_id, str(payload.get("profile") or ""))
+    return True, "Bedrijfsdoel opgeslagen"
+
+
+async def _cmd_onboarding_step2(payload: Dict) -> Tuple[bool, str]:
+    from ..onboarding import service as onboarding
+    site_id = str(payload.get("site_id") or "").strip()
+    if not site_id:
+        return False, "Geen site_id meegegeven"
+    await onboarding.save_step2(site_id, str(payload.get("tone_text") or ""))
+    return True, "Schrijfstijl opgeslagen"
+
+
+async def _cmd_onboarding_step4(payload: Dict) -> Tuple[bool, str]:
+    from ..onboarding import service as onboarding
+    site_id = str(payload.get("site_id") or "").strip()
+    if not site_id:
+        return False, "Geen site_id meegegeven"
+    preset = str(payload.get("preset") or "").strip()
+    overrides = payload.get("overrides") or None
+    onboarding.save_step4(site_id, preset, overrides)
+    return True, "Werk-grenzen opgeslagen"
+
+
+async def _cmd_onboarding_complete(payload: Dict) -> Tuple[bool, str]:
+    from ..onboarding import service as onboarding
+    site_id = str(payload.get("site_id") or "").strip()
+    if not site_id:
+        return False, "Geen site_id meegegeven"
+    status = onboarding.complete_onboarding(site_id)
+    return True, f"Onboarding afgerond voor {status.get('project', site_id)}"
+
+
+async def _cmd_onboarding_new_client(payload: Dict) -> Tuple[bool, str]:
+    """"+ Nieuwe klant" vanaf de telefoon: maakt de site aan zodat de wizard
+    daarna stap 1 kan indienen. Geen review-gate nodig — dit maakt alleen een
+    lege rij aan, precies zoals de oude lokale 'startNewClientOnboarding()'."""
+    from ..seo import sites as sites_service
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return False, "Geen naam meegegeven"
+    site = sites_service.create_site({"name": name})
+    return True, f"Nieuwe klant aangemaakt: {site['name']} (site_id={site['id']})"
+
+
+async def _cmd_oauth_token_relay(payload: Dict) -> Tuple[bool, str]:
+    """Komt NIET van een tik op de telefoon, maar van `remote/api/oauth.js`
+    ná een geslaagde Google/Microsoft-consent-redirect (zie CLAUDE.md 14 —
+    de lokale instance blijft zo dicht; alleen de publiek bereikbare Vercel-
+    app hoeft de OAuth-redirect te ontvangen). Payload:
+    {site_id, provider, account_email, credentials: {access_token,
+    refresh_token, expiry, scopes}, scopes: [...]}.
+
+    De payload draagt een refresh-token — na een geslaagde apply scrubt
+    `remote/api/bridge.js:ack()` 'm bewust uit Neon (zie dat bestand); hier
+    hoeft niets extra's te gebeuren, dit is gewoon de schrijfkant."""
+    from ..onboarding import resolve
+
+    site_id = str(payload.get("site_id") or "").strip()
+    provider = str(payload.get("provider") or "").strip()
+    credentials = payload.get("credentials") or {}
+    if not site_id or provider not in ("google", "microsoft"):
+        return False, "Onvolledige payload (site_id/provider ontbreekt of onbekend)"
+    if not credentials.get("access_token") or not credentials.get("refresh_token"):
+        return False, "Geen bruikbare tokens meegegeven"
+    resolve.store_relayed_token(
+        site_id, provider,
+        str(payload.get("account_email") or ""),
+        credentials,
+        list(payload.get("scopes") or credentials.get("scopes") or []),
+    )
+    return True, f"{provider.capitalize()} gekoppeld"
+
+
 # Commando's staan bewust in een eigen tabel: ze horen niet bij één item, en
 # een tikfout mag nooit per ongeluk in de item-whitelist vallen.
 async def _cmd_calendar_add(payload: Dict) -> Tuple[bool, str]:
@@ -494,6 +582,12 @@ _COMMANDS = {
     "ritual_evening_save": _cmd_ritual_evening_save,
     "ritual_win_add": _cmd_ritual_win_add,
     "ritual_goal_progress": _cmd_ritual_goal_progress,
+    "onboarding_step1": _cmd_onboarding_step1,
+    "onboarding_step2": _cmd_onboarding_step2,
+    "onboarding_step4": _cmd_onboarding_step4,
+    "onboarding_complete": _cmd_onboarding_complete,
+    "onboarding_new_client": _cmd_onboarding_new_client,
+    "oauth_token_relay": _cmd_oauth_token_relay,
 }
 
 

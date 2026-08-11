@@ -16,6 +16,17 @@ os.environ["AGENTOS_DB_PATH"] = _TMP_DB
 # stranden. Leeg = gate uit (zelfde gedrag als lokale dev zonder wachtwoord).
 os.environ["AGENTOS_PASSWORD"] = ""
 
+# Geen echte mail vanuit tests. email_service.is_configured() / resend_service
+# .is_configured() lezen deze vars uit de echte .env — tests die run_morning_
+# briefing() of run_daily_digest() aanroepen (test_iris.py e.a.) raken dat pad
+# ongemockt. Zolang SMTP_PASSWORD leeg was, verstuurde dat stil niets; zodra
+# Resend geconfigureerd werd, stuurde elke testrun ineens écht meerdere e-mails
+# naar de productie-inbox (11 aug 2026: 3 testruns = een stortvloed identieke
+# "Testsite"-dagbriefingen). Beide kanalen expliciet leeg in tests, ongeacht
+# wat er in .env staat.
+os.environ["RESEND_API_KEY"] = ""
+os.environ["SMTP_PASSWORD"] = ""
+
 import pytest  # noqa: E402
 
 

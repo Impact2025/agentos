@@ -24,6 +24,59 @@ def _short_title(title: str) -> str:
     niet overspoelen."""
     return content_pipeline._clean_title(title or "") or "(zonder titel)"
 
+# Ruwe activity_log-actienamen zijn code, geen kaarttitel ("task_not_executed
+# — goal:goal-20260810-194752-608bdd81d0d6" zegt niets over wát er misging).
+_ERROR_ACTION_LABELS = {
+    "task_not_executed": "Taak niet uitgevoerd",
+    "task_failed": "Taak mislukt",
+    "live-fout": "Publicatie niet zichtbaar",
+    "publish-fout": "Publiceren mislukt",
+    "live-overgeslagen": "Publicatiecontrole overgeslagen",
+    "job_nooit_geslaagd": "Taak nog nooit geslaagd",
+}
+
+
+def _display_project(conn, project: str) -> str:
+    """Een goal-fout draagt `project='goal:<id>'` (zie goal/service.py:_log_activity)
+    — dat is een sleutel, geen naam. Overal waar het project getoond wordt
+    (kaarttitel én de losse project-regel in Iris Remote) hoort het echte
+    projectbord te staan."""
+    if project.startswith("goal:"):
+        goal_id = project[len("goal:"):]
+        row = conn.execute("SELECT title, project FROM goals WHERE id=?", (goal_id,)).fetchone()
+        if row:
+            return row["project"] or row["title"] or goal_id
+        return goal_id
+    return project
+
+
+def _error_card_title(conn, e: Dict[str, Any]) -> str:
+    """Mensleesbare titel voor een foutkaart: welke taak, van welk doel/project
+    — niet de ruwe actienaam naast een goal-id."""
+    label = _ERROR_ACTION_LABELS.get(e["action"]) or e["action"].replace("_", " ").capitalize()
+    project = e["project"] or ""
+    detail = e["detail"] or ""
+    # Taaktitel staat vaak vooraan in de detailtekst tussen aanhalingstekens:
+    # "'Content-editing gids-artikel' na 4 pogingen: ...".
+    task_title = None
+    if detail.startswith("'"):
+        end = detail.find("'", 1)
+        if end > 1:
+            task_title = detail[1:end]
+    if project.startswith("goal:"):
+        goal_id = project[len("goal:"):]
+        row = conn.execute("SELECT title, project FROM goals WHERE id=?", (goal_id,)).fetchone()
+        if row:
+            goal_title = row["title"] or goal_id
+            where = row["project"] or goal_title
+            if task_title:
+                return f"{label}: '{task_title}' — doel '{goal_title}' ({where})"
+            return f"{label} — doel '{goal_title}' ({where})"
+        return f"{label} — {goal_id}"
+    if task_title:
+        return f"{label}: '{task_title}' — {project}" if project else f"{label}: '{task_title}'"
+    return f"{label} — {project}" if project else label
+
 logger = logging.getLogger(__name__)
 VACANCY_FIT_THRESHOLD = 60
 
@@ -320,8 +373,8 @@ def build_inbox() -> Dict[str, Any]:
                 "kind": "error",
                 "dismiss_kind": "error",
                 "id": e["id"],
-                "title": f"{e['action']} — {e['project']}",
-                "project": e["project"],
+                "title": _error_card_title(conn, dict(e)),
+                "project": _display_project(conn, e["project"] or ""),
                 "created_at": e["created_at"],
                 "summary": summary,
                 "self_heal": st,

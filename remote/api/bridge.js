@@ -119,9 +119,17 @@ async function ack(req, res, tenant) {
     const rows = await sql`UPDATE decisions SET status = ${status},
               result = ${String(a.result || '').slice(0, 500)}, decided_at = now()
               WHERE id = ${a.id} AND tenant = ${tenant} AND status = 'pending'
-              RETURNING item_key`;
+              RETURNING item_key, action`;
     if (status === 'failed' && rows.length) {
       failed.push(`${rows[0].item_key}: ${a.result || 'mislukt'}`);
+    }
+    // Een refresh-token is de eerste écht gevoelige waarde die door dit kanaal
+    // reist (elders is de payload al businessdata die toch in Neon staat, zie
+    // schema.sql) — hij hoort er niet langer plat te blijven staan dan nodig.
+    // Ongeacht geslaagd/mislukt: gelukt = niet meer nodig, mislukt = de
+    // koppeling moet sowieso opnieuw vanaf stap 3.
+    if (rows.length && rows[0].action === 'oauth_token_relay') {
+      await sql`UPDATE decisions SET payload = '{}'::jsonb WHERE id = ${a.id} AND tenant = ${tenant}`;
     }
   }
   // Een mislukt besluit stond onderweg als "gedaan" in je hoofd — dat verdient

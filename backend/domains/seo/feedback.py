@@ -47,8 +47,8 @@ def sync_page_performance(site: Dict) -> Dict:
         # verzwijgt geanonimiseerde (zeldzame) zoekwoorden, waardoor de som
         # van de query-rijen structureel lager uitvalt dan wat de pagina echt
         # scoort — clicks stonden daardoor bijna overal op 0.
-        totals = gsc.fetch_page_performance(prop, days=28, row_limit=2000)
-        rows = gsc.fetch_page_query_performance(prop, days=28, row_limit=2000)
+        totals = gsc.fetch_page_performance(prop, days=28, row_limit=2000, site_id=site["id"])
+        rows = gsc.fetch_page_query_performance(prop, days=28, row_limit=2000, site_id=site["id"])
     except Exception as e:  # netwerk/API-fout mag de sync nooit laten crashen
         return {"ok": False, "reason": f"GSC-fout: {str(e)[:160]}", "synced": 0}
 

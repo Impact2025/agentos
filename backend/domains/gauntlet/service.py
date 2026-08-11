@@ -1,0 +1,508 @@
+"""
+Gauntlet Loop — AgentOS-implementatie van het "Gauntlet Loop"-patroon.
+
+Dit is de orchestrator die AgentOS' bestaande Loop Engineering (maker/beoordelaar)
+en Delegate-laag (parallelle subagents) KOMBINEERT tot de 3-pijler-Gauntlet uit de
+video van Matt Schumer / Julian Goldie:
+
+  Pijler 1 — Taaksplitsing & parallelle subagents
+      Een Lead Agent (hier: een decompose-stap via de Hermes-agent) splitst de
+      opdracht op in deeltaken; elke deeltaak krijgt een eigen gespecialiseerde
+      builder-subagent die tegelijk met de anderen draait (asyncio.gather).
+
+  Pijler 2 — Blinde, onvermoeibare critici per subagent
+      Elke builder krijgt een eigen criticus. De criticus ziet ALLEEN de output
+      (het eindproduct) en de benchmark — nooit het bouwproces of de builder-prompt.
+      Dat breekt de "AI geeft zichzelf altijd een 10"-self-bias: de criticus meet
+      blind tegen de echte benchmark en levert een harde score 0–100 + verdict.
+
+  Pijler 3 — Echte benchmarks zonder ingebouwde stopconditie
+      De opdrachtgever levert een scherpe BENCHMARK (referentie-artifact of
+      -omschrijving). De criticus toetst de output er hard tegenaan. De loop blijft
+      draaien (builder herschrijft met feedback) totdat de deeltaak de benchmark
+      doorstaat of max_iterations bereikt is.
+
+Stopconditie / menselijke eindjurat (de waarschuwing uit de video):
+  Een Gauntlet stopt NOOIT vanzelf als de benchmark onhaalbaar scherp is. Daarom
+  heeft elke run een harde max_iterations-per-deeltaak én een expliciete STOP-
+  knop (POST /api/gauntlet/{id}/stop). Na afloop beoordeelt een MENS het overgebleven
+  resultaat als eindjurat (POST /api/gauntlet/{id}/verdict). De UI toont een
+  "Stop" + "Beoordeel als mens"-knop.
+
+Architectuur:
+  - Draait als losse achtergrond-asyncio-task (net als loop/delegate) → non-blocking.
+  - Stroomt elke gebeurtenis live terug via de gedeelde event_bus (gauntlet_*-events).
+  - Hergebruikt agent_runner.run_agent, event_bus, en de agent_profiles-tabel.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
+from ...shared.config import hermes_backend
+from ...shared.database import get_conn
+from ...shared import agent_runner as agent_service
+from ...domains.delegate import event_bus
+from ...domains.pipeline.service import get_agent_profile
+
+logger = logging.getLogger(__name__)
+
+# Sterke referenties naar lopende achtergrond-tasks (anders ruimt GC de task op).
+_BG_TASKS: "set[asyncio.Task]" = set()
+
+DEFAULT_THRESHOLD = 85
+DEFAULT_MAX_ITERATIONS = 3
+DEFAULT_STOP = False  # zachte default; de mens bepaalt wanneer het stopt
+
+# System-prompt voor de Lead/Decompose-stap: splitst de opdracht in deeltaken.
+_DECOMPOSE_PROMPT = (
+    "Je bent de Lead Agent van een Gauntlet Loop. Je krijgt één overkoepelende "
+    "opdracht en je splitst die op in 2–6 scherp omkaderde, onafhankelijke deeltaken "
+    "die parallel door gespecialiseerde builders kunnen worden uitgevoerd. "
+    "Elke deeltaak moet self-contained zijn (een andere builder kan 'm zonder context "
+    "van de andere doen). Geen overlap, geen vage deeltaken.\n\n"
+    "ANTWOORD UITSLUITEND met één JSON-object, zonder markdown eromheen:\n"
+    '{"subtasks": [{"role": "<korte specialist-rol, bv. \'Belichting\'>", '
+    '"goal": "<een strakke, concrete opdracht voor deze builder>"}, ...]}'
+)
+
+MAKER_DEFAULT = (
+    "Je bent een gespecialiseerde builder in een Gauntlet Loop. Je levert een direct "
+    "bruikbaar, self-contained eindproduct in Markdown — geen meta-uitleg, geen vragen "
+    "terug. Krijg je feedback van een blinde criticus, verwerk die dan punt voor punt en "
+    "lever een merkbaar betere versie."
+)
+
+CRITIC_DEFAULT = (
+    "Je bent een BLINDE, onvermoeibare criticus in een Gauntlet Loop. Je ziet ALLEEN het "
+    "eindproduct van de builder en de benchmark — nooit het bouwproces. Je meet het product "
+    "hard tegen de benchmark en geeft een eerlijke score 0–100. Je bent meedogenloos: een 10 "
+    "verdien je niet, je geeft 'm niet weg. Je feedback is concreet en uitvoerbaar."
+)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _resolve_model_override(profile_model: Optional[str]) -> Optional[str]:
+    """Profielmodel → bare model-string die de cloud-gateway snapt (zie loop/delegate)."""
+    if not profile_model:
+        return None
+    model = profile_model.strip()
+    if model.startswith("openrouter/"):
+        from ...shared.config import OPENROUTER_API_KEY
+        return model[len("openrouter/"):] if OPENROUTER_API_KEY else None
+    from ...shared.config import OPENMODEL_API_KEY
+    return model if OPENMODEL_API_KEY else None
+
+
+def _extract_json(raw: str) -> str:
+    """Pak het eerste JSON-object uit een LLM-antwoord, ook in fences."""
+    s = raw.strip()
+    if s.startswith("```"):
+        s = s.strip("`")
+        if s[:4].lower() == "json":
+            s = s[4:]
+    start = s.find("{")
+    end = s.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return s[start:end + 1]
+    return s.strip()
+
+
+# ── Persistence ──────────────────────────────────────────────────────────────
+
+def _create_run(
+    objective: str,
+    benchmark: str,
+    session_id: Optional[str],
+    threshold: int,
+    max_iterations: int,
+) -> str:
+    run_id = f"gaunt-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    now = _now()
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO gauntlet_runs
+               (id, objective, benchmark, session_id, status, threshold, max_iterations,
+                subtask_count, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'running', ?, ?, 0, ?, ?)""",
+            (run_id, objective, benchmark, session_id or "", threshold, max_iterations, now, now),
+        )
+    return run_id
+
+
+def _create_subtask(run_id: str, position: int, role: str, goal: str) -> str:
+    st_id = str(uuid.uuid4())
+    now = _now()
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO gauntlet_subtasks
+               (id, run_id, position, role, goal, status, best_score, best_output,
+                iterations_run, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, 'queued', -1, '', 0, ?, ?)""",
+            (st_id, run_id, position, role, goal, now, now),
+        )
+    return st_id
+
+
+def _record_subtask_iteration(
+    st_id: str, iteration: int, draft: str, score: int,
+    feedback: str, passed: bool, duration_ms: int,
+) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO gauntlet_iterations
+               (subtask_id, iteration, draft, score, feedback, passed, duration_ms, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (st_id, iteration, draft, score, feedback, 1 if passed else 0, duration_ms, _now()),
+        )
+
+
+def _update_run(run_id: str, **fields: Any) -> None:
+    fields["updated_at"] = _now()
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    with get_conn() as conn:
+        conn.execute(
+            f"UPDATE gauntlet_runs SET {set_clause} WHERE id = ?",
+            list(fields.values()) + [run_id],
+        )
+
+
+def _update_subtask(st_id: str, **fields: Any) -> None:
+    fields["updated_at"] = _now()
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    with get_conn() as conn:
+        conn.execute(
+            f"UPDATE gauntlet_subtasks SET {set_clause} WHERE id = ?",
+            list(fields.values()) + [st_id],
+        )
+
+
+# ── Agent-aanroepen ──────────────────────────────────────────────────────────
+
+async def _run_text_agent(
+    system_prompt: str, user_message: str, model_override: Optional[str],
+) -> str:
+    """Draai een agent zonder tools en verzamel tekst (content-taak)."""
+    chunks: List[str] = []
+    async for event in agent_service.run_agent(
+        messages=[{"role": "user", "content": user_message}],
+        system_prompt=system_prompt,
+        agent="hermes",
+        model_override=model_override,
+        use_tools=False,  # content-taken: zwakke modellen lekken anders tool-syntax
+    ):
+        if event.get("type") == "error":
+            raise RuntimeError(event.get("message") or "Onbekende agent-fout")
+        if event.get("type") == "text":
+            chunks.append(event["text"])
+    return "".join(chunks).strip()
+
+
+async def _decompose(objective: str, model_override: Optional[str]) -> List[Dict[str, str]]:
+    """Lead Agent splitst de opdracht op in deeltaken. Fallback bij faal = 1 deeltaak."""
+    raw = await _run_text_agent(_DECOMPOSE_PROMPT, f"# Opdracht\n{objective}", model_override)
+    try:
+        obj = json.loads(_extract_json(raw))
+        subs = obj.get("subtasks") or []
+        cleaned = [
+            {"role": str(s.get("role") or f"deeltaak {i+1}").strip(),
+             "goal": str(s.get("goal") or "").strip()}
+            for i, s in enumerate(subs)
+            if str(s.get("goal") or "").strip()
+        ]
+        if cleaned:
+            return cleaned
+    except (json.JSONDecodeError, ValueError, AttributeError):
+        logger.warning("Decompose gaf geen geldige JSON; val terug op 1 deeltaak.")
+    return [{"role": "Hoofdtaak", "goal": objective}]
+
+
+async def _run_builder(
+    goal: str, brand_brief: str, model_override: Optional[str],
+    prior_draft: Optional[str], feedback: Optional[str],
+) -> str:
+    system_prompt = MAKER_DEFAULT
+    if brand_brief:
+        system_prompt += "\n\n" + brand_brief
+    user_message = f"# Jouw deeltaak\n{goal}\n"
+    if prior_draft and feedback:
+        user_message += (
+            "\n# Je vorige versie\n" + prior_draft +
+            "\n\n# Feedback van de blinde criticus (verwerk dit punt voor punt)\n" + feedback +
+            "\n\nLever nu een merkbaar betere, volledige nieuwe versie."
+        )
+    draft = await _run_text_agent(system_prompt, user_message, model_override)
+    return draft or "_(De builder leverde geen tekst op.)_"
+
+
+def _parse_critic(raw: str, threshold: int) -> Tuple[int, str, bool]:
+    """Robuuste parse van de blinde criticus: score/feedback/verdict."""
+    try:
+        obj = json.loads(_extract_json(raw))
+    except (json.JSONDecodeError, ValueError):
+        return 0, f"(Criticus gaf geen geldige JSON.) Ruwe output:\n{raw[:1500]}", False
+    try:
+        score = int(round(float(obj.get("score", 0))))
+    except (TypeError, ValueError):
+        score = 0
+    score = max(0, min(100, score))
+    feedback = str(obj.get("feedback") or "").strip()
+    verdict = str(obj.get("verdict") or "").strip().lower()
+    passed = verdict == "pass" or score >= threshold
+    return score, feedback, passed
+
+
+async def _run_critic(
+    goal: str, draft: str, benchmark: str, model_override: Optional[str], threshold: int,
+) -> Tuple[int, str, bool]:
+    """BLINDE criticus: ziet alleen output + benchmark + deeltaak, nooit het bouwproces."""
+    system_prompt = CRITIC_DEFAULT + (
+        "\n\nANTWOORD UITSLUITEND met één JSON-object, zonder markdown eromheen:\n"
+        '{"score": <geheel getal 0-100>, "verdict": "pass" | "revise", '
+        '"feedback": "<concrete, uitvoerbare feedback>"}\n'
+        f"Geef verdict 'pass' alleen als het product minstens {threshold}/100 haalt tegen de benchmark."
+    )
+    user_message = (
+        f"# Deeltaak (waar het product aan moet voldoen)\n{goal}\n\n"
+        f"# BENCHMARK (waar het product hard tegenaan gemeten wordt)\n{benchmark}\n\n"
+        f"# Het eindproduct van de builder (DIT alleen beoordeel je)\n{draft}\n\n"
+        f"Beoordeel het product blind tegen de benchmark. Drempel: {threshold}/100."
+    )
+    raw = await _run_text_agent(system_prompt, user_message, model_override)
+    return _parse_critic(raw, threshold)
+
+
+# ── Eén deeltaak: builder + blinde criticus in een lus ───────────────────────
+
+async def _run_subtask(
+    run_id: str, st_id: str, position: int, role: str, goal: str,
+    benchmark: str, brand_brief: str, threshold: int, max_iterations: int,
+    stop_flag: Dict[str, bool], model_override: Optional[str],
+) -> None:
+    event_bus.publish({
+        "type": "gauntlet_subtask_start", "run_id": run_id, "subtask_id": st_id,
+        "position": position, "role": role, "goal": goal,
+    })
+    best_score = -1
+    best_output = ""
+    prior_draft: Optional[str] = None
+    feedback: Optional[str] = None
+    final_status = "stopped"
+
+    try:
+        for i in range(1, max_iterations + 1):
+            if stop_flag.get("stop"):
+                final_status = "stopped_by_user"
+                break
+            started = time.perf_counter()
+            draft = await _run_builder(goal, brand_brief, model_override, prior_draft, feedback)
+            score, fb, passed = await _run_critic(
+                goal, draft, benchmark, model_override, threshold
+            )
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            _record_subtask_iteration(st_id, i, draft, score, fb, passed, duration_ms)
+            if score > best_score:
+                best_score = score
+                best_output = draft
+            _update_subtask(st_id, iterations_run=i, best_score=best_score, best_output=best_output)
+
+            event_bus.publish({
+                "type": "gauntlet_subtask_iteration", "run_id": run_id, "subtask_id": st_id,
+                "position": position, "role": role, "iteration": i,
+                "max_iterations": max_iterations, "score": score, "threshold": threshold,
+                "passed": passed, "feedback": fb, "duration_ms": duration_ms,
+            })
+            if passed:
+                final_status = "passed"
+                break
+            prior_draft = draft
+            feedback = fb
+        else:
+            final_status = "stopped"  # max_iterations bereikt zonder pass
+
+        _update_subtask(st_id, status=final_status)
+        event_bus.publish({
+            "type": "gauntlet_subtask_done", "run_id": run_id, "subtask_id": st_id,
+            "position": position, "role": role, "status": final_status,
+            "best_score": best_score, "threshold": threshold,
+        })
+    except Exception as exc:  # noqa: BLE001
+        _update_subtask(st_id, status="error")
+        event_bus.publish({
+            "type": "gauntlet_subtask_error", "run_id": run_id, "subtask_id": st_id,
+            "position": position, "role": role, "error": str(exc),
+        })
+        logger.exception("Gauntlet deeltaak %s (%s) faalde: %s", st_id, role, exc)
+
+
+# ── De volledige Gauntlet run ──────────────────────────────────────────────────
+
+async def _run_gauntlet(
+    run_id: str, objective: str, benchmark: str, threshold: int, max_iterations: int,
+    session_id: Optional[str], stop_flag: Dict[str, bool],
+) -> None:
+    model_override = None  # default backend; profielen kunnen later per-deeltaak komen
+    brand_brief = ""  # placeholder voor gedeeld merkgeheugen (uit Obsidian)
+
+    event_bus.publish({
+        "type": "gauntlet_start", "run_id": run_id, "objective": objective,
+        "benchmark_len": len(benchmark), "threshold": threshold,
+        "max_iterations": max_iterations,
+    })
+
+    try:
+        # Pijler 1: decompose → parallelle subagents
+        subtasks = await _decompose(objective, model_override)
+        _update_run(run_id, subtask_count=len(subtasks))
+        st_rows = [
+            {"id": _create_subtask(run_id, idx, s["role"], s["goal"]),
+             "position": idx, "role": s["role"], "goal": s["goal"]}
+            for idx, s in enumerate(subtasks)
+        ]
+        event_bus.publish({
+            "type": "gauntlet_plan", "run_id": run_id,
+            "subtasks": [{"position": r["position"], "role": r["role"], "goal": r["goal"]}
+                         for r in st_rows],
+        })
+
+        # Pijler 1+2+3: elke deeltaak draait zijn eigen builder+blinde-critic-lus,
+        # allemaal tegelijk (parallel fan-out zoals de delegate-laag).
+        await asyncio.gather(*(
+            _run_subtask(
+                run_id, r["id"], r["position"], r["role"], r["goal"],
+                benchmark, brand_brief, threshold, max_iterations, stop_flag, model_override,
+            )
+            for r in st_rows
+        ), return_exceptions=True)
+
+        # Status bepalen: passed = alle deeltaken geslaagd; anders partial.
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT status FROM gauntlet_subtasks WHERE run_id = ?", (run_id,)
+            ).fetchall()
+        statuses = [r["status"] for r in rows]
+        if all(s == "passed" for s in statuses) and statuses:
+            final_status = "passed"
+        elif stop_flag.get("stop"):
+            final_status = "stopped_by_user"
+        elif any(s == "passed" for s in statuses):
+            final_status = "partial"
+        else:
+            final_status = "stopped"
+
+        _update_run(run_id, status=final_status, finished_at=_now())
+        event_bus.publish({
+            "type": "gauntlet_done", "run_id": run_id, "status": final_status,
+            "subtask_statuses": statuses,
+            "message": "Menselijke eindjurat vereist: beoordeel het overgebleven resultaat "
+                       "als laatste jury (POST /api/gauntlet/{id}/verdict).",
+        })
+        logger.info("Gauntlet %s afgerond: status=%s", run_id, final_status)
+    except Exception as exc:  # noqa: BLE001
+        _update_run(run_id, status="failed", finished_at=_now())
+        event_bus.publish({"type": "gauntlet_error", "run_id": run_id, "error": str(exc)})
+        logger.exception("Gauntlet %s faalde: %s", run_id, exc)
+
+
+# ── Publieke API ──────────────────────────────────────────────────────────────
+
+def spawn_gauntlet(
+    objective: str,
+    benchmark: str,
+    threshold: int = DEFAULT_THRESHOLD,
+    max_iterations: int = DEFAULT_MAX_ITERATIONS,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Start een Gauntlet Loop en KEER DIRECT TERUG (non-blocking)."""
+    if not objective or not objective.strip():
+        raise ValueError("Een opdracht (objective) is verplicht voor een Gauntlet.")
+    if not benchmark or not benchmark.strip():
+        raise ValueError(
+            "Een benchmark is verplicht: lever een scherpe referentie (tekst, voorbeeld-"
+            "artifact of beschrijving) waar de blinde critici hard tegenaan meten."
+        )
+    threshold = max(1, min(100, int(threshold)))
+    max_iterations = max(1, min(10, int(max_iterations)))
+
+    run_id = _create_run(objective.strip(), benchmark.strip(), session_id, threshold, max_iterations)
+    stop_flag: Dict[str, bool] = {"stop": False}
+    # stop_flag bewaren zodat de STOP-endpoint de lopende run kan afbreken.
+    _STOP_FLAGS[run_id] = stop_flag
+
+    task = asyncio.create_task(
+        _run_gauntlet(run_id, objective.strip(), benchmark.strip(), threshold,
+                      max_iterations, session_id, stop_flag)
+    )
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    task.add_done_callback(lambda _t: _STOP_FLAGS.pop(run_id, None))
+
+    return {"run_id": run_id, "threshold": threshold, "max_iterations": max_iterations}
+
+
+# Stop-vlaggen per run_id, zodat de STOP-endpoint de lopende asyncio-task kan afbreken.
+_STOP_FLAGS: "Dict[str, Dict[str, bool]]" = {}
+
+
+def stop_gauntlet(run_id: str) -> bool:
+    """Zet de stop-vlag voor een lopende run. De lussen breken bij de volgende ronde af."""
+    flag = _STOP_FLAGS.get(run_id)
+    if flag is None:
+        # Run bestaat mogelijk niet (meer) of is al klaar. Markeer in DB als gestopt.
+        with get_conn() as conn:
+            cur = conn.execute(
+                "UPDATE gauntlet_runs SET status='stopped_by_user', finished_at=? "
+                "WHERE id=? AND status='running'",
+                (_now(), run_id),
+            )
+        return cur.rowcount > 0
+    flag["stop"] = True
+    return True
+
+
+def record_verdict(run_id: str, verdict: str, note: Optional[str] = None) -> bool:
+    """Menselijke eindjurat: sla het oordeel van de mens op als laatste jury."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE gauntlet_runs SET human_verdict=?, human_note=?, updated_at=? "
+            "WHERE id=?",
+            (verdict, note or "", _now(), run_id),
+        )
+    return cur.rowcount > 0
+
+
+def get_run(run_id: str) -> Optional[Dict[str, Any]]:
+    with get_conn() as conn:
+        run = conn.execute("SELECT * FROM gauntlet_runs WHERE id = ?", (run_id,)).fetchone()
+        if not run:
+            return None
+        subs = conn.execute(
+            "SELECT * FROM gauntlet_subtasks WHERE run_id = ? ORDER BY position ASC", (run_id,)
+        ).fetchall()
+        iters = conn.execute(
+            "SELECT * FROM gauntlet_iterations WHERE subtask_id IN "
+            "(SELECT id FROM gauntlet_subtasks WHERE run_id = ?) ORDER BY subtask_id, iteration ASC",
+            (run_id,),
+        ).fetchall()
+    out = dict(run)
+    out["subtasks"] = [dict(s) for s in subs]
+    out["iterations"] = [dict(i) for i in iters]
+    return out
+
+
+def list_runs(limit: int = 25) -> List[Dict[str, Any]]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, objective, status, threshold, max_iterations, subtask_count, "
+            "best_overall_score, human_verdict, created_at, finished_at "
+            "FROM gauntlet_runs ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [dict(r) for r in rows]

@@ -174,8 +174,17 @@ def get_auth_state() -> dict:
     return _auth_state.copy()
 
 
-def get_valid_token() -> Optional[str]:
-    """Return a valid access token, auto-refreshing if needed."""
+def get_valid_token(site_id: Optional[str] = None) -> Optional[str]:
+    """Return a valid access token, auto-refreshing if needed.
+
+    `site_id`: delegeert naar het per-klant account (Iris-onboarding,
+    domains/onboarding/resolve.py) als dat bestaat, anders het globale
+    account hieronder — resolve.py doet zelf al die terugval. Zonder site_id
+    (alle bestaande aanroepen) is het gedrag exact als voorheen.
+    """
+    if site_id:
+        from ..onboarding import resolve
+        return resolve.microsoft_token_for(site_id)
     if not is_configured():
         return None
     try:

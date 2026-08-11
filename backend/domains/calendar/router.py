@@ -15,6 +15,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from . import service as calendar_service
+from ...shared.config import CALENDAR_BACKEND
+from ...shared.settings_store import get_setting, set_setting
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/calendar", tags=["calendar"])
@@ -29,6 +31,11 @@ class BlockRequest(BaseModel):
 
 class ProposalAction(BaseModel):
     proposal_id: int
+
+
+class CalendarSettings(BaseModel):
+    calendar_id: Optional[str] = None
+    busy_calendar_ids: Optional[str] = None  # komma-gescheiden
 
 
 @router.get("/proposals")
@@ -77,12 +84,36 @@ async def status():
     # te lezen. Alleen dat tweede zegt of conflict-detectie iets waard is.
     access = await calendar_service.verify_access()
     return {
+        "backend": CALENDAR_BACKEND,
         "configured": calendar_service.is_configured(),
         "calendar_id": access["calendar_id"],
         "busy_calendar_ids": access["busy_calendar_ids"],
         "reachable": access["reachable"],
         "error": access["error"],
         "sub": bool(__import__("os").environ.get("CALENDAR_SUB")),
+        # Adres om de agenda mee te delen (alleen bij de Google-serviceaccount-
+        # backend — leeg bij Outlook, daar is de koppeling de eigen OAuth-login).
+        "client_email": calendar_service.client_email(),
+    }
+
+
+@router.put("/settings")
+async def update_settings(body: CalendarSettings):
+    """Agenda-ID/busy-agenda's zelf koppelen vanuit de Instellingen-hub —
+    werkt direct (DB-override, zie shared/settings_store.py), geen herstart
+    nodig. Alleen zinvol bij de Google-serviceaccount-backend; bij Outlook
+    volgt de agenda dezelfde koppeling als mail."""
+    if body.calendar_id is not None:
+        set_setting("calendar_calendar_id", body.calendar_id.strip())
+    if body.busy_calendar_ids is not None:
+        set_setting("calendar_busy_ids", body.busy_calendar_ids.strip())
+    access = await calendar_service.verify_access()
+    return {
+        "configured": calendar_service.is_configured(),
+        "calendar_id": access["calendar_id"],
+        "busy_calendar_ids": access["busy_calendar_ids"],
+        "reachable": access["reachable"],
+        "error": access["error"],
     }
 
 

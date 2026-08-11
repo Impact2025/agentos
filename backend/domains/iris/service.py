@@ -958,7 +958,7 @@ def _trend_section(projects: List[Dict[str, Any]]) -> List[str]:
         return []
     risers.sort(key=lambda x: x[1]["delta_clicks"], reverse=True)
     fallers.sort(key=lambda x: x[1]["delta_clicks"])
-    lines = ["## 📈 Bewegers deze week (GSC, pagina-niveau)"]
+    lines = ["## Bewegers deze week (GSC, pagina-niveau)"]
     for proj, m in risers[:5]:
         q = m.get("query") or m["url"]
         lines.append(f"- ▲ _{proj}_: '{q}' +{m['delta_clicks']} clicks")
@@ -975,17 +975,17 @@ def _validation_section(validation: Optional[Dict[str, Any]],
     lines: List[str] = []
     tr = track_record or {}
     if tr.get("accuracy") is not None:
-        lines.append(f"## 🎯 Mijn trefkans: {tr['accuracy']}% "
+        lines.append(f"## Mijn trefkans: {tr['accuracy']}% "
                      f"({tr['correct']} raak · {tr['wrong']} mis · {tr['open']} nog open)")
     val = validation or {}
     evaluated = val.get("evaluated") or []
     if evaluated:
         if not lines:
-            lines.append("## 🎯 Voorspellingen getoetst")
-        icon = {"correct": "✅", "wrong": "❌", "unclear": "➖"}
+            lines.append("## Voorspellingen getoetst")
+        label = {"correct": "Raak", "wrong": "Mis", "unclear": "Onbeslist"}
         for e in evaluated[:8]:
             stmt = e.get("statement") or f"{e['project']} {e['metric']} {e['direction']}"
-            lines.append(f"- {icon.get(e['status'], '·')} {stmt} — {e['note']}")
+            lines.append(f"- **{label.get(e['status'], '—')}** — {stmt} — {e['note']}")
     if lines:
         lines.append("")
     return lines
@@ -998,7 +998,7 @@ def _open_predictions_section() -> List[str]:
     openp = predictions.open_predictions()
     if not openp:
         return []
-    lines = ["## 🔮 Wat ik nu voorspel (wordt automatisch getoetst)"]
+    lines = ["## Wat ik nu voorspel (wordt automatisch getoetst)"]
     for p in openp[:6]:
         stmt = p.get("statement") or f"{p['project']}: {p['metric']} {p['direction']}"
         lines.append(f"- {stmt} _(afrekening {p['due_date']})_")
@@ -1014,7 +1014,7 @@ def _fix_offer_section(report_date: str) -> List[str]:
                if s.get("status") == "pending"]
     if not pending:
         return []
-    lines = ["## ⚡ Dit kan ik nu voor je fixen (één klik op het dashboard)"]
+    lines = ["## Dit kan ik nu voor je fixen (één klik op het dashboard)"]
     for s in pending[:6]:
         detail = f" — {s['detail']}" if s.get("detail") else ""
         lines.append(f"- **{s['title']}**{detail}")
@@ -1034,7 +1034,7 @@ def _build_markdown(report_date: str, snapshot: Dict[str, Any], parsed: Optional
     if not llm_used:
         lines += ["_LLM niet beschikbaar — dit is de puur cijfermatige briefing._", ""]
 
-    lines += ["## 📊 Cijfers per project", *_grade_table(projects, judgments), ""]
+    lines += ["## Cijfers per project", *_grade_table(projects, judgments), ""]
     lines += _trend_section(projects)
     lines += _validation_section(validation, track_record)
 
@@ -1047,24 +1047,24 @@ def _build_markdown(report_date: str, snapshot: Dict[str, Any], parsed: Optional
         return "GSC" in note or (p["pillars"]["seo"]["pages"] == 0 and not has_trend)
     unmeasurable = [p["project"] for p in projects if _unmeasurable(p)]
     if unmeasurable:
-        lines += ["## ⚠ Niet meetbaar — koppel eerst GSC",
+        lines += ["## Niet meetbaar — koppel eerst GSC",
                   f"- {len(unmeasurable)} project(en) hebben geen bruikbare Search Console-data "
                   f"({', '.join(unmeasurable[:8])}). Zolang dat zo is, is hun SEO-cijfer een "
                   "ondergrens en is elk SEO-advies giswerk. Dit is probleem nummer één.", ""]
 
     evaluation = (parsed or {}).get("evaluatie_gisteren")
     if evaluation:
-        lines += ["## 🔁 Terugblik op mijn vorige advies", f"- {evaluation}", ""]
+        lines += ["## Terugblik op mijn vorige advies", f"- {evaluation}", ""]
 
     learned = (parsed or {}).get("geleerd") or []
-    lines.append("## 🧠 Wat ik geleerd heb")
+    lines.append("## Wat ik geleerd heb")
     if learned:
         lines += [f"- {item}" for item in learned[:5]]
     else:
         lines.append("- (geen nieuwe lessen vandaag)")
     lines.append("")
 
-    lines.append("## 🔧 Wat ik heb opgepakt")
+    lines.append("## Wat ik heb opgepakt")
     if applied:
         lines += [f"- {item}" for item in applied]
     else:
@@ -1072,11 +1072,11 @@ def _build_markdown(report_date: str, snapshot: Dict[str, Any], parsed: Optional
     recommendations = [i for i in ((parsed or {}).get("verbeteringen") or [])
                        if (i.get("type") or "").lower() == "aanbeveling" and i.get("tekst")]
     for rec in recommendations[:3]:
-        lines.append(f"- 💡 Aanbeveling: {rec['tekst']}" + (f" ({rec.get('reden', '')})" if rec.get("reden") else ""))
+        lines.append(f"- Aanbeveling: {rec['tekst']}" + (f" ({rec.get('reden', '')})" if rec.get("reden") else ""))
     lines.append("")
 
     advice = (parsed or {}).get("advies") or []
-    lines.append("## 🎯 Beste stappen voor vandaag")
+    lines.append("## Beste stappen voor vandaag")
     if advice:
         for a in sorted(advice, key=lambda x: x.get("prio", 9))[:3]:
             lines.append(f"{a.get('prio', '•')}. **{a.get('actie', '')}** — {a.get('waarom', '')}")
@@ -1092,7 +1092,7 @@ def _build_markdown(report_date: str, snapshot: Dict[str, Any], parsed: Optional
 
     funnel = glob.get("funnel") or {}
     if funnel.get("formula"):
-        lines += ["## 📈 De formule", f"- {funnel['formula']}", ""]
+        lines += ["## De formule", f"- {funnel['formula']}", ""]
 
     lines.append("_Iris draait elke ochtend 06:45 — geschiedenis via /api/iris/history._")
     return "\n".join(lines)

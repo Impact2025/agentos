@@ -54,6 +54,12 @@ def is_configured() -> bool:
     return outlook_service.is_configured()
 
 
+def client_email() -> str:
+    """Geen service-account bij deze backend — de agenda is de eigen OAuth-
+    login (dezelfde koppeling als mail), er is niets om mee te delen."""
+    return ""
+
+
 def explain_error(exc: Exception, cal_id: Optional[str] = None) -> str:
     """Vertaal een kale Graph-fout naar een uitvoerbare melding, zelfde rol
     als service_google.explain_error() — de scheduler-job en het Actiecentrum

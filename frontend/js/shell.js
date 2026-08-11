@@ -93,6 +93,7 @@ async function loadCurrentTab() {
     else if (currentTab === 'Technisch') await renderTechTab(el);
     else if (currentTab === 'Activiteit') await renderActiviteitTab(el);
     else if (currentTab === 'Social Creatie') await renderSocialCreatieTab(el);
+    else if (currentTab === 'Gauntlet') await renderGauntletTab(el);
     else if (currentTab === 'Helpdesk') await renderHelpdeskTab(el);
     else if (currentTab === 'Instellingen') await renderInstellingenTab(el);
     else el.innerHTML = '<div class="empty-state">Tab niet gevonden</div>';

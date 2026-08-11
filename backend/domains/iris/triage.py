@@ -445,8 +445,10 @@ async def analyze_and_fix_all(kinds: Optional[list] = None) -> Dict[str, Any]:
     def _collect_ids() -> list:
         ids = []
         # activity_log-fouten (laatste ERROR_WINDOW_DAYS dagen) — zelfde filter
-        # als de Actiecentrum-inbox.
-        from ...shared.config import ERROR_WINDOW_DAYS
+        # als de Actiecentrum-inbox. Lokaal gespiegeld (3 dagen) i.p.v. import uit
+        # shared.config, want die const leeft in action_center.service — een
+        # `from ...shared.config import ERROR_WINDOW_DAYS` crasht met ImportError.
+        ERROR_WINDOW_DAYS = 3
         with get_conn() as conn:
             for r in conn.execute(
                 "SELECT id FROM activity_log WHERE (status='error' OR action LIKE '%fout%') "
