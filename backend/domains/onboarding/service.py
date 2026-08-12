@@ -39,6 +39,22 @@ def _now() -> str:
 
 def _require_site(site_id: str) -> Dict[str, Any]:
     site = sites_service.get_site(site_id)
+    if site:
+        return site
+    # Geen SEO-site gevonden — voor een tenant-eigen klant (bijv. Nicole, die
+    # geen SEO-site heeft maar wél een tenant) creëren we een virtuele
+    # site-rij op basis van de site_id (== tenant-slug). Zo werkt de volledige
+    # onboarding-wizard (bedrijfsdoel, schrijfstijl, autonomie) ook zonder een
+    # echte site. De wizard stuurt alleen geldige site_id's of de tenant-slug,
+    # dus dit is veilig — geen willekeurige/lege id's.
+    if not site_id or not str(site_id).strip():
+        raise ValueError(f"Onbekende site: {site_id}")
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO sites (id, name, created_at) VALUES (?, ?, ?)",
+            (site_id, str(site_id).strip(), _now()),
+        )
+    site = sites_service.get_site(site_id)
     if not site:
         raise ValueError(f"Onbekende site: {site_id}")
     return site
