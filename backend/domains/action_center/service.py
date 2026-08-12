@@ -508,7 +508,7 @@ def build_inbox() -> Dict[str, Any]:
         # ── 2c. Mail helpdesk: concept-antwoorden wachten op goedkeuring ──
         for r in conn.execute(
             "SELECT r.id, r.to_addr, r.subject, r.draft_body, r.created_at, "
-            "m.project, m.address, i.from_name "
+            "m.project, m.address, i.from_name, r.poot_referral "
             "FROM mail_reply r "
             "JOIN mailboxes m ON m.id=r.mailbox_id "
             "JOIN mail_inbox i ON i.id=r.inbox_id "
@@ -523,6 +523,10 @@ def build_inbox() -> Dict[str, Any]:
                 "title": f"Mail {r['from_name'] or r['to_addr']}: {r['subject']}",
                 "project": r["project"] or "Helpdesk",
                 "created_at": r["created_at"],
+                # Iris-regel: als er een Pootgelukkig-kans is gezien, geef dat
+                # door als vlag zodat de UI 'm kan tonen (niet verplicht — Vincent
+                # keurt het concept alsnog goed of laat de PS weg bij Bewerk).
+                "flag": ("Pootgelukkig-suggestie" if (r["poot_referral"] or "").strip() else None),
                 "summary": (r["draft_body"][:240] + ("…" if len(r["draft_body"]) > 240 else "")),
                 # GSC-expert-knop alleen bij échte Search Console-mails
                 # (afzender sc-noreply@google.com of kenmerkende onderwerp/body).

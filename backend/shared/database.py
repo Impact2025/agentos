@@ -962,6 +962,10 @@ def _migrate(conn) -> None:
         # écht geïndexeerd is). NULL/leeg = nog niet geïnspecteerd.
         ("index_status", "ALTER TABLE content_jobs ADD COLUMN index_status TEXT DEFAULT ''"),
         ("index_inspected_at", "ALTER TABLE content_jobs ADD COLUMN index_inspected_at TEXT DEFAULT ''"),
+        # Content-type: onderscheidt wat de job WERKELIJK is, zodat de publish-pijplijn
+        # en de UI weten wat ze ermee moeten doen. blog = site-pagina; linkedin_outreach
+        # = LinkedIn-berichten (NOOIT als site-pagina publiceren); landing_page = pagina.
+        ("content_type", "ALTER TABLE content_jobs ADD COLUMN content_type TEXT DEFAULT 'blog'"),
     ):
         if cj_cols and col not in cj_cols:
             conn.execute(ddl)
@@ -1480,9 +1484,15 @@ def _migrate(conn) -> None:
             status       TEXT DEFAULT 'pending_review', -- pending_review|sent|edited|rejected
             edited_body  TEXT DEFAULT '',
             created_at   TEXT DEFAULT (datetime('now')),
-            sent_at      TEXT DEFAULT ''
+            sent_at      TEXT DEFAULT '',
+            poot_referral TEXT DEFAULT ''          -- Iris-regel: signaal dat een Pootgelukkig-kans zag
         )"""
     )
+    # Idempotente aanvulling voor bestaande DB's waarin de kolom nog ontbreekt.
+    try:
+        conn.execute("ALTER TABLE mail_reply ADD COLUMN poot_referral TEXT DEFAULT ''")
+    except Exception:
+        pass  # kolom bestond al — negeren
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_mail_reply_status "
         "ON mail_reply(mailbox_id, status)"
@@ -1941,8 +1951,9 @@ def _migrate_postvak(conn) -> None:
         )
 
     try:
-        from ..domains.outlook.rules import seed_system_rules
+        from ..domains.outlook.rules import seed_system_rules, seed_self_sender_rules
         seed_system_rules(conn)
+        seed_self_sender_rules(conn)
     except Exception:  # noqa: BLE001
         logger.warning("Seeden van afzenderregels mislukt", exc_info=True)
 

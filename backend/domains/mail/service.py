@@ -222,7 +222,7 @@ def _process_classified(mailbox: Dict, inbox_id: int, from_addr: str,
         knowledge = knowledge_mod.build_knowledge(conn, mailbox.get("project", ""), mailbox)
         history = knowledge_mod.thread_history(conn, mid, from_addr, inbox_id)
     signature = (mailbox.get("signature") or "").strip()
-    draft = drafter.draft_reply(
+    draft, opp = drafter.draft_reply_with_referral(
         from_name=from_name or from_addr,
         subject=subject,
         body=body,
@@ -235,12 +235,17 @@ def _process_classified(mailbox: Dict, inbox_id: int, from_addr: str,
         draft = draft.rstrip() + "\n\n" + signature
     refs = ""
     irt = ""
+    # Iris-regel: als er een Pootgelukkig-kans is gezien, sla het signaal op
+    # zodat de UI een 'Pootgelukkig-suggestie'-vlag kan tonen (Vincent keurt
+    # het concept alsnog goed of laat de PS weg bij Verstuur/Bewerk).
+    poot_signal = (opp or {}).get("signal") if opp else None
     with get_conn() as conn:  # korte schrijffase, ná de LLM-call
         conn.execute(
             "INSERT INTO mail_reply(mailbox_id,inbox_id,to_addr,subject,draft_body,"
-            "in_reply_to,\"references\") "
-            "VALUES(?,?,?,?,?,?,?)",
-            (mid, inbox_id, from_addr, "Re: " + subject, draft, irt, refs),
+            "in_reply_to,\"references\",poot_referral) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (mid, inbox_id, from_addr, "Re: " + subject, draft, irt, refs,
+             poot_signal or ""),
         )
     return 1
 

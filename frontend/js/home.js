@@ -281,7 +281,8 @@ function loadActionCenter() {
         '<div style="flex:1;min-width:0">' +
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px">' +
         '<span class="pill ' + meta.pill + '">' + escHtml(meta.label) + '</span>' +
-        '<span style="font-size:10px;color:#64748b;background:var(--neutral-bg);padding:1px 6px;border-radius:4px">' + escHtml(it.project || '') + '</span>' + when + '</div>' +
+        '<span style="font-size:10px;color:#64748b;background:var(--neutral-bg);padding:1px 6px;border-radius:4px">' + escHtml(it.project || '') + '</span>' +
+        (it.flag ? '<span style="font-size:10px;color:#065f46;background:#d1fae5;padding:1px 6px;border-radius:4px;font-weight:600">' + escHtml(it.flag) + '</span>' : '') + when + '</div>' +
         '<p style="font-size:13px;font-weight:600;color:var(--text);margin:2px 0">' + escHtml(it.title) + '</p>' +
         '<p style="font-size:11px;color:#64748b;margin-bottom:6px">' + escHtml(it.summary || '') + '</p>' +
         '<div style="display:flex;gap:6px;flex-wrap:wrap">' +

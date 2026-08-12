@@ -12,10 +12,14 @@ review-gate vangt dat op en jij vult handmatig in.
 import asyncio
 import os
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 
 import httpx
 
+from .pootgelukkig_referral import (
+    detect_pootgelukkig_opportunity,
+    referral_instruction,
+)
 from ...shared.config import (
     OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL,
     OLLAMA_BASE_URL, OLLAMA_MODEL,
@@ -124,9 +128,13 @@ def _sync_openmodel(system: str, user: str) -> str:
         )
     # OpenModel geeft ofwel Anthropic-vorm (content[].text) of OpenAI-vorm (choices)
     if "content" in data:
-        return "".join(
+        text = "".join(
             part.get("text", "") for part in data["content"] if part.get("type") == "text"
         )
+        # Soms komt er alleen een 'thinking'-blok terug en géén 'text' (bij grote
+        # prompts) — dat is géén geldig antwoord. Geef leeg terug zodat de
+        # fallback-keten (Claude → Ollama) het overneemt i.p.v. een lege draft.
+        return text
     if "choices" in data:
         return data["choices"][0]["message"]["content"]
     return data.get("text", "")
@@ -189,7 +197,23 @@ def draft_reply(
     closing = (_CLOSING_WITH_SIGNATURE if has_signature else _CLOSING_NO_SIGNATURE)
     system = (SYSTEM_TEMPLATE.format(brand=brand) + closing.format(brand=brand)
               + "\n\n" + lang_note)
+    # Iris-regel: optionele Pootgelukkig-referral. Alleen wanneer er een echte
+    # kans is (dier-/adoptie-signaal + WeAreImpact-achtige brand-context) krijgt
+    # de LLM een zachte hint — nooit verplicht, de mens keurt alsnog goed.
+    opp = detect_pootgelukkig_opportunity(subject, body, brand_context)
+    ref_instr = referral_instruction(opp)
+    if ref_instr:
+        system += ref_instr
     if knowledge:
+        # OpenModel (deepseek-v4-flash) geeft bij een te grote system-prompt
+        # geregeld alleen een 'thinking'-blok terug en géén 'text' → lege draft.
+        # De kennisbank van grote projecten (WeAreImpact) loopt makkelijk over de
+        # 200K chars heen, dus clippen we hem tot een veilige bovengrens. De
+        # drafter mist dan hooguit wat dieperliggende details; liever een goed
+        # antwoord met minder context dan een lege draft die de review-gate vult.
+        _MAX_KNOWLEDGE = 6000
+        if len(knowledge) > _MAX_KNOWLEDGE:
+            knowledge = knowledge[:_MAX_KNOWLEDGE].rsplit("\n", 1)[0] + "\n[…kennis ingekort]"
         system += f"\n\n— KENNISBASIS (hieronder staat wat je WÉL mag zeggen over het project, de app en de maker) —\n{knowledge}"
     user = ""
     if history:
@@ -236,3 +260,32 @@ def draft_reply(
         except Exception as e:
             log.warning("Ollama draft mislukt: %s", e)
     return claude_out  # leesbare placeholder — review-gate vangt dit op
+
+
+def draft_reply_with_referral(
+    from_name: str,
+    subject: str,
+    body: str,
+    brand_context: str,
+    knowledge: str,
+    history: str = "",
+    has_signature: bool = False,
+) -> Tuple[str, Optional[dict]]:
+    """Zelfde als draft_reply(), maar geeft ook de referral-kans terug.
+
+    Return: (draft_tekst, opportunity_dict_of_None). De caller kan de
+    opportunity gebruiken om in de UI een 'Pootgelukkig-suggestie'-vlag te
+    tonen, zodat Vincent weet dat Iris een kans zag (en 'm met één klik kan
+    weglaten bij Verstuur/Bewerk).
+    """
+    opp = detect_pootgelukkig_opportunity(subject, body, brand_context)
+    draft = draft_reply(
+        from_name=from_name,
+        subject=subject,
+        body=body,
+        brand_context=brand_context,
+        knowledge=knowledge,
+        history=history,
+        has_signature=has_signature,
+    )
+    return draft, opp
