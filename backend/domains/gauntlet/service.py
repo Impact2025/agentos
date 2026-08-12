@@ -209,25 +209,34 @@ def _update_subtask(st_id: str, **fields: Any) -> None:
 
 async def _run_text_agent(
     system_prompt: str, user_message: str, model_override: Optional[str],
-    max_tokens: int = 4096,
+    max_tokens: int = 4096, call_timeout: float = 90.0,
 ) -> str:
-    """Draai een agent zonder tools en verzamel tekst (content-taak)."""
+    """Draai een agent zonder tools en verzamel tekst (content-taak).
+
+    `call_timeout` voorkomt dat één trage OpenModel-call de hele Gauntlet-run
+    blokkeert: bij timeout wordt RuntimeError opgegooid (en door de caller
+    geretry'd of als 'error' gemarkeerd i.p.v. de run te laten hangen).
+    """
     chunks: List[str] = []
-    async for event in agent_service.run_agent(
-        messages=[{"role": "user", "content": user_message}],
-        system_prompt=system_prompt,
-        agent="hermes",
-        model_override=model_override,
-        use_tools=False,  # content-taken: zwakke modellen lekken anders tool-syntax
-        max_tokens=max_tokens,
-    ):
-        if event.get("type") == "error":
-            msg = event.get("message") or "Onbekende agent-fout"
-            if "402" in msg or "insufficient balance" in msg or "billing" in msg.lower():
-                raise BillingError(msg)
-            raise RuntimeError(msg)
-        if event.get("type") == "text":
-            chunks.append(event["text"])
+    try:
+        async with asyncio.timeout(call_timeout):
+            async for event in agent_service.run_agent(
+                messages=[{"role": "user", "content": user_message}],
+                system_prompt=system_prompt,
+                agent="hermes",
+                model_override=model_override,
+                use_tools=False,  # content-taken: zwakke modellen lekken anders tool-syntax
+                max_tokens=max_tokens,
+            ):
+                if event.get("type") == "error":
+                    msg = event.get("message") or "Onbekende agent-fout"
+                    if "402" in msg or "insufficient balance" in msg or "billing" in msg.lower():
+                        raise BillingError(msg)
+                    raise RuntimeError(msg)
+                if event.get("type") == "text":
+                    chunks.append(event["text"])
+    except asyncio.TimeoutError:
+        raise RuntimeError(f"LLM-call time-out na {call_timeout:.0f}s (OpenModel traag/leeg)")
     return "".join(chunks).strip()
 
 
@@ -300,12 +309,16 @@ async def _run_builder(
             "\n\nLever nu een merkbaar betere, VOLLEDIGE nieuwe versie (de hele pagina, " +
             "eindigend met de sluiting en beide CTA's). Breek niet af."
         )
-    # Retry de builder bij een lege output (voorkomt score -1 op niks).
-    for attempt in range(3):
-        draft = await _run_text_agent_retry(system_prompt, user_message, model_override, max_tokens=8192)
+    # Bij lege output: 1 retry (geen 3× bellen — verbrandt saldo op een model dat
+    # toch niks geeft bij dit deeltaak-type). De caller (de lus) gaat dan naar de
+    # volgende ronde met feedback i.p.v. de run te laten hangen.
+    for attempt in range(1):
+        draft = await _run_text_agent_retry(
+            system_prompt, user_message, model_override, max_tokens=8192, call_timeout=90.0,
+        )
         if draft and draft.strip() and "_(De builder leverde geen tekst op.)_" not in draft:
             return draft
-        logger.warning("Builder leverde lege output (poging %d); retry.", attempt + 1)
+        logger.warning("Builder leverde lege output (poging %d); ga naar volgende ronde.", attempt + 1)
     return "_(De builder leverde geen tekst op.)_"
 
 
@@ -380,10 +393,13 @@ async def _run_critic(
     for _ in range(retries + 1):
         try:
             last_raw = await _run_text_agent_retry(
-                system_prompt, user_message, model_override, max_tokens=4096
+                system_prompt, user_message, model_override, max_tokens=4096, call_timeout=90.0
             )
         except BillingError:
             raise  # saldo-op: niet retry'en, meteen naar de run-loop
+        except RuntimeError as exc:
+            logger.warning("Criticus-call mislukt: %s", exc)
+            continue  # timeout/haper: probeer opnieuw (binnen retries) i.p.v. te stranden
         score, fb, passed, ok = _parse_critic(last_raw, threshold)
         if ok:
             return score, fb, passed, True

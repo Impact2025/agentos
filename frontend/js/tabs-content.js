@@ -1657,7 +1657,7 @@ async function renderOmniTab(el) {
 
 async function _omniSiteId() {
   try {
-    var sites = await (await fetch('/api/projects')).json();
+    var sites = await (await fetch('/api/sites')).json();
     var s = (sites || []).find(function(x){ return (x.name || '').toLowerCase() === currentProject.toLowerCase(); });
     return s ? s.id : null;
   } catch (e) { return null; }

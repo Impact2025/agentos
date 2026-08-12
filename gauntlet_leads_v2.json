@@ -1,0 +1,7 @@
+{
+  "objective": "Schrijf een scherpe LinkedIn-outreachcampagne (Nederlands) voor WeAreImpact gericht op 'super leads': gemeenten, welzijnsorganisaties en vrijwilligersorganisaties met concrete AI/sociaal-domein intentie (o.a. 'digitale transformatie welzijnsorganisatie', 'vrijwilligersorganisatie ondersteuning', 'teambuilding met impact lokale overheid'). Doel: deze warme leads uitnodigen voor een strategische AI-verkenning. Toon: Vincent, eerste persoon, nuchter, peer-level met bestuurders.",
+  "benchmark": "Een sterk gemeente-voorstel / lead-outreach voldoet aan: (1) opent met het concrete probleem bij de doelgroep (geen algemeen verhaal), (2) een meetbaar resultaat met harde data, (3) realistische doorlooptijd en aanpak, (4) geen corporate jargon of AI-hype, (5) een heldere investering/opbrengst-sectie, (6) sluit af met een concrete volgende stap (gesprek/scan). Geschreven als Vincent (eerste persoon).",
+  "threshold": 85,
+  "max_iterations": 5,
+  "extra_system_prompt": "Schrijf in Vincents stem (eerste persoon, nuchter, geen em-dashes, geen verzonnen cijfers)."
+}
