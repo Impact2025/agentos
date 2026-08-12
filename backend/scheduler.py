@@ -58,6 +58,7 @@ from .domains.publish.content_learning import run_content_learning_eval
 from .domains.vacancies.service import run_vacancy_scan_job
 from .domains.seo.optimizer import run_weekly_optimizer_job
 from .domains.seo.index_monitor import run_index_status_check
+from .domains.omni.sweep import run_omni_sweep
 from .domains.seo.engine import run_weekly_demand_scan
 from .domains.radar.service import scan_the_skies
 from .domains.seo.feedback import run_daily_gsc_sync
@@ -534,6 +535,10 @@ _SPECS: list[JobSpec] = [
     JobSpec(
         "index_status_check", "Index-status monitor (URL Inspection API: meet of artikelen écht geïndexeerd zijn, elke 6 uur)",
         run_index_status_check, IntervalTrigger(hours=6), domain="seo",
+    ),
+    JobSpec(
+        "omni_sweep", "SERP-Omni sweep (reverse-engineer SERP per top-kans, zet platform-assets klaar, elke 12 uur)",
+        run_omni_sweep, IntervalTrigger(hours=12), domain="seo",
     ),
     JobSpec(
         "goal_autoheal", "Doelen-zelfreparatie (verweesde/dubbele doelen)",

@@ -24,12 +24,22 @@ async function renderGauntletTab(el) {
       '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Opdracht</label>' +
       '<textarea id="g-objective" rows="2" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;margin-bottom:10px" placeholder="Bijv. schrijf een wereldklasse landingspagina voor X"></textarea>' +
       '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Benchmark (waar hard tegenaan gemeten wordt)</label>' +
-      '<textarea id="g-benchmark" rows="2" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;margin-bottom:10px" placeholder="Bijv. de beste landingspagina die je kunt vinden, of een scherpe beschrijving van het gewenste resultaat"></textarea>' +
+      '<textarea id="g-benchmark" rows="2" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;margin-bottom:6px" placeholder="Bijv. de beste landingspagina die je kunt vinden, of een scherpe beschrijving van het gewenste resultaat"></textarea>' +
+      '<select id="g-benchmark-preset" onchange="applyGauntletBenchmark(this.value)" style="width:100%;padding:6px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;margin-bottom:10px">' +
+        '<option value="">— kies een kant-en-klare WeAreImpact-benchmark —</option>' +
+        '<option value="landingspagina">Landingspagina (gemeente)</option>' +
+        '<option value="voorstel">Gemeente-voorstel / offerte</option>' +
+        '<option value="blog">Blog / kennisbank-artikel (SEO-E-E-A-T)</option>' +
+        '<option value="linkedin">LinkedIn-campagne (social)</option>' +
+        '<option value="prompt">Prompt-bibliotheek (functionele test)</option>' +
+      '</select>' +
       '<div style="display:flex;gap:12px;margin-bottom:10px">' +
         '<div><label style="font-size:11px;color:#64748b;display:block">Drempel (0-100)</label>' +
           '<input id="g-threshold" type="number" value="85" min="1" max="100" style="width:90px;padding:6px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px"></div>' +
         '<div><label style="font-size:11px;color:#64748b;display:block">Max rondes / deeltaak</label>' +
           '<input id="g-maxiter" type="number" value="3" min="1" max="10" style="width:90px;padding:6px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px"></div>' +
+        '<div><label style="font-size:11px;color:#64748b;display:block">Model (opt.)</label>' +
+          '<input id="g-model" type="text" value="" placeholder="deepseek-v4-pro" style="width:140px;padding:6px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px"></div>' +
       '</div>' +
       '<button id="g-start" onclick="startGauntlet()" style="padding:8px 18px;background:#4f46e5;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Start Gauntlet</button>' +
     '</div>' +
@@ -85,11 +95,53 @@ function appendGauntletFeed(data) {
 
 function short(s, n) { s = s || ''; n = n || 60; return s.length > n ? s.slice(0, n) + '…' : s; }
 
+// ── Kant-en-klare WeAreImpact-benchmarks (taak 3) ─────────────────────────────
+const GAUNTLET_BENCHMARKS = {
+  landingspagina:
+    "Een excellente gemeente-landingspagina voldoet aan: (1) scherpe hero met één " +
+    "concrete belofte voor het sociaal domein, (2) maximaal 3 bullets met meetbaar " +
+    "resultaat (bv. '30% minder doorlooptijd' — alleen harde, traceerbare data), " +
+    "(3) een 'voor wie' sectie die wethouders/beleidsadviseurs herkent, (4) geen " +
+    "AI-buzzwords maar concreet vaktaal, (5) één duidelijke CTA naar een " +
+    "kennismakingsgesprek, (6) vertrouwenwekkend (ervaring/referenties, geen hype), " +
+    "(7) mobiel leesbaar, korte alinea's, geen em-dashes.",
+  voorstel:
+    "Een sterk gemeente-voorstel voldoet aan: (1) opent met het concrete probleem " +
+    "bij déze gemeente (geen algemeen verhaal), (2) één meetbaar resultaat met " +
+    "harde data, (3) realistische doorlooptijd en aanpak, (4) geen corporate jargon " +
+    "of AI-hype, (5) één heldere investering/opbrengst-sectie, (6) sluit af met een " +
+    "concrete volgende stap (gesprek/scan).",
+  blog:
+    "Een wereldklasse blog-artikel voor WeAreImpact voldoet aan Vincent's Schrijf-DNA: " +
+    "(1) geschreven in eerste persoon ('ik'/'mijn'), (2) Ervarings-Carrousel — harde " +
+    "feiten uit de Baan/Philia/Nyenrode-tijd, (3) Answer Island + scherpe hook per " +
+    "H2, (4) geen bullet points in de hoofdtekst, geen em-dashes, geen verzonnen " +
+    "cijfers, (5) interne links naar weareimpact.nl / bijeen.app / brickme.nl, " +
+    "(6) schaarsheid-CTA naar Iris. B1-niveau, feitelijk, geen AI-clichés.",
+  linkedin:
+    "Een goede LinkedIn-post voor WeAreImpact voldoet aan: (1) max 180 woorden, " +
+    "(2) één hook in de eerste regel, (3) één concrete casus of harde metriek, " +
+    "(4) geschreven als Vincent (eerste persoon, nuchter), (5) géén hashtag-spam, " +
+    "(6) één CTA naar een gesprek/scan. Peer-level toon richting bestuurders.",
+  prompt:
+    "Een bruikbare agent-prompt voldoet aan: (1) één duidelijke taak met scoped " +
+    "invoer/uitvoer, (2) expliciete constraints (wat NIET doen), (3) testbaar: " +
+    "lost de meegeleverde voorbeeld-input correct op, (4) geen hallucinatie-ruimte, " +
+    "(5) leesbaar en herbruikbaar. Beoordeel functioneel, niet op stijl."
+};
+
+function applyGauntletBenchmark(key) {
+  if (!key) return;
+  var el = document.getElementById('g-benchmark');
+  if (el && GAUNTLET_BENCHMARKS[key]) el.value = GAUNTLET_BENCHMARKS[key];
+}
+
 async function startGauntlet() {
   var objective = (document.getElementById('g-objective') || {}).value || '';
   var benchmark = (document.getElementById('g-benchmark') || {}).value || '';
   var threshold = parseInt((document.getElementById('g-threshold') || {}).value || '85', 10);
   var maxiter = parseInt((document.getElementById('g-maxiter') || {}).value || '3', 10);
+  var model = (document.getElementById('g-model') || {}).value || '';
   if (!objective.trim() || !benchmark.trim()) {
     alert('Een opdracht én een benchmark zijn verplicht.');
     return;
@@ -99,7 +151,7 @@ async function startGauntlet() {
   try {
     var resp = await fetch('/api/gauntlet', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ objective: objective, benchmark: benchmark, threshold: threshold, max_iterations: maxiter })
+      body: JSON.stringify({ objective: objective, benchmark: benchmark, threshold: threshold, max_iterations: maxiter, model: model || undefined })
     });
     if (!resp.ok) {
       var err = await resp.json().catch(function(){return {};});
@@ -142,6 +194,19 @@ async function submitGauntletVerdict(runId) {
   } catch (e) { alert('Fout: ' + e.message); }
 }
 
+async function publishGauntlet(runId) {
+  if (!confirm('Gauntlet publiceren naar WeAreImpact (content_job, pending_review)? De blinde criticus haalde de benchmark — dit zet hem klaar voor jouw goedkeuring, NIET direct live.')) return;
+  try {
+    var resp = await fetch('/api/gauntlet/' + encodeURIComponent(runId) + '/publish', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+    });
+    var d = await resp.json().catch(function(){return {};});
+    if (!resp.ok) { alert('Geblokkeerd: ' + (d.detail || resp.status)); return; }
+    alert('Klaargezet als content_job ' + (d.job_id || '') + ' (status: ' + (d.status || '') + '). Goedkeuren via de Publish-pijplijn.');
+    loadGauntletRuns();
+  } catch (e) { alert('Fout: ' + e.message); }
+}
+
 async function loadGauntletRuns() {
   var box = document.getElementById('g-runs');
   if (!box) return;
@@ -173,8 +238,39 @@ async function loadGauntletRuns() {
       '<td style="padding:6px">' + verdictCell + '</td>' +
       '<td style="padding:6px">' +
         (running ? '<button onclick="stopGauntlet(\'' + r.id + '\')" style="padding:3px 10px;background:#ef4444;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Stop</button>' : '') +
+        (r.best_overall_score >= 0 ? ' <span style="font-size:11px;color:#64748b">top ' + r.best_overall_score + '</span>' : '') +
+        ((r.status === 'passed' || r.status === 'partial') && !r.published_job_id ? ' <button onclick="publishGauntlet(\'' + r.id + '\')" style="padding:3px 10px;background:#22c55e;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Publiceer → WeAreImpact</button>' : '') +
+        (r.published_job_id ? ' <span style="font-size:11px;color:#22c55e">✓ job ' + short(r.published_job_id, 12) + '</span>' : '') +
+        ' <button onclick="toggleGauntletDetail(\'' + r.id + '\')" style="padding:3px 10px;background:#475569;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Bekijk</button>' +
       '</td></tr>';
   });
   html += '</tbody></table>';
-  box.innerHTML = html;
+  box.innerHTML = html +
+    '<div id="g-detail" style="margin-top:12px"></div>';
+}
+
+async function toggleGauntletDetail(runId) {
+  var det = document.getElementById('g-detail');
+  if (!det) return;
+  if (det.dataset.run === runId && det.innerHTML) { det.innerHTML = ''; det.dataset.run = ''; return; }
+  det.dataset.run = runId;
+  det.innerHTML = '<div style="color:#64748b;font-size:12px;padding:8px">Laadt resultaten…</div>';
+  try {
+    var resp = await fetch('/api/gauntlet/' + encodeURIComponent(runId), { headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('agentos_token') || '') } });
+    if (!resp.ok) { det.innerHTML = '<div class="empty-state">Kon run niet laden (' + resp.status + ').</div>'; return; }
+    var d = await resp.json();
+    var h = '<div class="section-card" style="margin-top:8px"><h4 style="font-size:13px;font-weight:600;margin-bottom:8px">Resultaat per deeltaak</h4>';
+    (d.subtasks || []).forEach(function(s) {
+      var sc = s.best_score >= d.threshold ? '#22c55e' : '#64748b';
+      h += '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:8px;margin-bottom:8px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
+          '<strong style="font-size:12px">' + escHtml(s.role) + '</strong>' +
+          '<span style="font-size:11px;color:' + sc + ';font-weight:600">' + escHtml(s.status) + ' · ' + s.best_score + '/' + d.threshold + '</span>' +
+        '</div>' +
+        '<pre style="white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;background:#f8fafc;border-radius:6px;padding:8px;max-height:280px;overflow:auto;margin:0">' + escHtml(s.best_output || '(geen output)') + '</pre>' +
+      '</div>';
+    });
+    h += '</div>';
+    det.innerHTML = h;
+  } catch (e) { det.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; }
 }

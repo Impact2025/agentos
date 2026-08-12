@@ -49,8 +49,19 @@ from ...shared.database import get_conn
 from ...shared import agent_runner as agent_service
 from ...domains.delegate import event_bus
 from ...domains.pipeline.service import get_agent_profile
+from ...domains.publish.content_pipeline import create_job as _create_content_job  # noqa: E402
+from . import brand_brief
 
 logger = logging.getLogger(__name__)
+
+
+class BillingError(RuntimeError):
+    """OpenModel (of andere backend) meldt onvoldoende saldo (HTTP 402).
+
+    Een Gauntlet-run die hierop stuit, wordt netjes als 'failed_billing'
+    gemarkeerd i.p.v. 5 deeltaken op 'error' te laten eindigen — zodat de
+    gebruiker direct ziet: laad je OpenModel-saldo op, niet 'systeem bug'.
+    """
 
 # Sterke referenties naar lopende achtergrond-tasks (anders ruimt GC de task op).
 _BG_TASKS: "set[asyncio.Task]" = set()
@@ -66,8 +77,17 @@ _DECOMPOSE_PROMPT = (
     "die parallel door gespecialiseerde builders kunnen worden uitgevoerd. "
     "Elke deeltaak moet self-contained zijn (een andere builder kan 'm zonder context "
     "van de andere doen). Geen overlap, geen vage deeltaken.\n\n"
+    "SPLITSRICHTLIJNEN:\n"
+    "- Is de opdracht één samenhangend eindproduct (bv. een landingspagina, een artikel, "
+    "een rapport)? Splits dan op IN DE STRUCTURELE ONDERDELEN die elk een waarneembaar, "
+    "los beoordeelbaar deel zijn. Voor een landingspagina: Hero/intro, Diensten/aanbod, "
+    "Bewijs/resultaten, Projecten/cases, CTA/sluiting — elk als eigen deeltaak.\n"
+    "- Bevat de opdracht expliciet 'en', 'plus', of meerdere verschillende assets? Splits "
+    "die dan op per asset.\n"
+    "- Liever 3–5 gerichte deeltaken dan 1 vage 'Hoofdtaak'. Eén deeltaak is alleen oké "
+    "als het product écht niet te ontleden valt in losse componenten.\n\n"
     "ANTWOORD UITSLUITEND met één JSON-object, zonder markdown eromheen:\n"
-    '{"subtasks": [{"role": "<korte specialist-rol, bv. \'Belichting\'>", '
+    '{"subtasks": [{"role": "<korte specialist-rol, bv. \'Hero-schrijver\'>", '
     '"goal": "<een strakke, concrete opdracht voor deze builder>"}, ...]}'
 )
 
@@ -189,6 +209,7 @@ def _update_subtask(st_id: str, **fields: Any) -> None:
 
 async def _run_text_agent(
     system_prompt: str, user_message: str, model_override: Optional[str],
+    max_tokens: int = 4096,
 ) -> str:
     """Draai een agent zonder tools en verzamel tekst (content-taak)."""
     chunks: List[str] = []
@@ -198,18 +219,55 @@ async def _run_text_agent(
         agent="hermes",
         model_override=model_override,
         use_tools=False,  # content-taken: zwakke modellen lekken anders tool-syntax
+        max_tokens=max_tokens,
     ):
         if event.get("type") == "error":
-            raise RuntimeError(event.get("message") or "Onbekende agent-fout")
+            msg = event.get("message") or "Onbekende agent-fout"
+            if "402" in msg or "insufficient balance" in msg or "billing" in msg.lower():
+                raise BillingError(msg)
+            raise RuntimeError(msg)
         if event.get("type") == "text":
             chunks.append(event["text"])
     return "".join(chunks).strip()
 
 
+async def _run_text_agent_retry(
+    system_prompt: str, user_message: str, model_override: Optional[str],
+    max_tokens: int = 4096, max_attempts: int = 3,
+) -> str:
+    """_run_text_agent met retry bij tijdelijke backend-haps (gateway :8899 flaky).
+
+    De LLM-gateway (OpenModel via :8899) is periodiek onbereikbaar (HTTP 000 /
+    verbinding geweigerd). Eén such hap mag een hele Gauntlet-deeltaak niet doden —
+    we proberen het tot 3x met een korte pauze, en pas daarna paseren we de fout
+    door zodat de deeltaak op 'error' belandt (ipv stil te crashen).
+    """
+    last_err: Optional[Exception] = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await _run_text_agent(system_prompt, user_message, model_override, max_tokens)
+        except BillingError:
+            raise  # saldo-op: nooit retry'en, direct naar de run-loop
+        except RuntimeError as exc:
+            last_err = exc
+            logger.warning(
+                "Gauntlet agent-call poging %d/%d mislukt: %s", attempt, max_attempts, exc
+            )
+            if attempt < max_attempts:
+                await asyncio.sleep(3 * attempt)  # korte, oplopende pauze
+    assert last_err is not None
+    raise last_err
+
+
 async def _decompose(objective: str, model_override: Optional[str]) -> List[Dict[str, str]]:
-    """Lead Agent splitst de opdracht op in deeltaken. Fallback bij faal = 1 deeltaak."""
-    raw = await _run_text_agent(_DECOMPOSE_PROMPT, f"# Opdracht\n{objective}", model_override)
+    """Lead Agent splitst de opdracht op in deeltaken. Fallback bij faal = 1 deeltaak.
+
+    Vangt ook agent-fouten (gateway down, BillingError bij leeg OpenModel-saldo)
+    zodat de run niet hard crasht met lege subtasks — er blijft dan één Hoofdtaak
+    over die de gebruiker alsnog kan laten lopen (en die zelf de fout netjes meldt).
+    """
     try:
+        raw = await _run_text_agent(_DECOMPOSE_PROMPT, f"# Opdracht\n{objective}", model_override)
         obj = json.loads(_extract_json(raw))
         subs = obj.get("subtasks") or []
         cleaned = [
@@ -222,6 +280,8 @@ async def _decompose(objective: str, model_override: Optional[str]) -> List[Dict
             return cleaned
     except (json.JSONDecodeError, ValueError, AttributeError):
         logger.warning("Decompose gaf geen geldige JSON; val terug op 1 deeltaak.")
+    except (RuntimeError, BillingError) as exc:
+        logger.warning("Decompose agent-call faalde (%s); val terug op 1 deeltaak.", exc)
     return [{"role": "Hoofdtaak", "goal": objective}]
 
 
@@ -237,18 +297,40 @@ async def _run_builder(
         user_message += (
             "\n# Je vorige versie\n" + prior_draft +
             "\n\n# Feedback van de blinde criticus (verwerk dit punt voor punt)\n" + feedback +
-            "\n\nLever nu een merkbaar betere, volledige nieuwe versie."
+            "\n\nLever nu een merkbaar betere, VOLLEDIGE nieuwe versie (de hele pagina, " +
+            "eindigend met de sluiting en beide CTA's). Breek niet af."
         )
-    draft = await _run_text_agent(system_prompt, user_message, model_override)
-    return draft or "_(De builder leverde geen tekst op.)_"
+    # Retry de builder bij een lege output (voorkomt score -1 op niks).
+    for attempt in range(3):
+        draft = await _run_text_agent_retry(system_prompt, user_message, model_override, max_tokens=8192)
+        if draft and draft.strip() and "_(De builder leverde geen tekst op.)_" not in draft:
+            return draft
+        logger.warning("Builder leverde lege output (poging %d); retry.", attempt + 1)
+    return "_(De builder leverde geen tekst op.)_"
 
 
-def _parse_critic(raw: str, threshold: int) -> Tuple[int, str, bool]:
-    """Robuuste parse van de blinde criticus: score/feedback/verdict."""
+# Wereldklasse-default: gebruik het 'smart' model i.p.v. de goedkope flash,
+# zodat de Gauntlet geen sub-prime content produceert. Kan per-run worden
+# overschreven via model_override in de API-aanroep.
+def _default_model() -> Optional[str]:
+    try:
+        from ...shared.config import OPENMODEL_SMART_MODEL
+        return OPENMODEL_SMART_MODEL or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _parse_critic(raw: str, threshold: int) -> Tuple[int, str, bool, bool]:
+    """Robuuste parse van de blinde criticus: score/feedback/verdict.
+
+    Returns (score, feedback, passed, ok). `ok` is False als de criticus geen
+    geldige JSON leverde — de caller kan dan retry'en i.p.v. de score op 0 te
+    zetten (wat een goede run zou laten stranden op een parser-fout).
+    """
     try:
         obj = json.loads(_extract_json(raw))
     except (json.JSONDecodeError, ValueError):
-        return 0, f"(Criticus gaf geen geldige JSON.) Ruwe output:\n{raw[:1500]}", False
+        return 0, "(Criticus gaf geen geldige JSON.)", False, False
     try:
         score = int(round(float(obj.get("score", 0))))
     except (TypeError, ValueError):
@@ -257,17 +339,25 @@ def _parse_critic(raw: str, threshold: int) -> Tuple[int, str, bool]:
     feedback = str(obj.get("feedback") or "").strip()
     verdict = str(obj.get("verdict") or "").strip().lower()
     passed = verdict == "pass" or score >= threshold
-    return score, feedback, passed
+    return score, feedback, passed, True
 
 
 async def _run_critic(
     goal: str, draft: str, benchmark: str, model_override: Optional[str], threshold: int,
-) -> Tuple[int, str, bool]:
-    """BLINDE criticus: ziet alleen output + benchmark + deeltaak, nooit het bouwproces."""
+    retries: int = 2,
+) -> Tuple[int, str, bool, bool]:
+    """BLINDE criticus: ziet alleen output + benchmark + deeltaak, nooit het bouwproces.
+
+    Bij een mislukte parse (geen geldige JSON) retry't hij `retries` keer.
+    Returns (score, feedback, passed, ok). Als ook na retry geen geldige JSON
+    komt, is ok=False en houdt de caller de vorige beste versie aan.
+    """
     system_prompt = CRITIC_DEFAULT + (
         "\n\nANTWOORD UITSLUITEND met één JSON-object, zonder markdown eromheen:\n"
         '{"score": <geheel getal 0-100>, "verdict": "pass" | "revise", '
         '"feedback": "<concrete, uitvoerbare feedback>"}\n'
+        "Je MAG geen enkele andere tekst schrijven vóór of ná de JSON. "
+        "Geen uitleg, geen inleiding. Alleen het JSON-object.\n"
         f"Geef verdict 'pass' alleen als het product minstens {threshold}/100 haalt tegen de benchmark."
     )
     user_message = (
@@ -276,8 +366,23 @@ async def _run_critic(
         f"# Het eindproduct van de builder (DIT alleen beoordeel je)\n{draft}\n\n"
         f"Beoordeel het product blind tegen de benchmark. Drempel: {threshold}/100."
     )
-    raw = await _run_text_agent(system_prompt, user_message, model_override)
-    return _parse_critic(raw, threshold)
+    last_raw = ""
+    for _ in range(retries + 1):
+        try:
+            last_raw = await _run_text_agent_retry(
+                system_prompt, user_message, model_override, max_tokens=2048
+            )
+        except BillingError:
+            raise  # saldo-op: niet retry'en, meteen naar de run-loop
+        score, fb, passed, ok = _parse_critic(last_raw, threshold)
+        if ok:
+            return score, fb, passed, True
+    # Ook na retry geen geldige JSON: behoud vorige versie (geen score-0-straf)
+    return best_score_keep, "(Criticus leverde geen parseerbare beoordeling; vorige versie behouden.)", False, False
+
+
+# Sentinel zodat _run_critic weet dat er nog geen 'beste' versie is
+best_score_keep = 0
 
 
 # ── Eén deeltaak: builder + blinde criticus in een lus ───────────────────────
@@ -304,9 +409,35 @@ async def _run_subtask(
                 break
             started = time.perf_counter()
             draft = await _run_builder(goal, brand_brief, model_override, prior_draft, feedback)
-            score, fb, passed = await _run_critic(
+            score, fb, passed, ok = await _run_critic(
                 goal, draft, benchmark, model_override, threshold
             )
+            if not ok:
+                # Criticus faalde (geen parseerbare JSON) — de builder leverde
+                # WÉL een draft, dus bewaar die als beste versie en ga door naar
+                # de volgende ronde i.p.v. de run te laten stranden op lege output.
+                logger.warning(
+                    "Criticus-parse faalde voor %s ronde %d; draft behouden, doorgaan.",
+                    role, i,
+                )
+                if len(draft) > len(best_output):
+                    best_score = max(best_score, 0)  # onbeoordeeld, niet -1
+                    best_output = draft
+                _record_subtask_iteration(
+                    st_id, i, draft, best_score if best_score >= 0 else 0,
+                    fb, False, int((time.perf_counter() - started) * 1000),
+                )
+                event_bus.publish({
+                    "type": "gauntlet_subtask_iteration", "run_id": run_id,
+                    "subtask_id": st_id, "position": position, "role": role,
+                    "iteration": i, "max_iterations": max_iterations,
+                    "score": best_score if best_score >= 0 else 0,
+                    "threshold": threshold, "passed": False, "feedback": fb,
+                    "duration_ms": int((time.perf_counter() - started) * 1000),
+                })
+                prior_draft = draft
+                feedback = fb
+                continue
             duration_ms = int((time.perf_counter() - started) * 1000)
             _record_subtask_iteration(st_id, i, draft, score, fb, passed, duration_ms)
             if score > best_score:
@@ -348,9 +479,15 @@ async def _run_subtask(
 async def _run_gauntlet(
     run_id: str, objective: str, benchmark: str, threshold: int, max_iterations: int,
     session_id: Optional[str], stop_flag: Dict[str, bool],
+    model_override: Optional[str] = None,
 ) -> None:
-    model_override = None  # default backend; profielen kunnen later per-deeltaak komen
-    brand_brief = ""  # placeholder voor gedeeld merkgeheugen (uit Obsidian)
+    # Wereldklasse-default: gebruik het smart-model (dieper, betere content)
+    # tenzij de caller een specifiek model meegeeft via de API.
+    model_override = model_override or _default_model()
+    # Gedeelde merk-brief uit de vault (Vincent's Schrijf-DNA) — één keer per run
+    # opgehaald en naar elke builder gestuurd zodat alle deeltaken in dezelfde
+    # stem schrijven.
+    brand_brief_txt = brand_brief.get_brand_brief()
 
     event_bus.publish({
         "type": "gauntlet_start", "run_id": run_id, "objective": objective,
@@ -375,13 +512,22 @@ async def _run_gauntlet(
 
         # Pijler 1+2+3: elke deeltaak draait zijn eigen builder+blinde-critic-lus,
         # allemaal tegelijk (parallel fan-out zoals de delegate-laag).
-        await asyncio.gather(*(
+        results = await asyncio.gather(*(
             _run_subtask(
                 run_id, r["id"], r["position"], r["role"], r["goal"],
-                benchmark, brand_brief, threshold, max_iterations, stop_flag, model_override,
+                benchmark, brand_brief_txt, threshold, max_iterations, stop_flag, model_override,
             )
             for r in st_rows
         ), return_exceptions=True)
+        # Billing-fout? Markeer de hele run als failed_billing (niet 5× error).
+        if any(isinstance(r, BillingError) for r in results):
+            _update_run(run_id, status="failed_billing", finished_at=_now())
+            event_bus.publish({
+                "type": "gauntlet_error", "run_id": run_id,
+                "error": "OpenModel-saldo op (HTTP 402). Laad je saldo op en start de run opnieuw.",
+            })
+            logger.error("Gauntlet %s: OpenModel billing-fout — run gestopt.", run_id)
+            return
 
         # Status bepalen: passed = alle deeltaken geslaagd; anders partial.
         with get_conn() as conn:
@@ -420,6 +566,7 @@ def spawn_gauntlet(
     threshold: int = DEFAULT_THRESHOLD,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     session_id: Optional[str] = None,
+    model_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Start een Gauntlet Loop en KEER DIRECT TERUG (non-blocking)."""
     if not objective or not objective.strip():
@@ -439,7 +586,7 @@ def spawn_gauntlet(
 
     task = asyncio.create_task(
         _run_gauntlet(run_id, objective.strip(), benchmark.strip(), threshold,
-                      max_iterations, session_id, stop_flag)
+                      max_iterations, session_id, stop_flag, model_override)
     )
     _BG_TASKS.add(task)
     task.add_done_callback(_BG_TASKS.discard)
@@ -502,7 +649,137 @@ def list_runs(limit: int = 25) -> List[Dict[str, Any]]:
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT id, objective, status, threshold, max_iterations, subtask_count, "
-            "best_overall_score, human_verdict, created_at, finished_at "
+            "best_overall_score, human_verdict, published_job_id, created_at, finished_at "
             "FROM gauntlet_runs ORDER BY created_at DESC LIMIT ?", (limit,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── Publish-gate: PASSED-run → content_job voor WeAreImpact ───────────────────
+#
+# De blinde criticus moet de benchmark halen (status 'passed' of 'partial' met ten
+# minste één deeltaak boven drempel) VOORDAT er iets naar de publish-pijplijn mag.
+# Een run onder de drempel wordt geweigerd — zo publiceer je nooit sub-standaard
+# kopij (de kernbelofte van de Gauntlet Loop).
+
+def _best_overall_score(run_id: str) -> int:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT best_score FROM gauntlet_subtasks WHERE run_id = ?", (run_id,)
+        ).fetchall()
+    scores = [r["best_score"] for r in rows if r["best_score"] is not None and r["best_score"] >= 0]
+    return max(scores) if scores else -1
+
+
+def _assemble_draft(run: Dict[str, Any]) -> str:
+    """Zet de beste output per deeltaak aan elkaar tot één samenhangend stuk."""
+    parts = []
+    for s in run.get("subtasks", []):
+        out = (s.get("best_output") or "").strip()
+        if out and out != "_(De builder leverde geen tekst op.)_":
+            parts.append(f"## {s.get('role', 'Deeltaak')}\n\n{out}")
+    return "\n\n".join(parts) if parts else (run.get("objective") or "")
+
+
+def publish_to_weareimpact(run_id: str, site_id: Optional[str] = None) -> Dict[str, Any]:
+    """Publish-gate: zet een PASSED Gauntlet-run om in een content_job (pending_review).
+
+    Blokkeert als de run niet (ten minste gedeeltelijk) de benchmark haalde:
+    - status 'failed' / 'stopped' / 'stopped_by_user' → geweigerd.
+    - status 'partial' of 'passed' → toegestaan, maar alleen deeltaken boven de
+      drempel worden meegenomen; een deeltaak onder drempel blijft uit de job.
+    """
+    run = get_run(run_id)
+    if not run:
+        raise ValueError("Gauntlet run niet gevonden.")
+    status = run.get("status")
+    threshold = run.get("threshold") or DEFAULT_THRESHOLD
+    allowed = status in ("passed", "partial")
+    if not allowed:
+        raise ValueError(
+            f"Run {run_id} heeft status '{status}' — pas toe nadat de blinde criticus "
+            f"de benchmark haalt (>= {threshold}). Publiceren geblokkeerd."
+        )
+
+    # Neem alleen deeltaken die de drempel haalden (bij 'partial' kunnen er
+    # deeltaken onder zitten die de mens alsnog wil weigeren).
+    passed_subs = [
+        s for s in run.get("subtasks", [])
+        if (s.get("best_score") or -1) >= threshold
+    ]
+    if not passed_subs:
+        raise ValueError(
+            f"Geen enkele deeltaak haalde de drempel ({threshold}). Publiceren geblokkeerd."
+        )
+
+    draft = _assemble_draft({**run, "subtasks": passed_subs})
+    if not site_id:
+        # Zoek de WeAreImpact-site_id uit de publish/projects-config.
+        site_id = _resolve_weareimpact_site_id()
+
+    title = (run.get("objective") or "Gauntlet-run")[:120]
+    # Maak een content_job aan in de publish-pijplijn (status pending_review =
+    # wacht op menselijke goedkeuring, NOOIT automatisch live).
+    job_id = _create_content_job(
+        site_id=site_id,
+        title=title,
+        keyword="",
+        rationale=f"Gegenereerd via Gauntlet Loop (run {run_id}, status {status}). "
+                  f"Blinde criticus haalde benchmark >= {threshold}.",
+        blog_html=_md_to_html(draft),
+        seo_score=float(_best_overall_score(run_id)),
+        social_copy={},
+        image_bytes=None,
+        slug=_slugify(title),
+        status="pending_review",
+        qc_report={"source": "gauntlet", "run_id": run_id, "threshold": threshold},
+        dedupe=False,
+    )
+    _update_run(run_id, published_job_id=job_id)
+    event_bus.publish({
+        "type": "gauntlet_published", "run_id": run_id, "job_id": job_id,
+        "site_id": site_id,
+    })
+    logger.info("Gauntlet %s gepubliceerd naar content_job %s (site %s).", run_id, job_id, site_id)
+    return {"run_id": run_id, "job_id": job_id, "site_id": site_id, "status": "pending_review"}
+
+
+def _resolve_weareimpact_site_id() -> str:
+    """Zoek de WeAreImpact-site in de publish-pijplijn; val terug op 'weareimpact'."""
+    try:
+        from ...domains.seo import sites as sites_service
+        sites = sites_service.list_sites() if hasattr(sites_service, "list_sites") else []
+        for s in sites:
+            if "weareimpact" in str(s.get("name", "")).lower() or "weareimpact" in str(s.get("id", "")).lower():
+                return s.get("id")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Kon WeAreImpact-site niet resolveren: %s", exc)
+    return "weareimpact"
+
+
+def _slugify(text: str) -> str:
+    import re
+    t = re.sub(r"[^a-z0-9\s-]", "", text.lower()).strip()
+    t = re.sub(r"\s+", "-", t)
+    return t[:80] or "gauntlet-run"
+
+
+def _md_to_html(md: str) -> str:
+    """Minimale markdown→HTML voor de content_job (H2, paragrafen, bold)."""
+    import re
+    html_parts = []
+    for block in md.split("\n\n"):
+        block = block.strip()
+        if not block:
+            continue
+        if block.startswith("## "):
+            html_parts.append(f"<h2>{_esc(block[3:].strip())}</h2>")
+        elif block.startswith("# "):
+            html_parts.append(f"<h1>{_esc(block[2:].strip())}</h1>")
+        else:
+            html_parts.append(f"<p>{_esc(block)}</p>")
+    return "\n".join(html_parts)
+
+
+def _esc(s: str) -> str:
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))

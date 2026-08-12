@@ -540,6 +540,62 @@ def build_seo() -> Dict[str, Any]:
     return {"sites": out}
 
 
+# ── Google-config voor live agenda/GSC zonder AgentOS ──────────────────────
+
+def build_google_config() -> Optional[Dict[str, Any]]:
+    """Het Google-service-account dat de cloud nodig heeft om agenda en GSC
+    zélf te kunnen uitlezen wanneer AgentOS niet draait (Iris Remote).
+
+    Bewust geen los provisioneringspad: dit meegeeft in elke bridge_sync-push
+    houdt één bron van waarheid (deze .env) — roteert Vincent de sleutel
+    lokaal, dan volgt Vercel vanzelf binnen één synccyclus. Vercel versleutelt
+    de sleutel pas bij ontvangst (zie remote/api/_crypto.py-equivalent
+    _crypto.js); hier gaat hij nog in leesbare vorm over de al-geauthenti-
+    ceerde bridge-verbinding (BRIDGE_TOKEN), net als de rest van deze push.
+
+    None als agenda niet geconfigureerd is, of niet met een herbruikbare
+    sleutel (zie hieronder) — dan is er niets zinvols te versturen en moet
+    Vercel gewoon op zijn cache blijven staan.
+    """
+    from ...shared.config import CALENDAR_BACKEND
+
+    if CALENDAR_BACKEND == "outlook":
+        # service_outlook.py is MSAL delegated-OAuth (zelfde patroon als Mail):
+        # geen lang-levende sleutel die een los proces kan hergebruiken, en
+        # kan op elk moment door Microsoft ingetrokken worden. Niet exporteren.
+        return None
+
+    from ..calendar import service_google as cal
+
+    if not cal.is_configured():
+        return None
+    from ...shared.config import CALENDAR_PRIVATE_KEY, CALENDAR_SUB
+
+    client_email = cal.client_email()
+    if not client_email or not CALENDAR_PRIVATE_KEY:
+        # Alleen het inline-credential-pad (client_email + private_key) is
+        # herbruikbaar door een los proces; een JSON-bestand op deze machine
+        # kan Vercel niet lezen. service_account.json blijft dan lokaal-only.
+        return None
+
+    with get_conn() as conn:
+        sites = conn.execute(
+            "SELECT id, name, gsc_property FROM sites WHERE gsc_property != ''"
+        ).fetchall()
+
+    return {
+        "client_email": client_email,
+        "private_key": CALENDAR_PRIVATE_KEY,
+        "calendar_id": cal._cal_id(),  # noqa: SLF001 — inclusief Instellingen-hub-override
+        "busy_ids": cal._busy_cal_ids(),  # noqa: SLF001 — idem
+        "sub": CALENDAR_SUB or None,
+        "gsc_sites": [
+            {"site_id": s["id"], "name": s["name"], "gsc_property": s["gsc_property"]}
+            for s in sites
+        ],
+    }
+
+
 # ── Rituelen ────────────────────────────────────────────────────────────────
 
 def build_rituals() -> Dict[str, Any]:

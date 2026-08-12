@@ -129,6 +129,14 @@
     const myToken = ++loadToken;
     if (push) pushView(view);
     views.forEach((v) => { $(`view-${v}`).hidden = v !== view; });
+    // Het inlogscherm is geen werkscherm: geen begroeting, geen sync-/uitlogknop,
+    // geen tabbalk — alleen het logo in de kop blijft staan.
+    const isLogin = view === 'login';
+    $('topbar-greeting').hidden = isLogin;
+    $('sync-pill').hidden = isLogin;
+    $('syncTrigger').hidden = isLogin;
+    $('logoutIconBtn').hidden = isLogin;
+    $('bottomnav').hidden = isLogin;
     // Een tab-wissel was een harde snap (hidden -> zichtbaar zonder overgang).
     // .fade-up opnieuw triggeren vergt een geforceerde reflow — anders ziet de
     // browser dezelfde klasse en speelt de animatie niet opnieuw af.
@@ -1409,8 +1417,8 @@
   // ── Systeem ──────────────────────────────────────────────────────────────
   async function loadSystem(token = loadToken) {
     try {
-      const [itemsData, outboxData, sessionData] = await Promise.all([
-        api('items'), api('outbox'), api('sessions'),
+      const [itemsData, outboxData, sessionData, googleData] = await Promise.all([
+        api('items'), api('outbox'), api('sessions'), api('google-status').catch(() => null),
       ]);
       if (token !== loadToken) return;
       const lastPush = itemsData.last_push ? new Date(itemsData.last_push) : null;
@@ -1435,6 +1443,35 @@
             ${!online ? '<span class="font-label-caps text-label-caps text-warn">⚠ besluiten wachten op je machine</span>' : ''}
           </div>
         </div>`;
+
+      const gStatus = $('google-status');
+      if (gStatus) {
+        if (!googleData || !googleData.configured) {
+          gStatus.innerHTML = `
+            <div class="glass-panel rounded-xl p-6 fade-up">
+              <div class="flex items-center gap-2">
+                <span class="material-symbols-outlined text-on-surface-variant">calendar_month</span>
+                <p class="font-body-md text-body-md text-on-surface-variant">Live agenda/GSC: nog niet gekoppeld — komt automatisch mee bij de eerstvolgende sync zodra AgentOS een Google-agenda heeft.</p>
+              </div>
+            </div>`;
+        } else {
+          const gAge = googleData.google_synced_at ? Math.round((Date.now() - new Date(googleData.google_synced_at)) / 60000) : null;
+          const hasError = !!googleData.google_last_error;
+          gStatus.innerHTML = `
+            <div class="glass-panel rounded-xl p-6 border-l-4 ${hasError ? 'border-l-error' : 'border-l-primary'} fade-up">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="material-symbols-outlined ${hasError ? 'text-error' : 'text-primary'}">calendar_month</span>
+                <h3 class="font-headline-sm text-headline-sm">Live agenda &amp; GSC</h3>
+              </div>
+              <p class="font-body-md text-body-md text-on-surface-variant">
+                Agenda-credential ontvangen ${gAge === null ? 'nooit' : gAge < 1 ? 'zojuist' : gAge + ' min geleden'}
+                · GSC-sites gekoppeld: ${googleData.gsc_site_count ?? 0}
+              </p>
+              ${hasError ? `<p class="font-body-md text-body-md text-error mt-2">⚠ ${esc(googleData.google_last_error)} (${fmtDate(googleData.google_last_error_at)})</p>` : ''}
+            </div>`;
+        }
+      }
+
       const dec = outboxData.decisions || [];
       const pending = dec.filter((d) => d.status === 'pending').length;
       $('outbox-count').textContent = `${pending} PENDING`;
@@ -1945,13 +1982,18 @@
         : ''}`;
   }
 
-  function agendaPanel(a) {
+  // `live`: opgehaald rechtstreeks bij Google (api/_google.js), dus actueel
+  // óók als AgentOS niet draait — i.t.t. de rest van het scherm, dat uit de
+  // laatste bridge_sync-snapshot komt. Zonder dit onderscheid ziet een verse
+  // live-agenda er identiek uit aan een agenda van drie dagen geleden, en dat
+  // is precies het soort onzichtbaar verschil dat vertrouwen kost.
+  function agendaPanel(a, live) {
     if (!a || a.status !== 'ok') return a ? sectionOff('event_busy', 'Agenda', a) : '';
     return `<div class="glass-panel rounded-xl p-4 space-y-3">
       <button class="card-head card-head-btn" data-open-agenda-sheet="1">
         <div class="card-head-icon"><span class="material-symbols-outlined">calendar_month</span></div>
         <div class="min-w-0 flex-1">
-          <p class="card-head-title">Agenda</p>
+          <p class="card-head-title">Agenda${live ? ' <span class="font-label-caps text-[10px] text-primary align-middle">· LIVE</span>' : ''}</p>
           <p class="card-head-meta">${(a.today || []).length} afspra${(a.today || []).length === 1 ? 'ak' : 'ken'} vandaag</p>
         </div>
         <span class="material-symbols-outlined text-on-surface-variant/50 text-[20px] shrink-0">chevron_right</span>
@@ -2391,7 +2433,10 @@
     const tbGreet = $('topbar-greeting');
     if (tbGreet) tbGreet.textContent = g;
     try {
-      const data = await api('context');
+      const [data, outboxData] = await Promise.all([
+        api('context'),
+        api('outbox').catch(() => null), // niet-fataal: de queue-note is een bonus, geen kernfunctie
+      ]);
       if (token !== loadToken) return;
       const ctx = data.payload;
       if (!ctx) {
@@ -2422,6 +2467,23 @@
       } else {
         pulseLine.classList.add('hidden');
       }
+      // Besluiten die al ergens (chat, knop) zijn genomen maar nog niet zijn
+      // opgepikt: alleen tonen als de sync ook echt oud is — anders knippert
+      // dit elke keer even op tussen twee polls door.
+      const queueNote = $('today-queue-note');
+      const pendingOutbox = (outboxData?.decisions || []).filter((d) => d.status === 'pending').length;
+      const syncAgeMin = lastPushAt ? Math.round((Date.now() - new Date(lastPushAt)) / 60000) : null;
+      if (queueNote) {
+        if (pendingOutbox > 0 && (syncAgeMin === null || syncAgeMin >= 60)) {
+          const wanneer = lastPushAt
+            ? (syncAgeMin < 180 ? `${syncAgeMin}m geleden` : syncAgeMin < 1440 ? `${Math.round(syncAgeMin / 60)}u geleden` : `${Math.round(syncAgeMin / 1440)}d geleden`)
+            : 'nog nooit';
+          queueNote.textContent = `⏳ ${pendingOutbox} actie${pendingOutbox === 1 ? '' : 's'} wacht${pendingOutbox === 1 ? '' : 'en'} op AgentOS — laatst gesynct ${wanneer}.`;
+          queueNote.classList.remove('hidden');
+        } else {
+          queueNote.classList.add('hidden');
+        }
+      }
       // Dit ís de dag — agenda en postvak eerst, precies zo opent een
       // secretaresse het gesprek ook. Pulse (bredere signalen) erna, met
       // mail/agenda eruit gefilterd want die staan al concreet hierboven.
@@ -2431,7 +2493,7 @@
       // gebruikt (Postvak-rijen, notities), nu ook hier.
       el.classList.add('stagger');
       el.innerHTML = [
-        agendaPanel(ctx.agenda),
+        agendaPanel(ctx.agenda, data.live?.agenda),
         mailPanel(ctx.mail),
         pulsePanel(ctx.pulse, ['mail', 'agenda']),
         quickPanel(ctx),

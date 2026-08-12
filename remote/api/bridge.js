@@ -4,6 +4,7 @@
 //   POST /api/bridge?op=ack        → uitslag per besluit terugmelden
 import { sql, json, resolveBridgeTenant } from './_lib.js';
 import { pushToAll } from './_push.js';
+import { encrypt } from './_crypto.js';
 
 export default async function handler(req, res) {
   const tenant = await resolveBridgeTenant(req, res);
@@ -71,6 +72,32 @@ async function push(req, res, tenant) {
       VALUES (${tenant}, ${JSON.stringify(body.context)}::jsonb, now())
       ON CONFLICT (tenant) DO UPDATE SET payload = EXCLUDED.payload,
                                          generated_at = EXCLUDED.generated_at`;
+  }
+
+  // Google-config voor live agenda/GSC zonder AgentOS (zie context.py:
+  // build_google_config). Nooit laten falen op de rest van de push — één
+  // tenant met een kapotte sleutel mag de items/context-sync niet meeslepen.
+  if (body.google && body.google.client_email && body.google.private_key) {
+    try {
+      const g = body.google;
+      const encKey = encrypt(g.private_key);
+      await sql`
+        UPDATE tenants SET
+          calendar_client_email = ${g.client_email},
+          calendar_private_key_enc = ${encKey},
+          calendar_calendar_id = ${g.calendar_id || null},
+          calendar_busy_ids = ${Array.isArray(g.busy_ids) ? g.busy_ids.join(',') : (g.busy_ids || null)},
+          calendar_sub = ${g.sub || null},
+          gsc_sites = ${JSON.stringify(g.gsc_sites || [])}::jsonb,
+          google_synced_at = now(),
+          google_last_error = NULL,
+          google_last_error_at = NULL
+        WHERE slug = ${tenant}`;
+    } catch (e) {
+      console.error('google-config opslaan mislukt', tenant, e);
+      await sql`UPDATE tenants SET google_last_error = ${String(e).slice(0, 300)},
+                google_last_error_at = now() WHERE slug = ${tenant}`.catch(() => {});
+    }
   }
 
   // Opruimen: gearchiveerde items ouder dan 14 dagen (deze tenant).

@@ -13,6 +13,7 @@
 //     dat als een knop. Zou ze het zelf mogen queuen, dan was het model de
 //     goedkeurder geworden en had de hele review-gate geen betekenis meer.
 import { sql, json, requireSession } from './_lib.js';
+import { attachLive } from './_google.js';
 
 export const config = { maxDuration: 60 };
 
@@ -192,14 +193,42 @@ function resolveNlDate(opdracht) {
 
 // ── Tool-uitvoering (leest Neon, schrijft hooguit een commando) ─────────────
 
-async function runTool(name, input, effects, tenant) {
+// Boven deze drempel duurt "bij de volgende sync" mogelijk dagen — dan hoort
+// dat bij het commando zelf te staan, niet alleen ergens in de systeemprompt
+// die het model kan vergeten te herhalen.
+const LONG_OFFLINE_MIN = 180;
+function longOfflineSuffix(snapshotAt) {
+  if (!snapshotAt) return '';
+  const ageMin = Math.round((Date.now() - new Date(snapshotAt)) / 60000);
+  if (ageMin < LONG_OFFLINE_MIN) return '';
+  const uur = Math.round(ageMin / 60);
+  return uur >= 24
+    ? ` Let op: AgentOS staat al ${Math.round(uur / 24)} dag(en) niet gesynct — dit kan dus ook pas over dagen draaien, niet bij de eerstvolgende sync.`
+    : ` Let op: AgentOS heeft al ${uur} uur niet gesynct — dit wacht tot de machine weer aan staat.`;
+}
+
+async function runTool(name, input, effects, tenant, snapshotAt) {
   if (name === 'lees_context') {
     const rows = await sql`SELECT payload, generated_at FROM context_snapshot WHERE tenant = ${tenant}`;
     const snap = rows[0];
     if (!snap || !snap.payload) return 'Geen contextsnapshot beschikbaar — de machine heeft nog niet gesynct.';
+    // Agenda en GSC-trend proberen we live te verversen — zeg dat er dan ook
+    // eerlijk bij, anders herhaalt het model straks "de snapshot is X oud"
+    // over een cijfer dat in werkelijkheid van nu is.
+    let live = { agenda: false, seo: false };
+    if (input.sectie === 'agenda' || input.sectie === 'seo') {
+      try { live = await attachLive(tenant, snap.payload); }
+      catch (e) { console.error('attachLive (lees_context) mislukt', tenant, e); }
+    }
     const section = snap.payload[input.sectie];
     if (!section) return `Sectie '${input.sectie}' ontbreekt in de snapshot.`;
-    return JSON.stringify({ gesynct_op: snap.generated_at, [input.sectie]: section }).slice(0, 12000);
+    const isLive = (input.sectie === 'agenda' && live.agenda) || (input.sectie === 'seo' && live.seo);
+    return JSON.stringify({
+      gesynct_op: snap.generated_at,
+      live: isLive,
+      ...(isLive ? { live_opgehaald_op: new Date().toISOString() } : {}),
+      [input.sectie]: section,
+    }).slice(0, 12000);
   }
 
   if (name === 'lees_besluiten') {
@@ -247,7 +276,7 @@ async function runTool(name, input, effects, tenant) {
       RETURNING id`;
     effects.commands.push({ action, label: COMMANDS[action], queued: rows.length > 0 });
     return rows.length
-      ? `In de rij gezet: ${COMMANDS[action]}. AgentOS voert dit uit bij de volgende sync; het resultaat komt achter de review-gate.`
+      ? `In de rij gezet: ${COMMANDS[action]}. AgentOS voert dit uit bij de volgende sync; het resultaat komt achter de review-gate.${longOfflineSuffix(snapshotAt)}`
       : `Stond al in de rij: ${COMMANDS[action]}. Niet dubbel gestart.`;
   }
 
@@ -263,7 +292,7 @@ async function runTool(name, input, effects, tenant) {
     const wanneer = resolveNlDate(opdracht);
     const tijd = /\b\d{1,2}[:.]\d{2}\b/.test(opdracht) ? ' op de genoemde tijd' : (/hele\s*dag|whole\s*day|niet\s*beschikbaar|vrije\s*dag/.test(opdracht.toLowerCase()) ? ' als hele dag' : ' (tijd nog in te vullen)');
     return rows.length
-      ? `Agenda-voorstel klaargezet${wanneer ? ' voor ' + wanneer + tijd : ''} uit "${opdracht.slice(0, 80)}". Je ziet het in het Actiecentrum; met één tik van Vincent staat het in Google Agenda (conflictcheck inbegrepen).`
+      ? `Agenda-voorstel klaargezet${wanneer ? ' voor ' + wanneer + tijd : ''} uit "${opdracht.slice(0, 80)}". Je ziet het in het Actiecentrum; met één tik van Vincent staat het in Google Agenda (conflictcheck inbegrepen).${longOfflineSuffix(snapshotAt)}`
       : 'Kon het agenda-commando niet in de rij zetten.';
   }
 
@@ -306,7 +335,7 @@ async function runTool(name, input, effects, tenant) {
       RETURNING id`;
     effects.commands.push({ action, label: `Ritueel vastgelegd (${soort})`, queued: rows.length > 0 });
     return rows.length
-      ? `Vastgelegd. Landt bij de volgende sync in zijn rituelen — geen goedkeuring nodig, het is zijn eigen dagboek.`
+      ? `Vastgelegd. Landt bij de volgende sync in zijn rituelen — geen goedkeuring nodig, het is zijn eigen dagboek.${longOfflineSuffix(snapshotAt)}`
       : 'Kon het niet vastleggen.';
   }
 
@@ -424,8 +453,22 @@ async function callModel(provider, system, convo, offerTools) {
 
 // ── Systeemprompt ───────────────────────────────────────────────────────────
 
+// Zelfde leeftijdsgrenzen als de sync-pill in app.js, zodat de chat en de UI
+// nooit een tegenstrijdig beeld geven van hoe oud de snapshot is.
+function stalenessNote(snapshotAt) {
+  if (!snapshotAt) return 'Er is nog nooit gesynchroniseerd — je hebt geen enkel cijfer, alleen wat Vincent nu zegt.';
+  const ageMin = Math.round((Date.now() - new Date(snapshotAt)) / 60000);
+  if (ageMin < 15) return null; // vers genoeg om niet expliciet te noemen
+  if (ageMin < 60) return `De snapshot is ${ageMin} minuten oud — nog redelijk vers, noem het niet tenzij het relevant is.`;
+  if (ageMin < 180) return `De snapshot is ${ageMin} minuten oud. AgentOS synct mogelijk niet — zeg dit als je cijfers of de agenda noemt.`;
+  if (ageMin < 1440) return `AgentOS heeft al ${Math.round(ageMin / 60)} uur niet gesynct. Alles wat je weet is van toen — zeg dit EXPLICIET voordat je cijfers, mail of agenda noemt.`;
+  const days = Math.round(ageMin / 1440);
+  return `AgentOS heeft al ${days} dag(en) niet gesynct — de machine staat waarschijnlijk uit. Zeg dit ALTIJD als eerste als Vincent iets vraagt over actuele stand van zaken, en waarschuw dat een commando via start_werk/plan_agenda pas draait zodra AgentOS weer aan staat (dus mogelijk pas over dagen, niet "bij de volgende sync").`;
+}
+
 function systemPrompt(snapshotAt, pulse, openCount) {
   const now = new Date().toLocaleString('nl-NL', { timeZone: 'Europe/Amsterdam' });
+  const staleness = stalenessNote(snapshotAt);
   return [
     'Je bent Iris: de manager-agent van Agent OS en Vincents persoonlijke assistent.',
     `Het is nu ${now} (Europe/Amsterdam). Vincent spreekt je via Iris Remote op zijn telefoon.`,
@@ -433,6 +476,10 @@ function systemPrompt(snapshotAt, pulse, openCount) {
     '## Hoe je werkt',
     '- Je hebt tools. Gebruik ze vóórdat je iets beweert over cijfers, agenda of mail.',
     '  Nooit gokken, nooit cijfers uit je hoofd noemen.',
+    '- `lees_context` met sectie "agenda" of "seo" geeft een veld `live` terug: true',
+    '  betekent dat dit zojuist rechtstreeks bij Google is opgehaald (dus actueel, ook',
+    '  als AgentOS al dagen uitstaat); false betekent dat het uit de snapshot komt.',
+    '  Zeg dat er nooit "de snapshot is oud" bij als `live` true is voor dat onderdeel.',
     '- Denk mee als een scherpe stafchef: benoem wat opvalt, wat het betekent, en wat',
     '  de eerstvolgende stap is. Niet opsommen wat hij al ziet.',
     '- Antwoord in het Nederlands, kort en concreet. Geen inleidingen, geen excuses.',
@@ -466,8 +513,8 @@ function systemPrompt(snapshotAt, pulse, openCount) {
     '  je hoeft niet te vragen of het mag, alleen zeggen dat je het hebt vastgelegd.',
     '',
     '## Wat je zeker weet',
-    `- De snapshot is van ${snapshotAt || 'onbekend'}. Staat de pc uit, dan is dit het`,
-    '  laatste dat je weet — zeg dat erbij als de data verouderd kan zijn.',
+    `- De snapshot is van ${snapshotAt ? String(snapshotAt).slice(0, 16) : 'onbekend'}.`,
+    staleness ? `- ${staleness}` : '',
     `- Er wachten nu ${openCount} besluiten op Vincent.`,
     pulse ? `- Deterministische stand van zaken (geen LLM-oordeel):\n${JSON.stringify(pulse)}` : '',
   ].filter(Boolean).join('\n');
@@ -498,12 +545,9 @@ export default async function handler(req, res) {
 
   try {
     const snap = (await sql`SELECT payload, generated_at FROM context_snapshot WHERE tenant = ${tenant}`)[0];
+    const snapshotAt = snap ? snap.generated_at : null;
     const openCount = (await sql`SELECT count(*)::int AS c FROM sync_items WHERE tenant=${tenant} AND status='active'`)[0].c;
-    const system = systemPrompt(
-      snap ? String(snap.generated_at).slice(0, 16) : null,
-      snap?.payload?.pulse || null,
-      openCount,
-    );
+    const system = systemPrompt(snapshotAt, snap?.payload?.pulse || null, openCount);
 
     const effects = { commands: [], proposals: [] };
     const convo = [...messages];
@@ -526,7 +570,7 @@ export default async function handler(req, res) {
       for (const call of step.toolCalls) {
         let out;
         try {
-          out = await runTool(call.name, call.input || {}, effects, tenant);
+          out = await runTool(call.name, call.input || {}, effects, tenant, snapshotAt);
         } catch (e) {
           console.error('tool error', call.name, e);
           out = `Tool '${call.name}' faalde: ${String(e).slice(0, 200)}`;

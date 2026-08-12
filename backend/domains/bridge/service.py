@@ -277,12 +277,20 @@ async def build_push_payload() -> Dict[str, Any]:
     except Exception:  # noqa: BLE001
         logger.exception("Bridge: contextopbouw mislukt — push gaat door zonder")
         rich = {}
-    return {
+    try:
+        google_cfg = ctx.build_google_config()
+    except Exception:  # noqa: BLE001
+        logger.warning("Bridge: Google-config verzamelen mislukt", exc_info=True)
+        google_cfg = None
+    payload: Dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "items": collect_items(),
         "briefing": collect_briefing(),
         "context": rich,
     }
+    if google_cfg:
+        payload["google"] = google_cfg
+    return payload
 
 
 # ── Sync-cyclus ─────────────────────────────────────────────────────────────

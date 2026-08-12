@@ -1630,3 +1630,136 @@ async function scRenderVideo(id, btn) {
 }
 
 
+// ═══════════════════════════════════════════════════════════════════
+//  OMNI TAB — SERP-Omni engine: reverse-engineer de SERP per zoekwoord,
+//  genereer platform-assets (Reddit/YouTube/LinkedIn/X/AEO) en zet ze
+//  klaar ter goedkeuring. Niets post automatisch.
+// ═══════════════════════════════════════════════════════════════════
+async function renderOmniTab(el) {
+  if (!currentProject) { el.innerHTML = '<div class="empty-state">Kies eerst een project</div>'; return; }
+  el.innerHTML = '<div class="section-card"><h3 style="font-size:14px;margin:0 0 4px">SERP-Omni engine</h3>' +
+    '<p style="font-size:12px;color:#64748b;margin:0 0 12px">Reverse-engineer de zoekresultaten voor je top-zoekwoorden en zet platform-assets klaar (Reddit, YouTube, LinkedIn, X, AEO). Alles wordt eerst aan jou voorgelegd — niets post automatisch.</p>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
+    '<input id="omni-keyword" placeholder="1 zoekwoord…" style="flex:1;min-width:200px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px">' +
+    '<button onclick="omniAnalyzeOne(this)" style="padding:8px 16px;background:#e5a500;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Analyseer + genereer</button>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
+    '<textarea id="omni-batch" placeholder="Of plak meerdere zoekwoorden (één per regel, max 25)…" style="flex:1;min-width:200px;height:60px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px"></textarea>' +
+    '<button onclick="omniAnalyzeBatch(this)" style="padding:8px 16px;background:#0f172a;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Batch (top-kansen)</button>' +
+    '</div>' +
+    '<div id="omni-result" style="font-size:12px;color:#475569"></div>' +
+    '<hr style="margin:16px 0;border:none;border-top:1px solid #e2e8f0">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><h4 style="font-size:13px;margin:0">Wachtrij (staged assets)</h4>' +
+    '<button onclick="renderOmniTab(document.getElementById(\'tab-content\'))" style="padding:4px 10px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:6px;font-size:10px;cursor:pointer">Ververs</button></div>' +
+    '<div id="omni-queue" style="font-size:12px">Laden…</div></div>';
+  omniLoadQueue();
+}
+
+async function _omniSiteId() {
+  try {
+    var sites = await (await fetch('/api/projects')).json();
+    var s = (sites || []).find(function(x){ return (x.name || '').toLowerCase() === currentProject.toLowerCase(); });
+    return s ? s.id : null;
+  } catch (e) { return null; }
+}
+
+async function omniAnalyzeOne(btn) {
+  var kw = document.getElementById('omni-keyword').value.trim();
+  if (!kw) { alert('Vul een zoekwoord in'); return; }
+  var sid = await _omniSiteId(); if (!sid) { alert('Site niet gevonden'); return; }
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Bezig…';
+  try {
+    var resp = await fetch('/api/omni/analyze', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ site_id: sid, keyword: kw }) });
+    var d = await resp.json();
+    if (!resp.ok) { alert('Fout: ' + (d.detail || resp.status)); return; }
+    var dom = (d.serp && d.serp.dominant && d.serp.dominant.length) ? d.serp.dominant.join(', ') : 'geen dominant platform';
+    document.getElementById('omni-result').innerHTML = '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:8px;margin-top:8px">' +
+      '<strong>' + escHtml(kw) + '</strong> → SERP domineert: <em>' + escHtml(dom) + '</em>. ' +
+      (d.queued ? d.queued.length : 0) + ' asset(s) klaargezet: ' + (d.assets || []).map(function(a){ return a.asset_type; }).join(', ') + '</div>';
+    omniLoadQueue();
+  } catch (e) { alert('❌ ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = orig; }
+}
+
+async function omniAnalyzeBatch(btn) {
+  var raw = document.getElementById('omni-batch').value;
+  var kws = raw.split('\n').map(function(s){ return s.trim(); }).filter(Boolean);
+  if (!kws.length) { alert('Vul minstens 1 zoekwoord in'); return; }
+  var sid = await _omniSiteId(); if (!sid) { alert('Site niet gevonden'); return; }
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Bezig…';
+  try {
+    var resp = await fetch('/api/omni/batch', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ site_id: sid, keywords: kws }) });
+    var d = await resp.json();
+    if (!resp.ok) { alert('Fout: ' + (d.detail || resp.status)); return; }
+    document.getElementById('omni-result').innerHTML = '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:8px;margin-top:8px">' +
+      d.queued + ' assets klaargezet uit ' + d.keywords + ' zoekwoorden.</div>';
+    omniLoadQueue();
+  } catch (e) { alert('❌ ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = orig; }
+}
+
+async function omniLoadQueue() {
+  var box = document.getElementById('omni-queue'); if (!box) return;
+  var sid = await _omniSiteId(); if (!sid) { box.innerHTML = 'Site niet gevonden'; return; }
+  try {
+    var rows = await (await fetch('/api/omni/queue?site_id=' + encodeURIComponent(sid))).json();
+    if (!rows || !rows.length) { box.innerHTML = '<div style="color:#64748b;padding:8px">Nog geen staged assets. Analyseer een zoekwoord hierboven.</div>'; return; }
+    var html = '';
+    rows.forEach(function(r) {
+      var approved = r.status === 'approved';
+      var published = r.status === 'published';
+      var color = r.status === 'rejected' ? '#94a3b8' : (published ? '#16a34a' : (approved ? '#0ea5e9' : '#e5a500'));
+      html += '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:8px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+        '<div><span style="font-size:11px;font-weight:700;color:#1e293b">' + escHtml(r.platform) + '</span> ' +
+        '<span style="font-size:11px;color:#64748b">· ' + escHtml(r.keyword) + '</span> ' +
+        '<span style="font-size:10px;color:#94a3b8">· score ' + (r.score || 0) + '</span></div>' +
+        '<span style="font-size:10px;font-weight:700;color:' + color + ';text-transform:uppercase">' + escHtml(r.status) + '</span></div>' +
+        (r.title ? '<div style="font-size:13px;font-weight:600;margin:4px 0;color:#0f172a">' + escHtml(r.title) + '</div>' : '') +
+        '<div style="font-size:12px;color:#334155;white-space:pre-wrap;max-height:120px;overflow:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px">' + escHtml((r.body || '').slice(0, 800)) + '</div>' +
+        '<div style="display:flex;gap:6px;margin-top:6px">';
+      if (!approved && !published && r.status !== 'rejected') {
+        html += '<button onclick="omniApprove(\'' + r.id + '\',this)" style="padding:3px 10px;background:#16a34a;color:#fff;border:none;border-radius:5px;font-size:11px;cursor:pointer">Keur goed</button>';
+      }
+      if (r.status !== 'rejected' && !published) {
+        html += '<button onclick="omniPublish(\'' + r.id + '\',this)" style="padding:3px 10px;background:#0ea5e9;color:#fff;border:none;border-radius:5px;font-size:11px;cursor:pointer">' + (approved ? 'Publiceer' : 'Keur + publiceer') + '</button>';
+      }
+      if (r.status !== 'rejected' && !published) {
+        html += '<button onclick="omniReject(\'' + r.id + '\')" style="padding:3px 10px;background:#fff;color:#ef4444;border:1px solid #fecaca;border-radius:5px;font-size:11px;cursor:pointer">Wijs af</button>';
+      }
+      if (published && r.published_result) {
+        try { var pr = JSON.parse(r.published_result); if (pr.note) html += '<span style="font-size:10px;color:#64748b;align-self:center">' + escHtml(pr.note) + '</span>'; } catch(e){}
+      }
+      html += '</div></div>';
+    });
+    box.innerHTML = html;
+  } catch (e) { box.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; }
+}
+
+async function omniApprove(id, btn) {
+  btn.disabled = true;
+  try {
+    var resp = await fetch('/api/omni/queue/' + encodeURIComponent(id) + '/approve', { method:'POST' });
+    if (resp.ok) omniLoadQueue();
+  } catch (e) { alert('❌ ' + e.message); btn.disabled = false; }
+}
+
+async function omniReject(id) {
+  try {
+    var resp = await fetch('/api/omni/queue/' + encodeURIComponent(id) + '/reject', { method:'POST' });
+    if (resp.ok) omniLoadQueue();
+  } catch (e) { alert('❌ ' + e.message); }
+}
+
+async function omniPublish(id, btn) {
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = '…';
+  try {
+    var resp = await fetch('/api/omni/queue/' + encodeURIComponent(id) + '/publish', { method:'POST' });
+    var d = await resp.json();
+    if (!resp.ok) { alert('Fout: ' + (d.detail || resp.status)); btn.textContent = orig; btn.disabled = false; return; }
+    if (d.note) socialToast(d.note);
+    omniLoadQueue();
+  } catch (e) { alert('❌ ' + e.message); btn.textContent = orig; btn.disabled = false; }
+}
+
+

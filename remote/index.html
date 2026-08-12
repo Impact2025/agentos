@@ -111,6 +111,10 @@
            kop i.p.v. alleen een teller — "3 besluiten wachten" zegt niets over
            wélk het belangrijkst is. Leeg totdat loadToday() 'm vult. -->
       <p class="font-body-md text-body-md hidden" id="today-pulse-line"></p>
+      <!-- Besluiten die Vincent al nam (via chat of knop) maar die AgentOS nog niet
+           kon uitvoeren omdat de machine niet synct — anders staat die wachtrij
+           alleen verstopt in het Systeem-tabblad. Zie app.js:loadToday. -->
+      <p class="font-body-md text-body-md hidden stale-note" id="today-queue-note"></p>
     </div>
 
     <!-- Cloud-Iris chat -->
@@ -214,6 +218,10 @@
       <h2 class="font-display-lg-mobile text-display-lg-mobile">Systeem</h2>
     </div>
     <div id="system-status"></div>
+    <!-- Live agenda/GSC zonder AgentOS (api/_google.js) — status apart van de
+         sync-pill hierboven, want dit kan werken (of stuk zijn) onafhankelijk
+         van of AgentOS zelf online is. -->
+    <div id="google-status"></div>
 
     <!-- Iris-onboarding: wizard verhuisd hierheen (was lokaal op localhost,
          onbereikbaar voor een klant zoals Nicole). Zie backend/domains/

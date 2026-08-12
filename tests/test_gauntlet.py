@@ -124,3 +124,67 @@ def test_gauntlet_human_verdict(temp_db, patch_agent):
     run = service.get_run(run_id)
     assert run["human_verdict"] == "goedgekeurd"
     assert run["human_note"] == "Menselijke eindjurat: prima."
+
+
+def _make_flaky_critic_fake():
+    """Fake run_agent waarbij de criticus elke 2e keer ONGELDIGE JSON teruggeeft.
+
+    Bewijst Fix 1: bij een mislukte parse mag de loop NIET crashen of de score
+    op 0 zetten — hij behoudt de vorige beste versie en gaat door.
+    """
+    call_state = {"n": 0}
+
+    async def fake_run_agent(messages, system_prompt="", **kwargs):
+        call_state["n"] += 1
+        if "Lead Agent" in system_prompt:
+            yield {"type": "text", "text": json.dumps({
+                "subtasks": [
+                    {"role": "Hero", "goal": "Schrijf de hero."},
+                    {"role": "Diensten", "goal": "Schrijf de diensten."},
+                ]
+            })}
+            return
+        if "BLINDE" in system_prompt:
+            if call_state["n"] % 2 == 0:
+                # ongeldige JSON — parser-fout simuleren
+                yield {"type": "text", "text": "Sorry, ik kan dit niet beoordelen."}
+                return
+            yield {"type": "text", "text": json.dumps({
+                "score": 90, "verdict": "pass",
+                "feedback": "Goed genoeg.",
+            })}
+            return
+        yield {"type": "text", "text": f"# Concept ronde {call_state['n']}"}
+
+    return fake_run_agent
+
+
+def test_criticus_parse_failure_does_not_crash(temp_db, monkeypatch):
+    from backend.domains.gauntlet import service
+    import backend.shared.agent_runner as agent_mod
+    monkeypatch.setattr(agent_mod, "run_agent", _make_flaky_critic_fake())
+
+    run_id = service._create_run("LP", "ref", "", 85, 3)
+    stop_flag = {}
+    asyncio.run(service._run_gauntlet(
+        run_id, "LP", "ref", 85, 3, "", stop_flag))
+    run = service.get_run(run_id)
+    # Geen 'failed'/'error' status: de run voltooit ondanks flaky criticus
+    assert run["status"] != "failed"
+    for s in run["subtasks"]:
+        assert s["status"] != "error"
+    # De beste versie is behouden (score > 0), niet op 0 gestrand
+    assert all(s["best_score"] >= 0 for s in run["subtasks"])
+
+
+def test_decompose_splits_landingpage_into_parts(temp_db, monkeypatch):
+    from backend.domains.gauntlet import service
+    import backend.shared.agent_runner as agent_mod
+    monkeypatch.setattr(agent_mod, "run_agent", _make_flaky_critic_fake())
+
+    subtasks = asyncio.run(service._decompose(
+        "Schrijf een landingspagina met hero, diensten, projecten en CTA", None))
+    # Fix 2: geen enkele 'Hoofdtaak'-val, meerdere structurele deeltaken
+    roles = {s["role"] for s in subtasks}
+    assert "Hoofdtaak" not in roles
+    assert len(subtasks) >= 2

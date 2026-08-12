@@ -14,6 +14,7 @@ import {
   requireSession, endSession, endAllSessions, listSessions,
   loginLockSeconds, noteLoginFailure, clearLoginFailures,
 } from './_lib.js';
+import { attachLive } from './_google.js';
 
 // Welke acties de telefoon per item-type mag aanvragen. Moet een subset zijn
 // van de whitelist in backend/domains/bridge/actions.py — de bridge weigert
@@ -153,6 +154,7 @@ export default async function handler(req, res) {
     if (op === 'note-delete' && req.method === 'POST') return await noteDelete(req, res, sessionTenant);
     if (op === 'notes' && req.method === 'GET') return await notesList(res, sessionTenant);
     if (op === 'outbox' && req.method === 'GET') return await outbox(res, sessionTenant);
+    if (op === 'google-status' && req.method === 'GET') return await googleStatus(res, sessionTenant);
     if (op === 'vapid' && req.method === 'GET') {
       return json(res, 200, { key: process.env.VAPID_PUBLIC_KEY || '' });
     }
@@ -211,7 +213,20 @@ async function decide(req, res, tenant) {
 async function context(res, tenant) {
   const rows = await sql`
     SELECT payload, generated_at FROM context_snapshot WHERE tenant = ${tenant}`;
-  return json(res, 200, rows[0] || { payload: null, generated_at: null });
+  const snap = rows[0] || { payload: null, generated_at: null };
+  // Agenda en GSC-trend proberen we altijd live te verversen (Google-
+  // service-account, geen AgentOS nodig) — de rest van de snapshot blijft
+  // uit de cache. Nooit laten falen op de rest van het antwoord: één tenant
+  // zonder Google-koppeling krijgt gewoon zijn snapshot terug, ongewijzigd.
+  if (snap.payload) {
+    try {
+      snap.live = await attachLive(tenant, snap.payload);
+    } catch (e) {
+      console.error('attachLive mislukt', tenant, e);
+      snap.live = { agenda: false, seo: false };
+    }
+  }
+  return json(res, 200, snap);
 }
 
 async function command(req, res, tenant) {
@@ -253,6 +268,20 @@ async function outbox(res, tenant) {
     SELECT id, item_key, item_kind, action, status, result, created_at, decided_at
     FROM decisions WHERE tenant = ${tenant} ORDER BY created_at DESC LIMIT 20`;
   return json(res, 200, { decisions: rows });
+}
+
+// Alleen statusvelden — nooit de credentials zelf naar de browser. Voedt het
+// diagnoseblok in de Systeem-tab: "live" is stil zolang alles werkt, maar een
+// verlopen/ingetrokken service-account moet net zo zichtbaar worden als de
+// ingetrokken Outlook-sessie dat eerder al moest worden (zie CLAUDE.md 14d).
+async function googleStatus(res, tenant) {
+  const rows = await sql`
+    SELECT (calendar_client_email IS NOT NULL AND calendar_private_key_enc IS NOT NULL) AS configured,
+           calendar_calendar_id,
+           jsonb_array_length(COALESCE(gsc_sites, '[]'::jsonb)) AS gsc_site_count,
+           google_synced_at, google_last_error, google_last_error_at
+    FROM tenants WHERE slug = ${tenant}`;
+  return json(res, 200, rows[0] || { configured: false });
 }
 
 async function pushSubscribe(req, res, tenant) {

@@ -791,6 +791,7 @@ def _migrate(conn) -> None:
         threshold INTEGER DEFAULT 85, max_iterations INTEGER DEFAULT 3,
         subtask_count INTEGER DEFAULT 0, best_overall_score INTEGER DEFAULT -1,
         human_verdict TEXT DEFAULT '', human_note TEXT DEFAULT '',
+        published_job_id TEXT DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT DEFAULT '')""")
     conn.execute("""CREATE TABLE IF NOT EXISTS gauntlet_subtasks (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL, position INTEGER DEFAULT 0,
@@ -803,6 +804,13 @@ def _migrate(conn) -> None:
         draft TEXT DEFAULT '', score INTEGER DEFAULT 0, feedback TEXT DEFAULT '', passed INTEGER DEFAULT 0,
         duration_ms INTEGER DEFAULT 0, created_at TEXT NOT NULL,
         FOREIGN KEY (subtask_id) REFERENCES gauntlet_subtasks(id) ON DELETE CASCADE)""")
+
+    # Gauntlet: zorg dat published_job_id bestaat op reeds-bestaande DB's
+    # (CREATE TABLE IF NOT EXISTS vangt alleen nieuwe DB's; een live DB die al
+    # draaide vóór deze kolom is aangelegd mist 'm zonder deze idempotente ALTER).
+    _gauntlet_cols = {row["name"] for row in conn.execute("PRAGMA table_info(gauntlet_runs)").fetchall()}
+    if "published_job_id" not in _gauntlet_cols:
+        conn.execute("ALTER TABLE gauntlet_runs ADD COLUMN published_job_id TEXT DEFAULT ''")
 
     # Status-funnel migratie: oude generieke waarden → nieuwe funnel-stappen
     _STATUS_MAP = {
@@ -858,6 +866,16 @@ def _migrate(conn) -> None:
         ):
             if col not in oe_cols:
                 conn.execute(ddl)
+
+    # SERP-Omni engine: staged wachtrij voor platform-assets (Reddit/YouTube/
+    # LinkedIn/X/AEO). Niets wordt automatisch gepost — Vincent keurt goed.
+    conn.execute("""CREATE TABLE IF NOT EXISTS omni_queue (
+        id TEXT PRIMARY KEY, site_id TEXT NOT NULL, keyword TEXT NOT NULL,
+        asset_type TEXT NOT NULL, platform TEXT NOT NULL, title TEXT DEFAULT '',
+        body TEXT DEFAULT '', serp_profile TEXT DEFAULT '', angle TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'staged', score INTEGER DEFAULT 0,
+        note TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        approved_at TEXT DEFAULT '', published_result TEXT DEFAULT '')""")
 
     # Goal Mode: ord kolom voor task volgorde (idempotent)
     gt_cols = {row["name"] for row in conn.execute("PRAGMA table_info(goal_tasks)").fetchall()}

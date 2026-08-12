@@ -49,6 +49,7 @@ pc uit, dan stapelen besluiten zich op en voert de eerstvolgende sync ze uit.
    | **Iris-onboarding — per-klant OAuth** (`api/oauth.js`) | De browser-consentredirect loopt hier (publiek bereikbaar), niet via de lokale instance — zie CLAUDE.md 14. Zelfde client_id/secret horen ook in de lokale `.env` van elke klant-instance (voor het ververs-token-endpoint, ná de eerste koppeling), zie `.env.example`. |
    | `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` | Google Cloud Console > Credentials > OAuth client ID (Web application). Redirect-URI: `https://<jouw-deploy>/api/oauth?provider=google&op=callback` |
    | `OUTLOOK_CLIENT_ID` / `OUTLOOK_CLIENT_SECRET` / `OUTLOOK_TENANT_ID` | Zelfde Azure-app als de lokale Outlook-integratie, plus een client secret (App registrations > Certificates & secrets). Redirect-URI: `https://<jouw-deploy>/api/oauth?provider=microsoft&op=callback` |
+   | `TENANT_SECRET_KEY` | **Voor live agenda/GSC zonder AgentOS** (zie hieronder). 32 bytes base64, bv. `openssl rand -base64 32`. Vercel-only — nooit lokaal nodig. Ontbreekt hij, dan blijft alles werken zoals voorheen (cache-only), er verschijnt alleen geen live-badge. |
 
    `BRIDGE_TOKEN` en `APP_PASSWORD` staan **niet** meer als globale env var —
    die zijn per klant en leven als gehashte kolommen in de `tenants`-tabel
@@ -84,6 +85,37 @@ uit stap 3, en kies "Zet op beginscherm" — dan gedraagt het zich als app
 (donker Iris-thema, bottom-nav). Meldingen aanzetten: tab *Systeem* →
 "Meldingen inschakelen". Op iPhone werkt web-push alléén vanuit de
 op-het-beginscherm-gezette app (iOS 16.4+), niet vanuit Safari zelf.
+
+## Live agenda + GSC-trend (zonder AgentOS)
+
+Agenda en GSC-cijfers hoeven niet te wachten op de eerstvolgende `bridge_sync`
+of op een draaiende AgentOS: ze gebruiken een Google **service-account**
+(lang-levende sleutel, geen interactieve login) en kunnen daarom rechtstreeks
+door Vercel worden opgehaald (`api/_google.js`). Mail blijft wél op de cache —
+Outlook gebruikt MSAL-delegated-OAuth, geen sleutel die een los proces
+herbruikt (zie CLAUDE.md 14d).
+
+**Hoe de koppeling ontstaat — automatisch, geen los provisioneringsscript:**
+elke `bridge_sync`-push stuurt (als agenda lokaal via `service_google.py` is
+geconfigureerd) het service-account mee. Vercel versleutelt de sleutel bij
+ontvangst (AES-256-GCM, `TENANT_SECRET_KEY`) en slaat 'm op in `tenants`.
+Rotereert Vincent de sleutel lokaal, dan volgt Vercel binnen één synccyclus.
+
+**Setup (eenmalig, ná `TENANT_SECRET_KEY` in de Vercel-env):**
+1. `node migrate.mjs` — voegt de nieuwe `tenants`-kolommen toe (additief, veilig).
+2. Lokale AgentOS herstarten — de eerstvolgende `bridge_sync` stuurt de
+   Google-config mee (alleen als `CALENDAR_CLIENT_EMAIL`/`CALENDAR_PRIVATE_KEY`
+   inline zijn ingevuld — een los JSON-keyfile op de machine kan Vercel niet
+   lezen). GSC-sites komen mee vanuit `sites.gsc_property` (lokale `sites`-tabel).
+3. Controleren: tab *Systeem* → "Live agenda & GSC" toont wanneer de
+   credential voor het laatst ontvangen is en hoeveel GSC-sites gekoppeld
+   zijn. Rood + een foutmelding betekent: credential ontvangen, maar de live
+   call zelf faalt (bv. het service-account heeft geen toegang meer tot de
+   agenda) — precies zichtbaar in plaats van een stille terugval op cache.
+
+**Multi-tenant, expliciet**: dit is per klant. Er is bewust géén globale
+Vercel-env-var met één Google-credential — dat zou klant A's agenda aan
+klant B tonen. Elke tenant-rij draagt zijn eigen (versleutelde) sleutel.
 
 ## Meerdere klanten (multi-tenant)
 
@@ -211,8 +243,10 @@ niet meer ziet.
 
 ## Bestanden
 - `api/bridge.js` — push/decisions/ack/notes (bearer, alleen voor de lokale machine)
-- `api/ui.js` — login/items/decide/briefing/notes/outbox/sessions (sessiecookie, voor jou)
+- `api/ui.js` — login/items/decide/briefing/notes/outbox/sessions/google-status (sessiecookie, voor jou)
 - `api/_lib.js` — Neon-client, wachtwoord- en sessiebeheer, brute-force-rem
+- `api/_google.js` — live agenda + GSC-trend rechtstreeks bij Google, zonder AgentOS
+- `api/_crypto.js` — AES-256-GCM voor de per-tenant Google-sleutel in Neon
 - `index.html` + `app.js` + `style.css` — Iris Remote-frontend
 - `tailwind.config.js` + `tailwind-src.css` + `build-fonts.mjs` — assets-build
 - `schema.sql` — het schema; `node migrate.mjs` past het toe op `DATABASE_URL`

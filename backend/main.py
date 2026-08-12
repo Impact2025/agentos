@@ -73,6 +73,7 @@ from .domains.iris import router as iris_router
 from .domains.researcher import router as researcher_router
 from .domains.auth import router as auth_router
 from .domains.auth import service as auth_service
+from .domains.omni import router as omni_router
 
 BASE_DIR = Path(__file__).parent.parent
 logger = logging.getLogger("agentos")
@@ -216,6 +217,7 @@ if domain_enabled("seo"):
     app.include_router(sites_router.router)
     app.include_router(knowledge_router.router)
     app.include_router(seo_optimizer.router)
+    app.include_router(omni_router.router)
 if domain_enabled("analytics"):
     app.include_router(analytics_router.router)
 if domain_enabled("finance"):

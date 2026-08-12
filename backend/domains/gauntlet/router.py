@@ -30,6 +30,7 @@ class GauntletRequest(BaseModel):
     threshold: int = 85
     max_iterations: int = 3
     session_id: Optional[str] = None
+    model: Optional[str] = None  # optioneel: bv. deepseek-v4-pro, qwen3.6-flash
 
 
 class GauntletVerdict(BaseModel):
@@ -46,6 +47,7 @@ async def start_gauntlet(body: GauntletRequest):
             threshold=body.threshold,
             max_iterations=body.max_iterations,
             session_id=body.session_id,
+            model_override=body.model,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -104,3 +106,20 @@ def record_verdict(run_id: str, body: GauntletVerdict):
     if not ok:
         raise HTTPException(status_code=404, detail="Gauntlet run niet gevonden")
     return {"run_id": run_id, "verdict": body.verdict, "recorded": True}
+
+
+class GauntletPublish(BaseModel):
+    site_id: Optional[str] = None
+
+
+@router.post("/{run_id}/publish")
+def publish_gauntlet(run_id: str, body: Optional[GauntletPublish] = None):
+    """Publish-gate: zet een PASSED/partial Gauntlet-run om in een content_job.
+
+    Blokkeert als de blinde criticus de benchmark niet haalde (zie service.publish_to_weareimpact).
+    """
+    try:
+        site_id = body.site_id if body else None
+        return gauntlet_service.publish_to_weareimpact(run_id, site_id=site_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

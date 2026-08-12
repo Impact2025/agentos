@@ -25,6 +25,25 @@ CREATE TABLE IF NOT EXISTS tenants (
   password_hash TEXT NOT NULL,           -- scrypt van het inlogwachtwoord voor de telefoon/browser
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Live agenda/GSC zonder AgentOS (12 aug 2026): per-tenant kopie van het
+-- Google-service-account, meegestuurd door de lokale bridge_sync bij elke
+-- push (api/bridge.js:push) — één bron van waarheid (de lokale .env), geen
+-- los provisioneringsscript met een geplakte sleutel. calendar_private_key_enc
+-- is versleuteld (AES-256-GCM, api/_crypto.js) met TENANT_SECRET_KEY, een
+-- Vercel-only secret die nooit lokaal hoeft te staan. Eén globale env-var
+-- zou hier fout zijn: dit is multi-tenant, en klant A's agenda mag nooit met
+-- klant B's credentials worden opgehaald.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS calendar_client_email TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS calendar_private_key_enc TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS calendar_calendar_id TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS calendar_busy_ids TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS calendar_sub TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS gsc_sites JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS google_synced_at TIMESTAMPTZ;
+-- Zichtbare diagnose i.p.v. een stille terugval op cache: dezelfde reden
+-- waarom scheduler_gaps/integrity_findings bestaan in de Python-kant.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS google_last_error TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS google_last_error_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS sync_items (
   tenant       TEXT NOT NULL,
