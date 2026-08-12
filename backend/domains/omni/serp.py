@@ -65,15 +65,21 @@ def _is_owned(url: str, owned_domains: List[str]) -> bool:
 
 
 def _recommend(platforms: Dict[str, int], has_video_box: bool,
-               has_reddit: bool) -> List[str]:
+               has_reddit: bool, query: str = "") -> List[str]:
     """Zet een SERP-profiel om in de asset-types die we moeten genereren.
 
-    Logica (afgeleid van de video):
-      - Reddit domineert -> reddit_post (hoogste AIO-hefboom volgens Floate)
-      - videobox of YouTube in top -> youtube_script
-      - LinkedIn aanwezig -> linkedin_article (rankt beter dan X volgens video)
-      - X zweeft onderaan -> x_post (laagste prioriteit)
-      - altijd een eigen AEO-artikel-tip als het owned-aandeel laag is
+    Verbeterd model (afgeleid van de Goldie/Floate-analyse + de pro-run van
+    12 aug op NL-institutionele zoekwoorden):
+
+      - Reddit-thread of -dominantie -> reddit_post (hoogste AIO-hefboom).
+      - 'other' domineert (kennis/overheid/VNG/Rijksoverheid) -> Reddit is JUIST
+        de onderbenutte hefboom (Floate: weinig concurrentie op Reddit = makkelijker
+        ranken in AIO). Dus bij weinig platform-signaal wél Reddit aanbevelen.
+      - videobox of YouTube of video-intentie in snippets -> youtube_script.
+      - LinkedIn aanwezig -> linkedin_article (rankt beter dan X volgens video).
+      - X aanwezig -> x_post (laagste prioriteit, bereik beperkt).
+      - Zwak signaal (alleen 'other') -> genereer een brede omnipresence-set
+        (reddit + linkedin + x + aeo) in plaats van te kiezen: je wilt overal staan.
     """
     assets: List[str] = []
     if has_reddit or platforms.get("reddit", 0) >= 1:
@@ -84,10 +90,19 @@ def _recommend(platforms: Dict[str, int], has_video_box: bool,
         assets.append("linkedin_article")
     if platforms.get("x", 0) >= 1:
         assets.append("x_post")
-    # Nooit leeg: als we niets specifieks zien, tippen we Reddit + LinkedIn
-    # (de twee kanalen met het hoogste AIO-rendement volgens de analyse).
+
+    other = platforms.get("other", 0)
+    # Zwak signaal: SERP zit vol 'other' (kennis/overheid). Dan is Reddit de
+    # open hefboom en willen we omnipresence — genereer de volle set.
     if not assets:
-        assets = ["reddit_post", "linkedin_article"]
+        assets = ["reddit_post", "linkedin_article", "x_post", "aeo_snippet"]
+    elif other >= 8 and "reddit_post" not in assets:
+        # Veel 'other', weinig platformen: Reddit er expliciet bij voor de
+        # onderbenutte positie in AIO.
+        assets.append("reddit_post")
+    # Altijd een AEO-snippet als anker (eigen site blijft de basis).
+    if "aeo_snippet" not in assets:
+        assets.append("aeo_snippet")
     return assets
 
 
@@ -138,8 +153,12 @@ def analyze_serp(query: str, owned_domains: Optional[List[str]] = None,
             platforms["owned"] += 1
         else:
             platforms["other"] += 1
-        # YouTube-videobox: vaak een youtube-url bovenaan OF een 'video'-hint.
-        if plat == "youtube" or "video" in (title + h.get("snippet", "")).lower():
+        # Video-intentie: youtube-url OF 'video/uitleg/how-to' in titel+snippet.
+        # Op DDG (na Tavily-quota) staan er zelden youtube-url's bovenaan, maar
+        # de intentie is er wel — dan willen we alsnog een YouTube-script.
+        blob = (title + " " + h.get("snippet", "")).lower()
+        if plat == "youtube" or any(k in blob for k in
+                                     ("video", "uitleg", "how-to", "how to", "tutorial", "youtube")):
             has_video_box = True
         top_results.append({
             "title": title, "url": url,
@@ -160,7 +179,7 @@ def analyze_serp(query: str, owned_domains: Optional[List[str]] = None,
         "has_video_box": has_video_box,
         "has_reddit_thread": has_reddit,
         "top_results": top_results,
-        "recommended_assets": _recommend(platforms, has_video_box, has_reddit),
+        "recommended_assets": _recommend(platforms, has_video_box, has_reddit, query),
         "note": "",
     }
     _serp_cache[key] = (time.time(), prof)

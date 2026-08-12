@@ -108,16 +108,17 @@ def _parse_json(text: str) -> Dict:
         return {}
 
 
-def generate_asset(asset_type: str, keyword: str, site: Dict,
+async def generate_asset(asset_type: str, keyword: str, site: Dict,
                    angle: str = "", serp_profile: Optional[Dict] = None) -> Dict:
     """Genereer één asset. Geeft altijd een dict met status/score terug."""
+    import asyncio
     from ..publish.article_writer import _llm, check_ai_language
     from ..seo.enhancements import assess_seo_worldclass
 
     serp = serp_profile or {}
     system, user = _build_prompt(asset_type, keyword, site, angle, serp)
     try:
-        raw = _llm(system, user, max_tokens=1200)
+        raw = await _llm(system, user, max_tokens=1200)
     except Exception as e:  # noqa: BLE001
         logger.error("[omni] generatie faalde voor %s/%s: %s", asset_type, keyword, e)
         return {"asset_type": asset_type, "platform": asset_type.replace("_", ""),
@@ -162,7 +163,7 @@ def generate_asset(asset_type: str, keyword: str, site: Dict,
     }
 
 
-def generate_for_keyword(keyword: str, site: Dict, angle: str = "",
+async def generate_for_keyword(keyword: str, site: Dict, angle: str = "",
                          owned_domains: Optional[List[str]] = None) -> Dict:
     """Volledige Omni-run: SERP analyseren + alle aanbevolen assets genereren.
 
@@ -170,6 +171,6 @@ def generate_for_keyword(keyword: str, site: Dict, angle: str = "",
     buiten de LLM-call en de cache; de router schrijft naar omni_queue.
     """
     serp = analyze_serp(keyword, owned_domains=owned_domains)
-    assets = [generate_asset(a, keyword, site, angle, serp)
+    assets = [await generate_asset(a, keyword, site, angle, serp)
               for a in serp.get("recommended_assets", [])]
     return {"keyword": keyword, "serp": serp, "assets": assets}

@@ -91,7 +91,7 @@ async def run_omni_sweep() -> Dict:
             conn.row_factory = __import__("sqlite3").Row
             for kw in keywords:
                 try:
-                    res = generate_for_keyword(kw, site, "",
+                    res = await generate_for_keyword(kw, site, "",
                                                owned_domains=_owned_domains(site))
                 except Exception as e:  # noqa: BLE001
                     logger.error("[omni-sweep] generatie faalde voor %s/%s: %s",

@@ -330,7 +330,17 @@ def _parse_critic(raw: str, threshold: int) -> Tuple[int, str, bool, bool]:
     try:
         obj = json.loads(_extract_json(raw))
     except (json.JSONDecodeError, ValueError):
-        return 0, "(Criticus gaf geen geldige JSON.)", False, False
+        # Fallback: zoek het eerste {...} blok (ook zonder fences / met prose
+        # eromheen). deepseek-v4-flash schrijft soms een intro-regel vóór de JSON.
+        import re
+        m = re.search(r"\{[^{}]*\"score\"[^{}]*\}", raw, re.DOTALL)
+        if m:
+            try:
+                obj = json.loads(m.group(0))
+            except (json.JSONDecodeError, ValueError):
+                return 0, "(Criticus gaf geen geldige JSON.)", False, False
+        else:
+            return 0, "(Criticus gaf geen geldige JSON.)", False, False
     try:
         score = int(round(float(obj.get("score", 0))))
     except (TypeError, ValueError):
@@ -370,7 +380,7 @@ async def _run_critic(
     for _ in range(retries + 1):
         try:
             last_raw = await _run_text_agent_retry(
-                system_prompt, user_message, model_override, max_tokens=2048
+                system_prompt, user_message, model_override, max_tokens=4096
             )
         except BillingError:
             raise  # saldo-op: niet retry'en, meteen naar de run-loop

@@ -86,7 +86,7 @@ async def analyze_keyword(body: AnalyzeBody):
     site = _site_row(body.site_id)
     if not site:
         raise HTTPException(404, detail="site niet gevonden")
-    result = generate_for_keyword(body.keyword, site, body.angle,
+    result = await generate_for_keyword(body.keyword, site, body.angle,
                                    owned_domains=_owned_domains(site))
     # Schrijf assets naar omni_queue (staged).
     queued = []
@@ -124,7 +124,7 @@ async def analyze_batch(body: BatchBody):
             kw = kw.strip()
             if not kw:
                 continue
-            res = generate_for_keyword(kw, site, body.angle,
+            res = await generate_for_keyword(kw, site, body.angle,
                                        owned_domains=_owned_domains(site))
             for a in res.get("assets", []):
                 qid = f"omni_{uuid.uuid4().hex[:12]}"
