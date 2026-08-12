@@ -256,6 +256,7 @@ def build_inbox() -> Dict[str, Any]:
                 "title": j["title"],
                 "project": j["site"] or "?",
                 "created_at": j["created_at"],
+                "content_type": ct,
                 "summary": summary,
                 "actions": actions,
             })
