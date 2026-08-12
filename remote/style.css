@@ -294,6 +294,17 @@ body.sheet-open {
 #sync-pill.stale .dot, #sync-pill.dead .dot { animation: blink 1.4s infinite; }
 @keyframes blink { 50% { opacity: 0.25; } }
 
+/* Onder ~380px (iPhone SE, kleine Android) verliezen begroeting + pill +
+   de twee headerknoppen de wedstrijd om de breedte, en zonder ingrijpen
+   duwt de linkerkant de uitlog-knop letterlijk het scherm uit — body's
+   overflow-x:hidden knipt 'm dan stil af (gemeten: Galaxy S8+, 360px).
+   De pill-tekst is het enige stukje dat je kunt missen zonder informatie
+   te verliezen: de stip laat nog steeds fresh/stale/dead zien. */
+@media (max-width: 400px) {
+  #sync-pill-txt { display: none; }
+  #sync-pill { padding: 4px; gap: 0; }
+}
+
 /* ── Besluit-status badges (inline in cards) ───────────────────────────── */
 .bdg { display:inline-flex; align-items:center; gap:6px; font-size:13px; padding-top:2px; }
 .bdg.pending { color: var(--iris-blue); }
