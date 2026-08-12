@@ -960,7 +960,7 @@
         try { ctx = (await api('context')).payload; contextCache = ctx; } catch { ctx = null; }
       }
       if (token !== loadToken) return;
-      if (ctx) html += analyticsPanel(ctx.analytics) + seoMoversPanel(ctx.seo);
+      if (ctx) html += analyticsPanel(ctx.analytics) + seoMoversPanel(ctx.seo) + orchestratorPanel(ctx.orchestrator);
 
       el.innerHTML = html || `<div class="glass-panel rounded-xl p-10 text-center fade-up">
         <span class="material-symbols-outlined text-primary text-4xl mb-2">auto_awesome</span>
@@ -2584,6 +2584,25 @@
           class="mt-3 w-full bg-transparent border border-primary/30 text-primary font-headline-sm text-[13px] py-2 rounded-lg active:scale-[0.98] transition-all">
           Laat Iris de dalers verrijken</button>` : ''}
       </div>`).join('')}
+    </div>`;
+  }
+
+  // Vastgelopen content (Iris Orchestrator): stukken die de goedkope 30-min
+  // verbeteraar niet redde ('stuck') of die zijn afgewezen ('rejected').
+  // Eén knop, geen site/count-parameter — de backend kiest zelf het eerste
+  // stuk. Bewust een tik-knop, geen chat-commando (zie remote/api/iris.js).
+  function orchestratorPanel(orch) {
+    if (!orch || orch.status !== 'ok' || !orch.count) return '';
+    const row = (j) => `<li class="flex justify-between gap-3 font-body-md text-[12px]">
+      <span class="text-on-surface-variant truncate">${esc(j.title || j.id)} · ${esc(j.project || '')}</span>
+      <span class="text-on-surface-variant/60 shrink-0">${esc(j.status || '')}${j.seo_score == null ? '' : ` · ${j.seo_score}`}</span>
+    </li>`;
+    return `<div class="glass-panel rounded-xl p-4">
+      <p class="font-headline-sm text-[15px] mb-2">Vastgelopen content (${orch.count})</p>
+      <ul class="space-y-1 mb-3">${(orch.jobs || []).slice(0, 5).map(row).join('')}</ul>
+      <button data-cmd="orchestrator_run"
+        class="w-full bg-transparent border border-primary/30 text-primary font-headline-sm text-[13px] py-2 rounded-lg active:scale-[0.98] transition-all">
+        Zet er één op de Gauntlet Loop</button>
     </div>`;
   }
 

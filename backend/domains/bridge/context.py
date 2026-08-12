@@ -17,6 +17,8 @@ telefoon "niet geconfigureerd" nooit als "alles rustig" toont:
     seo        per site: GSC-trend, stijgers en dalers
     rituals    ochtend/avond-ritueel vandaag, streaks, weekintentie, wins,
                persoonlijke doelen — puur lokale SQLite-lezing, geen cache nodig
+    orchestrator  content_queue-stukken die de goedkope verbeteraar niet redde
+               ('stuck'/'rejected') — zichtbaar, alleen handmatig verwerkbaar
 
 Plus `pulse`: een deterministische "wat gaat goed / wat gaat slecht"-lijst,
 afgeleid uit bovenstaande. Bewust zónder LLM — een oordeel dat wegvalt zodra
@@ -640,6 +642,40 @@ def build_rituals() -> Dict[str, Any]:
         return {"status": "error", "error": str(e)[:200]}
 
 
+def build_orchestrator() -> Dict[str, Any]:
+    """Content die de goedkope 30-min verbeteraar niet redde ('stuck') of die
+    een mens afwees ('rejected') — het jachtgebied van de Iris Orchestrator
+    (zie backend/domains/orchestrator/service.py).
+
+    Puur een lokale SQLite-lezing, geen TTL-cache nodig (zelfde reden als
+    rituals hierboven). Bewust alleen zichtbaar: de telefoon toont de lijst en
+    Vincent kan 'm handmatig via het commando 'orchestrator_run' laten
+    verwerken (bridge/actions.py), maar dit commando staat NIET in cloud-Iris'
+    eigen tool-whitelist (remote/api/iris.js) — de zware Gauntlet Loop is
+    kostbaar genoeg, en de keuze "nog een poging vs. de benchmark aanpassen"
+    is precies het oordeel dat bij Vincent hoort te blijven, niet bij een
+    model dat autonoom mag 'starten'."""
+    try:
+        from ..orchestrator import service as orchestrator_service
+        jobs = orchestrator_service._find_under_threshold_jobs()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Bridge-context: orchestrator-sectie mislukt: %s", e)
+        return {"status": "error", "error": str(e)[:200]}
+    return {
+        "count": len(jobs),
+        "jobs": [
+            {
+                "id": j.get("id"),
+                "title": j.get("title"),
+                "project": orchestrator_service._project_for_job(j),
+                "status": j.get("status"),
+                "seo_score": j.get("seo_score"),
+            }
+            for j in jobs[:10]
+        ],
+    }
+
+
 # ── Pulse: wat gaat goed, wat gaat slecht ───────────────────────────────────
 
 def _pulse_mail(mail: Dict, good: List, bad: List) -> None:
@@ -824,6 +860,15 @@ async def build_context() -> Dict[str, Any]:
     onboarding_sec.setdefault("status", "ok")
     onboarding_sec["generated_at"] = _iso(_now())
     sections["onboarding"] = onboarding_sec
+
+    try:
+        orch_sec = build_orchestrator()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Bridge-context: orchestrator-sectie mislukt: %s", e)
+        orch_sec = {"status": "error", "error": str(e)[:200]}
+    orch_sec.setdefault("status", "ok")
+    orch_sec["generated_at"] = _iso(_now())
+    sections["orchestrator"] = orch_sec
 
     sections["pulse"] = build_pulse(sections)
     return sections

@@ -242,7 +242,7 @@ async def _run_text_agent(
 
 async def _run_text_agent_retry(
     system_prompt: str, user_message: str, model_override: Optional[str],
-    max_tokens: int = 4096, max_attempts: int = 3,
+    max_tokens: int = 4096, max_attempts: int = 3, call_timeout: float = 90.0,
 ) -> str:
     """_run_text_agent met retry bij tijdelijke backend-haps (gateway :8899 flaky).
 
@@ -254,7 +254,9 @@ async def _run_text_agent_retry(
     last_err: Optional[Exception] = None
     for attempt in range(1, max_attempts + 1):
         try:
-            return await _run_text_agent(system_prompt, user_message, model_override, max_tokens)
+            return await _run_text_agent(
+                system_prompt, user_message, model_override, max_tokens, call_timeout,
+            )
         except BillingError:
             raise  # saldo-op: nooit retry'en, direct naar de run-loop
         except RuntimeError as exc:
@@ -319,6 +321,11 @@ async def _run_builder(
         if draft and draft.strip() and "_(De builder leverde geen tekst op.)_" not in draft:
             return draft
         logger.warning("Builder leverde lege output (poging %d); ga naar volgende ronde.", attempt + 1)
+    # Lege output en er is een eerdere versie: behoud die (beter dan een lege
+    # placeholder). Voorkomt dat een deeltaak compleet leeg wordt als de builder in
+    # een latere ronde hapert op lange context (OpenModel geeft dan lege body).
+    if prior_draft and prior_draft.strip():
+        return prior_draft
     return "_(De builder leverde geen tekst op.)_"
 
 
@@ -453,6 +460,9 @@ async def _run_subtask(
                     st_id, i, draft, best_score if best_score >= 0 else 0,
                     fb, False, int((time.perf_counter() - started) * 1000),
                 )
+                # Schrijf de draft naar de DB zodat hij niet verloren gaat bij een
+                # criticus-faal (zonder dit blijft de deeltaak op 'queued' met lege output).
+                _update_subtask(st_id, iterations_run=i, best_score=max(best_score, 0), best_output=best_output)
                 event_bus.publish({
                     "type": "gauntlet_subtask_iteration", "run_id": run_id,
                     "subtask_id": st_id, "position": position, "role": role,
@@ -570,14 +580,32 @@ async def _run_gauntlet(
         else:
             final_status = "stopped"
 
-        _update_run(run_id, status=final_status, finished_at=_now())
+        # Schrijf de echte eindscore terug naar de run — anders blijft
+        # best_overall_score op -1 staan terwijl de deeltaken wél een score
+        # hebben, en liegt het dashboard (en de publish-gate) over de kwaliteit.
+        overall = _best_overall_score(run_id)
+        _update_run(run_id, status=final_status, finished_at=_now(),
+                     best_overall_score=overall)
+
+        # Auto-queue: een run die de benchmark haalt, gaat automatisch naar de
+        # publish-pijplijn als content_job (status pending_review — wacht op
+        # menselijke goedkeuring, NOOIT automatisch live). Zo wordt Iris' dagelijkse
+        # inzet daadwerkelijk reviewbare content i.p.v. een run die in het vacuüm
+        # verdwijnt. Bij elke fout loggen we en laten de run intact.
+        if overall >= threshold:
+            try:
+                _auto_queue_run(run_id, threshold)
+            except Exception as que:
+                logger.warning("Auto-queue van %s mislukte (run blijft intact): %s", run_id, que)
+
         event_bus.publish({
             "type": "gauntlet_done", "run_id": run_id, "status": final_status,
+            "best_overall_score": overall,
             "subtask_statuses": statuses,
             "message": "Menselijke eindjurat vereist: beoordeel het overgebleven resultaat "
                        "als laatste jury (POST /api/gauntlet/{id}/verdict).",
         })
-        logger.info("Gauntlet %s afgerond: status=%s", run_id, final_status)
+        logger.info("Gauntlet %s afgerond: status=%s, best_overall_score=%s", run_id, final_status, overall)
     except Exception as exc:  # noqa: BLE001
         _update_run(run_id, status="failed", finished_at=_now())
         event_bus.publish({"type": "gauntlet_error", "run_id": run_id, "error": str(exc)})
@@ -707,7 +735,9 @@ def _assemble_draft(run: Dict[str, Any]) -> str:
     return "\n\n".join(parts) if parts else (run.get("objective") or "")
 
 
-def publish_to_weareimpact(run_id: str, site_id: Optional[str] = None) -> Dict[str, Any]:
+def publish_to_weareimpact(run_id: str, site_id: Optional[str] = None,
+                          site_name: Optional[str] = None, title: Optional[str] = None,
+                          keyword: Optional[str] = None, slug: Optional[str] = None) -> Dict[str, Any]:
     """Publish-gate: zet een PASSED Gauntlet-run om in een content_job (pending_review).
 
     Blokkeert als de run niet (ten minste gedeeltelijk) de benchmark haalde:
@@ -739,35 +769,89 @@ def publish_to_weareimpact(run_id: str, site_id: Optional[str] = None) -> Dict[s
         )
 
     draft = _assemble_draft({**run, "subtasks": passed_subs})
-    if not site_id:
-        # Zoek de WeAreImpact-site_id uit de publish/projects-config.
-        site_id = _resolve_weareimpact_site_id()
 
-    title = (run.get("objective") or "Gauntlet-run")[:120]
+    # Site-resolutie: expliciete site_id wint; anders site_name → site_id;
+    # anders terugval op WeAreImpact (legacy). Zo stuurt de Orchestrator het
+    # juiste project mee zonder dat hij site_id's hoeft te kennen.
+    resolved_site_id = site_id
+    if not resolved_site_id and site_name:
+        resolved_site_id = _resolve_site_id_by_name(site_name)
+    if not resolved_site_id:
+        resolved_site_id = _resolve_weareimpact_site_id()
+
+    job_title = (title or run.get("objective") or "Gauntlet-run")[:120]
+    job_slug = slug or _slugify(job_title)
+    job_keyword = keyword or ""
+
+    # ── Content-type detectie ──────────────────────────────────────────────
+    objective_l = (run.get("objective") or "").lower()
+    benchmark_l = (run.get("benchmark") or "").lower()
+    is_outreach = any(k in objective_l or k in benchmark_l for k in
+                      ("linkedin", "outreach", "lead", "uitnodig", "benaderen", "acquisitie"))
+    # Hook/snippet-herkenning: een losse SEO-hook, titel of snippet is GEEN
+    # artikel en mag nooit als pagina op de site (zie content_pipeline
+    # is_non_page_content). Landt zo'n taak toch als 'blog', dan krijgt hij de
+    # "Publiceer"-knop en staat de ene zin live op de site.
+    is_hook = any(k in objective_l or k in benchmark_l for k in
+                  ("seo-hook", "seo hook", "1-zin", "1 zin", "snippet", "hook",
+                   "meta-description", "meta description", "titeltje", "kopje"))
+    content_type = ("linkedin_outreach" if is_outreach
+                    else "hook" if is_hook
+                    else "blog")
+    if is_outreach:
+        social_copy = _draft_to_social_copy(draft)
+        blog_html = ""
+    else:
+        social_copy = {}
+        blog_html = _md_to_html(draft)
     # Maak een content_job aan in de publish-pijplijn (status pending_review =
     # wacht op menselijke goedkeuring, NOOIT automatisch live).
     job_id = _create_content_job(
-        site_id=site_id,
-        title=title,
-        keyword="",
+        site_id=resolved_site_id,
+        title=job_title,
+        keyword=job_keyword,
         rationale=f"Gegenereerd via Gauntlet Loop (run {run_id}, status {status}). "
-                  f"Blinde criticus haalde benchmark >= {threshold}.",
-        blog_html=_md_to_html(draft),
+                  f"Blinde criticus haalde benchmark >= {threshold}. Type: {content_type}.",
+        blog_html=blog_html,
         seo_score=float(_best_overall_score(run_id)),
-        social_copy={},
+        social_copy=social_copy,
         image_bytes=None,
-        slug=_slugify(title),
+        slug=job_slug,
         status="pending_review",
-        qc_report={"source": "gauntlet", "run_id": run_id, "threshold": threshold},
+        qc_report={"source": "gauntlet", "run_id": run_id, "threshold": threshold,
+                   "content_type": content_type},
         dedupe=False,
+        content_type=content_type,
     )
     _update_run(run_id, published_job_id=job_id)
     event_bus.publish({
         "type": "gauntlet_published", "run_id": run_id, "job_id": job_id,
-        "site_id": site_id,
+        "site_id": resolved_site_id,
     })
-    logger.info("Gauntlet %s gepubliceerd naar content_job %s (site %s).", run_id, job_id, site_id)
-    return {"run_id": run_id, "job_id": job_id, "site_id": site_id, "status": "pending_review"}
+    logger.info("Gauntlet %s gepubliceerd naar content_job %s (site %s).", run_id, job_id, resolved_site_id)
+    return {"run_id": run_id, "job_id": job_id, "site_id": resolved_site_id, "status": "pending_review"}
+
+
+def _auto_queue_run(run_id: str, threshold: int) -> Optional[str]:
+    """Stuur een geslaagde run automatisch naar de publish-pijplijn.
+
+    Wordt aangeroepen bij run-afronding (overall >= threshold). Maakt een
+    content_job met status 'pending_review' — wacht op menselijke goedkeuring,
+    NOOIT automatisch live. Site-resolutie: project-naam uit de run objective
+    (formaat '[Agent] taak voor <project>') → anders WeAreImpact-legacy.
+    """
+    run = get_run(run_id)
+    if not run:
+        return None
+    objective = (run.get("objective") or "")
+    # Project-naam zit in de agent-deploy benchmark ("... voor project 'X'")
+    import re
+    m = re.search(r"project\s+['\"]([^'\"]+)['\"]", (run.get("benchmark") or ""), re.IGNORECASE)
+    project = m.group(1).strip() if m else None
+    site_id = _resolve_site_id_by_name(project) if project else None
+    out = publish_to_weareimpact(run_id, site_id=site_id, site_name=project)
+    logger.info("Auto-queue: run %s -> content_job %s (site %s)", run_id, out.get("job_id"), out.get("site_id"))
+    return out.get("job_id")
 
 
 def _resolve_weareimpact_site_id() -> str:
@@ -783,11 +867,49 @@ def _resolve_weareimpact_site_id() -> str:
     return "weareimpact"
 
 
+def _resolve_site_id_by_name(site_name: str) -> Optional[str]:
+    """Zoek een site_id op project-naam (case-insensitive, spaties/streepjes genegeerd)."""
+    norm = lambda x: "".join(c for c in str(x).lower() if c.isalnum())
+    target = norm(site_name)
+    try:
+        from ...domains.seo import sites as sites_service
+        sites = sites_service.list_sites() if hasattr(sites_service, "list_sites") else []
+        for s in sites:
+            if norm(s.get("name", "")) == target or norm(s.get("id", "")) == target:
+                return s.get("id")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Kon site niet resolveren op naam %r: %s", site_name, exc)
+    return None
+
+
 def _slugify(text: str) -> str:
     import re
     t = re.sub(r"[^a-z0-9\s-]", "", text.lower()).strip()
     t = re.sub(r"\s+", "-", t)
     return t[:80] or "gauntlet-run"
+
+
+def _draft_to_social_copy(draft: str) -> Dict[str, str]:
+    """Parse een Gauntlet-draft (## Rol + paragrafen) naar aparte LinkedIn-berichten.
+
+    Elke H2-blok wordt één bericht onder een sleutel als 'linkedin_<rol-slug>'.
+    Zo kan Iris/gebruiker ze per doelgroep plakken ipv als één site-pagina.
+    """
+    import re
+    blocks = re.split(r"\n## ", draft)
+    out: Dict[str, str] = {}
+    for i, block in enumerate(blocks):
+        if not block.strip():
+            continue
+        lines = block.split("\n", 1)
+        role = (lines[0].strip() or f"bericht {i}").lower()
+        role_key = re.sub(r"[^a-z0-9]+", "_", role).strip("_")[:40]
+        body = lines[1].strip() if len(lines) > 1 else ""
+        # HTML → platte tekst voor LinkedIn (geen tags in een DM).
+        text = re.sub(r"<[^>]+>", "", body).strip()
+        if text:
+            out[f"linkedin_{role_key}"] = text
+    return out or {"linkedin_bericht": re.sub(r"<[^>]+>", "", draft).strip()}
 
 
 def _md_to_html(md: str) -> str:

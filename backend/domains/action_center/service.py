@@ -191,11 +191,15 @@ def build_inbox() -> Dict[str, Any]:
         # de content-verbeteraar (scheduler) ze oppakt i.p.v. de mens.
         from ...shared.config import CONTENT_MIN_SCORE
         for j in conn.execute(
-            "SELECT j.id, j.title, j.seo_score, j.created_at, s.name AS site "
+            "SELECT j.id, j.title, j.seo_score, j.created_at, s.name AS site, "
+            "COALESCE(j.content_type,'blog') AS content_type "
             "FROM content_jobs j LEFT JOIN sites s ON s.id = j.site_id "
             "WHERE j.status='pending_review' ORDER BY j.created_at DESC"
         ):
             score = int(j["seo_score"] or 0)
+            ct = (j["content_type"] or "blog").strip().lower()
+            is_outreach = ct == "linkedin_outreach"
+            is_hook = ct in ("hook", "snippet", "social_snippet")
             if score < CONTENT_MIN_SCORE:
                 # Inconsistent: onder grens maar wél in de goedkeuringsqueue.
                 # Niet aan Vincent tonen — de agent lost het op (zie
@@ -212,6 +216,39 @@ def build_inbox() -> Dict[str, Any]:
                         j["id"], j["title"], score, CONTENT_MIN_SCORE,
                     )
                 continue
+            # Eerlijke subtekst + knoppen per content-type. Een hook/snippet is
+            # GEEN pagina: de "Publiceer"-knop verdwijnt en maakt plaats voor
+            # "Gebruik in artikel" (open de Wachtrij) + "Wijs af" — zo kan een
+            # losse SEO-hook nooit per ongeluk als live pagina op de site.
+            if is_outreach:
+                summary = (
+                    "LinkedIn-outreach klaar (SEO {seo}/100) — plak de berichten per "
+                    "doelgroep op LinkedIn. Niet op de site publiceren."
+                ).format(seo=j["seo_score"])
+                actions = [
+                    {"label": "Bekijk in Wachtrij", "type": "open_tab", "tab": "Wachtrij"},
+                    {"label": "Klaar voor LinkedIn", "type": "content_ready_linkedin", "id": j["id"]},
+                    {"label": "Wijs af", "type": "content_reject", "id": j["id"], "danger": True},
+                ]
+            elif is_hook:
+                summary = (
+                    "SEO-hook/snippet klaar (SEO {seo}/100) — géén artikel, wordt "
+                    "NIET als pagina gepubliceerd. Gebruik het in een artikel of wijs af."
+                ).format(seo=j["seo_score"])
+                actions = [
+                    {"label": "Bekijk in Wachtrij", "type": "open_tab", "tab": "Wachtrij"},
+                    {"label": "Gebruik in artikel", "type": "open_tab", "tab": "Wachtrij"},
+                    {"label": "Wijs af", "type": "content_reject", "id": j["id"], "danger": True},
+                ]
+            else:  # blog / article — echte pagina's
+                summary = (
+                    "Artikel klaar (SEO {seo}/100) — goedkeuren publiceert echt op de site."
+                ).format(seo=j["seo_score"])
+                actions = [
+                    {"label": "Bekijk in Wachtrij", "type": "open_tab", "tab": "Wachtrij"},
+                    {"label": "Publiceer", "type": "content_approve", "id": j["id"]},
+                    {"label": "Wijs af", "type": "content_reject", "id": j["id"], "danger": True},
+                ]
             items.append({
                 "kind": "content_review",
                 "dismiss_kind": "content",
@@ -219,12 +256,8 @@ def build_inbox() -> Dict[str, Any]:
                 "title": j["title"],
                 "project": j["site"] or "?",
                 "created_at": j["created_at"],
-                "summary": f"Artikel klaar (SEO {j['seo_score']}/100) — goedkeuren publiceert echt.",
-                "actions": [
-                    {"label": "Bekijk in Wachtrij", "type": "open_tab", "tab": "Wachtrij"},
-                    {"label": "Publiceer", "type": "content_approve", "id": j["id"]},
-                    {"label": "Wijs af", "type": "content_reject", "id": j["id"], "danger": True},
-                ],
+                "summary": summary,
+                "actions": actions,
             })
 
         # ── 2a. Content onder de kwaliteitsgrens: verbeteren of afwijzen ─

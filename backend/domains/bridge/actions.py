@@ -348,6 +348,28 @@ async def _cmd_ritual_goal_progress(payload: Dict) -> Tuple[bool, str]:
     return True, f"Voortgang bijgewerkt: '{result['title']}' → {result['progress']}%"
 
 
+async def _cmd_orchestrator_run(payload: Dict) -> Tuple[bool, str]:
+    """Zet één 'stuck'/'rejected' content-stuk op de zware Gauntlet Loop.
+
+    Bewust géén site/count-parameter: de Orchestrator kiest zelf het eerste
+    stuk uit `orchestrator.service._find_under_threshold_jobs()` (dezelfde
+    lijst die de telefoon ziet via de context-snapshot). Kan enkele minuten
+    duren — de bridge-sync-cyclus wacht dat gewoon af, net als content_run.
+    Staat hier op de commando-whitelist zodat Vincent 'm kan aftikken, maar
+    NIET in remote/api/iris.js' COMMANDS: cloud-Iris mag 'm niet zelf starten
+    (zie orchestrator/service.py — dit is een kostbare, oordeel-vereisende
+    escalatie, geen goedkope routine-actie zoals content_run/seo_refresh).
+    """
+    from ..orchestrator import service as orchestrator_service
+    result = await orchestrator_service.process_one_under_threshold()
+    if result.get("processed"):
+        return True, f"Herschreven en teruggezet in de Wachtrij (job {result.get('published_job_id')})"
+    reason = result.get("reason") or "niets verwerkt"
+    if reason == "geen stukken onder de grens":
+        return True, "Niets vastgelopen — geen stuck/rejected stukken onder de grens"
+    return False, reason
+
+
 async def _cmd_digest(payload: Dict) -> Tuple[bool, str]:
     from ..action_center import digest
     await digest.run_daily_digest()
@@ -577,6 +599,7 @@ _COMMANDS = {
     "iris_briefing": _cmd_iris_briefing,
     "context_refresh": _cmd_context_refresh,
     "digest": _cmd_digest,
+    "orchestrator_run": _cmd_orchestrator_run,
     "calendar_add": _cmd_calendar_add,
     "ritual_morning_save": _cmd_ritual_morning_save,
     "ritual_evening_save": _cmd_ritual_evening_save,

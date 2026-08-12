@@ -1331,7 +1331,8 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
                 slug: str, status: str = "pending_review",
                 qc_report: Optional[Dict] = None, case_study_id: str = "",
                 infographic_bytes: Optional[bytes] = None,
-                dedupe: bool = True) -> str:
+                dedupe: bool = True,
+                content_type: str = "blog") -> str:
     """status 'pending_review' = klaar om goed te keuren (score ≥ gate);
     'needs_work' = onder de kwaliteitsgate — eerst verbeteren of afwijzen.
 
@@ -1395,11 +1396,11 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
                 conn.execute(
                     "UPDATE content_jobs SET title=?, keyword=?, rationale=?, "
                     "status=?, blog_html=?, seo_score=?, social_copy=?, slug=?, "
-                    "qc_report=?, case_study_id=? WHERE id=?",
+                    "qc_report=?, case_study_id=?, content_type=? WHERE id=?",
                     (title, keyword, rationale, new_status, blog_html, seo_score,
                      json.dumps(social_copy), slug,
                      json.dumps(qc_report or {}, ensure_ascii=False),
-                     case_study_id, existing["id"]),
+                     case_study_id, content_type, existing["id"]),
                 )
                 demand_quality.invalidate(site_id)
                 return existing["id"]
@@ -1411,12 +1412,12 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
             """INSERT INTO content_jobs
                (id, site_id, title, keyword, rationale, status, blog_html, seo_score,
                 social_copy, image_path, slug, publish_result, qc_report, case_study_id,
-                infographic_path, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?)""",
+                infographic_path, content_type, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, ?)""",
             (job_id, site_id, title, keyword, rationale, status, blog_html, seo_score,
              json.dumps(social_copy), image_path, slug,
              json.dumps(qc_report or {}, ensure_ascii=False), case_study_id,
-             infographic_path, _now()),
+             infographic_path, content_type, _now()),
         )
     # De kwaliteitsgate van de Kansen-lijst vergelijkt tegen content_jobs; een
     # verse job moet meteen meetellen, anders biedt het paneel het zoekwoord dat
@@ -2066,6 +2067,50 @@ def is_internal_document(title: str, html_body: str = "") -> Optional[str]:
     return None
 
 
+# ── Content-type taxonomy: wat mag er als pagina live, wat niet ──────────────
+# De publish-gate kende voorheen alleen `blog` en `linkedin_outreach`. Alles
+# wat niet `linkedin_outreach` was, kreeg de "Publiceer"-knop en werd als pagina
+# op de site gezet — dus ook een losse SEO-hook of snippet. Op 12-08-2026 stond
+# een job "[SEO Copywriter] Schrijf een 1-zin SEO-hook over AI voor welzijn" als
+# `blog` in de wachtrij met een "Publiceer"-knop: één klik en die ene zin stond
+# als live pagina op weareimpact.nl. Publiceerbaarheid is een aparte, harde vraag
+# (zie is_internal_document) en hoort per content-type beslist te worden.
+#
+#   Pagina-types  (mogen als echte pagina live):  blog, article
+#   Non-pagina's  (nooit als site-pagina publiceren):  linkedin_outreach,
+#                  hook, snippet, social_snippet
+_PUBLISHABLE_PAGE_TYPES = {"blog", "article"}
+_NON_PAGE_TYPES = {
+    "linkedin_outreach", "hook", "snippet", "social_snippet",
+}
+
+
+def is_non_page_content(job: dict) -> Optional[str]:
+    """Mag deze job als pagina op de website? Retourneert een reden als NEE,
+    anders None.
+
+    Een losse hook/snippet is géén pagina: publiceer hem niet, maar bied hem aan
+    als herbruikbaar element (voor in een artikel, als meta-description, etc.).
+    Onbekende types worden conservatief als non-pagina behandeld — liever een
+    extra beoordelings-stap van Vincent dan een ongewenste live pagina.
+    """
+    ct = (job.get("content_type") or "blog").strip().lower()
+    if ct in _PUBLISHABLE_PAGE_TYPES:
+        return None
+    if ct in _NON_PAGE_TYPES:
+        return (f"content_type '{ct}' is geen pagina-type — publiceer niet als "
+                f"site-pagina. Gebruik het als herbruikbaar element (hook/snippet) "
+                f"binnen een echt artikel, of wijs het af.")
+    # Onbekend / legacy 'blog'-rij zónder body => bijna zeker geen artikel.
+    html = (job.get("blog_html") or "").strip()
+    if not html:
+        return (f"content_type '{ct}' heeft geen artikel-body — waarschijnlijk "
+                f"geen publiceerbaar artikel. Controleer het type of wijs af.")
+    return (f"content_type '{ct}' is geen bekend pagina-type — publiceer niet "
+            f"zonder expliciete beoordeling. Wijs af of herclassificeer naar "
+            f"'blog'/'article'.")
+
+
 async def _verify_live(url: str) -> Optional[str]:
     """Haal de zojuist gepubliceerde URL op. Retourneert een foutreden als de
     pagina niet echt live staat, anders None.
@@ -2424,6 +2469,30 @@ def publish_failure_reason(result: Optional[Dict]) -> str:
 
 
 
+def mark_ready_for_linkedin(job_id: str) -> None:
+    """Markeer een LinkedIn-outreach job als 'klaar voor LinkedIn'.
+
+    Dit is de expliciete menselijke bevestiging (via de 'Klaar voor LinkedIn'-knop)
+    dat de berichten op LinkedIn mogen worden geplakt. Er gebeurt GEEN site-publish —
+    de job verlaat de review-wachtrij en wacht op de gebruiker op LinkedIn.
+    """
+    from ...shared.database import get_conn
+    job = get_job(job_id)
+    if not job:
+        raise ValueError("Content-job niet gevonden.")
+    if (job.get("content_type") or "blog") != "linkedin_outreach":
+        raise ValueError(
+            f"Job {job_id} is type '{job.get('content_type')}', geen LinkedIn-outreach. "
+            "Deze actie is alleen voor outreach-berichten."
+        )
+    if not (job.get("social_copy") or {}):
+        raise ValueError("Job heeft geen social_copy-berichten om naar LinkedIn te plakken.")
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE content_jobs SET status='ready_for_linkedin' WHERE id=?", (job_id,)
+        )
+
+
 async def approve_and_publish(job_id: str,
                               social_channels: Optional[List[str]] = None) -> Dict:
     """Publiceer naar de website van de site (Netlify óf de per-project
@@ -2468,6 +2537,40 @@ async def approve_and_publish(job_id: str,
         raise ValueError(
             f"'{job['title']}' is niet publiceerbaar: {intern}. "
             "Wijs het af of herschrijf het als artikel voor bezoekers."
+        )
+
+    # Content-type gate: LinkedIn-outreach is GEEN site-pagina. Het hoort op
+    # LinkedIn (per bericht plakken), nooit als pagina op weareimpact.nl. Bij een
+    # poging tot "publiceer" zetten we de job op 'ready_for_linkedin' en weigeren
+    # de Netlify-deploy — zo kan niemand per ongeluk outreach als pagina live zetten.
+    if (job.get("content_type") or "blog") == "linkedin_outreach":
+        from ...shared.database import get_conn
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE content_jobs SET status='ready_for_linkedin' WHERE id=?",
+                (job_id,),
+            )
+        return {
+            "job_id": job_id,
+            "status": "ready_for_linkedin",
+            "published": False,
+            "message": (
+                "Dit is LinkedIn-outreach, geen site-pagina. Niet gepubliceerd naar de "
+                "website. De berichten staan klaar in 'social_copy' om per doelgroep op "
+                "LinkedIn te plakken (zie de 'Kopieer naar LinkedIn'-knop)."
+            ),
+        }
+
+    # Non-pagina-gate: een hook/snippet/linkedin_outreach mag NOOIT als pagina
+    # op de site. Weiger de Netlify-deploy hard — zelfs met een menselijke
+    # "Publiceer"-klik (de knop wordt voor deze types in de UI verborgen, maar
+    # een directe API-call moet hier ook falen). Outreach valt hier niet meer
+    # onder omdat de linkedin-branch hierboven die al afvangt; deze gate vangt
+    # de overige non-pagina-types (hook/snippet/...).
+    non_page = is_non_page_content(job)
+    if non_page:
+        raise ValueError(
+            f"Publiceren geweigerd: {non_page}"
         )
 
     site = sites_service.get_site(job["site_id"])

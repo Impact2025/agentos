@@ -57,6 +57,10 @@ const COMMANDS = {
   iris_briefing: { label: 'Iris opnieuw laten analyseren', fields: [] },
   context_refresh: { label: 'Cijfers verversen', fields: ['sections'] },
   digest: { label: 'Ochtendrapport draaien', fields: [] },
+  // Zware Gauntlet-escalatie voor 'stuck'/'rejected' content — bewust NIET
+  // in remote/api/iris.js' COMMANDS (cloud-Iris' start_werk-whitelist), dus
+  // alleen bereikbaar via een tik op de telefoon, nooit via de chat.
+  orchestrator_run: { label: 'Vastgelopen stuk door de Gauntlet jagen', fields: [] },
   // Agenda-opdracht: vrije tekst/spraak -> afspraak-voorstel (review-gate).
   // 'text' bevat de volledige zin; de backend parsed datum/tijd/wie.
   // keyField=text zodat twee verschillende opdrachten niet op dezelfde
