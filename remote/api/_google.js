@@ -27,7 +27,22 @@ const FETCH_TIMEOUT_MS = 10000;
 
 // ── Tenant-config ────────────────────────────────────────────────────────
 
+// ── Per-tenant Google-config ──────────────────────────────────────────────
+// Twee geldige bronnen, in prioriteitsvolgorde:
+//   1. De per-klant gekoppelde OAuth-account uit `oauth_accounts` (de
+//      onboarding-wizard schrijft daarheen via de Bridge-relay). Dit is de
+//      eigen Google-agenda/-GSC van déze klant — volledig gescheiden van
+//      andere tenants. We regelen hier zelf het access-token via de
+//      refresh-token (Google OAuth), en cachen dat per token.
+//   2. De (legacy) service-account-kolommen in `tenants` (calendar_client_email
+//      + calendar_private_key_enc), gevuld door de lokale AgentOS-push.
+// Een lege return = "niet geconfigureerd" → de aanroeper valt terug op cache.
 export async function getGoogleTenantConfig(tenant) {
+  // 1. Eigen OAuth-account van deze tenant (de echte wereldklasse-route).
+  const oa = await getTenantOAuthConfig(tenant);
+  if (oa) return oa;
+
+  // 2. Terugval op de service-account-kolommen (bestaand gedrag).
   const rows = await sql`
     SELECT calendar_client_email, calendar_private_key_enc, calendar_calendar_id,
            calendar_busy_ids, calendar_sub, gsc_sites
@@ -48,7 +63,75 @@ export async function getGoogleTenantConfig(tenant) {
     busyIds: String(row.calendar_busy_ids || '').split(',').map((s) => s.trim()).filter(Boolean),
     sub: row.calendar_sub || undefined,
     gscSites: Array.isArray(row.gsc_sites) ? row.gsc_sites : [],
+    viaOAuth: false,
   };
+}
+
+// Haalt de per-tenant OAuth-credentials uit `oauth_accounts` en regelt een
+// vers access-token via de refresh-token (Google OAuth2 token endpoint).
+// Retourneert dezelfde cfg-vorm als de service-account-route, plus een
+// `accessToken` dat direct aan de Calendar/GSC API meegegeven kan worden.
+async function getTenantOAuthConfig(tenant) {
+  let rows;
+  try {
+    rows = await sql`
+      SELECT credentials_json, account_email
+      FROM oauth_accounts
+      WHERE site_id = ${tenant} AND provider = 'google'
+      ORDER BY updated_at DESC LIMIT 1`;
+  } catch (e) {
+    // Tabel bestaat misschien niet in oudere installs — silenced terugval.
+    return null;
+  }
+  if (!rows.length) return null;
+  const creds = (() => {
+    try { return typeof rows[0].credentials_json === 'string'
+      ? JSON.parse(rows[0].credentials_json) : rows[0].credentials_json; }
+    catch { return null; }
+  })();
+  if (!creds || !creds.refresh_token) return null;
+  const accessToken = await refreshAccessToken(creds);
+  if (!accessToken) return null;
+  return {
+    clientEmail: rows[0].account_email || creds.account_email || '',
+    accessToken,
+    calendarId: 'primary',
+    busyIds: [],
+    sub: undefined,
+    gscSites: [],
+    viaOAuth: true,
+  };
+}
+
+// Ververs een Google-OAuth access-token met de refresh-token. Cached kort.
+async function refreshAccessToken(creds) {
+  const cacheKey = `oauth:${creds.refresh_token.slice(0, 12)}`;
+  const hit = tokenCache.get(cacheKey);
+  if (hit && hit.exp > Date.now() + 60000) return hit.token;
+  try {
+    const resp = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: process.env.GOOGLE_OAUTH_CLIENT_ID || '',
+        client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET || '',
+        refresh_token: creds.refresh_token,
+        grant_type: 'refresh_token',
+      }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.access_token) {
+      console.error('google oauth refresh mislukt', creds.account_email || '', data.error_description || data.error || resp.statusText);
+      return null;
+    }
+    const ttl = (data.expires_in || 3600) * 1000;
+    tokenCache.set(cacheKey, { token: data.access_token, exp: Date.now() + ttl - 60000 });
+    return data.access_token;
+  } catch (e) {
+    console.error('google oauth refresh exception', e);
+    return null;
+  }
 }
 
 // ── Token-cache (per warme lambda-instance; Google-tokens gelden 1 uur) ───
@@ -56,6 +139,8 @@ export async function getGoogleTenantConfig(tenant) {
 const tokenCache = new Map();
 
 async function getToken(cfg, scope) {
+  // OAuth-route: we hebben al een vers access-token, gebruik dat direct.
+  if (cfg.viaOAuth && cfg.accessToken) return cfg.accessToken;
   const key = `${cfg.clientEmail}:${scope}:${cfg.sub || ''}`;
   const hit = tokenCache.get(key);
   if (hit && hit.exp > Date.now() + 60000) return hit.token;

@@ -203,3 +203,21 @@ CREATE TABLE IF NOT EXISTS oauth_state (
   provider   TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Iris-onboarding OAuth-accounts (per klant gekoppeld via de wizard in
+-- remote/api/oauth.js, weggeschreven door de backend-relay
+-- backend/domains/onboarding/resolve.py:store_relayed_token). Eén rij per
+-- (site_id, provider) — de per-klant Google/Microsoft-credentials die de
+-- cloud-agenda-lezer en de GSC-sync gebruiken. Volledig gescheiden van de
+-- service-account-kolommen in `tenants`.
+CREATE TABLE IF NOT EXISTS oauth_accounts (
+  id               TEXT PRIMARY KEY,
+  site_id          TEXT NOT NULL,
+  provider         TEXT NOT NULL,
+  account_email    TEXT,
+  credentials_json TEXT NOT NULL,
+  scopes           TEXT DEFAULT '',
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (site_id, provider)
+);

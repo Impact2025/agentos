@@ -218,6 +218,24 @@ async function context(res, tenant) {
   const rows = await sql`
     SELECT payload, generated_at FROM context_snapshot WHERE tenant = ${tenant}`;
   const snap = rows[0] || { payload: null, generated_at: null };
+  // Per-tenant identiteit (naam + Google-status) uit de laatste push — de
+  // enige correcte bron voor de UI-naam (nooit hard-coded "Vincent").
+  let tenantInfo = null;
+  try {
+    const trows = await sql`SELECT name FROM tenants WHERE slug = ${tenant}`;
+    if (trows[0]) {
+      const g = await googleStatusRow(tenant);
+      tenantInfo = {
+        slug: tenant,
+        name: trows[0].name,
+        google_configured: !!(g && g.configured),
+        calendar_configured: !!(g && g.configured),
+        google_account: g ? g.account_email : null,
+      };
+    }
+  } catch (e) {
+    console.error('tenant-info ophalen mislukt', tenant, e);
+  }
   // Agenda en GSC-trend proberen we altijd live te verversen (Google-
   // service-account, geen AgentOS nodig) — de rest van de snapshot blijft
   // uit de cache. Nooit laten falen op de rest van het antwoord: één tenant
@@ -230,7 +248,20 @@ async function context(res, tenant) {
       snap.live = { agenda: false, seo: false };
     }
   }
-  return json(res, 200, snap);
+  const out = { payload: snap.payload, generated_at: snap.generated_at, live: snap.live };
+  if (tenantInfo) out.tenant = tenantInfo;
+  return json(res, 200, out);
+}
+
+// Interne helper: leest de Google-configuratiestatus voor een tenant (zowel
+// de service-account-kolommen als de per-tenant OAuth-koppeling).
+async function googleStatusRow(tenant) {
+  const rows = await sql`
+    SELECT (calendar_client_email IS NOT NULL AND calendar_private_key_enc IS NOT NULL) AS configured,
+           calendar_calendar_id,
+           (SELECT account_email FROM oauth_accounts WHERE site_id = ${tenant} AND provider = 'google' ORDER BY updated_at DESC LIMIT 1) AS account_email
+    FROM tenants WHERE slug = ${tenant}`;
+  return rows[0] || null;
 }
 
 async function command(req, res, tenant) {

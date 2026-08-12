@@ -1535,16 +1535,43 @@
     return sites.find((s) => s.site_id === siteId) || null;
   }
 
+  // Voor een tenant-eigen klant (zoals Nicole) die geen SEO-`site` heeft in
+  // de backend: behandel de tenant zelf als de te onboarden "site", zodat de
+  // OAuth-koppeling op site_id=<tenant> terechtkomt en de cloud-lezer die
+  // per-tenant credentials ook weer uitleest. Valt terug op de echte sites.
+  function tenantSite(ctx) {
+    const sites = (ctx && ctx.onboarding && ctx.onboarding.sites) || [];
+    if (sites.length) return null; // echte sites hebben voorrang
+    const name = (ctx && ctx.tenant && ctx.tenant.name) || window.__tenantName || 'Klant';
+    const slug = (ctx && ctx.tenant && ctx.tenant.slug) || '';
+    if (!slug) return null;
+    return {
+      site_id: slug,
+      project: name,
+      onboarded_at: null,
+      steps: {
+        '1_bedrijfsdoel': { done: false },
+        '2_schrijfstijl': { done: false },
+        '4_autonomie': { done: false, current: null, presets: {} },
+        '3_kanalen': { google: null, google_configured: false,
+                       microsoft: null, microsoft_configured: false },
+      },
+    };
+  }
+
   async function renderOnboardingList() {
     const host = $('onboarding-list');
     if (!host) return;
     const ctx = await ensureContext();
     const sites = (ctx && ctx.onboarding && ctx.onboarding.sites) || [];
-    if (!sites.length) {
+    // Een tenant zonder SEO-sites krijgt zijn eigen onboarding-rij.
+    const ts = (!sites.length) ? tenantSite(ctx) : null;
+    const all = ts ? [ts] : sites;
+    if (!all.length) {
       host.innerHTML = '<p class="font-body-md text-body-md text-on-surface-variant">Nog geen klanten.</p>';
       return;
     }
-    host.innerHTML = sites.map((s) => {
+    host.innerHTML = all.map((s) => {
       const done = [s.steps['1_bedrijfsdoel'].done, s.steps['2_schrijfstijl'].done, s.steps['4_autonomie'].done]
         .filter(Boolean).length;
       const label = s.onboarded_at ? 'Onboard' : `${done}/3 stappen`;
@@ -1580,7 +1607,13 @@
     const host = $('onboarding-wizard');
     host.innerHTML = skeletons(1);
     const ctx = await ensureContext(true);
-    const site = onboardingSite(ctx, siteId);
+    let site = onboardingSite(ctx, siteId);
+    if (!site) {
+      // Geen echte SEO-site gevonden — probeer de virtuele tenant-site
+      // (bijv. Nicole, die geen eigen site-rij heeft maar wel een tenant).
+      const ts = tenantSite(ctx);
+      if (ts && ts.site_id === siteId) site = ts;
+    }
     if (!site) {
       host.innerHTML = `<div class="glass-panel rounded-xl p-6"><p class="font-body-md text-body-md text-on-surface-variant">
         Deze klant is nog niet gesynchroniseerd — probeer over een paar minuten opnieuw.</p></div>`;
@@ -2412,9 +2445,10 @@
     if (chatHistory.some((m) => m.hi)) return;
     chatHistory.push({ role: 'user', content: 'Hi 👋' });
     const open = items.filter((it) => !it.decision_status || it.decision_status === 'failed').length;
+    const who = window.__tenantName || 'Vincent';
     const line = open
-      ? `Hoi Vincent 👋 Fijn dat je er bent. ${open} besluit(en) wachten, ik hou ze voor je vast — zeg het als ik er eentje voor je moet uitvoeren.`
-      : `Hoi Vincent 👋 Fijn dat je er bent. Niets wacht op je — rustig ritje vandaag.`;
+      ? `Hoi ${who} 👋 Fijn dat je er bent. ${open} besluit(en) wachten, ik hou ze voor je vast — zeg het als ik er eentje voor je moet uitvoeren.`
+      : `Hoi ${who} 👋 Fijn dat je er bent. Niets wacht op je — rustig ritje vandaag.`;
     chatHistory.push({ role: 'assistant', content: line, hi: true });
     renderChat();
   }
@@ -2423,9 +2457,11 @@
     const el = $('today-body');
     if (token === loadToken && !contextCache) el.innerHTML = skeletons(3);
     // Topbar toont de live begroeting ("Goedemiddag"); de grote body-titel
-    // wordt de naam zodat de begroeting niet dubbel staat.
+    // wordt de tenant-naam (Nicole, niet hard-coded "Vincent") zodat de
+    // begroeting niet dubbel staat. De naam komt uit de context-response.
     const g = greeting();
-    $('today-greeting').textContent = 'Vincent';
+    const tenantName = (contextCache && contextCache.tenant && contextCache.tenant.name) || window.__tenantName || 'Vincent';
+    $('today-greeting').textContent = tenantName;
     const tbGreet = $('topbar-greeting');
     if (tbGreet) tbGreet.textContent = g;
     try {
@@ -2442,6 +2478,10 @@
         return;
       }
       contextCache = ctx;
+      // Zet de tenant-naam globaal zodat latere begroetingen ("Hoi <naam>")
+      // de juiste klant tonen i.p.v. het hard-coded "Vincent".
+      const tName = (data.tenant && data.tenant.name) || (ctx && ctx.tenant && ctx.tenant.name);
+      if (tName) window.__tenantName = tName;
       const stamp = data.generated_at ? `Stand van ${fmtDate(data.generated_at)}` : '';
       $('today-stamp').textContent = stamp;
       // Iris begroet zodra er context is (ze "ziet" je dag).
