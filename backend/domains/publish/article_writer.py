@@ -618,11 +618,11 @@ async def _link_pass(site: Dict, keyword: str, html_body: str,
         raw = await _llm(system, prompt, max_tokens=900)
         picks = json.loads(_extract_json(raw))
     except Exception as e:
-        logger.warning("[article-writer] Linkstap mislukt (%s) — artikel blijft zonder links", e)
-        report["error"] = str(e)[:150]
-        return html_body, report
+        logger.warning("[article-writer] Linkstap mislukt (%s) — deterministische fallback", e)
+        picks = {}
 
     candidate_urls = {c["url"] for c in candidates}
+    # LLM-gestuurde picks (indien bruikbaar).
     for item in (picks.get("internal") or [])[:internal_budget]:
         url = (item.get("url") or "").strip()
         if url not in candidate_urls:  # gehallucineerde interne URL → strippen
@@ -637,7 +637,114 @@ async def _link_pass(site: Dict, keyword: str, html_body: str,
             continue
         html_body, ok = insert_link(html_body, item.get("anchor", ""), url)
         report["external_added"] += int(ok)
+
+    # ── Deterministische fallback (geen stille 0-links) ──────────────────────
+    # Als de LLM-stap faalde of te weinig echte links plaatste, koppelen we
+    # kandidaat-titels (en hun kernwoorden) direct aan de lopende tekst. Zo
+    # garanderen we dat élk artikel ≥ MIN_INTERNE_LINKS echte, werkende
+    # interne links krijgt — zonder dat de schrijver ze hoeft te verzinnen.
+    _MIN_INTERNE_LINKS = 3
+    if report["internal_added"] < _MIN_INTERNE_LINKS and candidates:
+        needed = _MIN_INTERNE_LINKS - report["internal_added"]
+        added = _insert_links_deterministic(
+            html_body, candidates, own_host, max_links=needed,
+            already=int(report["internal_added"]),
+        )
+        if added:
+            html_body, report["internal_added"] = added
+            logger.info("[article-writer] Link-fallback: +%d interne links",
+                        report["internal_added"] - (report["internal_added"] - added[1]))
     return html_body, report
+
+
+def _insert_links_deterministic(html_body: str, candidates: List[Dict[str, str]],
+                                own_host: str, max_links: int = 3,
+                                already: int = 0) -> Optional[Tuple[str, int]]:
+    """Koppel kandidaat-titels/zoekwoorden aan letterlijke fragmenten in de
+    lopende tekst en verlink ze. Retourneert (nieuwe_html, totaal_aantal) of
+    None als er niets te doen was. Idempotent: telt `already` mee.
+
+    Robuust tegen woordvolgorde-verschillen: per kandidaat zoeken we het
+    langste deel van de titel (of slug-frase) dat letterlijk in de body
+    voorkomt, en verlinken dát — niet de hele titel (die vaak net anders
+    loopt dan de lopende tekst)."""
+    if not candidates or max_links <= 0:
+        return None
+    # Verzamel per kandidaat een lijst van phrase-opties (titel + slug-frase).
+    phrases_per_url: Dict[str, List[str]] = {}
+    for c in candidates:
+        url = c["url"].rstrip("/")
+        # safe-guard: absolute url met vreemde host overslaan
+        if urlparse(url).scheme and urlparse(url).netloc:
+            if urlparse(url).netloc.lower().removeprefix("www.") != own_host:
+                continue
+        opts = []
+        title = (c.get("title") or "").strip()
+        if title:
+            opts.append(title)
+        slug = url.rstrip("/").rsplit("/", 1)[-1].replace("-", " ")
+        if len(slug) > 6:
+            opts.append(slug)
+        if opts:
+            phrases_per_url.setdefault(url, []).extend(opts)
+    if not phrases_per_url:
+        return None
+    # Voor elke url: het langste fragment dat echt in de body staat.
+    anchors: List[Tuple[str, str]] = []
+    body_low = _plain_text(html_body).lower()
+    for url, opts in phrases_per_url.items():
+        best = _best_anchor(opts, body_low)
+        if best:
+            anchors.append((best, url))
+    if not anchors:
+        return None
+    # Sorteer op lengte (langste anchor eerst → minst ambigu) en dedupe op url.
+    seen_urls = set()
+    ranked = []
+    for text, url in sorted(anchors, key=lambda x: len(x[0]), reverse=True):
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        ranked.append((text, url))
+    total = already
+    added_any = False
+    for anchor, url in ranked:
+        if total >= already + max_links:
+            break
+        html_body, ok = insert_link(html_body, anchor, url)
+        if ok:
+            total += 1
+            added_any = True
+    return (html_body, total) if added_any else None
+
+
+def _best_anchor(phrases: List[str], body_low: str) -> Optional[str]:
+    """Het langste deel (≥3 woorden) van één van `phrases` dat letterlijk in
+    `body_low` voorkomt. Enkele stopwoord-fragmenten ('met een', 'voor de')
+    leveren geen bruikbare ankertekst — bij <3 betekenisvolle woorden None."""
+    best: Optional[str] = None
+    for phrase in phrases:
+        words = phrase.split()
+        # Zoek van lang naar kort (min 3 woorden) naar een substring-match.
+        for n in range(min(len(words), 8), 2, -1):
+            for i in range(len(words) - n + 1):
+                sub = " ".join(words[i:i + n])
+                if len(sub) > 6 and sub.lower() in body_low:
+                    if best is None or len(sub) > len(best):
+                        best = sub
+    # Minimaliseer stopwoord-aanvang: als het fragment met een stopwoord
+    # begint, probeer het één woord op te schuiven (blijft in body_low?).
+    if best:
+        stop = ("de", "het", "een", "met", "voor", "van", "en", "op", "bij", "als")
+        w = best.split()
+        while len(w) > 3 and w[0].lower() in stop:
+            shifted = " ".join(w[1:])
+            if shifted.lower() in body_low:
+                best = shifted
+                w = w[1:]
+            else:
+                break
+    return best
 
 
 # ── Fase 5: Deterministische QC ──────────────────────────────────────────────

@@ -861,6 +861,26 @@ async def review_and_improve(site: Dict, keyword: str, html_body: str,
                 f"gepubliceerd artikel op deze site ('{uniq['best_match']}'). Herschrijf de "
                 "invalshoek, voorbeelden en structuur zodat het inhoudelijk onderscheidend is."
             ).strip()
+        # ── Wereldklasse-eis: FAQ-sectie verplicht ──────────────────────────
+        # Zonder een zichtbare FAQ (H2 'Veelgestelde vragen' + <h3>-vragen)
+        # mist het artikel de FAQPage-rich-result én de AI-Overview-citeerbare
+        # direct-antwoorden. De `_ensure_faq`-stap in de schrijver faalt echter
+        # stil, waardoor artikelen op ~77 blijven steken. We dwingen hier af:
+        # géén FAQ → score onder de grens, zodat de verbeter-loop het opnieuw
+        # (met H2-FAQ-instructie) probeert en anders naar needs_work gaat.
+        from ..seo.enhancements import extract_faq
+        faq = extract_faq(body)
+        if not faq:
+            r["score"] = min(r["score"], goal - 1)
+            r["feedback"] = (
+                (r.get("feedback") or "").strip()
+                + "\n\nFAQ ONTBREEKT: voeg een zichtbare 'Veelgestelde vragen'-sectie toe "
+                "(<h2>Veelgestelde vragen</h2> met 3-5 <h3>-vragen en een kort antwoord per "
+                "vraag). Deze sectie is verplicht voor de FAQPage-rich-result en AI Overviews."
+            ).strip()
+            r["faq_missing"] = True
+        else:
+            r["faq_missing"] = False
         return r
 
     review = await _reviewed(html_body)
@@ -1456,6 +1476,29 @@ def _update_job(job_id: str, **fields) -> None:
         conn.execute(f"UPDATE content_jobs SET {cols} WHERE id = ?", (*fields.values(), job_id))
 
 
+def bump_orchestrator_attempts(job_id: str) -> int:
+    """Tel één Orchestrator/Gauntlet-poging op dit bronrecord (cross-run cap,
+    zie ORCHESTRATOR_MAX_ATTEMPTS). Telt vóór de zware Gauntlet-run start —
+    ook een mislukte/afgekapte poging heeft al LLM-budget gekost en moet
+    meetellen, anders herstart de teller stil bij elke timeout."""
+    job = get_job(job_id)
+    attempts = int((job or {}).get("orchestrator_attempts") or 0) + 1
+    _update_job(job_id, orchestrator_attempts=attempts)
+    return attempts
+
+
+def mark_superseded(job_id: str, published_job_id: str) -> None:
+    """Sluit een 'rejected'/'stuck' bronrecord af nadat de Gauntlet Loop het
+    succesvol heeft herschreven en teruggezet als nieuwe pending_review-job.
+
+    Zonder dit blijft het bronrecord permanent 'rejected'/'stuck' staan en
+    wordt het bij de volgende ronde opnieuw gevonden door
+    orchestrator.service._find_under_threshold_jobs — met een nieuwe, dure
+    Gauntlet-run en weer een duplicaat in de Wachtrij tot gevolg (incident
+    14 aug 2026: hetzelfde artikel 20+ keer op één dag herschreven)."""
+    _update_job(job_id, status="superseded", superseded_by=published_job_id)
+
+
 # ── Genereer één content-job voor één site ──────────────────────────────────
 
 async def generate_content_job(site: Dict, keyword: Optional[str] = None,
@@ -1618,6 +1661,44 @@ _META_H_COLON_RE = re.compile(
     r"<h[23][^>]*>\s*meta[- ]?(titel|title|beschrijving|description)\s*</h[23]>\s*<p>(.*?)</p>",
     re.IGNORECASE | re.DOTALL,
 )
+# MARKDOWN-variant: de schrijver leverde soms een zichtbaar markdown-blokje
+# (`**Metadata**` + bullet-list `- Focus keyword: …`, `- URL-slug: …`,
+# `- Meta-title: …`, `- Meta-description: …`). Dit glipte door alle
+# HTML-gebaseerde regexes heen en belandde ZICHTBAAR op de live pagina
+# (gemeten op bijeen.app, aug 2026). We strippen het hele blok en vissen de
+# bruikbare meta-waarden eruit. Het blok kan zowel naakt markdown zijn
+# (`**Metadata**` op een regel) als in <p>-tags gewrapt
+# (`<p>**Metadata**</p>` + `<p>- Focus keyword: …</p>`), dus beide vormen
+# worden hieronder toegestaan.
+_META_MARKDOWN_BLOCK_RE = re.compile(
+    r"(?:\n|^)\s*(?:<p>\s*)?\*\*\s*Metadata\s*\*\*(?:\s*</p>)?\s*\n"
+    r"(?:(?:\s*<p>\s*)?[-*]\s*(?:focus\s+keyword|url-slug|meta[- ]?titel|"
+    r"meta[- ]?title|meta[- ]?beschrijving|meta[- ]?description|trefwoord|slug)"
+    r"\s*:[^\n]*(?:\s*</p>)?\s*\n)+",
+    re.IGNORECASE,
+)
+_META_MARKDOWN_KV_RE = re.compile(
+    r"[-*]\s*(focus\s+keyword|url-slug|meta[- ]?titel|meta[- ]?title|"
+    r"meta[- ]?beschrijving|meta[- ]?description)\s*:\s*([^<\n]+?)\s*(?:</p>)?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _strip_meta_markdown(html_body: str, meta_title: str, meta_desc: str) -> tuple:
+    """Strippen van het markdown-Metadata-blok; geeft (html, meta_title, meta_desc)
+    terug. Wordt aangeroepen vóórdat de HTML-vormen worden aangepakt, zodat het
+    blok niet per ongeluk deels blijft hangen."""
+    if not re.search(r"(?:\*\*\s*Metadata\s*\*\*|#+\s*Metadata)", html_body, re.IGNORECASE):
+        return html_body, meta_title, meta_desc
+    for kind, val in _META_MARKDOWN_KV_RE.findall(html_body):
+        k = kind.lower().replace(" ", "")
+        if "titel" in k or "title" in k:
+            meta_title = meta_title or val.strip()
+        elif "beschrijving" in k or "description" in k:
+            meta_desc = meta_desc or val.strip()
+        # focus keyword / url-slug zijn geen head-meta, alleen opruimen.
+    html_body = _META_MARKDOWN_BLOCK_RE.sub("\n", html_body)
+    return html_body, meta_title, meta_desc
 
 
 def _strip_meta_and_suggestions(html_body: str) -> tuple:
@@ -1628,6 +1709,10 @@ def _strip_meta_and_suggestions(html_body: str) -> tuple:
         return html_body, "", ""
     meta_title = ""
     meta_desc = ""
+
+    # 0) markdown-variant (`**Metadata**` + bullet-list) — eerst, zodat de
+    #    head-meta-waarden eruit gevist worden vóórdat de HTML-vormen lopen.
+    html_body, meta_title, meta_desc = _strip_meta_markdown(html_body, meta_title, meta_desc)
 
     # 1) attribuutvorm commentaar (nieuwe stijl)
     mc = _META_COMMENT_ATTR_RE.search(html_body)
@@ -2345,7 +2430,8 @@ async def unpublish_from_project_site(site: Dict, slug: str, reason: str = "") -
         return {"success": False,
                 "error": f"Geen {env_prefix}_PUBLISH_URL/_PUBLISH_KEY — depubliceren niet mogelijk"}
 
-    # /api/publish → /api/unpublish op dezelfde host.
+    # /api/publish → /api/unpublish op dezelfde host. Werkt alleen voor sites
+    # waarvan de publish-URL letterlijk op '/api/publish' eindigt.
     unpublish_url = re.sub(r"/api/publish/?$", "/api/unpublish", publish_url)
     if unpublish_url == publish_url:
         unpublish_url = publish_url.rstrip("/") + "/../unpublish"
@@ -2371,9 +2457,30 @@ async def unpublish_from_project_site(site: Dict, slug: str, reason: str = "") -
                 break
             return resp
 
-        resp = await asyncio.to_thread(
-            _post_follow, unpublish_url, {"slug": slug, "reason": reason}, publish_key)
-        if resp.status_code in (200, 201):
+        def _delete(url: str, key: str):
+            return httpx.delete(url, headers={"Authorization": f"Bearer {key}"},
+                                timeout=60, follow_redirects=True)
+
+        # Aanleiding (13 aug 2026, Bewaard voor Jou): de regel hierboven
+        # veronderstelt dat élke site-CMS hetzelfde contract deelt (POST
+        # {publish_url met /publish→/unpublish} + {"slug", "reason"}). Dat
+        # klopt voor de sites waarvan PUBLISH_URL letterlijk op '/api/publish'
+        # eindigt, maar Bewaardvoorjou's CMS ('Life Journey API', eigen
+        # OpenAPI-spec) publiceert op /api/v1/publish en depubliceert via het
+        # REST-idiomatische `DELETE {publish_url}/{slug}` — geen apart
+        # unpublish-pad, geen JSON-body. De oude regel matchte niet, viel
+        # terug op een geraden `/../unpublish`-pad en kreeg een schone 404:
+        # zichtbaar falen, geen stille schade, maar wél twee mislukte pogingen
+        # voordat de échte OpenAPI-spec (`GET {host}/openapi.json`) het
+        # bewijs gaf. Probeer daarom eerst de REST-idiomatische DELETE op de
+        # publish-collectie zelf; alleen als die zelf óók 404 geeft (dus geen
+        # route bestaat) valt dit terug op het oudere POST /api/unpublish-pad.
+        delete_url = publish_url.rstrip("/") + "/" + slug
+        resp = await asyncio.to_thread(_delete, delete_url, publish_key)
+        if resp.status_code == 404:
+            resp = await asyncio.to_thread(
+                _post_follow, unpublish_url, {"slug": slug, "reason": reason}, publish_key)
+        if resp.status_code in (200, 201, 204):
             data = {}
             try:
                 data = resp.json()

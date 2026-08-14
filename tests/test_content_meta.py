@@ -118,3 +118,37 @@ def test_preview_en_publisher_leveren_dezelfde_titel():
     preview_title, _ = cp._preview_meta(body)
     titel = cp._extract_title(body, fallback="")
     assert preview_title == cp.meta_title_for(titel)
+
+
+# ── Markdown-Metadata-blok: mag NOOIT zichtbaar op de live pagina belanden ──
+#
+# aug 2026: de schrijver leverde soms een zichtbaar markdown-blokje
+# (`**Metadata**` + bullet-list `- Focus keyword:` …). Alle HTML-gebaseerde
+# strippers grepen náást dit formaat, waardoor het VOLLEDIG zichtbaar op
+# bijeen.app stond (incl. een URL-slug die niet eens klopte met de echte URL).
+def test_markdown_metadata_wordt_gestript_en_meta_hergebruikt():
+    html = (
+        "<h1>Sociale cohesie versterken met een evenement</h1>\n"
+        "<p>De evenementen die ik heb zien slagen waren niet de grootste.</p>\n"
+        "<p>**Metadata**</p>\n"
+        "<p>- Focus keyword: sociale cohesie versterken met een evenement</p>\n"
+        "<p>- URL-slug: /sociale-cohesie-evenement-aanpakken</p>\n"
+        "<p>- Meta-title: Sociale cohesie versterken met een evenement: 6 bewijzen</p>\n"
+        "<p>- Meta-description: 6 concrete aanpakken om sociale cohesie te versterken.</p>\n"
+    )
+    cleaned, title, desc = cp._strip_meta_and_suggestions(html)
+    assert "Metadata" not in cleaned
+    assert "Focus keyword" not in cleaned
+    assert "URL-slug" not in cleaned
+    # De bruikbare meta-waarden worden wél teruggegeven voor de head.
+    assert title == "Sociale cohesie versterken met een evenement: 6 bewijzen"
+    assert desc == "6 concrete aanpakken om sociale cohesie te versterken."
+    # De echte artikeltekst blijft intact.
+    assert "De evenementen die ik heb zien slagen" in cleaned
+
+
+def test_markdown_metadata_zonder_meta_blijft_ongemoeid():
+    html = "<h1>Kop</h1><p>Lopende tekst zonder metadata-blok.</p>"
+    cleaned, title, desc = cp._strip_meta_and_suggestions(html)
+    assert cleaned == html
+    assert title == "" and desc == ""
