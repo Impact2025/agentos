@@ -2299,6 +2299,23 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
         return {"success": False,
                 "error": f"niet publiceerbaar: {intern}"}
 
+    # ── Pre-publish kwaliteitsguard (taalcorruptie / placeholders) ─────────
+    # Gespiegeld aan de app-kant (quality-guard.ts). Voorkomt dat Iris rotzooi
+    # pusht. Bij een harde fout proberen we eerst auto-herstel via de LLM; pas
+    # als dat faalt, weigeren we de publish expliciet (nooit stil publiceren).
+    from .quality_guard import check as _quality_check, auto_repair as _quality_repair
+    _ok, _issues, _susp = _quality_check(html_body)
+    if not _ok:
+        logger.warning("[content-pipeline] Kwaliteitscheck gefaald voor '%s': %s",
+                       title, _issues)
+        _repaired = _quality_repair(html_body, llm_fn=_llm)
+        if _repaired:
+            html_body = _repaired
+            logger.info("[content-pipeline] Auto-herstel gelukt voor '%s'", title)
+        else:
+            return {"success": False,
+                    "error": "kwaliteitscheck gefaald: " + "; ".join(_issues[:3])}
+
     env_prefix = re.sub(r"[^A-Z0-9]", "", name.upper())
     publish_url = os.getenv(f"{env_prefix}_PUBLISH_URL", "").strip()
     publish_key = os.getenv(f"{env_prefix}_PUBLISH_KEY", "").strip()
