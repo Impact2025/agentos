@@ -29,6 +29,12 @@ from ...shared.outcomes import (
 )
 from ...scheduler import get_scheduler_status
 
+# Lokale Omniroute-LLM-gateway (:8899) — de centrale router waar Hermes/AgentOS
+# (en de claude-CLI) doorheen praten. Staat los van de cloud-OpenModel-check:
+# openmodel kan bereikbaar zijn maar de gateway zélf down (zoals 13 aug 2026,
+# toen de supervisor crashte en :8899 platlag terwijl openmodel live was).
+LOCAL_GATEWAY_URL = "http://127.0.0.1:8899"
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/healthcheck", tags=["health"])
 
@@ -134,6 +140,139 @@ def _probe_calendar() -> dict:
         return {"configured": True, "live": None, "error": str(e)[:160]}
 
 
+def _probe_gateway() -> dict:
+    """Lokale Omniroute-LLM-gateway (:8899). Dit is de centrale router waar
+    Hermes/AgentOS/claude doorheen praten. OpenModel kan live zijn maar de
+    gateway zélf down — dat was de 13-aug-2026-storing (supervisor crashte)."""
+    try:
+        with httpx.Client(timeout=4.0) as c:
+            r = c.get(LOCAL_GATEWAY_URL.rstrip("/") + "/health")
+        return {"configured": True, "live": r.status_code == 200,
+                "http_status": r.status_code, "url": LOCAL_GATEWAY_URL}
+    except Exception as e:
+        return {"configured": True, "live": False, "error": str(e)[:160],
+                "url": LOCAL_GATEWAY_URL}
+
+
+def _probe_social() -> dict:
+    """Social-publishing gezondheid — DB-only, géén live Graph-poll per refresh.
+
+    Een groene 'Systeem gezond' terwijl Facebook dood is (zoals 18 aug 2026:
+    code 190 'Application has been deleted' op de Liefde-voor-Iedereen-pagina)
+    is vals vertrouwen. Deze probe leest de recente publish/social-fouten uit
+    activity_log en de social_posts-wachtrij — exact dezelfde bronnen die het
+    Actiecentrum voedt — en markeert de health als 'warning' zodra een gekoppeld
+    kanaal recent faalde. Geen externe API-call, dus veilig bij elke 15-30s poll.
+    """
+    try:
+        with get_conn() as conn:
+            # 1. Recente social/publish-failures (laatste 7 dagen)
+            errs = conn.execute(
+                "SELECT project, action, detail, created_at FROM activity_log "
+                "WHERE (action LIKE '%social%' OR action LIKE '%publish%' OR action LIKE '%fb%') "
+                "AND status='error' AND created_at >= datetime('now','-7 days') "
+                "ORDER BY created_at DESC LIMIT 8"
+            ).fetchall()
+            # 2. Social posts die op 'posted' staan maar geen enkele echte
+            #    kanaal-bevestiging hebben (fout-positief 'geplaatst').
+            ghost = conn.execute(
+                "SELECT COUNT(*) AS n FROM social_posts WHERE status='posted' "
+                "AND (posted_result_json IS NULL OR posted_result_json='' "
+                "OR posted_result_json='{}')"
+            ).fetchone()["n"]
+        failures = [
+            {"project": (r["project"] or ""), "action": r["action"],
+             "detail": (r["detail"] or "")[:160], "created_at": r["created_at"]}
+            for r in errs
+        ]
+        return {
+            "configured": True,
+            "live": len(failures) == 0 and ghost == 0,
+            "recent_failures": failures,
+            "ghost_posted": ghost,
+            "note": (f"{len(failures)} recente publish/social-fout(en)"
+                     + (f", {ghost} 'geplaatst' zonder bevestiging" if ghost else ""))
+                    if (failures or ghost) else "geen recente fouten",
+        }
+    except Exception as e:
+        return {"configured": True, "live": None, "error": str(e)[:160]}
+
+
+def _collect_bugs() -> dict:
+    """Verzamel recente fouten/bugs over de hele stack zodat de Health-tab ze
+    in één oogopslag toont. Geen side-effects, alleen lezen.
+
+    Drie bronnen:
+      1. scheduler_runs met status='error' (achtergrond-jobs die echt faalden)
+      2. goals met status 'failed'/'partial' (vastgelopen doelen) + hun
+         mislukte taken
+      3. iris_error_fixes die actief zijn met failures>0 (terugkerende bugs
+         die de agent nog niet zelf heeft kunnen oplossen)
+    """
+    out = {"scheduler_errors": [], "stalled_goals": [], "recurring_bugs": []}
+    try:
+        with get_conn() as conn:
+            # 1. scheduler errors (laatste 7 dagen, top 5 op tijd)
+            try:
+                rows = conn.execute(
+                    "SELECT job_id, status, error, last_run_at FROM scheduler_runs "
+                    "WHERE status='error' AND error IS NOT NULL AND error != '' "
+                    "ORDER BY last_run_at DESC LIMIT 5"
+                ).fetchall()
+                for r in rows:
+                    out["scheduler_errors"].append({
+                        "job": r["job_id"], "status": r["status"],
+                        "error": (r["error"] or "")[:240],
+                        "last_run_at": r["last_run_at"],
+                    })
+            except Exception:
+                pass
+
+            # 2. vastgelopen doelen + hun failed taken
+            try:
+                goals = conn.execute(
+                    "SELECT id, title, project, status, updated_at FROM goals "
+                    "WHERE status IN ('failed','partial') ORDER BY updated_at DESC LIMIT 8"
+                ).fetchall()
+                for g in goals:
+                    failed_tasks = conn.execute(
+                        "SELECT title, error FROM goal_tasks "
+                        "WHERE goal_id=? AND status='failed' ORDER BY ord LIMIT 3",
+                        (g["id"],)
+                    ).fetchall()
+                    out["stalled_goals"].append({
+                        "goal_id": g["id"], "title": g["title"],
+                        "project": g["project"], "status": g["status"],
+                        "failed_tasks": [{"title": t["title"],
+                                          "error": (t["error"] or "")[:160]}
+                                         for t in failed_tasks],
+                    })
+            except Exception:
+                pass
+
+            # 3. terugkerende bugs (iris auto-remedy learning)
+            try:
+                bugs = conn.execute(
+                    "SELECT signature, project, diagnosis, failures, occurrences, "
+                    "last_result FROM iris_error_fixes "
+                    "WHERE active=1 AND failures>0 ORDER BY failures DESC LIMIT 5"
+                ).fetchall()
+                for b in bugs:
+                    out["recurring_bugs"].append({
+                        "signature": b["signature"],
+                        "project": b["project"],
+                        "diagnosis": (b["diagnosis"] or "")[:160],
+                        "failures": b["failures"],
+                        "occurrences": b["occurrences"],
+                        "last_result": (b["last_result"] or "")[:80],
+                    })
+            except Exception:
+                pass
+    except Exception as e:
+        out["error"] = str(e)[:160]
+    return out
+
+
 def _active_work() -> dict:
     """Wat de agent nu aan het doen is: openstaande runs in de DB."""
     out: dict = {}
@@ -179,9 +318,25 @@ def _overall(items: dict) -> str:
         # primaire backend (local) is geconfigureerd maar DOOD → dat was de
         # 2026-07-12 bug (dode LiteLLM :4000). Robin hood niet stil.
         return "degraded"
+    if items["gateway"].get("configured") and not items["gateway"].get("live"):
+        # lokale LLM-gateway (:8899) plat → agents kunnen niet routeren
+        return "degraded"
     if items["calendar"].get("configured") and not items["calendar"].get("live"):
         return "degraded"
+    bugs = items.get("bugs") or {}
+    if bugs.get("scheduler_errors") or bugs.get("stalled_goals"):
+        return "warning"
+    # Social-publishing recent kapot (FB-token dood, post-failure) — de groene
+    # 'Systeem gezond' mag niet groen blijven terwijl kanalen dood zijn.
+    social = items.get("social") or {}
+    if social.get("configured") and social.get("live") is False:
+        return "warning"
     if items["llm"]["today"]["errors"] or items["llm"]["quota_backoff_active"]:
+        return "warning"
+    # Budget-overschrijding: de dagquota is op (>=100%). De provider-rem
+    # (quota_backoff) grijpt pas in bij een echte 403, maar het DAILY_TOKEN_BUDGET
+    # is hier al over — toon dat als waarschuwing zodat het niet groen lijkt.
+    if items["llm"].get("budget") and items["llm"]["today"].get("budget_pct", 0) >= 100:
         return "warning"
     return "ok"
 
@@ -215,7 +370,10 @@ def healthcheck():
         openmodel = _run(_probe_openmodel)
     ollama = _run(_probe_ollama)
     calendar = _run(_probe_calendar)
+    gateway = _run(_probe_gateway)
+    social = _run(_probe_social)
     active = _run(_active_work)
+    bugs = _run(_collect_bugs)
 
     backend_now = hermes_backend()
     llm = llm_usage_summary(days=1)
@@ -239,8 +397,11 @@ def healthcheck():
             "openmodel_model": OPENMODEL_MODEL,
         },
         "calendar": calendar,
+        "gateway": gateway,
+        "social": social,
         "llm": llm,
         "active_work": active,
+        "bugs": bugs,
         "scheduler": {
             "running": scheduler.get("running"),
             "catching_up": scheduler.get("catching_up"),
@@ -282,10 +443,34 @@ def _status_reden(items: dict, status: str) -> str:
     cal = items["calendar"]
     if cal.get("configured") and not cal.get("live"):
         return "agenda-sync faalt"
+    bugs = items.get("bugs") or {}
+    if bugs.get("scheduler_errors"):
+        first = bugs["scheduler_errors"][0]
+        return f"scheduler-fout: {first.get('job')}"
+    if bugs.get("stalled_goals"):
+        return f"{len(bugs['stalled_goals'])} vastgelopen doel(en)"
+    rb = bugs.get("recurring_bugs") or []
+    if rb:
+        # Operationele blokkades (geen code-bug) herkennen we aan de signature
+        # zodat de banner zinnig blijft i.p.v. 'onbekende oorzaak'.
+        sigs = " ".join(r.get("signature", "")).lower()
+        if "application has been deleted" in sigs or "error validating application" in sigs:
+            return "social-app (Instagram/Meta) verwijderd — token dood"
+        if "publicatie geblokkeerd" in sigs or "taalcorruptie" in sigs:
+            return f"{len(rb)} publish-gate blokkades (zwakke artikelen)"
+        return f"{len(rb)} self-heal fout(en) — zie Actiecentrum"
+    social = items.get("social") or {}
+    if social.get("configured") and social.get("live") is False:
+        if social.get("ghost_posted"):
+            return f"{social.get('ghost_posted')} post(s) 'geplaatst' zonder bevestiging"
+        n = len(social.get("recent_failures", []))
+        return f"{n} social-publish fout(en) (laatste 7d)"
     if items["llm"]["quota_backoff_active"]:
         return "quota-rem actief"
     if items["llm"]["today"]["errors"]:
         return f"{items['llm']['today']['errors']} LLM-fouten vandaag"
+    if items["llm"].get("budget") and items["llm"]["today"].get("budget_pct", 0) >= 100:
+        return f"daglimiet tokens overschreden ({items['llm']['today']['budget_pct']}%)"
     return "onbekende oorzaak"
 
 

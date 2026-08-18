@@ -27,6 +27,7 @@ Wachtrij-gate.
 import asyncio
 import inspect
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
@@ -60,12 +61,15 @@ from .domains.seo.optimizer import run_weekly_optimizer_job
 from .domains.seo.index_monitor import run_index_status_check
 from .domains.omni.sweep import run_omni_sweep
 from .domains.seo.engine import run_weekly_demand_scan
+from .domains.analytics.facebook_store import snapshot_all_facebook as run_facebook_snapshot
+from .domains.analytics.facebook_content import suggest_facebook_content as run_facebook_content_ideas
+
 from .domains.radar.service import scan_the_skies
 from .domains.seo.feedback import run_daily_gsc_sync
 from .domains.researcher.service import get_service as researcher_svc
 from .domains.action_center.digest import run_daily_digest
+from .domains.radar import astros_digest as astros_digest_mod
 from .domains.iris.service import run_morning_briefing
-from .domains.iris.service import run_iris_prediction_eval
 from .domains.prospecting.outreach import run_daily_outreach_batch
 from .domains.prospecting.learning import run_outreach_learning_eval
 from .domains.linkbuilding.prospector import run_weekly_linkbuilding
@@ -165,6 +169,34 @@ async def _autoheal_job() -> None:
         )
 
 
+async def _dashboard_observer_job() -> None:
+    """Proactieve zelfsturing: lees de Control Room en seed doelen waar het
+    dashboard er 0 (actieve) toont.
+
+    Dit is de ontbrekende laag: in plaats van dat een mens handmatig moet
+    constateren "er staan 0 actieve doelen voor WeAreImpact", doet de observer
+    dat periodiek en autonoom — mét de menselijke publiceer-gate intact.
+
+    Belangrijk: het *aanmaken* van een doel is hier LLM-VRIJ (deterministisch
+    plan), dus deze job faalt nooit door de down-gelopen LLM-proxy (:8899). Het
+    *uitvoeren* (content schrijven/publiceren) blijft de bestaande executor, die
+    vanzelf retry't zodra de proxy terug is. Doelen landen op 'ready' — nooit
+    auto-gepubliceerd.
+    """
+    from .domains.goal import observer as goal_observer
+    try:
+        report = goal_observer.observe_dashboard()
+    except Exception:
+        logger.exception("Dashboard-observer gefaald")
+        raise
+    if report.get("seeded"):
+        logger.info(
+            "Dashboard-observer: %d doel(en) geseed, %d overgeslagen, %d noop (van %d gescand)",
+            report.get("seeded", 0), report.get("skipped", 0),
+            report.get("noop", 0), report.get("scanned", 0),
+        )
+
+
 async def _iris_selfheal_job() -> None:
     """Iris' zelfherstel-ronde: openstaande fouten eerst zélf proberen op te
     lossen (probe = het werk echt opnieuw doen), en alleen melden wat ze niet
@@ -181,6 +213,26 @@ async def _iris_selfheal_job() -> None:
             "Iris-zelfherstel: %d bekeken, %d zelf opgelost, %d gemeld",
             report.get("checked", 0), report.get("healed", 0), report.get("escalated", 0),
         )
+
+
+async def _geo_citation_job() -> None:
+    """Wekelijkse GEO citatie-check: wordt elk merk genoemd als bron in AI?
+
+    Draait de check in een thread (meerdere LLM-calls kunnen minuten duren)
+    zodat de event loop niet blokkeert. Resultaat landt in geo_citations; de
+    score is zichtbaar via /api/geo/citation/latest en de GEO-tab."""
+    import asyncio
+    from .domains.geo import citation as citation_service
+    try:
+        summary = await asyncio.to_thread(citation_service.run_citation_check)
+        for r in summary.get("results", []):
+            logger.info(
+                "GEO citatie %s: %d/%d queries — score %d",
+                r.get("site_name"), r.get("cited", 0), r.get("queries", 0),
+                r.get("citation_score", 0),
+            )
+    except Exception:
+        logger.exception("[geo] citatie-check mislukt")
 
 
 def _waarheidsaudit_job() -> None:
@@ -211,8 +263,19 @@ async def _monthly_content_goal(project: str, title: str, objective: str) -> Non
     server. Draaien we hem in een wegwerp-loop die we daarna sluiten, dan staat
     het doel wel op `running` in de database maar draait er niets meer — en
     moest de 15-minuten-autoheal het puin ruimen.
+
+    ROBUSTHEID (toegevoegd 2026-08-13): de oorspronkelijke flow riep
+    `create_and_plan` aan, dat de LLM-proxy (:8899) nodig heeft om een plan te
+    *decomposeren*. Was die proxy down (HTTP 000) — zoals op 1 aug 2026 en
+    herhaaldelijk — dan stierf de cron stil en verscheen er géén doel, en niets
+    retry'de het. Nu vangt de exceptie dat op: we seeden een LLM-VRIJ plan
+    (deterministisch, zelfde vorm als `confirm_plan` verwacht) en bevestigen dat.
+    Het doel landt op `ready` (achter de gate); de executor retry't de
+    *uitvoering* vanzelf zodra de proxy terug is. Zo faalt de maandlijkse cadans
+    nooit meer door een tijdelijk down-gelopen proxy.
     """
     from .domains.goal import service as goal_svc
+    from .domains.goal import observer as goal_observer
     try:
         plan = await goal_svc.create_and_plan(title=title, objective=objective, project=project)
         goal_id = plan.get("goal_id") if isinstance(plan, dict) else None
@@ -223,8 +286,21 @@ async def _monthly_content_goal(project: str, title: str, objective: str) -> Non
         await goal_svc.start_goal_async(goal_id)
         logger.info("[%s] content-goal G2 (her)gestart: %s", project, goal_id)
     except Exception:
-        logger.exception("[%s] maandelijkse content-goal mislukt", project)
-        raise
+        # LLM-proxy down (of andere fout bij decompositie): val terug op een
+        # LLM-vrije seed zodat er wél een doel klaarstaat (op 'ready').
+        logger.warning(
+            "[%s] maandelijkse content-goal: create_and_plan mislukt — "
+            "val terug op LLM-vrije seed", project)
+        try:
+            r = goal_observer.seed_project_goal(project, force=True)
+            if r.get("action") == "seeded":
+                logger.info("[%s] content-goal G2 alsnog geseed (LLM-vrij): %s",
+                            project, r.get("goal_id"))
+            else:
+                logger.info("[%s] content-goal G2 fallback: %s", project, r.get("reason"))
+        except Exception:
+            logger.exception("[%s] maandelijkse content-goal fallback mislukt", project)
+            raise
 
 
 _ICTUSGO_OBJECTIVE = (
@@ -240,9 +316,59 @@ _WEAREIMPACT_OBJECTIVE = (
     "Serious Play, change management. Human-in-the-loop: nooit auto-publiceren, "
     "altijd menselijke review-gate."
 )
+_BEWAARDVOORJOU_OBJECTIVE = (
+    "Per maand 4 goedgekeurde kansen uit de Demand Engine (Search Console + "
+    "Mission Radar) omzetten in gepubliceerde content op bewaardvoorjou.nl — "
+    "vóór een nieuwe kans wordt geschreven, controleren of het zoekwoord al "
+    "wordt gedekt door een bestaande live pagina (cluster-/zoekwoordkannibali"
+    "satie is hier al twee keer geconstateerd) en géén tweede artikel op "
+    "hetzelfde zoekwoord starten. Focus: levensverhalen vastleggen, digitale "
+    "nalatenschap, herinneringen voor kinderen/kleinkinderen, 65+. "
+    "Human-in-the-loop: nooit auto-publiceren, altijd menselijke review-gate."
+)
 
 
 # ── Job-register ───────────────────────────────────────────────────────────
+
+async def _run_facebook_content_ideas_job() -> None:
+    """Wekelijkse FB-content-ideeën voor elke site met een facebook_page_id.
+
+    Genereert geen posts (die plaatst de mens, of de auto-post-gate), maar trekt
+    wél de data-gedreven ideeën uit GSC/Demand/FB-engagement en logt ze naar het
+    Actiecentrum — zodat de composer nooit op vault-gokwerk staat. Faalveilig per
+    site: één mislukkende site breekt de rest niet af.
+    """
+    from .shared.outcomes import log_outcome
+    from .domains.seo import sites as sites_service
+    total = 0
+    failed = []
+    for s in sites_service.list_sites():
+        pid = (s.get("facebook_page_id") or "").strip()
+        if not pid:
+            continue
+        name = s.get("name", "")
+        try:
+            r = await run_facebook_content_ideas(name, days=28, limit=5, write=False)
+            if r.get("success"):
+                n = len(r.get("ideas", []))
+                total += n
+                logger.info("[fb_content] %s: %s ideeën (bronnen: %s)", name, n,
+                            ", ".join(r.get("sources_used", [])) or "geen")
+            else:
+                failed.append(name)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[fb_content] ideeën mislukt voor %s: %s", name, e)
+            failed.append(name)
+    log_outcome(
+        "Social", "facebook_content_ideas",
+        f"FB-content-ideeën gegenereerd uit echte data: {total} ideeën"
+        + (f"; mislukt: {', '.join(failed[:5])}" if failed else ""),
+        artifact="/api/facebook/<site>/suggest",
+        next_step=("Controleer de GSC/Demand-koppeling van de mislukte site(s)."
+                   if failed else "Niets — de FB-composer toont de ideeën bij het volgende gebruik."),
+        status="error" if failed and total == 0 else "ok",
+    )
+
 
 @dataclass(frozen=True)
 class JobSpec:
@@ -398,13 +524,66 @@ async def _researcher_job() -> None:
     logger.info("[researcher] kennisronde klaar — %d/%d rapporten gelukt", ok, len(QUESTIONS))
 
 
+# ── Iris autonome agent-inzet (Agent Control) ───────────────────────────────
+# Elke ochtend voert Iris de top-5 voorgestelde acties uit als echte agent-runs,
+# mits de stal niet al zwaar bezet is. Geen LLM in de keuze (deterministisch op
+# de Iris-cijfers), wel echte uitvoering via de Gauntlet-pijplijn. De cap + busy-
+# drempel voorkomen dat de hele stal in één ochtend gebombardeerd wordt.
+#
+# Bewust alleen een async variant: een sync def die asyncio.run(...) aanroept
+# sterft in asyncio.to_thread() (spawn_gauntlet's create_task landt op de
+# wegwerp-loop en wordt geannuleerd zodra de coroutine terugkeert → orphaned
+# 'running' gauntlet-runs), dus de JobSpec verwijst rechtstreeks naar
+# iris_auto_deploy_job_async.
+async def iris_auto_deploy_job_async() -> None:
+    """Iris autonome agent-inzet (top-5 suggesties als runs, mits stal niet bezet).
+
+    Async zodat spawn_gauntlet's asyncio.create_task op de ECHTE server-loop landt
+    (niet op een wegwerp-loop van asyncio.to_thread). Zie CLAUDE.md keten over
+    scheduler-jobs die doelen starten: altijd async def + direct await.
+    """
+    from .domains.agentctl import suggest as agentctl_suggest
+    out = await agentctl_suggest.auto_deploy_daily(max_deploys=5, max_busy=6)
+    if out.get("skipped"):
+        logger.info("Iris auto-deploy overgeslagen: %s", out.get("reason"))
+        return
+    logger.info("Iris auto-deploy: %d/%d runs gestart.",
+                out.get("succeeded", 0), out.get("executed", 0))
+
+
+# ── Zoekprovider-Watchdog ─────────────────────────────────────────────────
+# Meet elke provider live en heft quota-backoffs op zodra een provider weer
+# resultaten geeft. Voorkomt dat de keten blijvend op één provider blijft
+# staan nadat een abonnement is bijgevuld of een rate-limit is gezakt — de
+# zoeklaag herstelt zichzelf, zonder server-restart of menselijke ingreep.
+# Stil als er niets te herstellen valt (geen side-effects).
+def search_provider_watchdog_job() -> None:
+    from .shared import websearch as w
+    try:
+        lifted = w.clear_recovered_blocks()
+        if lifted:
+            logger.info("[scheduler] zoekprovider-watchdog: backoff opgeheven voor %s",
+                        ", ".join(lifted))
+    except Exception:
+        logger.exception("[scheduler] zoekprovider-watchdog mislukt")
+
+
 # Volgorde = leesvolgorde van de dag. De inhaalslag sorteert zelf op tijdstip.
 _SPECS: list[JobSpec] = [
+    # Wekelijkse Demand Engine-scan (maandag) — ververst de kansen voor alle GSC-sites
+    # zodat de contentmotor nooit droogvalt (CLAUDE.md keten 7). MOET vóór de
+    # agent-inzet staan zodat Iris frisse kansen heeft om uit te kiezen.
     JobSpec(
-        "weekly_demand_scan", "Demand Engine-scan (kansen verversen, incl. cold-start voor verse sites)",
-        run_weekly_demand_scan, _cron(day_of_week="mon", hour=6, minute=15), catch_up=True,
-        gap_cost="de kansenvoorraad is een week niet ververst; de contentmotor kan drooglopen",
+        "weekly_demand_scan", "Wekelijkse Demand Engine-scan (ververst kansen voor alle GSC-sites)",
+        run_weekly_demand_scan, _cron(hour=6, minute=0, day_of_week=0), catch_up=True,
+        gap_cost="de kansenvoorraad droogt geleidelijk op; contentmotor valt stil zonder fout",
         domain="seo",
+    ),
+    JobSpec(
+        "iris_auto_deploy", "Iris autonome agent-inzet (top-5 suggesties als runs, mits stal niet bezet)",
+        iris_auto_deploy_job_async, _cron(hour=7, minute=0), catch_up=True,
+        gap_cost="de dagelijkse agent-inzet is overgeslagen; zwakke pijlers blijven onaangepakt",
+        domain="agentctl",
     ),
     # Bewust géén catch_up: een gemiste check heelt zichzelf morgen, en de
     # monitor hoort niet in de gsc→iris→digest-inhaalketen thuis.
@@ -423,6 +602,26 @@ _SPECS: list[JobSpec] = [
     JobSpec(
         "daily_digest", "Ochtendrapport (fouten · wacht-op-jou · gisteren opgeleverd)",
         run_daily_digest, _cron(hour=7, minute=0), catch_up=True,
+    ),
+    # Astros Digest: het ochtendrapport van de concurrent-radar. Draait NA het
+    # GSC-sync (06:30) en de Iris-briefing (06:45) zodat verse trends + momentum
+    # klaarliggen in de Obsidian-vault vóór de werkdag. Schrijft één markdown
+    # naar 10_Projects/_trends/_astros-digest/ en is daarmee direct vindbaar
+    # voor de chat-agent ("waar moet ik deze week content over maken?").
+    # Defensief: faalt nooit hard (vault-missing → log alleen).
+    JobSpec(
+        "astros_digest", "Astros Digest (concurrent-radar momentum → Obsidian-SSOT)",
+        astros_digest_mod.write_daily_digest, _cron(hour=7, minute=10), catch_up=True,
+        domain="radar",
+    ),
+    # Zoekprovider-Watchdog: elke 15 min de live-healthy van elke provider meten
+    # en quota-backoffs opheffen zodra een provider is hersteld. Houdt de
+    # zoek-keten zelfhelend — géén menselijke ingreep nodig als een quota
+    # 's nachts of na een upgrade weer vrijkomt. Bewust géén catch_up: een
+    # gemiste meting heelt zichzelf in de volgende 15-minuut-cycle.
+    JobSpec(
+        "search_provider_watchdog", "Zoekprovider-Watchdog (meet bereikbaarheid, heft herstelde blokkades op)",
+        search_provider_watchdog_job, IntervalTrigger(minutes=15),
     ),
     # Agenda-herinnering: 1 dag van tevoren per mail. Vroeg in de ochtend
     # zodat de herinnering bij het wakker-worden in de inbox ligt. Stil als SMTP
@@ -505,6 +704,18 @@ _SPECS: list[JobSpec] = [
         domain="finance",
     ),
     JobSpec(
+        "facebook_snapshot", "Facebook-analysesnapshot (alle FB-pagina's, 1x/etmaal)",
+        run_facebook_snapshot, _cron(day_of_week="mon", hour=8, minute=30), catch_up=True,
+        gap_cost="geen verse Facebook-cijfers; de UI en Iris lezen verouderde snapshots",
+        domain="facebook",
+    ),
+    JobSpec(
+        "facebook_content_ideas", "Facebook-content-ideeën uit echte data (GSC/Demand/FB-engagement, wekelijks)",
+        _run_facebook_content_ideas_job, _cron(day_of_week="tue", hour=10, minute=0), catch_up=True,
+        gap_cost="geen verse FB-content-ideeën; de composer blijft op vault-gokwerk staan",
+        domain="facebook",
+    ),
+    JobSpec(
         "biweekly_content", "Blog + social auto-content (2x/week)",
         run_biweekly_content_job, _cron(day_of_week="tue,fri", hour=9, minute=0), catch_up=True,
         gap_cost="geen artikelen geschreven; de Wachtrij is die ronde niet aangevuld",
@@ -521,12 +732,25 @@ _SPECS: list[JobSpec] = [
         _cron(day=1, hour=9, minute=0), domain="goal",
     ),
     JobSpec(
+        # Aanleiding (13 aug 2026): Bewaardvoorjou had als enige van de drie
+        # actieve content-projecten geen staand maandelijks contentdoel — alle
+        # 17 goals in de historie waren ad hoc (losse CTR-sprints, één
+        # moonshot, "Optimaliseer de bestaande content" 4× opnieuw gestart
+        # zonder dat het vorige resultaat werd meegenomen). Zonder een
+        # terugkerend doel is er niets dat de ene poging aan de volgende
+        # koppelt.
+        "bewaardvoorjou_monthly_content_goal", "Bewaardvoorjou AEO-contentgoal (maandelijks herstarten)",
+        partial(_monthly_content_goal, "bewaardvoorjou", "G2 — AEO-contentmotor Bewaardvoorjou",
+                _BEWAARDVOORJOU_OBJECTIVE),
+        _cron(day=1, hour=10, minute=0), domain="goal",
+    ),
+    JobSpec(
         "radar_sky_scan", "Mission Radar sky-scan (concurrenten & trends, elke 4 uur)",
         scan_the_skies, IntervalTrigger(hours=4), domain="radar",
     ),
     JobSpec(
-        "content_improver", "Content-verbeteraar (onder-85 artikelen zelf bijschaven, elke 30 min)",
-        run_content_improver_job, IntervalTrigger(minutes=30), domain="publish",
+        "content_improver", "Content-verbeteraar (onder-85 artikelen zelf bijschaven, elke 45 min)",
+        run_content_improver_job, IntervalTrigger(minutes=45), domain="publish",
     ),
     JobSpec(
         "stuck_recovery", "Stuck-herstel (verloren artikelen terug naar de Wachtrij, elke 60 min)",
@@ -543,6 +767,11 @@ _SPECS: list[JobSpec] = [
     JobSpec(
         "goal_autoheal", "Doelen-zelfreparatie (verweesde/dubbele doelen)",
         _autoheal_job, IntervalTrigger(minutes=15), misfire_grace_time=300, coalesce=True,
+        domain="goal",
+    ),
+    JobSpec(
+        "dashboard_observer", "Proactieve dashboard-observer (seedt doelen waar het dashboard er 0 toont, LLM-vrij, achter gate)",
+        _dashboard_observer_job, IntervalTrigger(hours=6), misfire_grace_time=600, coalesce=True,
         domain="goal",
     ),
     JobSpec(
@@ -573,6 +802,17 @@ _SPECS: list[JobSpec] = [
         "iris_briefing_retry", "Iris-herkanselaar (terugval-briefing later alsnog volwaardig)",
         _iris_retry_job, IntervalTrigger(minutes=45), misfire_grace_time=600, coalesce=True,
         domain="iris",
+    ),
+    # ── GEO citatie-check (wekelijks) ───────────────────────────────────
+    # Het échte AI-zichtbaarheid-KPI: wordt je merk genoemd als bron in
+    # ChatGPT/Perplexity? Draait wekelijks (zo 23:00) voor elke site mét
+    # geconfigureerde persona's, en schrijft per (site, query, week) een rij
+    # in geo_citations. Alleen sites mét persona's — zonder ICP-vragen heeft
+    # de check niets om op te testen.
+    JobSpec(
+        "geo_citation_check", "GEO citatie-check (wordt elk merk genoemd als bron in AI?)",
+        _geo_citation_job, _cron(day_of_week=6, hour=23, minute=0),
+        catch_up=True, misfire_grace_time=3600, coalesce=True, domain="geo",
     ),
     # ── NotebookLM-onderzoek-agent ─────────────────────────────────────
     # Vaste "kennisronde": per project één diepte-vraag tegen het
@@ -684,7 +924,63 @@ def _social_inbox_specs() -> list[JobSpec]:
     return specs
 
 
-_SPECS = _SPECS + _mailbox_specs() + _social_inbox_specs()
+# ── Social Auto-Poster: per project met auto_social_enabled=1 een cron ────────
+# Leest de sites-tabel (auto_social_enabled / auto_social_platforms). Voor elk
+# project dat auto-posten aan heeft staan, plant deze functie één dagelijkse run
+# die een content-pack genereert en — als de mens het heeft aangezet — plaatst op
+# Facebook/Instagram. auto_social_enabled blijft default 0 (UIT) tenzij de mens
+# het per project aanzet via de UI/curl. Review-gate: zonder de vlag genereert de
+# run alleen een pack dat wacht op goedkeuring.
+
+def _social_auto_job(project: str) -> None:
+    from .shared.social_auto import run_auto_social
+    try:
+        asyncio.run(run_auto_social(project))
+    except Exception as e:
+        logger.exception("Social auto-post mislukt voor %s", project)
+        try:
+            from .shared.outcomes import log_outcome
+            log_outcome(project=project, action="social_auto_fout",
+                        detail=f"Social auto-post mislukt: {e}",
+                        next_step="Controleer de social-tokens in de sites-tabel / .env.",
+                        status="error")
+        except Exception:
+            pass
+
+
+def _social_auto_specs() -> list:
+    try:
+        from .shared.database import get_conn
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT name FROM sites WHERE auto_social_enabled=1"
+            ).fetchall()
+    except Exception:
+        return []
+    specs = []
+    for r in rows:
+        proj = r["name"]
+        # Inline-normalisatie (geen _norm import nodig): lowercase + spaties
+        # weg, zodat de job-id stabiel is per project.
+        proj_id = re.sub(r"[^a-z0-9]+", "_", proj.lower()).strip("_") or "x"
+        specs.append(JobSpec(
+            f"social_auto_{proj_id}",
+            f"Social auto-post ({proj})",
+            partial(_social_auto_job, proj),
+            _cron(hour=9, minute=0),  # elke dag 09:00
+            catch_up=False,
+            domain="social",
+        ))
+    return specs
+
+
+# Assembleer de volledige jobspecificatie-lijst pas nádat alle
+# `_*_specs()`-helpers hierboven gedefinieerd zijn. Een forward reference
+# (regel 840 riep `_social_auto_specs()` aan vóórdat die lager in het
+# bestand gedefinieerd werd) gaf een NameError bij module-load en liet de
+# server bij elke herstart crashen — de oude `_SPECS`-assemblage stond
+# hierboven, vóórdat `_social_auto_specs` bestond.
+_SPECS = _SPECS + _mailbox_specs() + _social_inbox_specs() + _social_auto_specs()
 _BY_ID: dict[str, JobSpec] = {s.id: s for s in _SPECS}
 
 
