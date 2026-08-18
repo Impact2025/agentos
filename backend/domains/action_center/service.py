@@ -10,7 +10,8 @@ bestaande endpoints. Het Actiecentrum voert zelf niets uit — het verzamelt.
 """
 import json
 import logging
-from datetime import datetime, timezone
+import sqlite3
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List
 
 from ...shared.database import get_conn
@@ -96,6 +97,214 @@ def _dismissed(conn) -> set:
     }
 
 
+def _json_list(v) -> list:
+    """Parse een JSON-string-veld (tags/contracts) naar een list, robuust."""
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return v
+    try:
+        out = json.loads(v)
+        return out if isinstance(out, list) else []
+    except Exception:
+        return []
+
+
+def _json_dict(v) -> dict:
+    """Parse een JSON-string-veld naar een dict, robuust (spiegelt _json_list)."""
+    if isinstance(v, dict):
+        return v
+    if not v:
+        return {}
+    try:
+        out = json.loads(v)
+        return out if isinstance(out, dict) else {}
+    except Exception:
+        return {}
+
+
+def _snippet(text: str, max_len: int = 220) -> str:
+    """Korte, leesbare snippet zonder quoting/HTML-ruis."""
+    import re as _re
+    t = _re.sub(r"\s+", " ", text or "").strip()
+    return (t[:max_len] + "…") if len(t) > max_len else t
+
+
+def _is_known_sender(conn, from_addr: str) -> bool:
+    """Heeft Vincent deze afzender ooit als 'bekend' gemarkeerd in het
+    Actiecentrum? Zo ja, dan is hij géén 'Nieuwe afzender' meer — ook al
+    staat hij niet in de CRM/leads-tafel. Het register is handmatig beheerd
+    via de 'Markeer als bekend'-knop; het is de plek waar Vincent bijhoudt
+    wie een contact is (bv. 10x-hire) zónder dat er een lead-rij nodig is.
+    """
+    if not from_addr:
+        return False
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM known_senders WHERE lower(addr)=?",
+            (from_addr,),
+        ).fetchone()
+        return bool(row)
+    except Exception:
+        return False
+
+
+def _mark_sender_known(conn, from_addr: str, name: str = "") -> None:
+    """Voeg een afzender toe aan het bekende-afzenders-register (idempotent)."""
+    if not from_addr:
+        return
+    conn.execute(
+        "INSERT OR IGNORE INTO known_senders (addr, name, created_at) VALUES (?, ?, datetime('now'))",
+        (from_addr.strip().lower(), (name or "").strip()),
+    )
+
+
+def _classify_sender(conn, from_addr: str) -> Dict[str, Any]:
+    """Bepaal of een afzender al bekend is in ons systeem (klant/lead) of een
+    nieuw contact is. Kijkt in leads, radar_watchlist, mail_ignored_senders en
+    of er eerdere mails/afspraken van dit adres bestaan.
+
+    Returns dict met: known, label, where, tier, en (optioneel) crm = de volle
+    lead-rij zodat de detail-modal de CRM-data kan tonen.
+    """
+    if not from_addr:
+        return {"known": False, "label": "Onbekend", "where": [], "tier": "new", "crm": None}
+    where = []
+    crm_row = None
+
+    # 1) CRM / leads
+    try:
+        lead = conn.execute(
+            "SELECT * FROM leads WHERE lower(email)=?", (from_addr,)
+        ).fetchone()
+        if lead:
+            crm_row = dict(lead)
+            where.append(f"lead (#{lead['id']}, status: {lead['status']})")
+    except Exception:
+        pass
+
+    # 2) Radar-watchlist / prospect-targets
+    try:
+        rad = conn.execute(
+            "SELECT id, project, keyword FROM radar_watchlist "
+            "WHERE lower(keyword) LIKE ? OR lower(?) LIKE '%' || lower(keyword) || '%'",
+            (f"%{from_addr}%", from_addr),
+        ).fetchall()
+        for r in rad:
+            where.append(f"radar ({r['project']})")
+    except Exception:
+        pass
+
+    # 3) Historie: eerdere mails of al eerder afgehandelde voorstellen?
+    try:
+        mail_n = conn.execute(
+            "SELECT COUNT(*) AS n FROM mail_inbox WHERE lower(from_addr)=?",
+            (from_addr,),
+        ).fetchone()["n"]
+        prop_n = conn.execute(
+            "SELECT COUNT(*) AS n FROM calendar_proposals WHERE lower(from_addr)=? "
+            "AND status IN ('booked','rejected')",
+            (from_addr,),
+        ).fetchone()["n"]
+        if mail_n > 1 or prop_n > 0:
+            where.append(f"{mail_n} eerdere mail(s), {prop_n} afgehandeld voorstel")
+    except Exception:
+        pass
+
+    # 4) Geïgnoreerde afzenders
+    try:
+        ign = conn.execute(
+            "SELECT 1 FROM mail_ignored_senders WHERE lower(from_addr)=?",
+            (from_addr,),
+        ).fetchone()
+        if ign:
+            where.append("op ignoreer-lijst")
+    except Exception:
+        pass
+
+    # Nuanceer: iemand kan al mailhistorie hebben (bekend contact) zónder dat
+    # hij in de CRM/leads-tafel staat. Dan is het wél een nieuwe *lead* voor
+    # Vincent's diensten — maar géén volslagen onbekende. We onderscheiden drie
+    # niveaus zodat de badge op de kaart de juiste kleur krijgt.
+    on_ignore = "op ignoreer-lijst" in where
+    in_crm = crm_row is not None or any(w.startswith("radar (") for w in where)
+    has_history = any("mail" in w or "voorstel" in w for w in where)
+    if on_ignore:
+        return {"known": False, "label": "Geïgnoreerde afzender", "where": where, "tier": "ignored", "crm": crm_row}
+    if in_crm:
+        return {"known": True, "label": "Bekende klant/lead (CRM)", "where": where, "tier": "crm", "crm": crm_row}
+    if has_history:
+        return {"known": False, "label": "Warm contact — nog geen lead", "where": where, "tier": "warm", "crm": crm_row}
+    return {"known": False, "label": "Nieuwe lead", "where": where, "tier": "new", "crm": crm_row}
+
+
+def _calendar_detail(conn, p: Dict) -> Dict[str, Any]:
+    """Verrijk een calendar_proposal met lead-CRM-data en de laatste 3
+    gerelateerde mails, zodat de detail-modal volledige context geeft i.p.v.
+    kale statistieken.
+
+    Returns het bestaande `detail`-dict, aangevuld met: lead (dict of None),
+    recent_mails (list van {date, subject, snippet}), obsidian_path.
+    """
+    from_addr = (p.get("from_addr") or "").strip().lower()
+    detail = {
+        "from_addr": p.get("from_addr"),
+        "subject": p.get("subject"),
+        "proposed_start": p.get("proposed_start"),
+        "proposed_end": p.get("proposed_end"),
+        "location": p.get("location"),
+        "is_remote": bool(p.get("is_remote")),
+        "duration_min": p.get("duration_min"),
+        "travel_buffer_min": p.get("travel_buffer_min"),
+        "priority": p.get("priority"),
+        "rationale": (p.get("rationale") or "").strip(),
+        "mailbox_id": p.get("mailbox_id"),
+        "inbox_id": p.get("inbox_id"),
+    }
+    lead_status = _classify_sender(conn, from_addr)
+    detail["lead_status"] = lead_status
+
+    # Lead-CRM-data (als er een lead is).
+    crm = lead_status.get("crm")
+    if crm:
+        try:
+            detail["lead"] = {
+                "id": crm.get("id"),
+                "org_name": crm.get("org_name"),
+                "email": crm.get("email"),
+                "phone": crm.get("phone"),
+                "status": crm.get("status"),
+                "score": crm.get("score"),
+                "summary": crm.get("summary"),
+                "tags": _json_list(crm.get("tags")),
+                "obsidian_path": crm.get("obsidian_path"),
+            }
+        except Exception:
+            detail["lead"] = None
+    else:
+        detail["lead"] = None
+
+    # Laatste 3 mails van deze afzender (de thread).
+    try:
+        mails = conn.execute(
+            "SELECT received_at, created_at, subject, body_text FROM mail_inbox "
+            "WHERE lower(from_addr)=? ORDER BY COALESCE(received_at, created_at) DESC LIMIT 3",
+            (from_addr,),
+        ).fetchall()
+        detail["recent_mails"] = [
+            {
+                "date": (m["received_at"] or m["created_at"] or "")[:16],
+                "subject": (m["subject"] or "").strip(),
+                "snippet": _snippet(m["body_text"] or "", 220),
+            }
+            for m in mails
+        ]
+    except Exception:
+        detail["recent_mails"] = []
+
+    return detail
+
+
 def _goal_task_counts(conn, goal_id: str) -> Dict[str, int]:
     counts = {"total": 0}
     for r in conn.execute(
@@ -105,6 +314,56 @@ def _goal_task_counts(conn, goal_id: str) -> Dict[str, int]:
         counts[r["status"]] = r["n"]
         counts["total"] += r["n"]
     return counts
+
+
+def _campagne_auto_channels(conn, project: str, kanalen: List[str],
+                            image_brief_json: str = "") -> List[str]:
+    """Welke kanalen kan Agent OS voor dit pack ÉCHT automatisch plaatsen?
+
+    Stuurt de zichtbaarheid van de 'Plaats op socials'-knop. Een kanaal komt
+    alleen in deze lijst als de publish-chain hem daadwerkelijk kan doen —
+    anders belooft de knop iets dat hij niet waar kan maken en liegt de UI.
+
+    Regels (afgeleid van shared/social_content.publish_pack):
+      - facebook : alleen als er een page-id + token is voor dit project.
+      - twitter  : alleen als er API-creds zijn voor dit project.
+      - instagram: alleen als geconfigureerd ÉN het pack een públieke image_url
+                   heeft (IG weigert lokale files — anders manual-only).
+      - linkedin : nooit automatisch — vanaf een persoonlijk profiel kan het per
+                   definitie niet, dus altijd 'Ik heb 'm geplaatst'.
+    """
+    out: List[str] = []
+    proj_norm = (project or "").strip()
+    pub_img = ""
+    try:
+        ib = json.loads(image_brief_json or "{}")
+        u = (ib.get("image_url") or "").strip()
+        if u.startswith("http"):
+            pub_img = u
+    except Exception:
+        pass
+    for k in kanalen:
+        k = k.strip().lower()
+        try:
+            if k == "facebook":
+                from ...shared import facebook as fb
+                if fb.is_configured(proj_norm):
+                    out.append(k)
+            elif k == "twitter":
+                from ...shared import twitter as tw
+                if tw.is_configured(proj_norm):
+                    out.append(k)
+            elif k == "instagram":
+                from ...shared import instagram as ig
+                # Configured én een publieke afbeelding beschikbaar — anders
+                # valt publish_pack terug op manual en plaatst hij niets.
+                if ig.is_configured(proj_norm) and pub_img:
+                    out.append(k)
+            elif k == "linkedin":
+                pass  # bewust nooit automatisch
+        except Exception:
+            continue
+    return out
 
 
 def build_inbox() -> Dict[str, Any]:
@@ -121,6 +380,13 @@ def build_inbox() -> Dict[str, Any]:
             from ...domains.calendar import agent as agenda_agent
             for p in agenda_agent.pending_proposals():
                 conflict = (p.get("conflict_note") or "").strip()
+                # ── Lead-status: kende we deze afzender al? ──────────────
+                # Een afspraak-voorstel komt per mail binnen; de afzender kan een
+                # bestaande klant/lead zijn of — vaker — een nieuw contact. Die
+                # status hoort op de kaart zichtbaar te zijn vóórdat je boekt,
+                # zodat je meteen ziet of dit een eerste contact is. De volledige
+                # lead-status + recente mails worden in _calendar_detail() berekend.
+                from_addr = (p.get("from_addr") or "").strip().lower()
                 items.append({
                     "kind": "calendar_proposal",
                     "dismiss_kind": "calendar",
@@ -129,12 +395,16 @@ def build_inbox() -> Dict[str, Any]:
                     "project": "Agenda",
                     "created_at": p.get("created_at"),
                     "summary": (
-                        f"Voorgesteld: {p['proposed_start'][:16].replace('T', ' ')}\u2013"
-                        f"{p['proposed_end'][11:16]} \u00b7 {p['priority']}"
-                        + (f" \u00b7 \u26A0 {conflict[:120]}" if conflict else "")
+                        f"Voorgesteld: {p['proposed_start'][:16].replace('T', ' ')}–"
+                        f"{p['proposed_end'][11:16]} · {p['priority']}"
+                        + (f" · ⚠ {conflict[:120]}" if conflict else "")
                     ),
+                    # Volledige detail-payload voor het "Detail bekijken"-paneel:
+                    # lead-CRM, recente mails en lead-status in één call.
+                    "detail": _calendar_detail(conn, p),
                     "actions": [
                         {"label": "Plan in agenda", "type": "calendar_approve", "id": p["id"]},
+                        {"label": "Detail bekijken", "type": "calendar_detail", "id": p["id"]},
                         {"label": "Weiger", "type": "calendar_reject", "id": p["id"], "danger": True},
                     ],
                 })
@@ -190,12 +460,22 @@ def build_inbox() -> Dict[str, Any]:
         # weg uit de inbox en rapporteren we als inconsistente-staat-logging, zodat
         # de content-verbeteraar (scheduler) ze oppakt i.p.v. de mens.
         from ...shared.config import CONTENT_MIN_SCORE
+        _seen_wachtrij_titles = set()
         for j in conn.execute(
             "SELECT j.id, j.title, j.seo_score, j.created_at, s.name AS site, "
             "COALESCE(j.content_type,'blog') AS content_type "
             "FROM content_jobs j LEFT JOIN sites s ON s.id = j.site_id "
             "WHERE j.status='pending_review' ORDER BY j.created_at DESC"
         ):
+            if ("content", j["id"]) in skip:
+                continue
+            _dedup_key = ((j["site"] or "?"), _short_title(j["title"]).strip().lower())
+            if _dedup_key in _seen_wachtrij_titles:
+                # Zelfde site + zelfde titel al eerder in deze ronde getoond: een
+                # tweede content_jobs-rij voor hetzelfde artikel (bijv. doordat de
+                # keyword-dedupe in create_job niet aansloeg). Eén kaart, niet twee.
+                continue
+            _seen_wachtrij_titles.add(_dedup_key)
             score = int(j["seo_score"] or 0)
             ct = (j["content_type"] or "blog").strip().lower()
             is_outreach = ct == "linkedin_outreach"
@@ -253,7 +533,7 @@ def build_inbox() -> Dict[str, Any]:
                 "kind": "content_review",
                 "dismiss_kind": "content",
                 "id": j["id"],
-                "title": j["title"],
+                "title": _short_title(j["title"]),
                 "project": j["site"] or "?",
                 "created_at": j["created_at"],
                 "content_type": ct,
@@ -508,7 +788,8 @@ def build_inbox() -> Dict[str, Any]:
         # ── 2c. Mail helpdesk: concept-antwoorden wachten op goedkeuring ──
         for r in conn.execute(
             "SELECT r.id, r.to_addr, r.subject, r.draft_body, r.created_at, "
-            "m.project, m.address, i.from_name, r.poot_referral "
+            "m.project, m.address, i.from_name, i.received_at, i.from_addr, "
+            "r.poot_referral, r.customer_status "
             "FROM mail_reply r "
             "JOIN mailboxes m ON m.id=r.mailbox_id "
             "JOIN mail_inbox i ON i.id=r.inbox_id "
@@ -516,17 +797,35 @@ def build_inbox() -> Dict[str, Any]:
         ):
             if ("mail", r["id"]) in skip:
                 continue
+            from_addr = (r["from_addr"] or "").strip().lower()
+            known = bool(from_addr) and _is_known_sender(conn, from_addr)
             items.append({
                 "kind": "mail_reply",
                 "dismiss_kind": "mail",
                 "id": r["id"],
                 "title": f"Mail {r['from_name'] or r['to_addr']}: {r['subject']}",
                 "project": r["project"] or "Helpdesk",
-                "created_at": r["created_at"],
+                # Binnenkomsttijd van de oorspronkelijke mail (i.received_at),
+                # terugvallend op de concept-tijd — zodat het dashboard toont
+                # wanneer het bericht écht binnenkwam, niet wanneer het concept
+                # door de agent is geschreven.
+                "created_at": r["received_at"] or r["created_at"],
                 # Iris-regel: als er een Pootgelukkig-kans is gezien, geef dat
                 # door als vlag zodat de UI 'm kan tonen (niet verplicht — Vincent
                 # keurt het concept alsnog goed of laat de PS weg bij Bewerk).
-                "flag": ("Pootgelukkig-suggestie" if (r["poot_referral"] or "").strip() else None),
+                # 'Nieuwe afzender' tonen we alleen als de afzender écht onbekend
+                # is: niet in het bekende-afzenders-register én niet met een
+                # 'bekend' customer_status (die laatste is de historie-check van de
+                # mail-agent zelf). Eén keer 'Markeer als bekend' klikken en de
+                # afzender valt voortaan in deze groep.
+                "flag": " · ".join(f for f in (
+                    "Pootgelukkig-suggestie" if (r["poot_referral"] or "").strip() else None,
+                    "Nieuwe afzender" if (r["customer_status"] != "bekend" and not known) else None,
+                ) if f) or None,
+                # Altijd meesturen zodat de UI weet of er een "Markeer als bekend"-
+                # knop moet staan. Als de afzender al bekend is, laten we de knop
+                # weg (je markeert geen bekende afzender nóg een keer).
+                "sender_known": bool(known),
                 "summary": (r["draft_body"][:240] + ("…" if len(r["draft_body"]) > 240 else "")),
                 # GSC-expert-knop alleen bij échte Search Console-mails
                 # (afzender sc-noreply@google.com of kenmerkende onderwerp/body).
@@ -575,6 +874,98 @@ def build_inbox() -> Dict[str, Any]:
                     {"label": "Verstuur", "type": "personal_mail_send", "id": r["id"]},
                     {"label": "Afwijzen", "type": "personal_mail_reject", "id": r["id"], "danger": True},
                 ],
+            })
+
+        # ── 2e. Social-inbox: concept-antwoorden op reacties/DM's ──────────
+        # Zelfde patroon als 2d (Postvak) — bewust hier en niet alleen in de
+        # bridge, want dismiss/skip loopt voor élk itemtype via dezelfde
+        # inbox_dismissals-tabel en die skip-check zit alleen hier.
+        for r in conn.execute(
+            "SELECT m.id, m.platform, m.author_name, m.author_handle, m.text, "
+            "m.draft_body, m.created_at, i.project "
+            "FROM social_inbox_msg m JOIN social_inboxes i ON i.id=m.inbox_id "
+            "WHERE m.status IN ('pending_review','edited') "
+            "ORDER BY m.created_at DESC"
+        ):
+            if ("social", r["id"]) in skip:
+                continue
+            items.append({
+                "kind": "social_msg",
+                "dismiss_kind": "social",
+                "id": r["id"],
+                "title": f"{r['platform'].capitalize()} · {r['author_name'] or r['author_handle'] or 'iemand'}",
+                "project": r["project"] or "Social",
+                "created_at": r["created_at"],
+                "summary": (r["draft_body"] or r["text"] or "")[:240],
+                "actions": [
+                    {"label": "Plaats antwoord", "type": "social_send", "id": r["id"]},
+                    {"label": "Afwijzen", "type": "social_reject", "id": r["id"], "danger": True},
+                ],
+            })
+
+        # ── 2f. Campagne: de post die vandaag (of eerder) had moeten staan ──
+        # De invariant `campagnepost_over_datum` vangt dit óók, maar pas na een
+        # dag speling plus drie dagen 'stil'-drempel — dat is de vangnet-melding
+        # voor een campagne die stilvalt, niet de werkkaart voor vandaag. Een
+        # plan van achttien posts heeft een kaart nódig op de ochtend zelf,
+        # anders is de enige plek waar het slot staat opnieuw iemands geheugen.
+        # Toekomstige posts blijven bewust weg: een inbox die volloopt met werk
+        # van over drie weken is geen inbox meer. We tonen alleen de post die
+        # VANDAAG gepland staat — verleden (te_laat) posts horen in de
+        # `campagnepost_over_datum`-melding (zie hierboven), niet als werkkaart.
+        vandaag_begin = date.today().isoformat() + "T00:00:00"
+        vandaag_eind = date.today().isoformat() + "T23:59:59"
+        try:
+            campagne_rijen = conn.execute(
+                "SELECT id, project, campaign, campaign_post, theme, angle, "
+                "scheduled_for, copy_json, image_brief_json FROM social_posts "
+                "WHERE campaign <> '' AND scheduled_for <> '' "
+                "AND scheduled_for >= ? AND scheduled_for <= ? "
+                "AND status = 'pending_review' ORDER BY scheduled_for",
+                (vandaag_begin, vandaag_eind),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            campagne_rijen = []
+        for r in campagne_rijen:
+            if ("campagne_post", r["id"]) in skip:
+                continue
+            kanalen = sorted(_json_dict(r["copy_json"]).keys())
+            gepland = (r["scheduled_for"] or "")
+            te_laat = gepland[:10] < date.today().isoformat()
+            # Welke kanalen kan Agent OS ÉCHT automatisch plaatsen voor dit pack?
+            # Alleen die krijgen de groene "Plaats op socials"-knop — de rest
+            # kan toch niet (geen token / geen publieke image / LinkedIn is per
+            # definitie handmatig). Zo liegt de UI nooit dat ze geplaatst wordt.
+            auto_kanalen = _campagne_auto_channels(conn, r["project"], kanalen, r["image_brief_json"])
+            actions = [
+                {"label": "Bekijk & kopieer", "type": "open_tab", "tab": "Social Creatie"},
+            ]
+            if auto_kanalen:
+                actions.append({
+                    "label": "Plaats op socials", "type": "campagne_publish",
+                    "id": r["id"], "channels": auto_kanalen,
+                })
+            actions.append({
+                "label": "Ik heb 'm geplaatst", "type": "campagne_posted", "id": r["id"],
+            })
+            actions.append({
+                "label": "Sla over", "type": "campagne_skip", "id": r["id"], "danger": True,
+            })
+            items.append({
+                "kind": "campagne_post",
+                "dismiss_kind": "campagne_post",
+                "id": r["id"],
+                "title": f"Campagnepost {r['campaign_post']}: {_short_title(r['theme'])}",
+                "project": _display_project(conn, r["project"]),
+                "created_at": gepland,
+                "summary": (
+                    ("STOND GEPLAND VOOR " + gepland[:10] + " — " if te_laat else "")
+                    + f"Klaar voor {', '.join(kanalen) or 'geen kanaal'}. "
+                    + (f"Automatisch plaatsbaar op: {', '.join(auto_kanalen)}. " if auto_kanalen
+                       else "Geen kanaal automatisch beschikbaar — plaats handmatig. ")
+                    + (r["angle"] or "")[:240]
+                ),
+                "actions": actions,
             })
 
     # Stilstand: geplande runs die overgingen terwijl de machine uit stond.

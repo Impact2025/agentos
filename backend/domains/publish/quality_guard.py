@@ -56,6 +56,36 @@ CORRUPTION_TOKENS = {
     "の", "は", "を", "に", "が", "と", "です", "ます", "例えば",
 }
 
+# ── 1b. Woorden die in het Nederlands (of als leenwoord) wél geldig zijn ──
+# Deze mogen NOOIT als "tokenrot" worden flagt, ook niet als ze toevallig in
+# CORRUPTION_TOKENS staan. Zonder deze set falen normale NL-zinnen
+# ("er is", "in de", "die man", "het was", "alles half open") ten onrechte.
+DUTCH_SAFE = {
+    # Nederlandse functiewoorden / lidwoorden / voornaamwoorden / voorzetsels
+    "de", "het", "een", "en", "van", "in", "op", "aan", "met", "voor", "naar",
+    "bij", "door", "over", "onder", "tussen", "zonder", "om", "tot", "als",
+    "dat", "dit", "deze", "ons", "jij", "hij", "zij", "ze", "wij", "ik", "mij",
+    "je", "jou", "u", "uw", "zijn", "haar", "hen", "hun", "waar", "wanneer",
+    "hoe", "waarom", "welke", "elke", "alle", "veel", "weinig", "sommige",
+    "andere", "zelfde", "zelf", "echt", "zeker", "makkelijk", "moeilijk",
+    "snel", "langzaam", "vroeg", "laat", "groot", "klein", "hoog", "laag",
+    "lang", "kort", "levend", "dood", "gratis", "vol", "beide", "enige",
+    "eigen",
+    # de specifieke false-positives uit de ochtendrapportage van 18-08
+    "er", "was", "waren", "alles", "per", "half", "open", "start", "let",
+    "via", "see", "get", "set", "end", "out", "use", "used", "using", "make",
+    "made", "find", "found", "need", "needs", "one", "two", "you", "your",
+    "are", "have", "has", "been", "they", "their", "there", "here", "what",
+    "when", "where", "which", "while", "about", "into", "also", "can",
+    "should", "would", "could", "may", "might", "each", "other", "than",
+    "then", "them", "these", "those", "some", "such", "only", "just", "like",
+    "more", "most", "very", "first", "last", "next", "new", "old", "good",
+    "best", "well", "how", "why", "who", "whom", "whose", "our", "from",
+    "this", "that", "with", "for", "and", "the", "a", "an", "to", "of", "at",
+    "is", "it", "as", "be", "do", "we", "he", "she", "my", "me", "not", "no",
+    "so", "up", "by", "or", "if", "his",
+}
+
 # ── 2. Plaatshouders die nooit live mogen ─────────────────────────────────
 PLACEHOLDER_PATTERNS = [
     (re.compile(r"\[link\b[^\]]*\]", re.I), "lege download-/link-plaatshouder '[link …]'"),
@@ -92,18 +122,33 @@ def _tokens(text: str):
     return [t for t in re.split(r"[^a-z0-9à-ÿ]+", text.lower()) if t]
 
 
+# Drempel: pas falen op vreemde-woord-contaminatie als >= 12% van de tokens
+# een ÉCHT vreemd woord is (na uitsluiting van DUTCH_SAFE). Eén los Engels
+# zinnetje in een NL-artikel (ratio < drempel) mag de publicatie niet killen;
+# structurele rot (hoog ratio) wel. DUTCH_SAFE voorkomt false-positives op
+# woorden die in het Nederlands geldig zijn ("er", "in", "die", "was"…).
+CONTAMINATION_THRESHOLD = 0.12
+
+
 def check(html: str):
-    """Retourneert (ok, issues, suspicion_score)."""
+    """Retourneert (ok, issues, suspicion_score).
+
+    suspicion_score = 0..100: het percentage tokens dat een écht vreemd
+    woord bevat (na uitsluiting van DUTCH_SAFE). 0 = schone NL-tekst.
+    """
     issues: list[str] = []
     text = _to_text(html)
     toks = _tokens(text)
+    n = len(toks) or 1
 
-    hits = {t for t in toks if t in CORRUPTION_TOKENS}
-    if hits:
-        sample = sorted(hits)[:8]
+    foreign = {t for t in toks if t in CORRUPTION_TOKENS and t not in DUTCH_SAFE}
+    contamination = len(foreign) / n
+
+    if foreign and contamination >= CONTAMINATION_THRESHOLD:
+        sample = sorted(foreign)[:8]
         issues.append(
             f"Mogelijke taalcorruptie (LLM-tokenrot) gedetecteerd: "
-            f"{', '.join(sample)}{' …' if len(hits) > 8 else ''}. "
+            f"{', '.join(sample)}{' …' if len(foreign) > 8 else ''}. "
             "Nederlandse tekst mag geen Engelse/Duitse/zakelijke vreemde woorden bevatten."
         )
 
@@ -126,7 +171,7 @@ def check(html: str):
             f"Zichtbare '{m.group(0)}'-tekst in de body. Template niet correct verwerkt."
         )
 
-    return (len(issues) == 0, issues, len(hits))
+    return (len(issues) == 0, issues, round(contamination * 100))
 
 
 def sanitize_slug(slug: str) -> str:
