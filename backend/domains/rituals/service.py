@@ -352,6 +352,72 @@ class RitualsService:
     def get_open_goals(self) -> List[Dict[str, Any]]:
         return self.list_goals(include_completed=False)
 
+    # ----------------------------------------------------- verplichte gate
+    def get_next_required(self, now: Optional[datetime] = None) -> Dict[str, Any]:
+        """Bepaalt het volgende verplichte ritueel op basis van dag-type en een
+        17:00-time-gate. Server-side vertaling van weekflow.service.ts uit
+        impactreis3 (daar draaide dit client-side op localStorage, dus de gate
+        was onzichtbaar voor AgentOS/Iris). Retourneert exact dezelfde shape als
+        `getNextRequiredRitual()` in impactreis3:
+
+          {path, title, isRequired, isAvailable, reason}
+
+        `path` wijst naar een frontend-actie i.p.v. een URL (SPA heeft geen
+        routes): 'morning' | 'evening' | 'weekly-start' | 'weekly-review'.
+        `isAvailable` is False als het ritueel verplicht is maar (nog) niet mag
+        (avond vóór 17:00) — dan toont de UI een zachte banner, geen blokkade.
+        Geen verplicht ritueel → {"isRequired": False, "next": None}.
+        """
+        now = now or datetime.now()
+        js_day = now.weekday()  # ma=0 .. zo=6
+        day_type = "monday" if js_day == 0 else ("weekday" if 1 <= js_day <= 4 else "weekend")
+        after_5pm = now.hour >= 17
+        status = self.get_today_status()
+
+        # Maandag: weekstart verplicht vóór alles
+        if day_type == "monday" and not status["weekly_start_done"]:
+            return {
+                "isRequired": True,
+                "next": {"path": "weekly-start", "title": "Week Start",
+                         "isRequired": True, "isAvailable": True,
+                         "reason": "Start je nieuwe week met intentie"},
+            }
+
+        # Werkdagen (ma-vr): ochtend → avond
+        if day_type in ("weekday", "monday"):
+            if not status["morning_done"]:
+                return {
+                    "isRequired": True,
+                    "next": {"path": "morning", "title": "Ochtend Ritueel",
+                             "isRequired": True, "isAvailable": True,
+                             "reason": "Begin je dag met focus en intentie"},
+                }
+            if not status["evening_done"]:
+                if after_5pm:
+                    return {
+                        "isRequired": True,
+                        "next": {"path": "evening", "title": "Avond Ritueel",
+                                 "isRequired": True, "isAvailable": True,
+                                 "reason": "Sluit je dag af met reflectie"},
+                    }
+                return {
+                    "isRequired": True,
+                    "next": {"path": "evening", "title": "Avond Ritueel",
+                             "isRequired": True, "isAvailable": False,
+                             "reason": "Beschikbaar na 17:00"},
+                }
+
+        # Weekend: weekreview
+        if day_type == "weekend" and not status["weekly_review_done"]:
+            return {
+                "isRequired": True,
+                "next": {"path": "weekly-review", "title": "Week Review",
+                         "isRequired": True, "isAvailable": True,
+                         "reason": "Sluit je week af met reflectie"},
+            }
+
+        return {"isRequired": False, "next": None}
+
     def get_briefing_context(self) -> Dict[str, Any]:
         """Klein, foutbestendig bundeltje voor Iris' promptcontext. Wordt
         altijd door iris/service.py in een try/except aangeroepen — deze

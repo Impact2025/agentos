@@ -569,6 +569,14 @@ def search_provider_watchdog_job() -> None:
 
 
 # Volgorde = leesvolgorde van de dag. De inhaalslag sorteert zelf op tijdstip.
+# Lazy wrapper voor run_ritual_morning_check: die functie is verderop in dit
+# bestand gedefinieerd (regel ~844), dus een directe referentie in deze lijst
+# zou bij module-import een NameError geven. De wrapper lost de naam pas op
+# bij daadwerkelijke aanroep (láng ná import), wanneer de functie wél bestaat.
+async def _ritual_morning_check_job():
+    return await run_ritual_morning_check()
+
+
 _SPECS: list[JobSpec] = [
     # Wekelijkse Demand Engine-scan (maandag) — ververst de kansen voor alle GSC-sites
     # zodat de contentmotor nooit droogvalt (CLAUDE.md keten 7). MOET vóór de
@@ -602,6 +610,19 @@ _SPECS: list[JobSpec] = [
     JobSpec(
         "daily_digest", "Ochtendrapport (fouten · wacht-op-jou · gisteren opgeleverd)",
         run_daily_digest, _cron(hour=7, minute=0), catch_up=True,
+    ),
+
+    # Verplichte ritueel-check: kort ná de Iris-briefing (06:45) en het
+    # ochtendrapport (07:00). Als het ochtendritueel (werkdag) of weekstart
+    # (maandag) nog niet is ingevuld, wordt er een herinnering gelogd én — als
+    # SMTP is geconfigureerd — een mail gestuurd (zelfde patroon als de
+    # ochtend-herinnering in impactreis3). Idempotent en defensief: nooit een
+    # harde fout, nooit een side-effect zonder SMTP. Bewust géén catch_up — een
+    # gemiste ochtendcheck heelt zich de volgende dag vanzelf.
+    JobSpec(
+        "ritual_morning_check",
+        "Ritueel-check (herinnert als ochtendritueel/weekstart nog niet is gedaan)",
+        _ritual_morning_check_job, _cron(hour=7, minute=5), domain="rituals",
     ),
     # Astros Digest: het ochtendrapport van de concurrent-radar. Draait NA het
     # GSC-sync (06:30) en de Iris-briefing (06:45) zodat verse trends + momentum
@@ -827,13 +848,50 @@ _SPECS: list[JobSpec] = [
     ),
 ]
 
+
+async def run_ritual_morning_check() -> None:
+    """Herinnering als het verplichte ochtendritueel (of weekstart op maandag)
+    nog niet is ingevuld. Draait om 07:05, kort na Iris' briefing. Leest de
+    server-side gate uit rituals/service.py en stuurt — als SMTP draait — een
+    mail (zelfde patroon als impactreis3's ochtend-herinnering). Defensief:
+    vangt elke fout op zodat de job nooit de rest van de scheduler raakt."""
+    try:
+        from .domains.rituals import service as rituals_service
+        res = rituals_service.get_service().get_next_required()
+        if not res.get("isRequired") or not res.get("next"):
+            return  # alles al gedaan
+        next_r = res["next"]
+        if not next_r.get("isAvailable"):
+            return  # verplicht maar mag nog niet (avond vóór 17:00)
+        title = next_r.get("title", "Ritueel")
+        reason = next_r.get("reason", "")
+        logger.info("[rituals] verplicht ritueel nog niet gedaan: %s — %s", title, reason)
+        # Optionele mail-herinnering via de globale SMTP (.env), alleen als die
+        # geconfigureerd is. Faalt nooit hard — zonder SMTP blijft het bij een log.
+        try:
+            from ..shared.config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
+            if SMTP_USER:
+                import smtplib
+                from email.mime.text import MIMEText
+                msg = MIMEText(
+                    "Goedemorgen Vincent,\n\nJe verplichte %s staat nog open: %s.\n"
+                    "Open Agent OS om hem te doen — de Control Room wacht erop.\n\n"
+                    "Met vriendelijke groet,\nIris" % (title, reason)
+                )
+                msg["Subject"] = "Herinnering: %s nog niet gedaan" % title
+                msg["From"] = SMTP_USER
+                msg["To"] = SMTP_USER
+                with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+                    s.starttls()
+                    s.login(SMTP_USER, SMTP_PASSWORD)
+                    s.sendmail(SMTP_USER, [SMTP_USER], msg.as_string())
+        except Exception as mail_err:
+            logger.debug("[rituals] geen mail-herinnering verzonden: %s", mail_err)
+    except Exception as e:
+        logger.warning("[rituals] morning-check mislukt: %s", e, exc_info=True)
+
+
 # Filter vóór de mailbox/social-specs eraan geplakt worden: die laatste zijn
-# al project-gescopet via de database (lege tabel op een verse instance =
-# vanzelf geen jobs), dus daar is filteren op domain niet nodig — maar de
-# vaste _SPECS hierboven draaien ongeacht data, en precies dát maakt de
-# whitelist hier nodig (anders synct een klant-instance zonder Beursmeester
-# toch elke ochtend koershistorie).
-_SPECS = [s for s in _SPECS if domain_enabled(s.domain)]
 
 
 # ── Mail helpdesk: per actieve mailbox een eigen poll-job ──────────────────

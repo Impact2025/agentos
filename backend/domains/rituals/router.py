@@ -116,6 +116,14 @@ def status():
     return {"today": svc.get_today_status(), "streaks": svc.get_streaks()}
 
 
+@router.get("/next-required")
+def next_required():
+    """Het volgende verplichte ritueel (verplichte gate). Frontend toont een
+    full-screen overlay als `isRequired` en `next.isAvailable` beide True; een
+    zachte banner als `isAvailable` False is (avond vóór 17:00)."""
+    return get_service().get_next_required()
+
+
 # ---------------------------------------------------------------- morning
 @router.get("/morning")
 def get_morning(date: Optional[str] = None):
