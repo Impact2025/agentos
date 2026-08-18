@@ -1,0 +1,6 @@
+{
+  "objective": "Herschrijf het artikel 'Sociale cohesie versterken met een evenement: 6 aanpakken die werken' (Bijeen) naar een wereldklasse versie die de kwaliteitsgrens van 80+ SEO-score haalt. Behou de 6 concrete aanpakken, de praktische toon en de Bijeen-stijl (evenementen voor welzijn, geen dikke evaluatie-formulieren, direct uitvoerbaar). Versterk de zwakke delen: scherpere intro, meer concrete voorbeelden per aanpak, betere leesbaarheid, vermijd zweverige taal. Max 1200 woorden, Nederlands, eerste persoon waar passend, geen AI-buzzwords.",
+  "benchmark": "BENCHMARK = echte Bijeen-stijl (zie vault 10_Projects/Bijeen). Verplicht: (1) titel behouden of scherper maken, (2) 6 aanpakken expliciet benoemen en elk met een concreet voorbeeld, (3) toon van 'gezellige middag' naar 'blijvende verbinding' (het bestaande artikel doet dit goed, behoud het), (4) praktische toon, geen jargon, geen verzonnen cijfers/quotes, (5) leesbaarheid: korte alinea's, duidelijke tussenkoppen, (6) SEO: trefwoord 'sociale cohesie' natuurlijk verweven, 800-1200 woorden, (7) eindig met een zachte CTA (bijeen.app uitproberen). STRAF elke afwijking (zweverig, verzonnen voorbeelden, te lang, SEO-ramsjl) zwaar in de score. Drempel: 80+.",
+  "threshold": 80,
+  "max_iterations": 3
+}
