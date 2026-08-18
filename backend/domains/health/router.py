@@ -453,7 +453,7 @@ def _status_reden(items: dict, status: str) -> str:
     if rb:
         # Operationele blokkades (geen code-bug) herkennen we aan de signature
         # zodat de banner zinnig blijft i.p.v. 'onbekende oorzaak'.
-        sigs = " ".join(r.get("signature", "")).lower()
+        sigs = " ".join(str(b.get("signature", "")).lower() for b in rb)
         if "application has been deleted" in sigs or "error validating application" in sigs:
             return "social-app (Instagram/Meta) verwijderd — token dood"
         if "publicatie geblokkeerd" in sigs or "taalcorruptie" in sigs:
