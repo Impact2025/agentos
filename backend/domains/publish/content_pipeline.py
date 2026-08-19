@@ -30,6 +30,7 @@ import uuid
 
 import httpx
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -51,6 +52,26 @@ from ...shared import twitter as twitter_service
 from ...shared.image_gen import generate_infographic, generate_quote_card
 
 logger = logging.getLogger(__name__)
+
+
+def _generate_cover_image(site: Dict, title: str) -> Optional[bytes]:
+    """Artikel-omslag voor de Wachtrij-thumbnail.
+
+    Projecten met een `style.json`-profiel (huisstijl-overlay, zie
+    `shared/social_style.py`) krijgen dezelfde on-brand render als hun
+    social-posts — foto + gouden overlay + logo — in plaats van de generieke
+    effen quote-card. Zonder profiel blijft de oude quote-card het antwoord,
+    dus verandert er voor projecten zonder huisstijl-profiel niets."""
+    from ...shared import social_style, social_image
+    if social_style.load_style(site["name"]).bron == "style.json":
+        res = social_image.generate_social_image(title, site["name"], headline=title)
+        if res.get("success") and res.get("path"):
+            try:
+                return Path(res["path"]).read_bytes()
+            except OSError as e:
+                logger.warning("On-brand omslagbeeld onleesbaar (%s), quote-card gebruikt: %s",
+                               res["path"], e)
+    return generate_quote_card(title, site["name"])
 
 _FALLBACK_WRITE_PROMPT = (
     "Je bent een ervaren Nederlandse SEO-copywriter. Schrijf heldere, feitelijke, "
@@ -1083,6 +1104,99 @@ async def _write_article_best(site: Dict, keyword: str, angle: str,
 _TITLE_MAX_LEN = 90
 
 
+# ── Sanitizer: agent-rommel uit elke body ───────────────────────────────────
+#
+# Deze functie is de laatste verdedigingslinie vóórdat een content_job de
+# wachtrij in gaat. Hij loopt op ÉLKE route (Gauntlet, meertraps-schrijver,
+# single-shot-fallback, listicle, run-now) en verwijdert twee klassen van
+# defecten die anders live op de site belanden:
+#
+#   1. Agent-rol-labels die als kop in het stuk lekten ("## Content Redactie-
+#      schrijver", "## Eindredacteur"). De Gauntlet assembleerde die vóór 17
+#      aug 2026 expliciet als H2; ook de schrijver zélf kan ze produceren.
+#   2. Een weggeschreven "Metadata:"-blok (title/meta/slug) onderaan het stuk.
+#
+# Opmerking: het vervangen van ándere merknamen (bv. een artikel dat per ongeluk
+# "Bijeen" noemt) is hier bewust NIET opgenomen — een blinde string-swap
+# corrumpeert legitieme case-menties en artikelen díe over dat merk gaan. Een
+# verkeerde-project-check hoort in de schrijf-prompt/brand_brief thuis, niet in
+# een deterministische sanitizer.
+#
+# Puur tekst/regel-gebaseerd: geen LLM, geen netwerk — dus gratis en
+# deterministicch, en daarmee geschikt om op elke create_job-aanroep te draaien.
+# Geeft (geschoond_html, aantal_verwijderde_blokken) terug zodat de aanroeper
+# kan loggen wat er is opgeruimd.
+# De Gauntlet genereert de deeltaak-rol dynamisch per run (het model kiest zelf
+# een "korte specialist-rol, bv. 'Hero-schrijver'" — zie gauntlet/service.py),
+# dus is een vaste lijst met bekende rolnamen altijd een pas-op-de-plaats
+# achter de werkelijkheid. Gemeten op bijeen.app (18 aug 2026): "Inleiding-
+# redacteur", "Stap-1-schrijver" t/m "Stap-3-schrijver" en "Conclusie-schrijver"
+# stonden allemaal letterlijk als <h2> live, want geen van die combinaties zat
+# in de oude vaste lijst. We matchen daarom generiek op elk voorvoegsel
+# gevolgd door een rol-woord (dezelfde aanpak als article_writer.py's
+# _PERSONA_LABEL_RE) in plaats van elke nieuwe rolnaam apart toe te voegen.
+_ROLE_WORDS = r"(?:schrijver|schrijvers|redacteur|specialist|strateeg|editor|criticus|builder|maker|copywriter)"
+_ROLE_LABEL_RE = re.compile(
+    r"^#{1,6}\s*(?:[\wÀ-ÿ][\wÀ-ÿ\s\-]*?" + _ROLE_WORDS + r"|hoofdtaak|deeltaak\s*\d*)\s*[:\-]?\s*$",
+    re.IGNORECASE,
+)
+# Hetzelfde als _ROLE_LABEL_RE maar voor al naar HTML geconverteerde bodies
+# (Gauntlet-schrijvers leveren markdown; publish_run_to_wachtrij zet dat om in
+# HTML, dus de rolnaam staat daar als <h2>Rolnaam</h2> in plaats van "## Rolnaam").
+_ROLE_LABEL_HTML_RE = re.compile(
+    r"<h[1-6][^>]*>\s*(?:[\wÀ-ÿ][\wÀ-ÿ\s\-]*?" + _ROLE_WORDS + r"|hoofdtaak|deeltaak\s*\d*)\s*[:\-]?\s*</h[1-6]>",
+    re.IGNORECASE,
+)
+# Een weggeschreven "Metadata:"-blok (title/meta/slug) onderaan het stuk, zowel
+# als markdown ("## Metadata:" / "Metadata:") als als platte <p>Metadata: …</p>.
+_METADATA_BLOCK_RE = re.compile(
+    r"\n(?:#{1,6}\s*)?metadata\s*:?\s*\n(?:.*\n)*?(?=\n#{1,6}\s|\Z)",
+    re.IGNORECASE,
+)
+_METADATA_PARA_RE = re.compile(
+    r"<p>\s*metadata\s*:\s*.*?</p>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _sanitize_blog_body(html_body: str) -> Tuple[str, int]:
+    raw = html_body or ""
+    blocks_removed = 0
+
+    # 1) Verwijder op zichzelf staande agent-rol-koppen (bv. "## Content
+    #    Redactie-schrijver" in markdown, of "<h2>Eindredacteur</h2>" in HTML).
+    #    Die zijn metadata van de schrijf-pipeline, geen artikelinhoud.
+    cleaned_lines = []
+    for line in raw.splitlines():
+        if _ROLE_LABEL_RE.match(line.strip()):
+            blocks_removed += 1
+            continue
+        cleaned_lines.append(line)
+    body = "\n".join(cleaned_lines)
+    # HTML-variant: rol-<h2> + (vaak lege) directe opvolger wegfilteren.
+    new_body = _ROLE_LABEL_HTML_RE.sub("", body)
+    if new_body != body:
+        # Tel elke verwijderde rolkop; grof (per match) maar voldoende voor logging.
+        blocks_removed += len(_ROLE_LABEL_HTML_RE.findall(body))
+        body = new_body
+
+    # 2) Verwijder een "Metadata:"-blok (title/meta/slug) dat de schrijver
+    #    onderaan het stuk wegschreef in plaats van in de metadata-velden.
+    new_body = _METADATA_BLOCK_RE.sub("", body)
+    if new_body != body:
+        blocks_removed += 1
+        body = new_body
+    new_body = _METADATA_PARA_RE.sub("", body)
+    if new_body != body:
+        blocks_removed += 1
+        body = new_body
+
+    # Opruimen: dubbele witregels en trailing whitespace.
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    body = re.sub(r"(?s)<p>\s*</p>", "", body).strip()
+    return body, blocks_removed
+
+
 def _clean_title(raw: str) -> str:
     """Maak van willekeurige tekst een bruikbare titel: HTML eruit, witruimte
     genormaliseerd, en nooit langer dan één kop.
@@ -1346,6 +1460,134 @@ def _keyword_key(keyword: str) -> str:
     return " ".join((keyword or "").lower().replace("?", " ").split())
 
 
+def _title_key(title: str) -> str:
+    """Genormaliseerde titel-sleutel voor dedupe.
+
+    Vangt de herschrijf-churn: een 'Herschrijf het artikel 'X''-run levert een
+    unieke slug + vaak een lege keyword, dus slug/keyword-dedupe grijpt niet —
+    maar de kale artikeltitel X is wél identiek aan een eerdere run. We
+    normaliseren naar een woord-set (lowercase, diacritica weg, alléén echte
+    determiners eruit, géén inhoudswoorden als 'doel'/'impact'/'pakt') en
+    sorteren, zodat 'Netwerkbijeenkomst organiseren in 5 stappen – van doel tot
+    impact' en 'Netwerkbijeenkomst organiseren? Zo pakt u het aan in 5 stappen'
+    dezelfde kern delen en als één onderwerp matchen.
+    """
+    import unicodedata
+    t = (title or "").lower()
+    t = unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii")
+    t = re.sub(r"[^a-z0-9 ]", " ", t)
+    # Alleen harde determiners/partikels eruit; inhoudswoorden (doel, impact,
+    # stappen, pakt, aan, zo) blijven staan — die onderscheiden onderwerpen.
+    STOP = {"de", "het", "een", "in", "van", "tot", "met", "zonder", "voor", "je",
+            "u", "en", "of", "dat", "op", "bij", "als", "aan", "zo", "pakt",
+            "uit", "over", "met", "naar", "dit", "die", "is", "zijn", "werken"}
+    words = sorted(w for w in t.split() if w and w not in STOP)
+    return " ".join(words)
+
+
+def _title_overlap(a: str, b: str) -> float:
+    """Jaccard-overlap van twee genormaliseerde titel-woord-sets.
+
+    Aanvulling op _title_key voor grensgevallen: als twee titels >= 60% van
+    hun (gestemde) woorden delen, zijn het hetzelfde onderwerp — ook als de
+    gesorteerde sleutel niet exact gelijk is (bv. '… van doel tot impact' t.o.v.
+    '… zo pakt u het aan' delen de kern 'netwerkbijeenkomst organiseren 5
+    stappen').
+    """
+    ka, kb = set(_title_key(a).split()), set(_title_key(b).split())
+    if not ka or not kb:
+        return 0.0
+    return len(ka & kb) / len(ka | kb)
+
+
+# ── Werkbon-guard: de énige plek waar álles doorheen loopt ───────────────────
+# Vóór 17 aug 2026 werd de "is dit een opdracht in plaats van een artikel?"-check
+# alleen in approve_and_publish() gedraaid — dus een werkbon-titel ("Herschrijf
+# het artikel '…'") kwam wél in de wachtrij als `blog` terecht (met een groene
+# "Publiceer"-knop die bij de klik pas faalde). create_job() is de enige trechter
+# die elke route passeert (Gauntlet, schrijver, listicle, run-now, save-edit),
+# dus hoort de herstel-/downgrade-logica hier te zitten — vóór het naar de DB gaat.
+_OPDRACHT_OMHULLING = re.compile(
+    r"^\s*(?:herschrijf|schrijf|maak|optimaliseer|werk|redigeer|verbeter|update)\b"
+    r"[^'‘“]*['‘“](?P<titel>[^'’”]{6,})['’”]",
+    re.IGNORECASE,
+)
+
+
+def publish_title_normalize(title: str, html_body: str = "",
+                           content_type: str = "blog") -> Dict[str, Any]:
+    """Herstel of weiger een content-job-titel vóórdat hij de wachtrij in gaat.
+
+    Drie uitkomsten, in volgorde van voorkeur:
+      1. Titel is een werkbon ("Herschrijf het artikel 'X' …") maar het stuk
+         draagt een echte H1 → return de H1 als `title` (met `was_work_order`).
+      2. Titel is een werkbon, géén H1 in de body → strip de opdracht-omhulling;
+         blijft er een leesbare kop over, gebruik die. Zo niet: downgrade het
+         content_type naar 'hook' (geen Publiceer-knop, geen pagina) en geef de
+         werkbon als reden terug in `publish_blocked`.
+      3. Titel is geen werkbon → ongewijzigd terug.
+
+    Retourneert altijd een dict:
+      {title, content_type, was_work_order, publish_blocked, block_reason}
+    `publish_blocked` is dezelfde check als is_internal_document(), zodat de UI de
+    groene knop kan verbergen én de backend in approve_and_publish alsnog weigert.
+    """
+    out = {
+        "title": (title or "").strip(),
+        "content_type": content_type,
+        "was_work_order": False,
+        "publish_blocked": False,
+        "block_reason": None,
+    }
+    if not out["title"]:
+        return out
+
+    intern = is_internal_document(out["title"], html_body)
+    if not intern:
+        return out  # schone titel, niets aan de hand
+
+    out["was_work_order"] = True
+    out["publish_blocked"] = True
+    out["block_reason"] = intern
+
+    # 1) Echte kop uit de body? (markdown H1 of <h1>)
+    body_kop = ""
+    for line in (html_body or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(r"^#\s+(?P<t>.+)$", line)
+        if not m:
+            m = re.match(r"^\s*<h1[^>]*>(?P<t>.*?)</h1>", line, re.IGNORECASE)
+        if m:
+            kop = re.sub(r"<[^>]+>", "", m.group("t")).strip(" #*")
+            if len(kop) >= 6:
+                body_kop = kop[:120]
+                break
+    if body_kop:
+        out["title"] = body_kop
+        out["publish_blocked"] = False
+        out["block_reason"] = None
+        return out
+
+    # 2) Pel de opdracht van de titel af → resterende kop
+    m = _OPDRACHT_OMHULLING.match(out["title"])
+    if m:
+        rest = m.group("titel").strip()
+        if len(rest) >= 6 and not is_internal_document(rest, html_body):
+            out["title"] = rest[:120]
+            out["publish_blocked"] = False
+            out["block_reason"] = None
+            return out
+
+    # 3) Geen redding: downgrade naar hook zodat hij nooit als pagina live komt.
+    #    De backend in approve_and_publish() weigert hooks al hard; dit is de
+    #    defensieve laag die voorkomt dat de UI een valse "Publiceer"-knop toont.
+    if out["content_type"] in ("blog", "article"):
+        out["content_type"] = "hook"
+    return out
+
+
 def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html: str,
                 seo_score: float, social_copy: Dict[str, str], image_bytes: Optional[bytes],
                 slug: str, status: str = "pending_review",
@@ -1374,6 +1616,32 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
     enige trechter die álle routes passeren, dus hoort de controle hier."""
     import base64
     kw_key = _keyword_key(keyword)
+    title_key = _title_key(title)
+    # ── Werkbon-guard (de énige trechter, vóór DB-write) ───────────────────────
+    # Een werkbon-titel ("Herschrijf het artikel 'X' …") mag nooit als blog de
+    # wachtrij in met een groene "Publiceer"-knop. Herstel de echte kop uit de
+    # body, of downgrade naar 'hook' (geen pagina, geen publiceer-knop). Draait
+    # vóór de body-sanitize zodat de H1 in de body nog leesbaar is.
+    norm = publish_title_normalize(title, blog_html, content_type)
+    if norm["was_work_order"]:
+        if norm["publish_blocked"]:
+            logger.warning(
+                "[content-pipeline] create_job: werkbon-titel kon niet worden "
+                "hersteld voor '%s' — downgrade naar '%s'.", title[:60], norm["content_type"])
+        else:
+            logger.info("[content-pipeline] create_job: werkbon-titel hersteld naar '%s'",
+                        norm["title"][:60])
+    title = norm["title"]
+    content_type = norm["content_type"]
+    # ── Laatste verdedigingslinie: agent-rommel en verkeerde-merk-lekken eruit ──
+    # Draait op ÉLKE route (Gauntlet, schrijver, listicle, run-now). Verwijdert
+    # gelekte rol-koppen, "Metadata:"-blokken en harde merknaam-lekken van een
+    # ander project vóórdat de body in de wachtrij belandt. Deterministisch,
+    # geen LLM — dus veilig op elke create_job-aanroep.
+    blog_html, _n_san = _sanitize_blog_body(blog_html)
+    if _n_san:
+        logger.info("[content-pipeline] create_job: %d defect(e) uit body gesaneerd voor '%s'",
+                    _n_san, title[:60])
     with get_conn() as conn:
         if dedupe:
             placeholders = ",".join("?" * len(_JOB_ACTIVE_STATUSES))
@@ -1404,6 +1672,29 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
                             "[content-pipeline] Zoekwoord-dedupe: '%s' hoort bij "
                             "bestaande job %s — bijgewerkt i.p.v. tweede artikel.",
                             keyword, row["id"],
+                        )
+                        break
+            # Titel-dedupe: vangt herschrijf-runs met unieke slug + lege keyword
+            # (de hoofdoorzaak van de 45x-superseded-churn in Bijeen). Twee
+            # artikelen met dezelfde genormaliseerde titel zijn hetzelfde stuk;
+            # werk de bestaande bij in plaats van een tweede te dumpen. Bij
+            # gedeeltelijke overlap (>= 60% van de woorden gedeeld) is het hetzelfde
+            # onderwerp in andere bewoording — ook dan dedupliceren.
+            if not existing and title_key:
+                for row in conn.execute(
+                    f"SELECT id, status, title FROM content_jobs "
+                    f"WHERE site_id=? AND status IN ({placeholders}) "
+                    f"ORDER BY created_at DESC",
+                    (site_id, *_JOB_ACTIVE_STATUSES),
+                ):
+                    same = (_title_key(row["title"]) == title_key
+                            or _title_overlap(row["title"], title) >= 0.6)
+                    if same:
+                        existing = row
+                        logger.info(
+                            "[content-pipeline] Titel-dedupe: '%s' hoort bij "
+                            "bestaande job %s — bijgewerkt i.p.v. tweede artikel.",
+                            title[:60], row["id"],
                         )
                         break
             if existing:
@@ -1495,8 +1786,25 @@ def mark_superseded(job_id: str, published_job_id: str) -> None:
     wordt het bij de volgende ronde opnieuw gevonden door
     orchestrator.service._find_under_threshold_jobs — met een nieuwe, dure
     Gauntlet-run en weer een duplicaat in de Wachtrij tot gevolg (incident
-    14 aug 2026: hetzelfde artikel 20+ keer op één dag herschreven)."""
+    14 aug 2026: hetzelfde artikel 20+ keer op één dag herschreven).
+
+    De pogingenteller verhuist mee (15 aug 2026). `bump_orchestrator_attempts`
+    telt op het bronrecord, maar dat record gaat één regel later op
+    'superseded' en verdwijnt daarmee uit `_find_under_threshold_jobs`. De
+    opvolger begon op nul, dus reset de cross-run cap bij elke generatie en
+    heeft hij nog nooit gebeten: gemeten stonden alle 244 WeAreImpact-jobs op
+    `orchestrator_attempts = 0` terwijl één artikel er zestien herschrijvingen
+    op had zitten. De teller hoort bij het artikel, niet bij de rij die het
+    mechanisme zelf vervangt — daarom erft de opvolger het maximum van beide
+    (nooit omlaag, ook niet als hij al een eigen telling had).
+    """
+    bron = get_job(job_id) or {}
+    opvolger = get_job(published_job_id) or {}
+    geërfd = max(int(bron.get("orchestrator_attempts") or 0),
+                 int(opvolger.get("orchestrator_attempts") or 0))
     _update_job(job_id, status="superseded", superseded_by=published_job_id)
+    if published_job_id and opvolger:
+        _update_job(published_job_id, orchestrator_attempts=geërfd)
 
 
 # ── Genereer één content-job voor één site ──────────────────────────────────
@@ -1542,10 +1850,14 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
         # nooit als 'pending_review' (publiceerbaar voorstel). "Alleen voorstellen
         # boven de 85%" betekent: onder de grens staat het in de verbeter-queue,
         # niet in de goedkeuringsqueue.
+        # De omslagafbeelding blijft wél staan: `_generate_cover_image` is een
+        # deterministische Pillow-render (kleurvlak + titel), geen LLM-call —
+        # "traag op de cloud-LLM" is geen reden om die over te slaan. Zonder dit
+        # bleef elk light-mode-artikel zonder thumbnail (Ictusgo: 19 augustus 2026).
         from ...shared.config import CONTENT_MIN_SCORE
         passed = review["score"] >= CONTENT_MIN_SCORE
         social_copy: Dict[str, str] = {}
-        image_bytes = None
+        image_bytes = _generate_cover_image(site, title)
         infographic_bytes = None
         create_job(site["id"], title, keyword, rationale, html_body,
                     review["score"], social_copy, image_bytes, slug,
@@ -1570,7 +1882,7 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
     # (light_mode retourneert hierboven; deze tak draait alleen voor de volledige
     # cyclus die de UI-knop, de biweekly scheduler en Iris' content_run gebruiken.)
     social_copy = await _generate_social_copy(site, title, keyword, html_body)
-    image_bytes = generate_quote_card(title, site["name"])
+    image_bytes = _generate_cover_image(site, title)
 
     from ...shared.config import CONTENT_MIN_SCORE
     passed = review["score"] >= CONTENT_MIN_SCORE
@@ -1670,16 +1982,28 @@ _META_H_COLON_RE = re.compile(
 # (`**Metadata**` op een regel) als in <p>-tags gewrapt
 # (`<p>**Metadata**</p>` + `<p>- Focus keyword: …</p>`), dus beide vormen
 # worden hieronder toegestaan.
+#
+# 18 aug 2026: dit glipte een tweede keer door, op weareimpact.nl, in twee
+# varianten die de regex hierboven niet dekte: de kop droeg een prefix
+# ('**SEO/GEO Metadata**' i.p.v. kaal '**Metadata**') en elk label was zélf
+# vetgedrukt ('- **Focus keyword:** …' i.p.v. '- Focus keyword: …'). Beide
+# zijn dezelfde schrijver-vrijheid als het origineel — een model kiest zijn
+# eigen markdown-nuance — dus de regex moet dat verdragen in plaats van op
+# exacte tekens te leunen. Ook een losse '---' (markdown-hr) vlak vóór het
+# blok hoort bij dezelfde ruis en gaat mee.
 _META_MARKDOWN_BLOCK_RE = re.compile(
-    r"(?:\n|^)\s*(?:<p>\s*)?\*\*\s*Metadata\s*\*\*(?:\s*</p>)?\s*\n"
-    r"(?:(?:\s*<p>\s*)?[-*]\s*(?:focus\s+keyword|url-slug|meta[- ]?titel|"
+    r"(?:\n|^)\s*(?:<p>\s*)?-{3,}(?:\s*</p>)?"
+    r"(?=\s*\n\s*(?:<p>\s*)?\*\*\s*(?:[\w/]+\s+){0,3}Metadata\s*\*\*)"
+    r"|"
+    r"(?:\n|^)\s*(?:<p>\s*)?\*\*\s*(?:[\w/]+\s+){0,3}Metadata\s*\*\*(?:\s*</p>)?\s*\n"
+    r"(?:(?:\s*<p>\s*)?[-*]\s*\*{0,2}\s*(?:focus\s+keyword|url-slug|meta[- ]?titel|"
     r"meta[- ]?title|meta[- ]?beschrijving|meta[- ]?description|trefwoord|slug)"
-    r"\s*:[^\n]*(?:\s*</p>)?\s*\n)+",
+    r"\*{0,2}\s*:\s*\*{0,2}[^\n]*(?:\s*</p>)?\s*\n?)+",
     re.IGNORECASE,
 )
 _META_MARKDOWN_KV_RE = re.compile(
-    r"[-*]\s*(focus\s+keyword|url-slug|meta[- ]?titel|meta[- ]?title|"
-    r"meta[- ]?beschrijving|meta[- ]?description)\s*:\s*([^<\n]+?)\s*(?:</p>)?\s*$",
+    r"[-*]\s*\*{0,2}\s*(focus\s+keyword|url-slug|meta[- ]?titel|meta[- ]?title|"
+    r"meta[- ]?beschrijving|meta[- ]?description)\*{0,2}\s*:\s*\*{0,2}\s*([^<\n]+?)\s*(?:</p>)?\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -1688,7 +2012,8 @@ def _strip_meta_markdown(html_body: str, meta_title: str, meta_desc: str) -> tup
     """Strippen van het markdown-Metadata-blok; geeft (html, meta_title, meta_desc)
     terug. Wordt aangeroepen vóórdat de HTML-vormen worden aangepakt, zodat het
     blok niet per ongeluk deels blijft hangen."""
-    if not re.search(r"(?:\*\*\s*Metadata\s*\*\*|#+\s*Metadata)", html_body, re.IGNORECASE):
+    if not re.search(r"(?:\*\*\s*(?:[\w/]+\s+){0,3}Metadata\s*\*\*|#+\s*(?:[\w/]+\s+){0,3}Metadata)",
+                      html_body, re.IGNORECASE):
         return html_body, meta_title, meta_desc
     for kind, val in _META_MARKDOWN_KV_RE.findall(html_body):
         k = kind.lower().replace(" ", "")
@@ -1889,7 +2214,7 @@ async def create_job_from_listicle(site: Dict, keyword: str, rationale: str,
     slug = slugify_title(title)
 
     social_copy = await _generate_social_copy(site, title, keyword, html_body)
-    image_bytes = generate_quote_card(title, site["name"])
+    image_bytes = _generate_cover_image(site, title)
 
     from ...shared.config import CONTENT_MIN_SCORE
     passed = review["score"] >= CONTENT_MIN_SCORE
@@ -2056,9 +2381,34 @@ _INTERNAL_TITLE_PREFIXES = (
 # haalde 82/100, passeerde alle gates en stond op 23-07-2026 als blogartikel op
 # steentjebijsteentje.nl (ontdekt 25-07-2026).
 _TASK_TITLE_VERBS = (
-    "schrijf", "publiceer", "optimaliseer", "selecteer", "monitor", "voeg",
-    "voer", "exporteer", "controleer", "analyseer", "verzamel", "bepaal",
+    "schrijf", "herschrijf", "publiceer", "optimaliseer", "selecteer", "monitor",
+    "voeg", "voer", "exporteer", "controleer", "analyseer", "verzamel", "bepaal",
     "implementeer", "redigeer", "review", "update", "werk ", "stel ", "maak ",
+)
+
+# Een opdracht die naar een ánder stuk verwijst is nooit zelf een titel: dat
+# stuk is het artikel, deze zin is de werkbon. Gemeten 15 aug 2026: 179
+# Wachtrij-items heetten "Herschrijf het artikel 'X' tot wereldklasse
+# SEO-content (1200-1500 woorden)" — inclusief de slug, dus dát was de URL
+# geworden.
+#
+# Bewust op het OBJECT ("het artikel", "de pagina") en niet op het citaat
+# eromheen: de aanhalingstekens zijn er in minstens drie smaken en breken op de
+# eerste de beste apostrof ("5 do's bij het organiseren…" sloot het citaat na
+# vijf tekens), en een variant zonder citaat bestaat ook al ("Herschrijf het
+# artikel voor Bijeen (vrijwilligersdag-organiseren-checklist) tot …"). Het
+# object is de constante.
+#
+# Het object hoeft niet direct achter het werkwoord te staan — "Optimaliseer de
+# 3 zwakst scorende pagina's van de site" heeft er drie woorden tussen — dus
+# een venster in plaats van een vaste afstand. Wat de vorm draagt is dat de zin
+# ópent met de opdracht: een gewone kop die deze woorden bevat doet dat niet
+# ("Zo schrijf je een goed artikel" begint met 'zo'). Losstaand van
+# _TASK_TITLE_JARGON, want hier verraadt de vórm de opdracht, niet het onderwerp.
+_TASK_TITLE_OBJECT = re.compile(
+    r"^\s*(?:her)?(?:schrijf|maak|optimaliseer|werk|redigeer|verbeter|update)\b"
+    r".{0,45}?\b(?:artikel|pagina|blog|blogpost|tekst|stuk|content)(?:en|s|'s)?\b",
+    re.IGNORECASE,
 )
 
 # Placeholders uit een taakomschrijving: "pagina A", "artikel 2", "pagina X".
@@ -2069,6 +2419,24 @@ _TASK_TITLE_JARGON = (
     "meta-titel", "meta titel", "meta-description", "meta description",
     "interne links", "interne linkstructuur", "zoekposities", "sitemap",
     "gsc", "search console", "seo-score", "striking distance", "canonical",
+    # 15 aug 2026: 'Herschrijf homepage metadata' glipte hierlangs — hij opent
+    # met een opdracht-werkwoord, maar 'metadata' stond niet in deze lijst en
+    # het object ('homepage') niet in _TASK_TITLE_OBJECT. Een artikel voor
+    # bezoekers gaat niet over de metadata van de eigen homepage.
+    "metadata", "homepage",
+)
+
+# Titels van interne plan- en procesdocumenten. 'implementatieplan' stond al in
+# _INTERNAL_BODY_MARKERS, maar die telt pas bij drie hits in de bódy — als kop
+# werd hij nooit gezien. Gemeten 15 aug 2026 in de Wachtrij: 'SEO-optimalisatie
+# van alle content – Implementatieplan', met een keurige score.
+#
+# Bewust een korte, harde lijst: 'stappenplan' en 'checklist' zijn juist góéde
+# artikelkoppen ("Vrijwilligers werven: checklist in 5 stappen") en horen hier
+# niet. Wat deze woorden gemeen hebben is dat ze het eigen wérk beschrijven.
+_PLAN_DOC_MARKERS = (
+    "implementatieplan", "plan van aanpak", "uitvoeringsplan",
+    "projectplan", "migratieplan", "actieplan voor onze",
 )
 
 # Test-artefacten. Een titel die zegt dat hij een test is, is er een — en die
@@ -2116,6 +2484,13 @@ def is_internal_document(title: str, html_body: str = "") -> Optional[str]:
     antwoorden toevoegen aan alle 28 pagina's", score 85). Publiceerbaarheid is
     een aparte vraag en hoort een aparte, harde gate te zijn."""
     t = (title or "").strip().lower()
+    # Een agent-rolprefix verbergt het opdracht-werkwoord dat erop volgt:
+    # "[SEO Copywriter] Schrijf 1 nieuw SEO-artikel (>=900 woorden…)" begint
+    # voor elke startswith-toets met een blokhaak en glipt er zo langs. De
+    # blokhaak is zelf al bewijs — een artikelkop voor bezoekers opent niet met
+    # de naam van de agent die hem moest schrijven — maar strippen laat de
+    # bestaande toetsen hun eigen, preciezere reden geven.
+    t = re.sub(r"^\[[^\]]{2,40}\]\s*", "", t)
     for prefix in _INTERNAL_TITLE_PREFIXES:
         if t.startswith(prefix):
             return f"titel begint met '{prefix.strip()}' — dit is een intern werkstuk, geen artikel"
@@ -2130,15 +2505,38 @@ def is_internal_document(title: str, html_body: str = "") -> Optional[str]:
         return (f"titel bevat '{marker}' — dit is een redactionele werktitel, "
                 "geen kop voor bezoekers")
 
-    # Agent-taaktitel: opdracht-werkwoord vooraan + een tweede signaal.
+    marker = next((m for m in _PLAN_DOC_MARKERS if m in t), None)
+    if marker:
+        return (f"titel bevat '{marker}' — dit is een intern plandocument, "
+                "geen artikel voor bezoekers")
+
+    # Een placeholder-verwijzing diskwalificeert op zichzelf, ongeacht of de
+    # zin met een opdracht-werkwoord ópent (15 aug 2026). 'Meta-titel en
+    # -description schrijven voor pagina 3 van Bewaard voor Jou' begint met een
+    # zelfstandig naamwoord, zakte daarmee door de verb-first-poort heen en
+    # stond als publiceerbaar in de Wachtrij. 'Pagina 3' is een verwijzing naar
+    # een werklijst; geen enkele kop voor bezoekers bevat er een.
+    plek = _PLACEHOLDER_REF.search(t)
+    if plek:
+        return ("titel is een agent-taak met een placeholder-verwijzing "
+                f"('{plek.group(0)}') — geen artikel")
+
+    # Agent-taaktitel: opdracht-werkwoord vooraan + vakjargon als tweede
+    # signaal. Jargon alléén is niet genoeg — 'Wat is een meta description?'
+    # is een prima artikel; het is de combinatie met de opdrachtvorm die telt.
     if t.startswith(_TASK_TITLE_VERBS):
-        if _PLACEHOLDER_REF.search(t):
-            return ("titel is een agent-taak met een placeholder-verwijzing "
-                    f"('{_PLACEHOLDER_REF.search(t).group(0)}') — geen artikel")
         jargon = next((j for j in _TASK_TITLE_JARGON if j in t), None)
         if jargon:
             return (f"titel is een agent-taak over '{jargon}' — een opdracht, "
                     "geen artikel voor bezoekers")
+
+    # Vangnet, bewust ná de toetsen hierboven: die noemen het concrete bewijs
+    # ('pagina 2', 'meta-description') en dát is wat een mens nodig heeft om te
+    # beoordelen of de weigering klopt. Deze regel kent alleen de vorm, dus hij
+    # mag pas spreken als niemand anders een preciezere reden heeft.
+    if _TASK_TITLE_OBJECT.match(t):
+        return ("titel is een opdracht óver een stuk ('herschrijf het artikel …') "
+                "— dat stuk is het artikel, deze zin is de werkbon")
 
     text = re.sub(r"<[^>]+>", " ", html_body or "")
     text = re.sub(r"\s+", " ", text).lower()
@@ -2266,7 +2664,9 @@ async def _verify_live_once(url: str) -> Optional[str]:
 
 
 async def _publish_to_project_site(site: Dict, title: str, html_body: str,
-                                    keyword: str, slug: str, seo_score: int) -> Dict:
+                                    keyword: str, slug: str, seo_score: int,
+                                    publish_date: Optional[str] = None,
+                                    image_bytes: Optional[bytes] = None) -> Dict:
     """Publiceer naar de eigen site van een project via de per-project
     publish-endpoint ({PROJECT}_PUBLISH_URL/_PUBLISH_KEY in .env).
 
@@ -2280,6 +2680,7 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
     met 'success': False teruggegeven, nooit een exception, zodat de aanroeper
     de website-publicatie nooit blokkeert."""
     import os
+    import base64
     name = site.get("name", "")
 
     # Publiceerbaarheidsgate, óók hier — niet alleen in approve_and_publish.
@@ -2322,6 +2723,33 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
     if not publish_url or not publish_key:
         return {"success": False,
                 "error": f"Geen {env_prefix}_PUBLISH_URL/_PUBLISH_KEY — site-publicatie overgeslagen"}
+
+    # ── Inhaalslag: datum in de pagina zélf zetten ───────────────────────────
+    # De live sites publiceren via een externe CMS-endpoint dat de publicatie-
+    # datum zelf beheert. In plaats van te raden welk veld dat CMS verwacht,
+    # zetten we de datum robuust in de artikel-HTML die naar het CMS gaat:
+    #  • datePublished/dateModified in de Article-JSON-LD (Google leest dit),
+    #  • een zichtbare "Gepubliceerd op DD-MM-YYYY"-regel bovenaan (bezoeker +
+    #    de meeste CMS-en tonen de opgeslagen HTML 1:1).
+    # Zo landt de gekozen datum onafhankelijk van het CMS-schema. Bij een lege
+    # publish_date (vandaag) laten we de body ongemoeid — bestaand gedrag.
+    if publish_date:
+        from ..publish import service as _pub_svc
+        created = (publish_date or "")[:10]
+        if created:
+            html_body = _pub_svc._inject_dates_into_json_ld(html_body, created, created)
+            try:
+                _d = datetime.strptime(created, "%Y-%m-%d")
+                _nl = _d.strftime("%d-%m-%Y")
+            except Exception:
+                _nl = created
+            _date_line = (f'<p class="agentos-published-on" style="color:#94a3b8;font-size:0.85rem;'
+                          f'margin:0 0 1em">Gepubliceerd op {_nl}</p>')
+            if "<h1" in html_body:
+                html_body = re.sub(r"(<h1[^>]*>)", _date_line + r"\1", html_body, count=1, flags=re.I)
+            else:
+                html_body = _date_line + html_body
+
 
     base_url = (site.get("base_url") or "").rstrip("/")
     # Code-fences eraf vóórdat we verder reinigen — anders belandt een
@@ -2373,9 +2801,25 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
             "slug": slug,
             "seoTitle": meta_title_for(parsed_title or title),
             "seoDescription": meta_desc,
+            # 18 aug 2026: ontbrak hier — dit schema kreeg dus nooit onze
+            # woordgrens-veilige excerpt (_smart_truncate) en leidde zelf een
+            # preview af uit de kale eerste alinea, midden in een zin
+            # afgekapt zónder ellipsis ("...inzet als"). Bijeen/Teambuilding-
+            # MetImpact kregen dit veld al; hier ontbrak het gewoon.
+            "excerpt": excerpt,
             "tags": [keyword] if keyword else [],
             "source": "agent-os",
         }
+        # Alleen bij bevestigd schema: /api/publish op ictusgo.nl uploadt
+        # zelf een meegestuurd base64-beeld naar Vercel Blob en zet het
+        # resultaat als `image` op de post (19 aug 2026, geverifieerd in de
+        # ictusgo-broncode). Andere project-sites op deze route hebben dat
+        # veld niet bevestigd gekregen — sommige (Bijeen/TeambuildingMetImpact)
+        # valideren met een strikt Zod-schema dat een onbekend veld de HELE
+        # publicatie laat afwijzen, dus dit blijft bewust per site opt-in
+        # i.p.v. generiek voor elke {PREFIX}_PUBLISH_URL-site.
+        if env_prefix == "ICTUSGO" and image_bytes:
+            payload["imageBase64"] = base64.b64encode(image_bytes).decode("ascii")
 
     try:
         import httpx
@@ -2514,7 +2958,8 @@ async def unpublish_from_project_site(site: Dict, slug: str, reason: str = "") -
 
 
 def _export_for_manual_publish(site: Dict, title: str, html_body: str,
-                                keyword: str, slug: str, seo_score: int) -> Dict:
+                                keyword: str, slug: str, seo_score: int,
+                                publish_date: Optional[str] = None) -> Dict:
     """Voor sites zónder publish-API (`sites.manual_publish`, bv. LiefdeVoorIedereen —
     content daar gaat via een Prisma-admin-sessie op datingsite2026, niet een
     publieke endpoint): schrijf het klaar-artikel als Markdown naar de vault
@@ -2536,16 +2981,18 @@ def _export_for_manual_publish(site: Dict, title: str, html_body: str,
     html_body = _strip_duplicate_header(html_body)
     meta_desc = parsed_desc or _derive_meta_desc(html_body)
 
+    q = chr(34)
     front_matter = (
         "---\n"
-        f"title: \"{(parsed_title or title).replace(chr(34), chr(39))}\"\n"
-        f"slug: \"{slug}\"\n"
-        f"meta_title: \"{meta_title_for(parsed_title or title).replace(chr(34), chr(39))}\"\n"
-        f"meta_description: \"{meta_desc.replace(chr(34), chr(39))}\"\n"
-        f"keyword: \"{keyword}\"\n"
-        f"seo_score: {seo_score}\n"
-        f"status: \"klaar voor handmatig publiceren\"\n"
-        "---\n\n"
+        + "title: " + q + (parsed_title or title).replace(q, chr(39)) + q + "\n"
+        + "slug: " + q + slug + q + "\n"
+        + "meta_title: " + q + meta_title_for(parsed_title or title).replace(q, chr(39)) + q + "\n"
+        + "meta_description: " + q + meta_desc.replace(q, chr(39)) + q + "\n"
+        + "keyword: " + q + keyword + q + "\n"
+        + "seo_score: " + str(seo_score) + "\n"
+        + "status: " + q + "klaar voor handmatig publiceren" + q + "\n"
+        + (("date: " + q + publish_date[:10] + q + "\n") if publish_date else "")
+        + "---\n\n"
     )
     filename = f"{name}/Te-pushen/{slug}.md"
     try:
@@ -2618,7 +3065,8 @@ def mark_ready_for_linkedin(job_id: str) -> None:
 
 
 async def approve_and_publish(job_id: str,
-                              social_channels: Optional[List[str]] = None) -> Dict:
+                              social_channels: Optional[List[str]] = None,
+                              publish_date: Optional[str] = None) -> Dict:
     """Publiceer naar de website van de site (Netlify óf de per-project
     publish-endpoint), dien de sitemap in bij Google Search Console, en post
     naar elk platform waarvoor de site credentials heeft. Wordt uitsluitend
@@ -2701,6 +3149,51 @@ async def approve_and_publish(job_id: str,
     if not site:
         raise ValueError("Site niet gevonden.")
 
+    # Verkeerde-site-gate: hetzelfde deterministische woordoverlap-oordeel als
+    # de waarheidsaudit (`content_hoort_bij_andere_site`), maar hier vóóraf
+    # afdwingend. 15+18 aug 2026: een terugval zette het site_id van meerdere
+    # Bijeen/TeambuildingMetImpact/Liefde-voor-Iedereen-artikelen al bij het
+    # aanmaken fout op WeAreImpact; de audit signaleerde dat correct, maar
+    # signaleren hield een menselijke "Goedkeuren"-klik in de Wachtrij niet
+    # tegen — drie van die stukken gingen alsnog live op weareimpact.nl. Een
+    # site_id dat al fout stond vóórdat deze gate bestond, wordt hier alsnog
+    # gevangen: de klik in de Wachtrij is niet de plek om op te vertrouwen dat
+    # de rij al klopte.
+    beter = sites_service.better_matching_site(job["title"], job["site_id"])
+    if beter:
+        raise ValueError(
+            f"'{job['title']}' hoort qua onderwerp bij {beter['name']}, niet bij "
+            f"{site.get('name')} — publiceren geweigerd. Verplaats de job naar het "
+            f"juiste project (site_id) of wijs hem af als hij hier niet thuishoort."
+        )
+
+    # Pre-publish duplicate-guard (wereldklasse: nooit een duplicaat live).
+    # 18 aug 2026: Bijeen had "Sociale cohesie versterken met een evenement: 6
+    # aanpakken die werken" 2x als 'published' in dezelfde site — dezelfde slug
+    # was dus 2x op de site. De publish-gate had geen slug/titel-dedupe tegen
+    # al-live artikelen, dus een menselijke "Publiceer"-klik op de tweede gooide
+    # hem er gewoon nog een keer naast. Hier blokkeren we dat hard: als een
+    # ANDERE (id != deze) job van deze site al 'published' is met dezelfde slug
+    # OF een titel die >= 0.6 overlapt, weigeren we — tenzij het om precies dít
+    # artikel gaat (re-publish na publish_failed, zelfde id).
+    from ...shared.database import get_conn
+    with get_conn() as conn:
+        live = conn.execute(
+            "SELECT id, title, slug FROM content_jobs "
+            "WHERE site_id=? AND status='published' AND id!=?",
+            (job["site_id"], job_id),
+        ).fetchall()
+    for row in live:
+        dup = (row["slug"] and row["slug"] == job.get("slug")
+               or _title_overlap(row["title"], job["title"]) >= 0.6)
+        if dup:
+            raise ValueError(
+                f"Publiceren geweigerd: een artikel met (vrijwel) dezelfde titel/"
+                f"slug staat al live op {site.get('name')}: '{row['title']}'. "
+                f"Depubliceer dat artikel eerst (of herschrijf dit met een unieke "
+                f"hoek) — een duplicaat schaadt de SEO van beide pagina's."
+            )
+
     # Alleen-website-sites (bv. Daar): wél publiceren + zoekmachine-indiening,
     # géén social-fan-out en géén Content Multiplier. Handmatige sites (export
     # naar de vault, geen live URL) horen hier hetzelfde te doen — een social-
@@ -2738,6 +3231,7 @@ async def approve_and_publish(job_id: str,
                 site_id=site["id"], title=job["title"], html_body=job["blog_html"],
                 slug=job["slug"], image_bytes=image_bytes,
                 infographic_bytes=infographic_bytes,
+                publish_date=publish_date,
             )
             result["netlify"] = netlify_result
             article_url = netlify_result.get("url")
@@ -2750,7 +3244,8 @@ async def approve_and_publish(job_id: str,
         try:
             site_result = await _publish_to_project_site(
                 site, job["title"], job["blog_html"], job["keyword"],
-                job["slug"], int(job.get("seo_score") or 0))
+                job["slug"], int(job.get("seo_score") or 0),
+                publish_date=publish_date, image_bytes=image_bytes)
             result["site"] = site_result
             if site_result.get("url"):
                 article_url = site_result["url"]
@@ -2761,7 +3256,8 @@ async def approve_and_publish(job_id: str,
     elif site.get("manual_publish"):
         site_result = _export_for_manual_publish(
             site, job["title"], job["blog_html"], job["keyword"],
-            job["slug"], int(job.get("seo_score") or 0))
+            job["slug"], int(job.get("seo_score") or 0),
+            publish_date=publish_date)
         result["site"] = site_result
         if site_result.get("path"):
             article_url = site_result["path"]
@@ -2770,7 +3266,8 @@ async def approve_and_publish(job_id: str,
         try:
             site_result = await _publish_to_project_site(
                 site, job["title"], job["blog_html"], job["keyword"],
-                job["slug"], int(job.get("seo_score") or 0))
+                job["slug"], int(job.get("seo_score") or 0),
+                publish_date=publish_date, image_bytes=image_bytes)
             result["site"] = site_result
             if site_result.get("url"):
                 article_url = site_result["url"]
@@ -2871,7 +3368,13 @@ async def approve_and_publish(job_id: str,
     # met een 'url' (of een 'error'), de project-route een expliciete 'success'.
     # Alleen op result["site"] kijken zette elke geslaagde Netlify-publicatie op
     # 'publish_failed' — die route vult de 'site'-sleutel namelijk nooit.
-    if site.get("publish_api_url"):
+    # LET OP: alleen een publish_api_url ZONDER http-prefix is een Netlify
+    # site-ID; een volledige https-URL loopt via de project-site-route en vult
+    # result["site"], nooit result["netlify"]. Zonder deze branch (zoals in
+    # regel ~3189) werd elke geslaagde https-publicatie (DatingAssistent,
+    # 19 aug 2026) alsnog op 'publish_failed' gezet terwijl de pagina live was.
+    _pub_url = (site.get("publish_api_url") or "").strip()
+    if _pub_url and not _pub_url.lower().startswith("http"):
         netlify = result.get("netlify") or {}
         site_ok = bool(netlify.get("url")) and not netlify.get("error")
     else:
@@ -2977,6 +3480,41 @@ def reject_job(job_id: str) -> None:
     _log_activity(site["name"], "afgekeurd", f"'{job['title']}' afgewezen")
 
 
+async def confirm_depublished(job_id: str) -> Dict:
+    """Haal een 'afgekeurd maar live'-artikel écht offline en sluit de kaart.
+
+    18 aug 2026: `reject_job` zet de rij op 'rejected' en logt de 'afgekeurd_
+    maar_live'-kaart, maar niets logt ooit de oplossing — de kaart droeg de
+    instructie "haal dit offline", maar geen enkel pad meldde ooit dát dat
+    gebeurd was. Bij nameting stond een kaart van 14 aug er nog steeds
+    terwijl de pagina allang 404 gaf (opgelost, nooit gesloten) naast een
+    kaart van 12 aug waarvan de pagina nog ECHT live stond (niet opgelost,
+    leek identiek). Zonder dit onderscheid leert een mens rode kaarten te
+    negeren. `_error_resolved` (iris/metrics.py) sluit een kaart al zodra er
+    een latere 'ok'-regel met dezelfde titel in hetzelfde project staat —
+    die regel bestond, maar niemand schreef hem. Dit is de schakel die dat
+    doet: écht depubliceren via `unpublish_from_project_site`, en pas bij
+    bevestigd succes de sluitende 'ok'-regel loggen (nooit vooraf — anders
+    sluit de kaart terwijl de pagina nog live staat)."""
+    job = get_job(job_id)
+    if not job:
+        raise ValueError("Content-job niet gevonden.")
+    site = sites_service.get_site(job["site_id"])
+    if not site:
+        raise ValueError("Site niet gevonden.")
+    result = await unpublish_from_project_site(
+        site, job.get("slug") or "",
+        reason="Afgekeurd maar stond nog live — via het Actiecentrum offline gehaald.",
+    )
+    if not result.get("success"):
+        raise ValueError(f"Depubliceren mislukt: {result.get('error') or result}")
+    _log_activity(site["name"], "live-gehaald",
+                  f"'{job['title']}' is offline gehaald (was afgekeurd maar stond nog live)",
+                  next_step="Niets — de pagina is niet meer publiek bereikbaar.",
+                  status="ok")
+    return result
+
+
 async def regenerate_job(job_id: str) -> str:
     """Herschrijf hetzelfde onderwerp opnieuw en overschrijf de bestaande job."""
     job = get_job(job_id)
@@ -3067,7 +3605,7 @@ async def regenerate_job(job_id: str) -> str:
     title = _extract_title(html_body, fallback=job["title"])
     slug = slugify_title(title)
     social_copy = await _generate_social_copy(site, title, job["keyword"], html_body)
-    image_bytes = generate_quote_card(title, site["name"])
+    image_bytes = _generate_cover_image(site, title)
     import base64
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
     infographic_bytes = (await _generate_article_infographic(site, title, job["keyword"], html_body)

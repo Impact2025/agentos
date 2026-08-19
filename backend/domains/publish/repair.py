@@ -161,11 +161,228 @@ async def repareer_alle_metatitels(project: Optional[str] = None,
     return {"gerepareerd": len(gelukt), "mislukt": mislukt}
 
 
+# ── Dode bronlinks ─────────────────────────────────────────────────────────
+# Aanleiding (13 aug 2026). 'link-dood' is de meest voorkomende, volledig
+# machine-oplosbare publicatiefout: een externe pagina waarnaar het artikel
+# linkt is verhuisd/verwijderd (HTTP 404), en de contentcontrole blokkeert de
+# publicatie. Maar zowel selfheal als triage sloegen hem over:
+#   • selfheal koppelde alleen de actienaam 'publicatie_mislukt' aan een probe
+#     (bestaat niet — de echte status heet 'publish_failed' in content_jobs),
+#   • repair.REMEDIES kende géén dode-link-remedie,
+#   • zelfherstel las alleen activity_log/scheduler en zag de publish_failed-
+#     jobs in content_jobs niet eens.
+# Gevolg: artikelen bleven voor altijd op 'publish_failed' staan en wachtten
+# op Vincent. Deze reparatie vervangt de dode link door een werkende
+# parent-pagina op dezelfde host (de auteur citeerde die autoriteit al, dus
+# we verzinnen géén nieuwe bron) en zet de job terug in de Wachtrij.
+
+import re as _re
+
+
+def _werkende_ouder(url: str) -> str:
+    """Loop een dode URL op naar de eerstvolgende werkende parent-pagina op
+    dezelfde host. Een verhuisde overheidspagina staat vrijwel altijd nog op
+    het onderwerp- of sectieniveau; de root is de laatste vangnet."""
+    import httpx as _httpx
+    try:
+        u = _httpx.URL(url)
+    except Exception:
+        return ""
+    segs = [s for s in (u.path or "").split("/") if s]
+    if not segs:
+        return f"{u.scheme}://{u.host}/"
+    for i in range(len(segs) - 1, 0, -1):
+        cand = f"{u.scheme}://{u.host}/" + "/".join(segs[:i])
+        try:
+            r = _httpx.head(cand, follow_redirects=True, timeout=10)
+        except Exception:
+            continue
+        if r.status_code == 200:
+            return cand
+    return f"{u.scheme}://{u.host}/"
+
+
+async def repareer_dode_link_in_job(job_id: str) -> Dict[str, Any]:
+    """Vervang dode bronlinks (404) in één artikel door een werkende
+    parent-pagina op dezelfde host, en zet de job terug in de Wachtrij
+    (pending_review) zodat Vincent hem met één klik publiceert.
+
+    Bewust géén herpublicatie hier: repareren is publiceren, maar een
+    vervangen link is een bewerking die Vincent nog moet goedkeuren — net als
+    elke andere Wachtrij-edit. De functie doet precies wat de contentcontrole
+    eiste: de dode link weg, een live link erin."""
+    import httpx as _httpx
+    with get_conn() as conn:
+        job = conn.execute(
+            "SELECT id, site_id, title, keyword, slug, seo_score, blog_html, error "
+            "FROM content_jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+        if not job:
+            return {"ok": False, "reden": "job-onbekend"}
+        site = conn.execute(
+            "SELECT * FROM sites WHERE id = ?", (job["site_id"],)
+        ).fetchone()
+    if not site:
+        return {"ok": False, "reden": "site-onbekend"}
+    html = job["blog_html"] or ""
+    if not html:
+        return {"ok": False, "reden": "geen-body"}
+    hrefs = _re.findall(r'href="([^"]+)"', html)
+    vervangen: List[List[str]] = []
+    for h in sorted(set(hrefs)):
+        if not h.startswith("http"):
+            continue
+        try:
+            r = _httpx.head(h, follow_redirects=True, timeout=10)
+            dood = r.status_code in (404, 410)
+        except Exception:
+            dood = False
+        if not dood:
+            continue
+        verv = _werkende_ouder(h)
+        if verv and verv.rstrip("/") != h.rstrip("/"):
+            html = html.replace(f'href="{h}"', f'href="{verv}"')
+            vervangen.append([h, verv])
+        if len(vervangen) >= 3:
+            break
+    if not vervangen:
+        return {"ok": False, "reden": "geen-vervangbare-dode-link"}
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE content_jobs SET blog_html=?, status='pending_review', "
+            "error='', reviewed_at=datetime('now') WHERE id = ?",
+            (html, job_id),
+        )
+    log_outcome(
+        site["name"], "dode-link-reparatie",
+        f"{len(vervangen)} dode bronlink(s) vervangen in '{job['title']}'; "
+        "terug in de Wachtrij.",
+        status="ok",
+    )
+    return {"ok": True, "vervangen": vervangen, "job": job_id}
+
+
+async def repareer_alle_dode_links(maximum: int = 25) -> Dict[str, Any]:
+    """Repareer elke openstaande publish_failed-job met een 'link-dood'."""
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id FROM content_jobs WHERE status='publish_failed' "
+            "AND error LIKE '%link-dood%' ORDER BY created_at LIMIT ?",
+            (maximum,),
+        ).fetchall()
+    gelukt: List[str] = []
+    mislukt: List[Dict[str, Any]] = []
+    for r in rijen:
+        try:
+            uit = await repareer_dode_link_in_job(r["id"])
+        except Exception as e:  # noqa: BLE001
+            uit = {"ok": False, "reden": "uitzondering", "detail": str(e)[:200]}
+        if uit.get("ok"):
+            gelukt.append(r["id"])
+        else:
+            mislukt.append({"job": r["id"], **uit})
+    return {"gerepareerd": len(gelukt), "mislukt": mislukt}
+
+
+# ── Ontbrekende omslagafbeelding ─────────────────────────────────────────────
+# Aanleiding (19 aug 2026, Ictusgo): 22 gepubliceerde artikelen stonden zonder
+# hero-image live. Twee stapelende oorzaken: `_publish_to_project_site` stuurde
+# nooit een afbeelding mee naar externe CMS'en (alleen title/content/seo-velden
+# — de echte fix, zie de `imageBase64`-tak hierboven), en `generate_content_job`
+# sloeg de omslag in light_mode helemaal over ("traag op de cloud-LLM", terwijl
+# `generate_quote_card` een Pillow-render zonder LLM is — die reden klopte niet).
+# Beide zijn nu gerepareerd; deze functie herpubliceert wat al live stond zónder
+# het artikel zelf opnieuw te schrijven.
+async def repareer_ontbrekende_afbeelding(job_id: str) -> Dict[str, Any]:
+    """Herpubliceer één live artikel met (indien nodig alsnog gegenereerde)
+    omslagafbeelding. Werkt alleen op de {PREFIX}_PUBLISH_URL-route met
+    bevestigd `imageBase64`-schema (zie `_publish_to_project_site`) — op een
+    andere site doet dit niets schadelijks, maar ook niets nuttigs."""
+    from . import content_pipeline as cp
+    import base64 as _b64
+
+    with get_conn() as conn:
+        job = conn.execute(
+            "SELECT id, site_id, title, keyword, slug, seo_score, blog_html, "
+            "image_path, status FROM content_jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+        if not job:
+            return {"ok": False, "reden": "job-onbekend"}
+        site = conn.execute("SELECT * FROM sites WHERE id = ?", (job["site_id"],)).fetchone()
+    if not site:
+        return {"ok": False, "reden": "site-onbekend"}
+    if job["status"] != "published":
+        return {"ok": False, "reden": "niet-live", "detail": f"status={job['status']}"}
+    site = dict(site)
+
+    image_bytes = _b64.b64decode(job["image_path"]) if job["image_path"] else None
+    if not image_bytes:
+        image_bytes = cp._generate_cover_image(site, job["title"])
+        with get_conn() as conn:
+            conn.execute("UPDATE content_jobs SET image_path=? WHERE id=?",
+                         (_b64.b64encode(image_bytes).decode("ascii"), job_id))
+
+    resultaat = await cp._publish_to_project_site(
+        site, job["title"], job["blog_html"] or "",
+        job["keyword"] or "", job["slug"] or "", int(job["seo_score"] or 0),
+        image_bytes=image_bytes,
+    )
+    if not resultaat.get("success"):
+        return {"ok": False, "reden": "publicatie-mislukt",
+                "detail": resultaat.get("error", "")}
+    return {"ok": True, "url": resultaat.get("url")}
+
+
+async def repareer_alle_ontbrekende_afbeeldingen(project: Optional[str] = None,
+                                                  maximum: int = 25) -> Dict[str, Any]:
+    """Herpubliceer elk live artikel van `project` met omslagafbeelding.
+
+    Bewust géén invariant-koppeling zoals de andere REMEDIES: er bestaat (nog)
+    geen `integrity_findings`-invariant voor een ontbrekende hero-image, dus
+    dit draait op een expliciete site-selectie in plaats van open bevindingen."""
+    with get_conn() as conn:
+        vraag = "SELECT id FROM content_jobs WHERE status='published'"
+        params: List[Any] = []
+        if project:
+            vraag += (" AND site_id = (SELECT id FROM sites WHERE name = ? "
+                      "OR REPLACE(LOWER(name), ' ', '') = REPLACE(LOWER(?), ' ', ''))")
+            params.extend([project, project])
+        vraag += " ORDER BY created_at LIMIT ?"
+        params.append(maximum)
+        rijen = conn.execute(vraag, params).fetchall()
+
+    gelukt: List[str] = []
+    mislukt: List[Dict[str, Any]] = []
+    for r in rijen:
+        try:
+            uit = await repareer_ontbrekende_afbeelding(r["id"])
+        except Exception as e:  # noqa: BLE001
+            uit = {"ok": False, "reden": "uitzondering", "detail": str(e)[:200]}
+        if uit.get("ok"):
+            gelukt.append(uit.get("url") or r["id"])
+        else:
+            mislukt.append({"job": r["id"], **uit})
+            logger.warning("[repair] Afbeelding %s niet gerepareerd: %s",
+                           r["id"][:8], uit.get("reden"))
+
+    log_outcome(
+        project or "SEO", "afbeelding_reparatie",
+        (f"{len(gelukt)} artikel(en) herpubliceerd met omslagafbeelding"
+         + (f"; {len(mislukt)} mislukt" if mislukt else "")),
+        artifact=gelukt[0] if gelukt else None,
+        status="error" if (mislukt and not gelukt) else "ok",
+    )
+    return {"gerepareerd": len(gelukt), "mislukt": mislukt}
+
+
 # Welke invarianten kunnen we écht zelf repareren? Eén register, want er zijn
 # twee lezers: het endpoint /api/iris/integrity/repair/{invariant} en de knop
 # "Analyseer & fix" in het Actiecentrum. Twee lijstjes zouden uit elkaar lopen,
 # en dan belooft de knop een remedie die het endpoint niet kent (of andersom).
-REMEDIES = {"metatitel_afgekapt": repareer_alle_metatitels}
+REMEDIES = {
+    "metatitel_afgekapt": repareer_alle_metatitels,
+    "dode_link": repareer_alle_dode_links,
+}
 
 
 def _volledige_titel(html_body: str) -> str:
