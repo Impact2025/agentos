@@ -89,7 +89,12 @@ def _parse_script(raw: str, title: str) -> List[vr.Scene]:
             vr.Scene(narration="Dit is wat je eruit meeneemt.", kind="body"),
             vr.Scene(narration="Lees het hele verhaal op onze site.", caption="Lees verder", kind="cta"),
         ]
-    parts = re.split(r"\n(?=HOOK:|BODY:|CTA:)", raw, flags=re.I)
+    # Split op elke header, ongeacht of er een newline vóór staat: het model
+    # levert soms alles op één regel, of met markdown-sterretjes/streepjes ervoor
+    # ("**HOOK:**", "- BODY:"). Met de oude `\n(?=HOOK:)`-split viel dan alles
+    # ná de eerste header in één scène, en hield de video 2 scènes over.
+    cleaned = re.sub(r"[*_`#>]+", "", raw)
+    parts = re.split(r"(?:^|\n|\s)[-•\d.\s]*(?=(?:HOOK|BODY|CTA)\s*:)", cleaned, flags=re.I)
     out: List[vr.Scene] = []
     for part in parts:
         m = re.match(r"\s*(HOOK|BODY|CTA)\s*:\s*(.+)", part.strip(), flags=re.I | re.S)
@@ -114,7 +119,15 @@ def make_blog_video(job_id: str, project: str, title: str, blog_html: str,
 
     Retourneert een dict met success / video_url / video_path / scenes / error.
     """
-    out_rel = f"projects/{project}/video/blog_{job_id}.mp4"
+    # De projectmap komt uit video_template._project_dir(): die kiest de map die
+    # de template.json ÉCHT bevat (projects/ heeft dubbele spellingen als
+    # 'liefde voor iedereen' vs 'liefdevooriedereen', en de UI stuurt soms
+    # 'Liefde voor Iedereen'). Zonder dit maakte elke render een dérde map aan,
+    # naast de map met logo/fonts/foto's — de video kwam dan buiten de
+    # brand-assets terecht.
+    from .video_template import _project_dir
+    proj_dir = _project_dir(project)
+    out_rel = f"projects/{proj_dir.name}/video/blog_{job_id}.mp4"
     out_path = _REPO / out_rel
     result: Dict = {"success": False, "job_id": job_id, "project": project}
 

@@ -20,6 +20,7 @@ herkent als niet-productieklaar.
 """
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -29,6 +30,7 @@ import httpx
 
 from .config import OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL
 from .database import get_conn
+from . import social_style
 
 logger = logging.getLogger(__name__)
 
@@ -38,16 +40,10 @@ PLATFORMS = ("linkedin", "facebook", "instagram", "tiktok", "twitter")
 BRAND_AMBER = "#e5a500"
 
 # Per-platform tone-instructie voor de drafter (parallel aan social_inbox).
-_PLATFORM_TONE = {
-    "linkedin": "Nuchter-professioneel, eerste persoon, zonder jargon. Max 60 woorden. "
-                "Eindig met een open vraag om engagement uit te lokken.",
-    "facebook": "Warm en menselijk, alsof je tegen een bekende praat. Max 50 woorden.",
-    "instagram": "Warm en kort, emoji-light (max 1 emoji). Max 40 woorden. Casual caption-toon.",
-    "tiktok": "Casual en kort, alsof je met een vriend praat. Max 30 woorden. Geen hashtag-salvo "
-              "in de body (hashtags komen in het aparte veld).",
-    "twitter": "Scherp en direct, één kerninzicht per tweet. Max 250 tekens (er komt nog een "
-               "link bij). Geen hashtags, geen emoji-salvo — de eerste zin is de hook.",
-}
+# Dit is de generieke terugval; een project met een eigen huisstijl-profiel
+# (`projects/<project>/social/style.json`) overschrijft deze per platform —
+# zie social_style.py voor waarom één stem voor twaalf merken niet werkt.
+_PLATFORM_TONE = dict(social_style.DEFAULT_TONE)
 
 
 # ── Dataklassen voor een pack ──────────────────────────────────────────────
@@ -63,6 +59,9 @@ class ImageBrief:
     font: str = "Inter / Montserrat, vet voor headline"
     layout: str = "Centreer headline boven, subtext onder, 1 accent-element (amber) rechtsonder."
     midjourney_prompt: str = ""
+    image_url: str = ""               # gegenereerde, on-brand afbeelding (public of local)
+    image_path: str = ""              # lokaal pad naar de opgeslagen asset
+    image_source: str = ""            # 'pexels' | 'fal' | '' (geen beeld beschikbaar)
     canva_note: str = (
         "Open Canva > Templates > zoek een passende 'quote' of 'social post'-template, "
         "vervang tekst door headline/subtext, zet de merkkleur op amber (#e5a500)."
@@ -102,11 +101,50 @@ class SocialPack:
     created_at: str = ""
     approved_at: str = ""
     posted_result: Dict = field(default_factory=dict)
+    # ── Herkomst (één ledger voor elke post, ongeacht de bron) ──────────────
+    origin: str = "pipeline"          # 'pipeline' (gegenereerd pack) | 'deluxe_manual' (Facebook-tab)
+    idea_source: str = ""             # 'gsc_top_queries' | 'demand_kansen' | 'fb_engagement' | 'vault' | ''
+    idea_query: str = ""              # het zoekwoord waar het idee vandaan kwam (indien van toepassing)
+    idea_evidence: str = ""           # het bewijs waarop het idee gekozen is (impressies/engagement/...)
+    idea_url: str = ""                # live artikel waar de post naar linkt (FB→SEO-brug)
+    # ── Campagne (een uitgeschreven plan met een volgorde en een datum) ──────
+    campaign: str = ""                # naam van het plan ('socialplan-6weken')
+    campaign_post: str = ""           # stabiele sleutel uit dat plan ('3.1')
+    scheduled_for: str = ""           # ISO-datumtijd waarop deze post hoort te staan
+    post_type: str = ""               # 'emotie' | 'product' | 'activatie' | ...
 
 
 # ── LLM-helper (sync, gespiegeld aan social_inbox._sync_openmodel) ─────────
 
+#: Reasoning-modellen (deepseek-v4-flash) sturen eerst een `thinking`-blok en dán
+#: het echte `text`-blok. Dat denk-blok eet uit hetzelfde max_tokens-budget: bij
+#: een te laag budget is de respons HTTP 200 met stop_reason=max_tokens en ALLEEN
+#: thinking, dus text="" — de caller zag een "lege" respons en viel stil terug op
+#: zijn fallback (de blogvideo sprak daardoor de blogtitel in i.p.v. een script).
+#: Gemeten 19-8-2026 met een echte lange prompt: 400/1200/1600 → alleen thinking;
+#: 3000 → thinking (≈1350 tok) + volledige text. Vandaar de bodem én de escalatie.
+_MIN_REASONING_TOKENS = 3200
+_MAX_REASONING_TOKENS = 8000
+
+
 def _sync_openmodel(system: str, user: str, max_tokens: int = 900) -> str:
+    """Vraag OpenModel om tekst; verhoog het budget als alleen `thinking` terugkomt.
+
+    Nooit een lege string teruggeven zolang het model nog binnen
+    `_MAX_REASONING_TOKENS` een tekst-blok kan afmaken: een stille lege respons
+    laat elke caller op zijn fallback vallen zonder dat iemand het merkt.
+    """
+    budget = max(max_tokens, _MIN_REASONING_TOKENS)
+    last = ""
+    while True:
+        last = _openmodel_once(system, user, budget)
+        if last.strip() or budget >= _MAX_REASONING_TOKENS:
+            return last
+        logger.info("OpenModel gaf alleen een thinking-blok bij max_tokens=%d, verdubbel budget", budget)
+        budget = min(budget * 2, _MAX_REASONING_TOKENS)
+
+
+def _openmodel_once(system: str, user: str, max_tokens: int) -> str:
     url = (OPENMODEL_BASE_URL or "https://api.openmodel.ai").rstrip("/") + "/v1/messages"
     payload = {
         "model": OPENMODEL_MODEL or "deepseek-v4-flash",
@@ -134,15 +172,15 @@ def _sync_openmodel(system: str, user: str, max_tokens: int = 900) -> str:
 
 
 def _brand_voice(project: str, brand_context: str) -> str:
-    """Bouw een korte merkstem-hint uit VaultReader + meegegeven context."""
+    """Bouw een korte merkstem-hint uit het huisstijl-profiel + VaultReader.
+
+    Het profiel wint van de generieke stem. Zonder profiel is de tekst hieronder
+    woordelijk gelijk aan wat hier vóór 16 aug 2026 stond, zodat projecten zonder
+    eigen huisstijl exact blijven schrijven zoals ze deden.
+    """
     brand = brand_context or project
-    voice = (
-        f"Je bent de social-media-stem van {brand}. "
-        f"Schrijf als de eigenaar (Vincent van Munster) — eerste persoon (ik/wij), "
-        f"warm en nuchter, geen robot-taal, geen uitroeptekens-geweld. "
-        f"Direct, geen jargon, mens centraal, technologie als stille achtergrond. "
-        f"Geen aandachtstreepjes (— / –). Geen bullet lists in de post zelf."
-    )
+    style = social_style.load_style(project)
+    voice = f"Je bent de social-media-stem van {brand}. {style.voice}"
     try:
         from .vault_reader import VaultReader
         vr = VaultReader()
@@ -213,28 +251,92 @@ def _parse_platform_blocks(text: str, platforms: List[str]) -> Dict[str, str]:
     return out
 
 
-def _parse_image_brief(text: str, theme: str) -> ImageBrief:
+def apply_hashtags(copy: Dict[str, str], project: str, post_type: str = "") -> Dict[str, str]:
+    """Plak de vaste hashtag-set van dit project onder elke post.
+
+    Alleen tags die er nog niet staan: het model schrijft er soms zelf een paar,
+    en '#familie #familie' onder een post is het soort slordigheid dat een merk
+    amateuristisch laat lijken. Zonder huisstijl-profiel gebeurt er niets — de
+    generieke pipeline plakte nooit hashtags en dat blijft zo.
+    """
+    style = social_style.load_style(project)
+    out = dict(copy)
+    for plat, tekst in out.items():
+        tags = style.hashtags_for(plat, post_type)
+        if not tags or not (tekst or "").strip():
+            continue
+        laag = tekst.lower()
+        nieuw = [t for t in tags if t.lower() not in laag]
+        if nieuw:
+            out[plat] = tekst.rstrip() + "\n" + " ".join(nieuw)
+    return out
+
+
+def _truncate_words(text: str, limit: int) -> str:
+    """Knip tekst af op een woordgrens i.p.v. midden in een woord.
+
+    Een kale `[:60]` sneed "levensverhaal losmaakte" af tot "levensverhaal
+    lo" — leesbaar noch bruikbaar als kop op een gepubliceerde afbeelding.
+    Zoekt de laatste spatie vóór de limiet; is er geen (één lang woord), dan
+    blijft de kale afkap de enige optie.
+    """
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    sp = cut.rfind(" ")
+    return cut[:sp].rstrip() if sp > 0 else cut
+
+
+def _parse_image_brief(text: str, theme: str, project: str = "") -> ImageBrief:
     """Parse een beeld-brief uit LLM-output; valt terug op een sensibele default."""
     b = ImageBrief()
-    b.headline = (theme or "Jouw boodschap")[:60]
+    b.headline = _truncate_words(theme or "Jouw boodschap", 60)
     for line in text.splitlines():
         hdr = _norm_header(line)
         if hdr in ("headline", "kop"):
-            val = line.split(":", 1)[-1].strip().strip("*").strip()[:80]
+            val = _truncate_words(line.split(":", 1)[-1].strip().strip("*").strip(), 80)
             b.headline = val or b.headline
         elif hdr in ("subtext", "onderschrift"):
-            b.subtext = line.split(":", 1)[-1].strip().strip("*").strip()[:120]
+            b.subtext = _truncate_words(line.split(":", 1)[-1].strip().strip("*").strip(), 120)
         elif "midjourney" in hdr or hdr in ("mj",):
             b.midjourney_prompt = line.split(":", 1)[-1].strip().strip("*").strip()
         elif hdr in ("layout", "opmaak"):
-            b.layout = line.split(":", 1)[-1].strip().strip("*").strip()[:160]
+            b.layout = _truncate_words(line.split(":", 1)[-1].strip().strip("*").strip(), 160)
+    style = social_style.load_style(project)
     if not b.midjourney_prompt:
-        b.midjourney_prompt = (
-            f"{b.headline}, warm amber accent (#e5a500), clean minimal typography, "
-            f"soft neutral background, professional Dutch brand style, high contrast, "
-            f"--ar 1:1 --style raw --v 6"
-        )
+        # Het vaste stijlblok van het project achter het onderwerp — zo blijft de
+        # hele serie herkenbaar. Zonder profiel is dit de oude amber-prompt.
+        b.midjourney_prompt = style.image_prompt(b.headline)
+    if style.bron == "style.json":
+        # Het beeldformaat hoort bij de huisstijl, niet bij de renderer: het plan
+        # schrijft 4:5 voor (staand vult meer scherm in de feed), de oude default
+        # was vierkant.
+        b.dimensions = _dimensions_for(style.aspect)
+        ov = style.overlay
+        # Wereldklasse: de project-specifieke kleuren horen in de beeld-brief,
+        # niet de generieke BRAND_AMBER-default. Zonder dit bleef elk pack op
+        # de goud-default (#e5a500) hangen en zag Bijeen-er geen enkele post
+        # uit in het eigen oranje/crème/nacht-palet uit style.json. 18 aug 2026.
+        b.color_palette = [
+            ov.accent_kleur or BRAND_AMBER,
+            ov.nacht_kleur or "#1f2937",
+            ov.achtergrond_kleur or "#ffffff",
+        ]
+        if ov.footer_tekst or ov.logo_path:
+            b.layout = (
+                f"Kop in serif-goud op een donker transparant vlak in het onderste "
+                f"derde deel, onderschrift eronder in warm wit"
+                + (f", logo {ov.logo_positie}" if ov.logo_path else "")
+                + (f", '{ov.footer_tekst}' onderaan." if ov.footer_tekst else ".")
+            )
     return b
+
+
+def _dimensions_for(aspect: str) -> str:
+    """'4:5' → '1080x1350'. Onbekende verhouding houdt het vierkant."""
+    known = {"1:1": "1080x1080", "4:5": "1080x1350", "9:16": "1080x1920", "16:9": "1920x1080"}
+    return known.get((aspect or "").strip(), "1080x1080")
 
 
 def _finalize_section(section: str, buf: List[str]):
@@ -247,6 +349,20 @@ def _finalize_section(section: str, buf: List[str]):
     if section == "shotlist":
         return list(buf)
     return "\n".join(buf).strip()
+
+
+_MD_RULE_RE = re.compile(r"^[-*_]{3,}$")
+
+
+def _is_markdown_rule(line: str) -> bool:
+    """Herken een markdown-scheidingsstreep ('---', '***', ...).
+
+    De LLM zet zo'n regel soms tussen secties (bv. na de hook, vóór het
+    script). Ongefilterd landt die letterlijk in de scène-tekst — en dus in
+    de video: een karaoke-caption die eindigt op "---" en een stem die het
+    ook probeert uit te spreken.
+    """
+    return bool(_MD_RULE_RE.match(line.strip()))
 
 
 def _parse_tiktok_pack(text: str) -> TikTokPack:
@@ -282,10 +398,12 @@ def _parse_tiktok_pack(text: str) -> TikTokPack:
             # Alleen echte bullets (lijnen die met -/* beginnen) horen in de shotlist.
             # Niet-bullet regels (bijv. een header die niet herkend werd) negeren we.
             stripped = line.strip()
-            if stripped.startswith(("-", "*")):
-                buf.append(stripped.lstrip("-*").strip())
+            if stripped.startswith(("-", "*")) and not _is_markdown_rule(stripped):
+                item = stripped.lstrip("-*").strip()
+                if item:
+                    buf.append(item)
         else:
-            if section and buf is not None and line.strip():
+            if section and buf is not None and line.strip() and not _is_markdown_rule(line):
                 buf.append(line)
     if section and buf:
         setattr(p, section, _finalize_section(section, buf))
@@ -306,18 +424,34 @@ def generate_content_pack(
     with_image: bool = True,
     with_video: bool = True,
     brand_context: str = "",
+    idea_source: str = "",
+    idea_query: str = "",
+    idea_evidence: str = "",
+    idea_url: str = "",
+    post_type: str = "",
 ) -> SocialPack:
     """Genereer één content-pack (posts + optioneel beeld/TikTok) in de merkstem.
 
     Schrijft de row met status 'pending_review' en retourneert het pack. Bij geen
     LLM-backend: deterministisch CONCEPT (concept=True) zodat de review-gate het
     herkent als niet-productieklaar.
+
+    idea_source/idea_query/idea_evidence/idea_url: herkomst van het thema als het
+    uit een datagedreven idee komt (social_auto._pick_grounded_idea, gevoed door
+    GSC/Demand/FB-engagement i.p.v. een gok uit de vault) — puur ter registratie,
+    zodat later meetbaar is welke herkomst tot welke prestatie leidt. idea_url
+    wordt bovendien meegegeven aan de schrijfprompt als link-kans (FB→SEO-brug).
+
+    post_type ('emotie' / 'product' / 'activatie' / ...) bepaalt wélke hashtag-set
+    van het project onder de post komt. Leeg = de vaste platform-set, en zonder
+    huisstijl-profiel helemaal geen hashtags (het oude gedrag).
     """
     platforms = [p for p in (platforms or list(PLATFORMS)) if p in PLATFORMS]
     if not platforms:
         platforms = list(PLATFORMS)
     brand = brand_context or project
     voice = _brand_voice(project, brand_context)
+    style = social_style.load_style(project)
     concept = False
 
     copy: Dict[str, str] = {p: "" for p in platforms}
@@ -334,7 +468,7 @@ def generate_content_pack(
                 f"(Schrijf uit in de merkstem van {brand}.)"
             )
         if with_image:
-            image_brief = ImageBrief(headline=(theme or "Boodschap")[:60])
+            image_brief = ImageBrief(headline=_truncate_words(theme or "Boodschap", 60))
         if with_video:
             tiktok_pack = TikTokPack(hook=(theme or "Korte hook")[:80],
                                      script=f"{theme}. {angle}")
@@ -344,26 +478,54 @@ def generate_content_pack(
             _labels = {"linkedin": "LinkedIn", "facebook": "Facebook",
                        "instagram": "Instagram", "tiktok": "TikTok", "twitter": "Twitter"}
             headers = ", ".join(f"'{_labels[p]}:'" for p in platforms)
-            tones = " ".join(f"{_labels[p]}: {_PLATFORM_TONE[p]}" for p in platforms)
+            tones = " ".join(f"{_labels[p]}: {style.tone_for(p)}" for p in platforms)
             sys_posts = (
                 f"{voice}\n\nSchrijf voor elk platform een aparte post over het thema. "
                 f"Gebruik duidelijke headers: {headers}. "
                 f"Volg per platform de toon: {tones}"
             )
+            link_hint = (
+                f"Er bestaat al een live pagina over dit onderwerp: {idea_url}. "
+                f"Verwijs er waar natuurlijk naar (bijv. 'lees het volledige verhaal op de site'), "
+                f"forceer het niet in elk platform.\n" if idea_url else ""
+            )
             user_posts = (f"Thema: {theme}\n{angle and ('Invalshoek: ' + angle + chr(10))}"
-                          f"Geef de {len(platforms)} posts.")
+                          f"{link_hint}Geef de {len(platforms)} posts.")
             raw = _sync_openmodel(sys_posts, user_posts, max_tokens=1600)
             copy = _parse_platform_blocks(raw, platforms)
 
-            # 2) Beeld-brief
+            # 2) Beeld-brief + ECHTE on-brand afbeelding
             if with_image:
                 sys_img = (
                     f"{voice}\n\nMaak een Canva-ready beeld-brief voor een social post over het thema. "
                     f"Geef velden: 'Headline:', 'Subtext:', 'Layout:', 'Midjourney:'. "
-                    f"Kleur: amber accent (#e5a500)."
+                    + (f"Beeldstijl (zet dit stijlblok achter de Midjourney-prompt zodat alle "
+                       f"beelden bij elkaar passen): {style.stijlblok}"
+                       if style.bron == "style.json" else "Kleur: amber accent (#e5a500).")
                 )
                 raw_img = _sync_openmodel(sys_img, f"Thema: {theme}", max_tokens=400)
-                image_brief = _parse_image_brief(raw_img, theme)
+                image_brief = _parse_image_brief(raw_img, theme, project)
+                # Echte, on-brand afbeelding genereren (Pexels eerst, FAL fallback)
+                # en de gouden merk-overlay erin branden. Zonder sleutel: image_url
+                # blijft leeg en toont de review-gate "genereer handmatig".
+                try:
+                    from . import social_image as img_svc
+                    img_res = img_svc.generate_social_image(
+                        theme, project,
+                        headline=image_brief.headline,
+                        subtext=image_brief.subtext,
+                    )
+                    if img_res.get("success"):
+                        image_brief.image_url = img_res["url"]
+                        image_brief.image_path = img_res.get("path", "")
+                        image_brief.image_source = img_res.get("source", "")
+                        logger.info("Social-afbeelding gegenereerd (%s): %s",
+                                    img_res.get("source"), img_res.get("url"))
+                    else:
+                        logger.warning("Social-afbeelding mislukt (brief blijft leidend): %s",
+                                       img_res.get("error"))
+                except Exception as e:
+                    logger.warning("Social-image-generatie overgeslagen: %s", e)
                 # Echte Canva-design aanmaken als Connect geconfigureerd is.
                 try:
                     from . import canva as canva_svc
@@ -401,9 +563,17 @@ def generate_content_pack(
                 if not copy.get(p):
                     copy[p] = f"[CONCEPT — LLM-fout: {e}]\n\n{theme}"
             if with_image and image_brief is None:
-                image_brief = ImageBrief(headline=(theme or "Boodschap")[:60])
+                image_brief = ImageBrief(headline=_truncate_words(theme or "Boodschap", 60))
             if with_video and tiktok_pack is None:
                 tiktok_pack = TikTokPack(hook=(theme or "Hook")[:80], script=f"{theme}. {angle}")
+
+    # De huisstijl geldt óók op het terugval-pad. Een CONCEPT-pack zonder de
+    # merk-hashtags en met de generieke amber-prompt is geen kleiner probleem
+    # dan een verkeerd geschreven post: het is precies het pack dat een mens
+    # daarna met de hand afmaakt, en dan sluipt de verkeerde stijl er alsnog in.
+    copy = apply_hashtags(copy, project, post_type)
+    if image_brief is not None and not image_brief.midjourney_prompt:
+        image_brief.midjourney_prompt = style.image_prompt(image_brief.headline or theme)
 
     pack = SocialPack(
         id=f"sp_{uuid.uuid4().hex[:12]}",
@@ -417,6 +587,11 @@ def generate_content_pack(
         status="pending_review",
         concept=concept,
         created_at=datetime.now().isoformat(),
+        origin="pipeline",
+        idea_source=idea_source,
+        idea_query=idea_query,
+        idea_evidence=idea_evidence,
+        idea_url=idea_url,
     )
     _persist(pack)
     return pack
@@ -428,13 +603,15 @@ def _persist(pack: SocialPack) -> None:
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO social_posts(id, project, theme, angle, brand_context, copy_json, "
-            "image_brief_json, tiktok_pack_json, status, concept, created_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "image_brief_json, tiktok_pack_json, status, concept, created_at, "
+            "origin, idea_source, idea_query, idea_evidence, idea_url) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (pack.id, pack.project, pack.theme, pack.angle, pack.brand_context,
              json.dumps(pack.copy, ensure_ascii=False),
              json.dumps(pack.image_brief or {}, ensure_ascii=False),
              json.dumps(pack.tiktok_pack or {}, ensure_ascii=False),
-             pack.status, int(pack.concept), pack.created_at),
+             pack.status, int(pack.concept), pack.created_at,
+             pack.origin, pack.idea_source, pack.idea_query, pack.idea_evidence, pack.idea_url),
         )
     try:
         from .outcomes import log_outcome
@@ -450,6 +627,47 @@ def _persist(pack: SocialPack) -> None:
         logger.debug("log_outcome mislukt: %s", e)
 
 
+def record_external_post(project: str, platform: str, text: str,
+                         post_id: str = "", url: str = "",
+                         origin: str = "deluxe_manual") -> SocialPack:
+    """Registreer een post die BUITEN generate_content_pack()/publish_pack() om is
+    geplaatst (bijv. de Facebook Deluxe-composer) in hetzelfde ledger.
+
+    Zonder dit is elke analyse (analyse_page, toekomstige content_learning voor
+    social) blind voor de helft van wat er daadwerkelijk gepost is — precies de
+    fout die dit ledger moest oplossen. De rij komt binnen als 'posted' (het
+    ding staat al live; hier is niets meer te keuren) en telt mee in dezelfde
+    tabel als de gated packs, met `origin` als onderscheid.
+    """
+    pack = SocialPack(
+        id=f"sp_{uuid.uuid4().hex[:12]}",
+        project=project,
+        theme=text[:120],
+        brand_context=project,
+        copy={platform: text},
+        status="posted",
+        concept=False,
+        created_at=datetime.now().isoformat(),
+        approved_at=datetime.now().isoformat(),
+        posted_result={platform: {"success": True, "url": url, "post_id": post_id},
+                       "_platforms": [platform]},
+        origin=origin,
+    )
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO social_posts(id, project, theme, angle, brand_context, copy_json, "
+            "image_brief_json, tiktok_pack_json, status, concept, created_at, approved_at, "
+            "posted_result_json, origin, idea_source, idea_query, idea_evidence, idea_url) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (pack.id, pack.project, pack.theme, pack.angle, pack.brand_context,
+             json.dumps(pack.copy, ensure_ascii=False), "{}", "{}",
+             pack.status, 0, pack.created_at, pack.approved_at,
+             json.dumps(pack.posted_result, ensure_ascii=False),
+             pack.origin, "", "", "", ""),
+        )
+    return pack
+
+
 def _row_to_pack(row) -> SocialPack:
     p = SocialPack(
         id=row["id"], project=row["project"], theme=row["theme"], angle=row["angle"],
@@ -458,6 +676,15 @@ def _row_to_pack(row) -> SocialPack:
         approved_at=row["approved_at"] or "",
         video_path=(row["video_path"] if "video_path" in row.keys() else "") or "",
         posted_result=json.loads(row["posted_result_json"] or "{}"),
+        origin=(row["origin"] if "origin" in row.keys() else "pipeline") or "pipeline",
+        idea_source=(row["idea_source"] if "idea_source" in row.keys() else "") or "",
+        idea_query=(row["idea_query"] if "idea_query" in row.keys() else "") or "",
+        idea_evidence=(row["idea_evidence"] if "idea_evidence" in row.keys() else "") or "",
+        idea_url=(row["idea_url"] if "idea_url" in row.keys() else "") or "",
+        campaign=(row["campaign"] if "campaign" in row.keys() else "") or "",
+        campaign_post=(row["campaign_post"] if "campaign_post" in row.keys() else "") or "",
+        scheduled_for=(row["scheduled_for"] if "scheduled_for" in row.keys() else "") or "",
+        post_type=(row["post_type"] if "post_type" in row.keys() else "") or "",
     )
     try:
         p.copy = json.loads(row["copy_json"] or "{}")
@@ -500,9 +727,77 @@ def approve_pack(pack_id: str) -> bool:
         return cur.rowcount > 0
 
 
+def mark_posted_manually(pack_id: str, platforms: Optional[List[str]] = None) -> Dict:
+    """Leg vast dat een mens dit pack zélf heeft geplaatst.
+
+    Voor kanalen die Agent OS niet kan bedienen — LinkedIn vanaf een persoonlijk
+    profiel kan per definitie niet geautomatiseerd, en een project zonder eigen
+    Facebook/Instagram-token mag nooit op de pagina van een ánder project posten
+    (zie social_auto). Zonder deze weg blijft zo'n pack eeuwig `pending_review`
+    en meldt `campagnepost_over_datum` een gemiste post die gewoon live staat:
+    een alarm dat aantoonbaar liegt leert een mens alle alarmen te negeren.
+
+    Bewust géén `approve_pack`: goedgekeurd betekent 'mag naar buiten', geplaatst
+    betekent 'is naar buiten'. Alleen het tweede telt als uitvoering, en het
+    verschil is het enige waarop je later kunt terugkijken. De uitkomst draagt
+    `via: 'handmatig'`, zodat een latere analyse een zelf-geplaatste post niet
+    verwart met een die via de API is gegaan.
+    """
+    pack = get_pack(pack_id)
+    if not pack:
+        return {"success": False, "error": "Pack niet gevonden"}
+    kanalen = [p.strip().lower() for p in (platforms or list(pack.copy.keys())) if p.strip()]
+    kanalen = [p for p in kanalen if p in PLATFORMS]
+    nu = datetime.now().isoformat()
+    resultaat = dict(pack.posted_result or {})
+    for plat in kanalen:
+        resultaat[plat] = {"success": True, "via": "handmatig", "at": nu}
+    resultaat["_platforms"] = sorted(set(resultaat.get("_platforms", [])) | set(kanalen))
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE social_posts SET status='posted', approved_at=?, posted_result_json=? "
+            "WHERE id=?",
+            (pack.approved_at or nu, json.dumps(resultaat, ensure_ascii=False), pack_id),
+        )
+    try:
+        from .outcomes import log_outcome
+        log_outcome(
+            project=pack.project,
+            action="social_post_geplaatst",
+            detail=f"'{pack.theme}' handmatig geplaatst op: " + (", ".join(kanalen) or "geen kanaal"),
+            next_step="Reageer binnen 24 uur op reacties — in deze fase is elk gesprek goud.",
+            status="ok",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("log_outcome (handmatig geplaatst) mislukt: %s", e)
+    return {"success": True, "pack_id": pack_id, "platforms": kanalen}
+
+
 def reject_pack(pack_id: str) -> bool:
     with get_conn() as conn:
         cur = conn.execute("UPDATE social_posts SET status='rejected' WHERE id=?", (pack_id,))
+        return cur.rowcount > 0
+
+
+def set_pack_image(pack_id: str, *, image_url: str, image_path: str, image_source: str) -> bool:
+    """Vervang het beeld van een pack (bijv. een geüploade Midjourney-render).
+
+    Update alleen de beeld-velden binnen `image_brief_json` — headline/subtext/
+    layout/midjourney_prompt blijven staan, want die zijn de instructie voor het
+    beeld en horen niet te verdwijnen zodra het beeld zelf handmatig geleverd is.
+    """
+    p = get_pack(pack_id)
+    if not p:
+        return False
+    brief = dict(p.image_brief or {})
+    brief["image_url"] = image_url
+    brief["image_path"] = image_path
+    brief["image_source"] = image_source
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE social_posts SET image_brief_json=? WHERE id=?",
+            (json.dumps(brief, ensure_ascii=False), pack_id),
+        )
         return cur.rowcount > 0
 
 
@@ -520,6 +815,11 @@ def export_pack(pack_id: str) -> Dict:
         "image_brief": p.image_brief,
         "tiktok_pack": p.tiktok_pack,
         "concept": p.concept,
+        "campaign": p.campaign,
+        "campaign_post": p.campaign_post,
+        "scheduled_for": p.scheduled_for,
+        "post_type": p.post_type,
+        "angle": p.angle,
         "video_path": p.video_path,
         # Directe stream-URL voor de <video>-preview (leeg als er nog geen video is).
         "video_url": (f"/api/social-content/packs/{p.id}/video" if p.video_path else ""),
@@ -577,7 +877,10 @@ def render_pack_video(pack_id: str) -> Dict:
                            caption="Start vandaag", kind="cta"))
 
     # 2) Renderen naar projects/<project>/video/<pack_id>.mp4.
-    rel = f"projects/{p.project}/video/{p.id}.mp4"
+    # Zelfde reden als in blog_video.make_blog_video: schrijf in de projectmap die
+    # de brand-assets/template draagt, niet in een nieuwe map met de UI-spelling.
+    from .video_template import _project_dir
+    rel = f"projects/{_project_dir(p.project).name}/video/{p.id}.mp4"
     out = REPO_ROOT / rel
     try:
         tpl = load_template(p.project)
@@ -622,20 +925,65 @@ def _log_video_outcome(pack: SocialPack, *, ok: bool, detail: str, artifact: str
         logger.debug("log_outcome (video) mislukt: %s", e)
 
 
+def _allowed_platforms_for(project: str) -> List[str]:
+    """Lees de per-site platform-restrictie uit de `sites`-tabel.
+
+    Leeg/None = geen restrictie (alle PLATFORMS). Een komma-gescheiden waarde
+    in `auto_social_platforms` (bv. 'linkedin') begrenst waarheen gepost mag
+    worden. Zo dwingen we 'Bijeen → alleen LinkedIn' af op infrastructuurniveau,
+    niet alleen in de UI.
+    """
+    try:
+        from ..domains.seo import sites as sites_svc
+        s = sites_svc.find_site_by_project(project)
+        if not s:
+            return []
+        raw = (s.get("auto_social_platforms") or "").strip()
+        if not raw:
+            return []
+        return [p.strip().lower() for p in raw.split(",") if p.strip()]
+    except Exception:
+        return []
+
+
 async def publish_pack(pack_id: str, platform: str) -> Dict:
     """Plaats een goedgekeurd pack op één platform.
 
     FB/IG/Twitter: echte posting via de bestaande social-services (als geconfigureerd).
     LinkedIn/TikTok: plak-adapter (manual=True) — consistent met social_inbox.
-    Markeert het pack als 'posted' bij succes.
+
+    Een pack kan naar MEERDERE platformen tegelijk (auto-poster plaatst FB + IG
+    in één run). Daarom blokkeert de guard NIET op status='posted' — een pack dat
+    al op FB staat mag nog steeds op IG. We houden per-platform bij WELKE kanalen
+    al gepost hebben in posted_result_json['_platforms'], zodat een kanaal nooit
+    dubbel gepost wordt. Een pack dat nog 'pending_review'/'rejected' is, blijft
+    geblokkeerd — je moet eerst keuren.
     """
     if platform not in PLATFORMS:
         return {"success": False, "error": f"Onbekend platform: {platform}"}
     p = get_pack(pack_id)
     if not p:
         return {"success": False, "error": "Pack niet gevonden"}
-    if p.status != "approved":
+    # Per-site platform-restrictie (wereldklasse, 18 aug 2026). Sommige sites
+    # mogen alleen op bepaalde kanalen plaatsen (bv. Bijeen → alleen LinkedIn).
+    # Leeg veld = geen restrictie (alle PLATFORMS toegestaan). Een niet-toegestaan
+    # platform wordt geweigerd i.p.v. stiekem op een verkeerd kanaal te posten.
+    allowed = _allowed_platforms_for(p.project)
+    if allowed and platform not in allowed:
+        return {"success": False, "error":
+                f"{p.project} mag alleen op {', '.join(allowed)} plaatsen — "
+                f"{platform} is geblokkeerd."}
+    # Alleen expliciet niet-goedgekeurde packs blokkeren. 'approved' én 'posted'
+    # (al op een ander kanaal geplaatst) zijn beide toegestaan.
+    if p.status in ("pending_review", "rejected"):
         return {"success": False, "error": "Pack is niet goedgekeurd (status=%s)" % p.status}
+    # Dubbel-post op hetzelfde kanaal voorkomen.
+    prev = p.posted_result or {}
+    done = prev.get("_platforms") or []
+    if platform in done:
+        return {"success": True, "manual": prev.get(platform, {}).get("manual", False),
+                "url": prev.get(platform, {}).get("url", ""),
+                "detail": f"{platform} al geplaatst — overgeslagen.", "already": True}
 
     text = (p.copy or {}).get(platform, "")
     if not text:
@@ -645,13 +993,30 @@ async def publish_pack(pack_id: str, platform: str) -> Dict:
     try:
         if platform == "facebook":
             from . import facebook as svc
-            result = await svc.post_update(text, None, p.project)
+            ib = p.image_brief or {}
+            img_path = ib.get("image_path", "")
+            # idea_url/idea_query (gezet door social_auto._pick_grounded_idea)
+            # voeden dezelfde FB→SEO-meetlus als de Facebook Deluxe-agent — zonder
+            # dit was een auto-post onzichtbaar voor fb_seo_impact.py.
+            result = await svc.post_update(text, p.idea_url or None, p.project,
+                                           image_path=img_path or None,
+                                           query=p.idea_query or None)
         elif platform == "instagram":
-            # IG vereist een image_url; zonder beeld-publicatie geen post.
-            result = {"success": False, "error": "manual",
-                      "manual": True,
-                      "detail": "Instagram vereist een afbeelding. Gebruik de image-brief "
-                                "om in Canva/Midjourney een beeld te maken en post handmatig."}
+            # IG vereist een publieke image_url. Als de pack een gegenereerde
+            # asset heeft (image_brief.image_url) én die publiek bereikbaar is,
+            # posten we die direct. Anders: plak-adapter met de lokale file.
+            ib = p.image_brief or {}
+            img_url = ib.get("image_url", "")
+            if img_url and img_url.startswith("http"):
+                from . import instagram as svc
+                result = await svc.post_image(img_url, text, p.project)
+            else:
+                result = {"success": False, "error": "manual",
+                          "manual": True,
+                          "detail": "Instagram vereist een publieke afbeelding. " +
+                                    (f"Asset lokaal: {ib.get('image_path','')}. " if ib.get("image_path") else "") +
+                                    "Zet AGENTOS_PUBLIC_HOST (of NETLIFY_TOKEN) zodat de asset " +
+                                    "publiek wordt, of post handmatig met de gegenereerde file."}
         elif platform == "twitter":
             from . import twitter as svc
             result = await svc.post_update(text, None, p.project)
@@ -678,12 +1043,33 @@ async def publish_pack(pack_id: str, platform: str) -> Dict:
     except Exception as e:
         result = {"success": False, "error": str(e)[:300]}
 
-    # Sla het resultaat op; markeer als posted als het écht (niet-manual) lukte.
+    # Sla het resultaat op per-platform, zonder eerdere kanalen te overschrijven.
+    # We bewaren een dict {platform: result, ..., "_platforms": [..lijst..]}.
     posted = bool(result.get("success")) and not result.get("manual")
     with get_conn() as conn:
+        row = conn.execute(
+            "SELECT posted_result_json FROM social_posts WHERE id=?", (pack_id,)
+        ).fetchone()
+        prev = {}
+        try:
+            prev = json.loads((row[0] or "{}")) if row else {}
+        except Exception:
+            prev = {}
+        # Behoud eerdere platform-resultaten (bv. FB al geplaatst, nu IG).
+        merged = {k: v for k, v in prev.items() if k != "_platforms"}
+        merged[platform] = result
+        done = list(prev.get("_platforms") or [])
+        if platform not in done:
+            done.append(platform)
+        merged["_platforms"] = done
+        # Status: 'posted' zodra één écht kanaal live is; anders 'approved'.
+        any_live = any(
+            bool(merged[p].get("success")) and not merged[p].get("manual")
+            for p in done
+        )
         conn.execute(
             "UPDATE social_posts SET posted_result_json=?, status=? WHERE id=?",
-            (json.dumps(result, ensure_ascii=False),
-             "posted" if posted else "approved", pack_id),
+            (json.dumps(merged, ensure_ascii=False),
+             "posted" if any_live else "approved", pack_id),
         )
     return result

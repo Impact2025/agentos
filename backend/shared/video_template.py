@@ -70,6 +70,7 @@ class FootageSpec:
     fallback: str = ""                 # provider om op terug te vallen (bijv. "local_photos")
     resolved: Optional[Path] = None    # gevuld door de loader als de map bestaat
     images: List[Path] = field(default_factory=list)
+    local_videos: List[Path] = field(default_factory=list)  # bv. Midjourney Animate-clips
 
 @dataclass
 class VideoTemplate:
@@ -83,6 +84,13 @@ class VideoTemplate:
     footer_text: str = ""                  # leeg = projectnaam
     cta_footer_text: str = ""              # leeg = footer_text
     voice: str = DEFAULT_VOICE
+    # Milde defaults: edge-tts is niet getraind om ver van +0% te spreken, dus
+    # een grote tempo/toonhoogte-shift klinkt eerder róbotischer dan warmer.
+    # Voor écht natuurlijke spraak is `tts_provider="elevenlabs"` de juiste hendel.
+    voice_rate: str = "-5%"                # edge-tts spreektempo
+    voice_pitch: str = "+0Hz"              # edge-tts toonhoogte
+    tts_provider: str = "edge"             # "edge" (gratis) of "elevenlabs" (betaald, natuurlijker)
+    elevenlabs_voice_id: str = ""          # leeg = ELEVENLABS_VOICE_ID uit .env
     music: Optional[Path] = None
     motion: bool = True                    # Ken-Burns aan/uit
     source: str = "defaults"               # 'template.json' of 'defaults' (voor logging)
@@ -93,8 +101,37 @@ class VideoTemplate:
 
 # ── Padden ──────────────────────────────────────────────────────────────────
 
+def _norm_name(name: str) -> str:
+    return (name or "").lower().replace(" ", "").replace("-", "").replace("_", "")
+
+
 def _project_dir(project: str) -> Path:
-    return REPO_ROOT / "projects" / project
+    """De projectmap — exacte naam eerst, anders de map die dezelfde squash-vorm heeft.
+
+    `projects/` bevat zowel 'liefde voor iedereen' als 'liefdevooriedereen', en de
+    aanroeper geeft soms 'Liefde voor Iedereen' (hoofdletters uit de UI). Zonder
+    deze normalisatie bestaat de map niet, valt `load_template()` stil terug op
+    de generieke defaults en rendert de video zonder logo/font/stem — precies de
+    fout die je pas ziet als je naar het beeld kijkt, niet in de logs.
+    """
+    exact = REPO_ROOT / "projects" / (project or "")
+    if exact.is_dir() and (exact / TEMPLATE_RELPATH).exists():
+        # Windows is case-insensitief: 'Liefde voor Iedereen' opent de map
+        # 'liefde voor iedereen'. resolve() geeft de ECHTE schrijfwijze terug,
+        # zodat afgeleide paden (video_path in de database) consistent blijven.
+        return exact.resolve()
+    root = REPO_ROOT / "projects"
+    doel = _norm_name(project)
+    if doel and root.is_dir():
+        # Map met een template.json wint van een lege restmap met dezelfde naam.
+        kandidaten = [d for d in sorted(root.iterdir())
+                      if d.is_dir() and _norm_name(d.name) == doel]
+        for d in kandidaten:
+            if (d / TEMPLATE_RELPATH).exists():
+                return d
+        if kandidaten:
+            return kandidaten[0]
+    return exact
 
 
 def _resolve_path(raw: str, project: str) -> Optional[Path]:
@@ -170,7 +207,7 @@ def load_template(project: str) -> VideoTemplate:
         if tpl.logo.resolved is None:
             logger.warning("Logo-pad niet gevonden voor %s: %s", project, logo.get("path"))
 
-    # Footage (familie-foto's / stock als achtergrond).
+    # Footage (eigen beeld / stock als achtergrond).
     footage = data.get("footage") or {}
     fprovider = (footage.get("provider") or "").lower()
     if fprovider == "local_photos" and footage.get("path"):
@@ -197,7 +234,7 @@ def load_template(project: str) -> VideoTemplate:
         else:
             logger.warning("Footage-map niet gevonden voor %s: %s", project, footage.get("path"))
     elif fprovider == "pexels":
-        # Stock-foto's worden bij render-tijd opgehaald uit het thema/script.
+        # Stock-foto's/video's worden bij render-tijd opgehaald uit het thema/script.
         tpl.footage = FootageSpec(
             provider="pexels",
             path=footage.get("path", ""),      # optioneel: vaste zoekterm
@@ -205,8 +242,12 @@ def load_template(project: str) -> VideoTemplate:
             query=(footage.get("query") or "").strip(),
             fallback=(footage.get("fallback") or "").lower(),
         )
-        # Optionele lokale fallback (als Pexels geen key/resultaat geeft).
-        if tpl.footage.fallback == "local_photos" and footage.get("path"):
+        # Eigen beeld in `path` (bv. Midjourney-stills of Animate-clips) krijgt
+        # ALTIJD voorrang op generieke stock, zodra er iets in staat — niet pas
+        # als noodgreep bij een mislukte Pexels-call. Merk-echt beeld verslaat
+        # onbekende mensen in stockfoto's, en de render-laag (video_render.py)
+        # gebruikt Pexels alleen nog als deze map leeg is.
+        if footage.get("path"):
             fdir = _resolve_path(footage.get("path", ""), project)
             if fdir is None:
                 cand = _project_dir(project) / footage.get("path", "")
@@ -216,14 +257,28 @@ def load_template(project: str) -> VideoTemplate:
                     p for p in fdir.iterdir()
                     if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")
                 )
+                vids = sorted(
+                    p for p in fdir.iterdir()
+                    if p.suffix.lower() in (".mp4", ".mov", ".webm", ".m4v")
+                )
                 if imgs:
-                    tpl.footage.images = imgs  # gebruikt als Pexels leeg is
+                    tpl.footage.images = imgs
+                if vids:
+                    tpl.footage.local_videos = vids
     # Onbekende/lege provider → geen footage (merk-slide).
 
     tpl.footer_text = (data.get("footer") or {}).get("text", "") or ""
     tpl.cta_footer_text = (data.get("footer") or {}).get("cta_text", "") or ""
 
     tpl.voice = (data.get("voice") or DEFAULT_VOICE).strip()
+    if isinstance(data.get("voice_rate"), str) and data["voice_rate"].strip():
+        tpl.voice_rate = data["voice_rate"].strip()
+    if isinstance(data.get("voice_pitch"), str) and data["voice_pitch"].strip():
+        tpl.voice_pitch = data["voice_pitch"].strip()
+    if isinstance(data.get("tts_provider"), str) and data["tts_provider"].strip():
+        tpl.tts_provider = data["tts_provider"].strip().lower()
+    if isinstance(data.get("elevenlabs_voice_id"), str):
+        tpl.elevenlabs_voice_id = data["elevenlabs_voice_id"].strip()
     tpl.music = _resolve_path(data.get("music", ""), project)
     if data.get("music") and tpl.music is None:
         logger.warning("Muziek-pad niet gevonden voor %s: %s", project, data.get("music"))
@@ -273,6 +328,10 @@ def write_default_template(project: str, *, overwrite: bool = False) -> Path:
         "logo": {"path": "", "position": "bottom", "width": 220, "opacity": 1.0},
         "footer": {"text": "", "cta_text": ""},
         "voice": DEFAULT_VOICE,
+        "voice_rate": "-5%",
+        "voice_pitch": "+0Hz",
+        "tts_provider": "edge",
+        "elevenlabs_voice_id": "",
         "music": "",
         "motion": True,
     }
