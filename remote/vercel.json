@@ -1,7 +1,8 @@
 {
   "cleanUrls": true,
   "functions": {
-    "api/iris.js": { "maxDuration": 60 }
+    "api/iris.js": { "maxDuration": 60 },
+    "api/whatsapp.js": { "maxDuration": 60 }
   },
   "headers": [
     {
