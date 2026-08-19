@@ -10,10 +10,11 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Body
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi import Request
 from pathlib import Path
 
 from .shared.logging_config import setup_logging
@@ -31,6 +32,7 @@ from .scheduler import start_scheduler, stop_scheduler, get_scheduler_status
 from .domains.pipeline.conveyor import conveyor_loop
 
 # ── Domein-routers ──────────────────────────────────────────────────────────
+from .domains.voice import router as voice_router
 from .domains.chat import router as chat_router
 from .domains.chat import sessions as sessions_router
 from .domains.chat import obsidian_router
@@ -71,6 +73,7 @@ from .domains.rituals import router as rituals_router
 from .domains.action_center import router as action_center_router
 from .domains.iris import router as iris_router
 from .domains.researcher import router as researcher_router
+from .domains.orchestrator import router as orchestrator_router
 from .domains.auth import router as auth_router
 from .domains.auth import service as auth_service
 from .domains.omni import router as omni_router
@@ -171,6 +174,7 @@ async def static_no_cache_middleware(request: Request, call_next):
 # ── Monteer alle domein-routers ─────────────────────────────────────────────
 # Kern: geen domain-tag, altijd aan (ook op een klant-instance met een
 # beperkte AGENTOS_ENABLED_DOMAINS-whitelist — zie shared/config.py).
+app.include_router(voice_router.router)
 app.include_router(chat_router.router)
 app.include_router(sessions_router.router)
 app.include_router(obsidian_router.router)
@@ -204,6 +208,8 @@ if domain_enabled("pipeline"):
     app.include_router(loops_router.router)
     from .domains.gauntlet import router as gauntlet_router
     app.include_router(gauntlet_router.router)
+if domain_enabled("orchestrator"):
+    app.include_router(orchestrator_router.router)
 if domain_enabled("prospecting"):
     app.include_router(leads_router.router)
 if domain_enabled("learning"):
@@ -315,6 +321,65 @@ def conveyor_status():
         "running": not loop_task.done(),
         "done": loop_task.done(),
         "cancelled": loop_task.cancelled(),
+    }
+
+
+# ── Live model-swap (zonder herstart) ──────────────────────────────────────
+# Julian Goldie's "2-click model swap": wissel het actieve brein zonder .env +
+# herstart. Schrijft overrides naar de instance_settings store; de resolvers in
+# shared/config.py lezen die vóór de env-var, dus elke nieuwe chat/goal/delegate
+# pakt meteen het gekozen model. Geen Claude-namen mogelijk (de _no_claude-
+# garantie in config.py vangt die af), dus een swap factureert nooit Claude.
+_MODELS_PRESET = [
+    {"id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash — snel/bulk (gratis)", "kind": "bulk"},
+    {"id": "deepseek-v4-pro", "label": "DeepSeek V4 Pro — denkwerk (gratis)", "kind": "smart"},
+    {"id": "qwen3.6-flash", "label": "Qwen 3.6 Flash — alternatief bulk (gratis)", "kind": "bulk"},
+    {"id": "deepseek-v4-flash-202605", "label": "DeepSeek V4 Flash (pinned 202605)", "kind": "bulk"},
+]
+
+
+@app.get("/api/config/models")
+def config_models():
+    from .shared.config import (
+        resolve_openmodel_model, resolve_openmodel_smart_model,
+    )
+    return {
+        "current": {
+            "bulk": resolve_openmodel_model(),
+            "smart": resolve_openmodel_smart_model(),
+        },
+        "presets": _MODELS_PRESET,
+        "note": "Overrides via instance_settings; zonder override geldt de .env-standaard.",
+    }
+
+
+class ModelSwapRequest(BaseModel):
+    slot: str   # 'bulk' (OPENMODEL_MODEL) of 'smart' (OPENMODEL_SMART_MODEL)
+    model: str
+
+
+@app.put("/api/config/models")
+def config_models_swap(body: ModelSwapRequest):
+    if body.slot not in ("bulk", "smart"):
+        raise HTTPException(status_code=400, detail="slot moet 'bulk' of 'smart' zijn.")
+    if not body.model or not body.model.strip():
+        raise HTTPException(status_code=400, detail="model mag niet leeg zijn.")
+    from .shared.config import _no_claude
+    from .shared.settings_store import set_setting
+    key = "openmodel_model" if body.slot == "bulk" else "openmodel_smart_model"
+    # _no_claude zet een eventuele Claude-naam stil om naar DeepSeek — geen
+    # Claude-facturatie via de swapper.
+    safe = _no_claude(body.model.strip())
+    set_setting(key, safe)
+    from .shared.config import resolve_openmodel_model, resolve_openmodel_smart_model
+    return {
+        "ok": True,
+        "slot": body.slot,
+        "model": safe,
+        "active": {
+            "bulk": resolve_openmodel_model(),
+            "smart": resolve_openmodel_smart_model(),
+        },
     }
 
 

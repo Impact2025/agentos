@@ -60,7 +60,8 @@ def active_route() -> str:
     if anthropic_configured():
         return f"anthropic/{CLAUDE_MODEL}"
     if openmodel_claude_configured():
-        return f"openmodel/{OPENMODEL_SMART_MODEL}"
+        from ...shared.config import resolve_openmodel_smart_model
+        return f"openmodel/{resolve_openmodel_smart_model()}"
     if OPENROUTER_API_KEY:
         return f"openrouter/{CLAUDE_VIA_OPENROUTER}"
     return "geen"

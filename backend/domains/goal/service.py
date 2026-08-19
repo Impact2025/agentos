@@ -205,7 +205,8 @@ def _reeds_gestagede_bronnen(goal_id: str) -> set:
     return uit
 
 
-async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str
+async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str,
+                              task_id: str = ""
                              ) -> Tuple[Optional[Tuple[str, str, int]], str]:
     """ECHTE actie voor publisher-taken: pak het artikel uit eerdere
     content-taken van deze goal en zet het als review-job in de Wachtrij
@@ -249,7 +250,39 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str
                 "ORDER BY updated_at DESC",
                 (goal_id,),
             ).fetchall()
-        row = next((r for r in kandidaten if r["id"] not in gestaged), None)
+
+        # Correleer de publisher-taak aan zíjn eigen brontaak via zijn
+        # 'dependencies' i.p.v. blind de nieuwste nog-niet-gestagede taak te
+        # pakken. Zonder dit koos elke publisher-taak in de goal dezelfde
+        # kandidaat, ook een cross-project "analyseer/herschrijf artikel X van
+        # project Y"-taak die inhoudelijk niets met déze site te maken had
+        # (6 aug 2026-incident: WeAreImpact-goal staget Bijeen-analyse).
+        dep_ids: set = set()
+        row = None
+        if task_id:
+            with get_conn() as conn2:
+                pub = conn2.execute(
+                    "SELECT dependencies FROM goal_tasks WHERE id = ?", (task_id,)
+                ).fetchone()
+            deps = json.loads(pub["dependencies"]) if pub and pub["dependencies"] else []
+            for ref in deps:
+                ref_l = (ref or "").strip().lower()
+                if len(ref_l) < 3:
+                    continue
+                for r in kandidaten:
+                    if r["id"] == ref or ref_l == (r["title"] or "").lower() \
+                            or ref_l in (r["title"] or "").lower() \
+                            or (r["title"] or "").lower() in ref_l:
+                        dep_ids.add(r["id"])
+        if dep_ids:
+            row = next((r for r in kandidaten if r["id"] in dep_ids and r["id"] not in gestaged), None)
+            if row is None:
+                # De brontaak is expliciet bekend maar al gestaged of niet
+                # bruikbaar — niet stilzwijgend een ándere (mogelijk
+                # cross-project) taak pakken.
+                return None, "de brontaak van deze publiceer-taak is al gestaged of leverde geen artikel op"
+        if row is None:
+            row = next((r for r in kandidaten if r["id"] not in gestaged), None)
         if not row:
             if kandidaten:
                 return None, (f"alle {len(kandidaten)} artikelen uit dit doel staan al in "
@@ -260,10 +293,13 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str
         import markdown as md_lib
         html_body = md_lib.markdown(row["result"], extensions=["tables"])
 
-        title = row["title"] or task_title
-        m = re.search(r"<h1[^>]*>(.*?)</h1>", html_body, re.IGNORECASE | re.DOTALL)
-        if m:
-            title = re.sub(r"<[^>]+>", "", m.group(1)).strip() or title
+        # _extract_title haalt de titel uit de h1/h2 van het artikel en valt
+        # anders terug op de brontaak-titel (row["title"]) — nooit op de
+        # publisher-taak zelf. task_title is de ruwe instructiezin van de
+        # publisher-taak ("Herschrijf het artikel X (project Y) naar een,
+        # analyseer als een pro") en hoort nooit als artikeltitel op het
+        # dashboard te belanden (6 aug 2026-incident).
+        title = content_pipeline._extract_title(html_body, row["title"] or "")
 
         full_site = sites_service.get_site(site["id"]) or site
 
@@ -634,9 +670,9 @@ async def decompose_goal(objective: str, project: str = "WeAreImpact") -> Dict[s
     # Planning/decompositie is denkwerk: routeer naar een sterke cloud-model
     # (OpenModel smart-model) in plaats van de trage lokale Ollama, zodat het
     # plan snel én kwalitatief goed is — ook als de standaard-backend lokaal is.
-    from ...shared.config import OPENMODEL_SMART_MODEL
+    from ...shared.config import resolve_openmodel_smart_model
     raw = await _stream_text(system, prompt, max_tokens=6000,
-                             model_override=OPENMODEL_SMART_MODEL)
+                             model_override=resolve_openmodel_smart_model())
 
     logger.info(f"Goal decompositie RAW ({len(raw)} chars): {raw[:500]}")
 
@@ -1451,6 +1487,7 @@ async def _execute_task(goal_id: str, task: Dict[str, Any]) -> str:
     try:
         result, artifact, next_step = await _route_by_skill(
             skill, title, description, goal_id, prior_results=prior_results,
+            task_id=task_id,
         )
         duration_ms = int((time.perf_counter() - started) * 1000)
         _update_task(task_id, status="completed", result=result, duration_ms=duration_ms, finished_at=_now())
@@ -1609,7 +1646,7 @@ def _build_prior_results_context(goal_id: str, current_task_id: str = "") -> str
 
 async def _route_by_skill(
     skill: str, title: str, description: str, goal_id: str,
-    prior_results: str = "",
+    prior_results: str = "", task_id: str = "",
 ) -> Tuple[str, str, str]:
     """Routeer een taak naar de juiste skill/agent op basis van het type.
 
@@ -1636,7 +1673,7 @@ async def _route_by_skill(
     # In plaats van een LLM-concept dat nergens landt, gaat het artikel uit
     # eerdere content-taken als pending_review-job naar de Wachtrij-tab.
     if skill == "publisher":
-        staged, blocked_reason = await _stage_to_wachtrij(goal_id, title, project)
+        staged, blocked_reason = await _stage_to_wachtrij(goal_id, title, project, task_id)
         if not staged:
             # Geen echte actie = geen voltooide taak. Vroeger viel deze taak
             # terug op een LLM-concept met CONCEPT-banner en werd hij tóch

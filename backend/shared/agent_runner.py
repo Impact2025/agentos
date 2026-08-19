@@ -115,12 +115,18 @@ async def run_agent(
     messages: List[Dict],
     system_prompt: str,
     agent: str = "hermes",
-    max_tokens: int = 4096,
+    max_tokens: int = None,
     model_override: str = None,
     use_tools: bool = True,
     purpose: str = "",
     backend_override: Optional[str] = None,
 ) -> AsyncGenerator[Dict, None]:
+    # max_tokens default volgt AGENT_MAX_TOKENS (zie shared/config.py): agent-
+    # stappen krijgen een strakke cap tenzij de caller expliciet een eigen
+    # waarde meegeeft (content/gauntlet doen dat en blijven onaangetast).
+    if max_tokens is None:
+        from .config import AGENT_MAX_TOKENS
+        max_tokens = AGENT_MAX_TOKENS
     # Een expliciete backend_override (bv. "openmodel") forceert die cloud-route
     # ook als de standaard-backend lokaal/Ollama is. Zo kan een agent-profiel met
     # een premium cloud-model (claude-sonnet-4-6 via OpenModel) wél gehonoreerd
@@ -295,7 +301,8 @@ async def _openmodel_loop(
     """
     import anthropic as _sdk
     from ..tools import TOOLS, TOOL_MAP
-    model = model_override or OPENMODEL_MODEL
+    from ..config import resolve_openmodel_model as _resolve_model
+    model = model_override or _resolve_model()
     client = _sdk.AsyncAnthropic(
         api_key=OPENMODEL_API_KEY,
         base_url=OPENMODEL_BASE_URL,

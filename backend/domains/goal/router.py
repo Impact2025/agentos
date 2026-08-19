@@ -24,6 +24,13 @@ class GoalAction(BaseModel):
 @router.post("/plan", status_code=201)
 async def plan_goal(body: GoalCreateRequest):
     """Stap 1: Maak een goal en laat Hermes een plan genereren (decompositie)."""
+    # Prompt-injectie-scan: een goal-objective kan uit een externe bron komen
+    # (observer, kalender, mail). Blokkeer instructies die het model dwingen
+    # zijn systeem-prompt te negeren. Zie backend/shared/prompt_safety.py.
+    from ...shared.prompt_safety import scan_structured
+    scan = scan_structured(title=body.title, objective=body.objective)
+    if scan.blocked:
+        raise HTTPException(status_code=400, detail=scan.reason())
     try:
         result = await goal_service.create_and_plan(
             title=body.title,
@@ -115,6 +122,35 @@ def delete_goal(goal_id: str):
         return {"deleted": goal_id}
     except ValueError as e:
         raise HTTPException(400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(500, detail=str(e)[:300])
+
+
+@router.post("/observer/run")
+def run_observer(force: bool = False):
+    """Proactieve dashboard-observer: lees Control Room, seed doelen waar nodig.
+
+    Zet waar nodig een LLM-vrij doel klaar (status 'ready', achter de
+    publiceer-gate). Met force=True worden ook projecten met een recent doel
+    of zonder GSC-data geforceerd geseed (handmatig noodstuur).
+    """
+    try:
+        from . import observer as goal_observer
+        return goal_observer.observe_dashboard() if not force else {
+            "forced": True,
+            "results": [goal_observer.seed_project_goal(p, force=True)
+                        for p in goal_observer.ELIGIBLE_PROJECTS],
+        }
+    except Exception as e:
+        raise HTTPException(500, detail=str(e)[:300])
+
+
+@router.post("/observer/seed/{project}")
+def observer_seed_one(project: str, force: bool = False):
+    """Seed één project geforceerd (of auto-beoordeeld wanneer force=False)."""
+    try:
+        from . import observer as goal_observer
+        return goal_observer.seed_project_goal(project, force=force)
     except Exception as e:
         raise HTTPException(500, detail=str(e)[:300])
 

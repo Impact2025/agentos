@@ -53,10 +53,58 @@ OPENMODEL_MODEL: str = _no_claude(os.getenv("OPENMODEL_MODEL", "deepseek-v4-flas
 OPENMODEL_SMART_MODEL: str = _no_claude(os.getenv("OPENMODEL_SMART_MODEL", "deepseek-v4-pro"))
 HERMES_MODEL: str = os.getenv("HERMES_MODEL", "meta-llama/llama-3.1-8b-instruct")
 
+# ── Live model-swap (zonder herstart) ───────────────────────────────────────
+# De 2-click model-swapper in de UI schrijft overrides naar de instance_settings
+# store (zie shared/settings_store.py) i.p.v. .env te eisen + herstart. Deze
+# resolvers lezen die override vóór de env-var, zodat een swap direct effect
+# heeft op de agent-runner, chat, goals en delegate. Zie api/config models.
+# Let op: de _no_claude-garantie blijft staan — een override op een Claude-naam
+# wordt alsnog naar DeepSeek omgezet, zodat een swap geen Claude factureert.
+_MODEL_OVERRIDE_KEYS = {
+    "openmodel_model": "OPENMODEL_MODEL",
+    "openmodel_smart_model": "OPENMODEL_SMART_MODEL",
+}
+
+
+def resolve_openmodel_model() -> str:
+    """Actief bulk-/tool-model (flash) — override vóór env."""
+    try:
+        from .settings_store import get_setting
+        ov = get_setting("openmodel_model")
+        if ov:
+            return _no_claude(ov)
+    except Exception:
+        pass
+    return OPENMODEL_MODEL
+
+
+def resolve_openmodel_smart_model() -> str:
+    """Actief denk-/synthese-model (smart) — override vóór env."""
+    try:
+        from .settings_store import get_setting
+        ov = get_setting("openmodel_smart_model")
+        if ov:
+            return _no_claude(ov)
+    except Exception:
+        pass
+    return OPENMODEL_SMART_MODEL
+
 # Pexels (gratis stock-foto's/video voor video-footage). Geen creditcard.
 # Haal een key op via https://www.pexels.com/api/ (gratis account, email + naam)
 # en zet hem hier. Zonder key valt de video-render terug op lokale foto's / merk-slides.
 PEXELS_API_KEY: str = os.getenv("PEXELS_API_KEY", "")
+
+# ElevenLabs (betaalde, veel natuurlijkere voiceover dan de gratis edge-tts-
+# stemmen — die klinken herkenbaar synthetisch, ook na tempo/toonhoogte-tuning).
+# Key via https://elevenlabs.io (account + betaalmethode nodig). Zonder key valt
+# de video-render terug op edge-tts — nooit een kapotte render.
+ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "")
+# Rachel: ElevenLabs' meest gedocumenteerde, stabiele voice-id (jaren ongewijzigd).
+# Werkt via het meertalige model ook voor Nederlands, maar is niet NL-geoptimaliseerd
+# — kies zelf een stem uit je ElevenLabs-bibliotheek en zet die hier of per project
+# in video/template.json (`elevenlabs_voice_id`) zodra je wilt vergelijken.
+ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+ELEVENLABS_MODEL: str = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 # Fallback-modellen (OpenRouter) waar de agent naartoe schakelt bij een 429
 # (rate-limit) op het primaire HERMES_MODEL. Komma-gescheiden, in volgorde van
 # voorkeur. Alleen relevant voor de openrouter-backend.
@@ -80,6 +128,12 @@ TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
 # Fallback-zoekprovider (Brave Search API) — springt bij als Tavily faalt of
 # zijn quota op is, zodat radar/leads/websearch niet stilvallen op één provider.
 BRAVE_SEARCH_API_KEY: str = os.getenv("BRAVE_SEARCH_API_KEY", "")
+# Tweede keyed backbone (eigen index, onafhankelijk van Bing/DDG) — GRATIS
+# 100 queries/dag via Google Programmable Search Engine. Zodra beide waarden
+# in .env staan schuift `google_pse` automatisch in de websearch-keten als
+# onafhankelijke, gecontracteerde pijler naast Tavily/Brave.
+GOOGLE_PSE_API_KEY: str = os.getenv("GOOGLE_PSE_API_KEY", "")
+GOOGLE_PSE_CX: str = os.getenv("GOOGLE_PSE_CX", "")
 HUNTER_API_KEY: str = os.getenv("HUNTER_API_KEY", "")
 
 # Netlify publisher — globale fallback-token (Personal Access Token). Per site kun
@@ -190,6 +244,18 @@ CONTENT_IMPROVER_MAX_PER_RUN: int = int(os.getenv("CONTENT_IMPROVER_MAX_PER_RUN"
 # "quota in één dag leeg"-incident van 2026-07-10.
 CONTENT_IMPROVER_MAX_ATTEMPTS: int = int(os.getenv("CONTENT_IMPROVER_MAX_ATTEMPTS", "3"))
 
+# Zelfde rem, maar voor de ZWARE Orchestrator/Gauntlet-loop (meerdere critici
+# per poging — duurder dan één regenerate). Incident 14 aug 2026: een 'rejected'
+# Bijeen-artikel en een WeAreImpact-artikel werden 20+ keer op één dag door de
+# Gauntlet Loop herschreven — telkens een NIEUWE pending_review-job erbij, het
+# bronrecord bleef gewoon 'rejected' staan en werd dus de volgende ronde weer
+# gevonden. Dat verbrandde het grootste deel van de dagbudget (5M tokens) aan
+# hetzelfde artikel. `process_one_under_threshold` telt nu pogingen per job en
+# sluit 'm na deze grens af (net als CONTENT_IMPROVER_MAX_ATTEMPTS hierboven,
+# maar lager: elke poging is al een 3-ronde criticus-loop, dus 2 zware pogingen
+# ≈ 6 lichte).
+ORCHESTRATOR_MAX_ATTEMPTS: int = int(os.getenv("ORCHESTRATOR_MAX_ATTEMPTS", "2"))
+
 # ── LLM-kosten-zicht ───────────────────────────────────────────────────────
 # Background-jobs (content-pipeline, improver, radar, SEO-engine) schreven hun
 # token-verbruik nergens heen — je zag pas "quota op" toen het te laat was.
@@ -204,7 +270,21 @@ ANTHROPIC_OUTPUT_COST_PER_MTOK: float = float(os.getenv("ANTHROPIC_OUTPUT_COST_P
 
 # Waarschuw (log-WARN + activiteit) zodra het geschatte dagverbruik deze grens
 # overschrijdt — vóórdat de echte quota hard tegen de limiet aanloopt.
-DAILY_TOKEN_BUDGET: int = int(os.getenv("DAILY_TOKEN_BUDGET", "3000000"))
+# Default 3M (origineel). Op Vincents hoofd-instance is het echte verbruik
+# ~6M/dag (autonome content + agent-runs op deepseek-v4-flash, goedkoop model).
+# Een budget ver onder het werkelijke verbruik geeft elke dag een
+# false-positive alarm en verliest zijn signaalwaarde. 8M = verbruik + ~30%
+# marge, zodat het alarm pas afgaat bij een ÉCHTE uitschieter (bv. een loop die
+# is vastgelopen en eindeloos retried). Tunable via DAILY_TOKEN_BUDGET in .env.
+DAILY_TOKEN_BUDGET: int = int(os.getenv("DAILY_TOKEN_BUDGET", "8000000"))
+
+# Agent-output-cap: maximale completion-tokens per agent-stap (run_agent /
+# agent_runner). Agent-stappen (beslissingen, korte antwoorden) hebben zelden
+# 4096 tok nodig; een lagere cap temt het verbruik zonder de kwaliteit van
+# content-pijplijnen te raken — die stellen hun eigen (hogere) max_tokens in en
+# overschrijven deze vlag. 1500 dekt vrijwel elke agent-stap; verhoog bij
+# gemelde 'afgekapte' agent-output. Tunable via AGENT_MAX_TOKENS in .env.
+AGENT_MAX_TOKENS: int = int(os.getenv("AGENT_MAX_TOKENS", "1500"))
 
 # Zelf-uitlijnende quota-rem: na een harde 403 "quota exceeded" van de provider
 # pauzeren autonome LLM-runs deze periode vanzelf (de provider is de bron van

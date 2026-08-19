@@ -20,6 +20,7 @@ async function renderInstellingenTab(el) {
 
   if (typeof domainOn === 'undefined' || domainOn('outlook_legacy')) html += renderOutlookSection();
   if (typeof domainOn === 'undefined' || domainOn('calendar')) html += await renderAgendaSettings();
+  if (typeof renderTourSettings === 'function') html += renderTourSettings();
 
   html += await renderSitePublishSettings();
   html += await renderKennisbankSettings();
@@ -31,9 +32,9 @@ async function renderInstellingenTab(el) {
     var mcpStr = (p.mcp_servers||[]).join(', ') || '-';
     var created = (p.created_at||'').slice(0,10);
     html += '<tr><td><span style="font-weight:600">' + escHtml(p.name) + '</span></td>' +
-      '<td style="font-size:11px;color:#64748b">' + escHtml(p.model||'-') + '</td>' +
-      '<td style="font-size:11px;color:#64748b">' + escHtml(mcpStr) + '</td>' +
-      '<td style="font-size:11px;color:#94a3b8">' + escHtml(created) + '</td></tr>';
+      '<td style="font-size:11px;color:var(--text-dim)">' + escHtml(p.model||'-') + '</td>' +
+      '<td style="font-size:11px;color:var(--text-dim)">' + escHtml(mcpStr) + '</td>' +
+      '<td style="font-size:11px;color:var(--text-muted)">' + escHtml(created) + '</td></tr>';
   });
   html += '</tbody></table></div>';
 
@@ -60,6 +61,20 @@ async function renderInstellingenTab(el) {
   });
   html += '</tbody></table></div>';
 
+  // ── Live model-swap (zonder herstart) ──
+  html += '<div class="section-card" id="model-swap-card" style="margin-bottom:16px">' +
+    '<h4 style="font-size:13px;font-weight:600;margin-bottom:8px">Model-swap (live, geen herstart)</h4>' +
+    '<p style="font-size:11px;color:var(--text-dim);margin-bottom:10px">Wissel het actieve brein per direct. Bulk = snel/tool-werk, Smart = denkwerk. Keuze geldt voor nieuwe chat, goals &amp; delegaties.</p>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">' +
+      '<label style="display:block"><span style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:2px">Bulk-model (flash)</span>' +
+      '<select id="model-bulk" style="width:100%;padding:6px 8px;border:1px solid var(--card-border);border-radius:6px;font-size:12px;box-sizing:border-box"></select></label>' +
+      '<label style="display:block"><span style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:2px">Smart-model (denkwerk)</span>' +
+      '<select id="model-smart" style="width:100%;padding:6px 8px;border:1px solid var(--card-border);border-radius:6px;font-size:12px;box-sizing:border-box"></select></label>' +
+    '</div>' +
+    '<button onclick="saveModelSwap(this)" class="btn btn-primary btn-sm">Modellen toepassen</button>' +
+    '<span id="model-swap-status" style="font-size:11px;color:var(--text-dim);margin-left:8px"></span>' +
+    '</div>';
+
   // ── Systeeminfo ──
   html += '<div class="section-card"><h4 style="font-size:13px;font-weight:600;margin-bottom:8px">API Overzicht</h4>' +
     '<table class="data-table"><thead><tr><th>Endpoint</th><th>Method</th><th>Omschrijving</th></tr></thead><tbody>' +
@@ -75,6 +90,57 @@ async function renderInstellingenTab(el) {
 
   el.innerHTML = html;
   if (document.getElementById('outlook-card')) outlookRefreshStatus();
+  loadModelSwap();
+}
+
+// ── Live model-swap: laad huidige + presets, vul de dropdowns ──────────────
+async function loadModelSwap() {
+  var card = document.getElementById('model-swap-card');
+  if (!card) return;
+  try {
+    var data = await (await fetch('/api/config/models')).json();
+    var bulk = document.getElementById('model-bulk');
+    var smart = document.getElementById('model-smart');
+    if (!bulk || !smart) return;
+    // Bouw opties uit presets; zorg dat het huidige model er altijd bij staat.
+    var bulkOpts = data.presets.filter(function (p) { return p.kind === 'bulk'; })
+      .map(function (p) { return p.id; });
+    var smartOpts = data.presets.filter(function (p) { return p.kind === 'smart'; })
+      .map(function (p) { return p.id; });
+    if (data.current && data.current.bulk && bulkOpts.indexOf(data.current.bulk) < 0) bulkOpts.push(data.current.bulk);
+    if (data.current && data.current.smart && smartOpts.indexOf(data.current.smart) < 0) smartOpts.push(data.current.smart);
+    bulk.innerHTML = bulkOpts.map(function (m) { return '<option value="' + escHtml(m) + '">' + escHtml(m) + '</option>'; }).join('');
+    smart.innerHTML = smartOpts.map(function (m) { return '<option value="' + escHtml(m) + '">' + escHtml(m) + '</option>'; }).join('');
+    if (data.current) { bulk.value = data.current.bulk; smart.value = data.current.smart; }
+  } catch (e) {
+    var st = document.getElementById('model-swap-status');
+    if (st) st.textContent = 'Kon modellen niet laden: ' + e.message;
+  }
+}
+
+async function saveModelSwap(btn) {
+  var bulk = document.getElementById('model-bulk');
+  var smart = document.getElementById('model-smart');
+  var st = document.getElementById('model-swap-status');
+  if (st) st.textContent = 'Bezig…';
+  if (btn) { btn.disabled = true; }
+  try {
+    var r1 = await fetch('/api/config/models', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slot: 'bulk', model: bulk.value }),
+    });
+    var r2 = await fetch('/api/config/models', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slot: 'smart', model: smart.value }),
+    });
+    if (!r1.ok || !r2.ok) throw new Error('swap mislukt');
+    var d = await r2.json();
+    if (st) st.textContent = 'Toegepast: bulk=' + d.active.bulk + ', smart=' + d.active.smart;
+  } catch (e) {
+    if (st) st.textContent = 'Fout: ' + e.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ── Agenda koppelen: agenda-ID + lees-agenda's zelf zetten, geen herstart
@@ -83,17 +149,17 @@ async function renderAgendaSettings() {
   var status;
   try { status = await (await fetch('/api/calendar/status')).json(); } catch(e) { return ''; }
   if (status.backend === 'outlook') return ''; // agenda volgt daar de mail-koppeling hierboven
-  var reach = status.reachable ? '✅ Verbonden — kan de agenda lezen.' :
-    (status.configured ? '⚠️ Geconfigureerd maar niet bereikbaar: ' + escHtml(status.error || 'onbekende fout') : 'ℹ️ Nog niet geconfigureerd.');
+  var reach = status.reachable ? '<span class="pill pill-ok">Verbonden</span> kan de agenda lezen.' :
+    (status.configured ? '<span class="pill pill-warn">Niet bereikbaar</span> ' + escHtml(status.error || 'onbekende fout') : '<span class="pill pill-neutral">Niet geconfigureerd</span>');
   return '<div class="section-card" style="margin-bottom:16px" id="agenda-card">' +
     '<h4 style="font-size:13px;font-weight:600;margin-bottom:8px">Agenda koppelen (Google)</h4>' +
-    (status.client_email ? '<p style="font-size:12px;color:#475569;margin-bottom:8px">Deel je agenda met dit adres (bewerkrechten): <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px">' + escHtml(status.client_email) + '</code></p>' : '') +
-    '<div id="agenda-status" style="font-size:12px;color:#475569;margin-bottom:8px">' + reach + '</div>' +
-    '<label style="display:block;margin-bottom:8px"><span style="display:block;font-size:11px;color:#64748b;margin-bottom:2px">Agenda-ID (e-mailadres van de gedeelde agenda, of "primary")</span>' +
-    '<input id="agenda-calendar-id" value="' + escHtml(status.calendar_id || '') + '" placeholder="jij@voorbeeld.nl" style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;box-sizing:border-box" /></label>' +
-    '<label style="display:block;margin-bottom:8px"><span style="display:block;font-size:11px;color:#64748b;margin-bottom:2px">Extra lees-agenda\'s voor conflict-detectie (komma-gescheiden, optioneel)</span>' +
-    '<input id="agenda-busy-ids" value="' + escHtml((status.busy_calendar_ids || []).join(', ')) + '" style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;box-sizing:border-box" /></label>' +
-    '<button onclick="saveAgendaSettings(this)" style="padding:6px 16px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Opslaan &amp; testen</button>' +
+    (status.client_email ? '<p style="font-size:12px;color:var(--text-dim);margin-bottom:8px">Deel je agenda met dit adres (bewerkrechten): <code style="background:var(--neutral-bg);padding:1px 5px;border-radius:3px">' + escHtml(status.client_email) + '</code></p>' : '') +
+    '<div id="agenda-status" style="font-size:12px;color:var(--text-dim);margin-bottom:8px">' + reach + '</div>' +
+    '<label style="display:block;margin-bottom:8px"><span style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:2px">Agenda-ID (e-mailadres van de gedeelde agenda, of "primary")</span>' +
+    '<input id="agenda-calendar-id" value="' + escHtml(status.calendar_id || '') + '" placeholder="jij@voorbeeld.nl" style="width:100%;padding:6px 8px;border:1px solid var(--card-border);border-radius:6px;font-size:12px;box-sizing:border-box" /></label>' +
+    '<label style="display:block;margin-bottom:8px"><span style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:2px">Extra lees-agenda\'s voor conflict-detectie (komma-gescheiden, optioneel)</span>' +
+    '<input id="agenda-busy-ids" value="' + escHtml((status.busy_calendar_ids || []).join(', ')) + '" style="width:100%;padding:6px 8px;border:1px solid var(--card-border);border-radius:6px;font-size:12px;box-sizing:border-box" /></label>' +
+    '<button onclick="saveAgendaSettings(this)" class="btn btn-primary btn-sm">Opslaan &amp; testen</button>' +
     '</div>';
 }
 
@@ -107,8 +173,8 @@ async function saveAgendaSettings(btn) {
     var resp = await fetch('/api/calendar/settings', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     var st = await resp.json();
     var statusEl = document.getElementById('agenda-status');
-    if (statusEl) statusEl.innerHTML = st.reachable ? '✅ Verbonden — kan de agenda lezen.' :
-      '⚠️ Opgeslagen, maar nog niet bereikbaar: ' + escHtml(st.error || 'onbekende fout') + '. Heb je de agenda al gedeeld?';
+    if (statusEl) statusEl.innerHTML = st.reachable ? '<span class="pill pill-ok">Verbonden</span> kan de agenda lezen.' :
+      '<span class="pill pill-warn">Niet bereikbaar</span> ' + escHtml(st.error || 'onbekende fout') + '. Heb je de agenda al gedeeld?';
   } catch(e) { alert('Fout: ' + e.message); }
   if (btn) { btn.disabled = false; btn.textContent = 'Opslaan & testen'; }
 }
@@ -117,16 +183,16 @@ async function saveAgendaSettings(btn) {
 function renderOutlookSection() {
   return '<div class="section-card" style="margin-bottom:16px" id="outlook-card">' +
     '<h4 style="font-size:13px;font-weight:600;margin-bottom:8px">Outlook / Microsoft Graph &mdash; e-mailverzending</h4>' +
-    '<div id="outlook-status" style="font-size:12px;color:#475569;margin-bottom:8px">Status wordt geladen…</div>' +
-    '<div id="outlook-flow" style="display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:10px">' +
+    '<div id="outlook-status" style="font-size:12px;color:var(--text-dim);margin-bottom:8px">Status wordt geladen…</div>' +
+    '<div id="outlook-flow" style="display:none;background:var(--neutral-bg);border:1px solid var(--card-border);border-radius:8px;padding:12px;margin-bottom:10px">' +
       '<p style="font-size:12px;margin:0 0 6px">Log in met deze code bij Microsoft:</p>' +
-      '<div id="outlook-code" style="font-size:22px;font-weight:800;letter-spacing:2px;color:#0ea5e9;margin-bottom:6px">••••••••</div>' +
-      '<a id="outlook-link" href="#" target="_blank" style="font-size:12px;color:#4f46e5">Open Microsoft login</a>' +
-      '<div id="outlook-flow-msg" style="font-size:12px;color:#64748b;margin-top:6px"></div>' +
+      '<div id="outlook-code" style="font-size:22px;font-weight:800;letter-spacing:2px;color:var(--accent);margin-bottom:6px">••••••••</div>' +
+      '<a id="outlook-link" href="#" target="_blank" style="font-size:12px;color:var(--accent)">Open Microsoft login</a>' +
+      '<div id="outlook-flow-msg" style="font-size:12px;color:var(--text-dim);margin-top:6px"></div>' +
     '</div>' +
     '<div style="display:flex;gap:8px">' +
-      '<button id="outlook-connect-btn" onclick="outlookConnect()" style="padding:6px 16px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">Koppel Outlook-account</button>' +
-      '<button id="outlook-logout-btn" onclick="outlookLogout()" style="padding:6px 16px;background:#f1f5f9;color:#b91c1c;border:1px solid #fecaca;border-radius:6px;font-size:12px;cursor:pointer;display:none">Ontkoppelen</button>' +
+      '<button id="outlook-connect-btn" onclick="outlookConnect()" class="btn btn-primary btn-sm">Koppel Outlook-account</button>' +
+      '<button id="outlook-logout-btn" onclick="outlookLogout()" class="btn btn-danger-outline btn-sm" style="display:none">Ontkoppelen</button>' +
     '</div>' +
   '</div>';
 }
@@ -140,21 +206,21 @@ function outlookRefreshStatus() {
     var connectBtn = document.getElementById('outlook-connect-btn');
     var logoutBtn = document.getElementById('outlook-logout-btn');
     if (!s.configured) {
-      el.innerHTML = '⚠️ Outlook niet geconfigureerd (OUTLOOK_CLIENT_ID ontbreekt in .env).';
+      el.innerHTML = '<span class="pill pill-neutral">Niet geconfigureerd</span> OUTLOOK_CLIENT_ID ontbreekt in .env.';
       if (connectBtn) connectBtn.style.display = 'none';
       if (logoutBtn) logoutBtn.style.display = 'none';
       return;
     }
     if (s.token_valid) {
-      el.innerHTML = '✅ Ingelogd als <b>' + escHtml((s.account && s.account.email) || '') + '</b> — e-mailverzending actief.';
+      el.innerHTML = '<span class="pill pill-ok">Ingelogd</span> als <b>' + escHtml((s.account && s.account.email) || '') + '</b> — e-mailverzending actief.';
       if (connectBtn) connectBtn.style.display = 'none';
       if (logoutBtn) logoutBtn.style.display = 'inline-block';
     } else if (s.authenticated) {
-      el.innerHTML = '⚠️ Sessie verlopen (token ongeldig). Koppel opnieuw om mail te kunnen versturen.';
+      el.innerHTML = '<span class="pill pill-warn">Sessie verlopen</span> koppel opnieuw om mail te kunnen versturen.';
       if (connectBtn) connectBtn.style.display = 'inline-block';
       if (logoutBtn) logoutBtn.style.display = 'inline-block';
     } else {
-      el.innerHTML = 'ℹ️ Niet gekoppeld. Koppel je Outlook-account om outreach-mail te versturen.';
+      el.innerHTML = '<span class="pill pill-neutral">Niet gekoppeld</span> koppel je Outlook-account om outreach-mail te versturen.';
       if (connectBtn) connectBtn.style.display = 'inline-block';
       if (logoutBtn) logoutBtn.style.display = 'none';
     }
@@ -189,13 +255,13 @@ function outlookPollStatus() {
     var msgEl = document.getElementById('outlook-flow-msg');
     if (st.status === 'done') {
       if (outlookPollTimer) { clearInterval(outlookPollTimer); outlookPollTimer = null; }
-      if (msgEl) msgEl.textContent = '✅ Ingelogd als ' + (st.email || '') + '!';
+      if (msgEl) msgEl.textContent = 'Ingelogd als ' + (st.email || '') + '.';
       var flowEl = document.getElementById('outlook-flow');
       if (flowEl) setTimeout(function(){ flowEl.style.display = 'none'; }, 1200);
       outlookRefreshStatus();
     } else if (st.status === 'error') {
       if (outlookPollTimer) { clearInterval(outlookPollTimer); outlookPollTimer = null; }
-      if (msgEl) msgEl.textContent = '❌ Fout: ' + (st.error || 'onbekend');
+      if (msgEl) msgEl.textContent = 'Fout: ' + (st.error || 'onbekend');
     } else {
       if (msgEl) msgEl.textContent = 'Wacht op autorisatie bij Microsoft…';
     }
@@ -254,8 +320,8 @@ async function renderSitePublishSettings() {
     _siteField('X access token', 'twitter_access_token', '', {secret:true, set:site.twitter_access_token_set}) +
     _siteField('X access secret', 'twitter_access_secret', '', {secret:true, set:site.twitter_access_secret_set}) +
     '</div>' +
-    '<button onclick="saveSitePublishSettings(this)" style="margin-top:8px;padding:6px 16px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Opslaan</button>' +
-    '<span id="site-settings-status" style="margin-left:10px;font-size:11px;color:#059669"></span>' +
+    '<button onclick="saveSitePublishSettings(this)" class="btn btn-primary btn-sm" style="margin-top:8px">Opslaan</button>' +
+    '<span id="site-settings-status" style="margin-left:10px;font-size:11px;color:var(--green)"></span>' +
     '</div>';
 }
 
@@ -270,7 +336,7 @@ async function saveSitePublishSettings(btn) {
   try {
     var resp = await fetch('/api/sites/' + site.id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     if (!resp.ok) { var d = await resp.json(); alert('Mislukt: ' + (d.detail || 'onbekende fout')); }
-    else { var statusEl = document.getElementById('site-settings-status'); if (statusEl) statusEl.textContent = 'Opgeslagen ✓'; renderInstellingenTab(document.getElementById('tab-content')); }
+    else { var statusEl = document.getElementById('site-settings-status'); if (statusEl) statusEl.textContent = 'Opgeslagen'; renderInstellingenTab(document.getElementById('tab-content')); }
   } catch(e) { alert('Fout: ' + e.message); }
   if (btn) { btn.disabled = false; btn.textContent = 'Opslaan'; }
 }
@@ -294,29 +360,29 @@ async function renderKennisbankSettings() {
     '<textarea id="kb-ctas" rows="3" style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;box-sizing:border-box">' + escHtml(ctas.join('\n')) + '</textarea></label>' +
     '<label style="display:block;margin-bottom:8px"><span style="display:block;font-size:11px;color:#64748b;margin-bottom:2px">Artikelen per auto-content-run (1-10)</span>' +
     '<input type="number" id="kb-batch" min="1" max="10" value="' + (site.content_batch_size || 1) + '" style="width:80px;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px" /></label>' +
-    '<button onclick="saveKennisbank(this)" style="padding:6px 16px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Opslaan</button>' +
-    '<span id="kb-status" style="margin-left:10px;font-size:11px;color:#059669"></span>';
+    '<button onclick="saveKennisbank(this)" class="btn btn-primary btn-sm">Opslaan</button>' +
+    '<span id="kb-status" style="margin-left:10px;font-size:11px;color:var(--green)"></span>';
 
   // Casestudies
   html += '<h5 style="font-size:12px;font-weight:600;margin:16px 0 4px">Casestudies (' + (studies||[]).length + ')</h5>' +
     '<p style="font-size:11px;color:#94a3b8;margin-bottom:8px">Harde data en resultaten van echte projecten. Bij elk artikel wordt automatisch de best passende casestudy gematcht (op tags/titel).</p>';
   (studies||[]).forEach(function(cs){
-    html += '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:8px' + (cs.status === 'archived' ? ';opacity:.55' : '') + '">' +
-      '<div style="min-width:0"><div style="font-size:12px;font-weight:600">' + escHtml(cs.title) + (cs.status === 'archived' ? ' <span style="font-weight:400;color:#94a3b8">(gearchiveerd)</span>' : '') + '</div>' +
-      '<div style="font-size:11px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(cs.summary || '') + '</div>' +
-      (cs.tags ? '<div style="font-size:10px;color:#94a3b8">tags: ' + escHtml(cs.tags) + '</div>' : '') + '</div>' +
+    html += '<div style="border:1px solid var(--card-border);border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:8px' + (cs.status === 'archived' ? ';opacity:.55' : '') + '">' +
+      '<div style="min-width:0"><div style="font-size:12px;font-weight:600">' + escHtml(cs.title) + (cs.status === 'archived' ? ' <span style="font-weight:400;color:var(--text-muted)">(gearchiveerd)</span>' : '') + '</div>' +
+      '<div style="font-size:11px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(cs.summary || '') + '</div>' +
+      (cs.tags ? '<div style="font-size:10px;color:var(--text-muted)">tags: ' + escHtml(cs.tags) + '</div>' : '') + '</div>' +
       '<div style="flex-shrink:0;display:flex;gap:4px">' +
-      '<button onclick="toggleCaseStudy(\'' + cs.id + '\',\'' + (cs.status === 'archived' ? 'active' : 'archived') + '\')" style="padding:3px 8px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:5px;font-size:10px;cursor:pointer">' + (cs.status === 'archived' ? 'Activeer' : 'Archiveer') + '</button>' +
-      '<button onclick="deleteCaseStudy(\'' + cs.id + '\')" style="padding:3px 8px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:5px;font-size:10px;cursor:pointer">Verwijder</button>' +
+      '<button onclick="toggleCaseStudy(\'' + cs.id + '\',\'' + (cs.status === 'archived' ? 'active' : 'archived') + '\')" class="btn btn-ghost btn-sm">' + (cs.status === 'archived' ? 'Activeer' : 'Archiveer') + '</button>' +
+      '<button onclick="deleteCaseStudy(\'' + cs.id + '\')" class="btn btn-danger-outline btn-sm">Verwijder</button>' +
       '</div></div>';
   });
-  html += '<div style="border:1px dashed #cbd5e1;border-radius:8px;padding:10px;margin-top:8px">' +
-    '<div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px">Nieuwe casestudy</div>' +
-    '<input id="cs-title" placeholder="Titel (bv. Webshop X: +140% organisch verkeer in 6 maanden)" style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;box-sizing:border-box;margin-bottom:6px" />' +
-    '<textarea id="cs-summary" rows="2" placeholder="Korte samenvatting (gaat in de prompt-matching mee)" style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;box-sizing:border-box;margin-bottom:6px"></textarea>' +
-    '<textarea id="cs-body" rows="4" placeholder="Details: concrete cijfers, aanpak, resultaten. De AI gebruikt dit letterlijk als bewijs — verzin niets." style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;box-sizing:border-box;margin-bottom:6px"></textarea>' +
-    '<div style="display:flex;gap:6px"><input id="cs-tags" placeholder="Tags, komma-gescheiden (bv. seo, webshop, linkbuilding)" style="flex:1;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px" />' +
-    '<button onclick="addCaseStudy(this)" style="padding:6px 16px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;flex-shrink:0">Toevoegen</button></div>' +
+  html += '<div style="border:1px dashed var(--card-border);border-radius:8px;padding:10px;margin-top:8px">' +
+    '<div style="font-size:11px;font-weight:600;color:var(--text-dim);margin-bottom:6px">Nieuwe casestudy</div>' +
+    '<input id="cs-title" placeholder="Titel (bv. Webshop X: +140% organisch verkeer in 6 maanden)" style="width:100%;padding:6px 8px;border:1px solid var(--card-border);border-radius:6px;font-size:12px;box-sizing:border-box;margin-bottom:6px" />' +
+    '<textarea id="cs-summary" rows="2" placeholder="Korte samenvatting (gaat in de prompt-matching mee)" style="width:100%;padding:6px 8px;border:1px solid var(--card-border);border-radius:6px;font-size:12px;box-sizing:border-box;margin-bottom:6px"></textarea>' +
+    '<textarea id="cs-body" rows="4" placeholder="Details: concrete cijfers, aanpak, resultaten. De AI gebruikt dit letterlijk als bewijs — verzin niets." style="width:100%;padding:6px 8px;border:1px solid var(--card-border);border-radius:6px;font-size:12px;box-sizing:border-box;margin-bottom:6px"></textarea>' +
+    '<div style="display:flex;gap:6px"><input id="cs-tags" placeholder="Tags, komma-gescheiden (bv. seo, webshop, linkbuilding)" style="flex:1;padding:6px 8px;border:1px solid var(--card-border);border-radius:6px;font-size:12px" />' +
+    '<button onclick="addCaseStudy(this)" class="btn btn-primary btn-sm" style="background:var(--green);flex-shrink:0">Toevoegen</button></div>' +
     '</div></div>';
   return html;
 }
@@ -334,7 +400,7 @@ async function saveKennisbank(btn) {
   try {
     var resp = await fetch('/api/sites/' + site.id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     if (!resp.ok) { var d = await resp.json(); alert('Mislukt: ' + (d.detail || 'onbekende fout')); }
-    else { var el = document.getElementById('kb-status'); if (el) el.textContent = 'Opgeslagen ✓'; }
+    else { var el = document.getElementById('kb-status'); if (el) el.textContent = 'Opgeslagen'; }
   } catch(e) { alert('Fout: ' + e.message); }
   if (btn) { btn.disabled = false; btn.textContent = 'Opslaan'; }
 }
@@ -421,7 +487,7 @@ async function sendChat() {
     sid = await ensureChatSession();
   }
   if (!sid) {
-    document.getElementById('chat-pending').outerHTML = '<div class="chat-msg assistant" style="color:#ef4444">❌ Kon geen chatsessie starten. Start eerst een sessie via Instellingen.</div>';
+    document.getElementById('chat-pending').outerHTML = '<div class="chat-msg assistant" style="color:var(--red)">Kon geen chatsessie starten. Start eerst een sessie via Instellingen.</div>';
     return;
   }
 
@@ -434,7 +500,7 @@ async function sendChat() {
     });
     if (!resp.ok) {
       var errText = await resp.text();
-      document.getElementById('chat-pending').outerHTML = '<div class="chat-msg assistant" style="color:#ef4444">❌ Fout: ' + escHtml(errText.slice(0,200)) + '</div>';
+      document.getElementById('chat-pending').outerHTML = '<div class="chat-msg assistant" style="color:var(--red)">Fout: ' + escHtml(errText.slice(0,200)) + '</div>';
       return;
     }
 
@@ -470,11 +536,11 @@ async function sendChat() {
               streamingEl.innerHTML = mdToHtmlSimple(fullText);
               container.scrollTop = container.scrollHeight;
             } else if (evt.type === 'error') {
-              streamingEl.innerHTML += '<div style="color:#ef4444;margin-top:8px">❌ Fout: ' + escHtml(evt.message||'') + '</div>';
+              streamingEl.innerHTML += '<div style="color:var(--red);margin-top:8px">Fout: ' + escHtml(evt.message||'') + '</div>';
             } else if (evt.type === 'tool_start') {
-              streamingEl.innerHTML += '<div style="color:#64748b;font-size:11px;margin:4px 0">🔧 Gebruik: ' + escHtml(evt.name||'') + '...</div>';
+              streamingEl.innerHTML += '<div style="color:var(--text-dim);font-size:11px;margin:4px 0">Gebruik: ' + escHtml(evt.name||'') + '...</div>';
             } else if (evt.type === 'tool_result') {
-              streamingEl.innerHTML += '<div style="color:#94a3b8;font-size:10px;margin:2px 0">✓ ' + escHtml(evt.name||'') + ' klaar</div>';
+              streamingEl.innerHTML += '<div style="color:var(--text-muted);font-size:10px;margin:2px 0">' + escHtml(evt.name||'') + ' klaar</div>';
             }
           } catch(e) {
             // Non-JSON SSE line, skip
@@ -485,7 +551,7 @@ async function sendChat() {
     streamingEl.id = ''; // Remove id after done
   } catch(e) {
     var p = document.getElementById('chat-pending') || document.getElementById('chat-streaming');
-    if (p) p.outerHTML = '<div class="chat-msg assistant" style="color:#ef4444">❌ Fout: ' + escHtml(e.message) + '</div>';
+    if (p) p.outerHTML = '<div class="chat-msg assistant" style="color:var(--red)">Fout: ' + escHtml(e.message) + '</div>';
   }
 }
 
@@ -513,8 +579,8 @@ function mdToHtmlSimple(text) {
 // ═══════════════════════════════════════════════════════════════════
 function renderFinanceExpert(el) {
   el.innerHTML = '<div id="beursmeester-desk"></div>' +
-    '<div class="agent-card" style="margin-top:20px"><div class="agent-icon" style="background:linear-gradient(135deg,#f43f5e,#e11d48)">F</div><h2>Finance Expert Agent</h2><p class="desc">Marktanalyse en rapportage. Het dagrapport (07:30) en weekrapport (ma 08:15) adviseren; de Beursmeester hierboven rekent dat advies af.</p>' +
-    '<button onclick="switchView(\'chat\')" style="padding:10px 28px;background:#f43f5e;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer">Start chat</button></div>';
+    '<div class="agent-card" style="margin-top:20px"><div class="agent-icon" style="background:var(--accent)">F</div><h2>Finance Expert Agent</h2><p class="desc">Marktanalyse en rapportage. Het dagrapport (07:30) en weekrapport (ma 08:15) adviseren; de Beursmeester hierboven rekent dat advies af.</p>' +
+    '<button onclick="switchView(\'chat\')" class="btn btn-primary">Start chat</button></div>';
   // Het volledige beursbureau staat in tabs-invest.js. Bewust één implementatie:
   // twee panelen die dezelfde vraag beantwoorden, lopen uit elkaar.
   renderBeursmeester(document.getElementById('beursmeester-desk'));
