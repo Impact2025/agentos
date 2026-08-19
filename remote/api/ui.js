@@ -13,8 +13,10 @@ import {
   sql, json, tenantFromHost, checkPassword, tenantConfigError, startSession, clearCookie,
   requireSession, endSession, endAllSessions, listSessions,
   loginLockSeconds, noteLoginFailure, clearLoginFailures,
+  resolveBridgeTenant,
 } from './_lib.js';
 import { attachLive } from './_google.js';
+import { sendText } from './_whatsapp_send.js';
 
 // Welke acties de telefoon per item-type mag aanvragen. Moet een subset zijn
 // van de whitelist in backend/domains/bridge/actions.py — de bridge weigert
@@ -23,6 +25,7 @@ const ALLOWED = {
   content: ['approve', 'reject', 'dismiss'],
   mail: ['send', 'edit', 'reject', 'dismiss'],
   personal_mail: ['send', 'reject', 'dismiss'],
+  social: ['send', 'edit', 'reject', 'dismiss'],
   outreach: ['approve', 'reject', 'dismiss'],
   calendar: ['approve', 'reject', 'dismiss'],
   goal: ['dismiss'], task: ['dismiss'], error: ['dismiss'],
@@ -54,6 +57,7 @@ const COMMANDS = {
   },
   mail_archive: { label: 'Mail archiveren', fields: ['email_id'], keyField: 'email_id' },
   helpdesk_run: { label: 'Helpdesk-concepten schrijven', fields: [] },
+  social_run: { label: 'Social-kanalen ophalen en beantwoorden', fields: ['inbox_id'] },
   iris_briefing: { label: 'Iris opnieuw laten analyseren', fields: [] },
   context_refresh: { label: 'Cijfers verversen', fields: ['sections'] },
   digest: { label: 'Ochtendrapport draaien', fields: [] },
@@ -108,6 +112,20 @@ export default async function handler(req, res) {
   const op = (req.query && req.query.op) || '';
   const tenant = tenantFromHost(req);
   try {
+    // ── Bridge-proxy variant van whatsapp-stats (VOÓR de sessie-check) ──────
+    // De lokale AgentOS-backend (SQLite) bedient het dashboard op :1250, maar de
+    // WhatsApp-data staat in de aparte Neon-Postgres van het remote-systeem.
+    // In plaats van de twee databases aan elkaar te koppelen, proxy't de lokale
+    // backend hiernaartoe met zijn BRIDGE_TOKEN — remote blijft bron van
+    // waarheid, er worden géén DB-credentials gedeeld. resolveBridgeTenant
+    // levert de tenant uit de token-hash, exact zoals de gewone bridge-push.
+    // Moet vóór requireSession staan: de bridge authenticeert via Bearer-token,
+    // niet via een UI-sessiecookie.
+    if (op === 'whatsapp-stats-bridge' && req.method === 'GET') {
+      const bt = await resolveBridgeTenant(req, res);
+      if (!bt) return; // 401 al gestuurd door helper
+      return await whatsappStats(res, bt);
+    }
     if (op === 'login' && req.method === 'POST') {
       // Een onbekende/niet-geprovisioneerde tenant is een serverfout, geen
       // inlogpoging — anders staat de deur open zonder dat iemand het ziet.
@@ -164,6 +182,10 @@ export default async function handler(req, res) {
     }
     if (op === 'push-subscribe' && req.method === 'POST') return await pushSubscribe(req, res, sessionTenant);
     if (op === 'push-unsubscribe' && req.method === 'POST') return await pushUnsubscribe(req, res, sessionTenant);
+    if (op === 'whatsapp' && req.method === 'GET') return await whatsappList(res, sessionTenant);
+    if (op === 'whatsapp-reply' && req.method === 'POST') return await whatsappReply(req, res, sessionTenant);
+    if (op === 'whatsapp-dismiss' && req.method === 'POST') return await whatsappDismiss(req, res, sessionTenant);
+    if (op === 'whatsapp-stats' && req.method === 'GET') return await whatsappStats(res, sessionTenant);
     return json(res, 400, { error: `onbekende op '${op}'` });
   } catch (e) {
     console.error('ui error', e);
@@ -187,6 +209,136 @@ async function items(res, tenant) {
   const last = await sql`
     SELECT max(updated_at) AS last_push FROM sync_items WHERE tenant = ${tenant}`;
   return json(res, 200, { items: rows, last_push: last[0]?.last_push || null });
+}
+
+// ── WhatsApp — klant-escalaties ─────────────────────────────────────────────
+// Bewust GEEN sync_items: die worden bij elke bridge_sync-push volledig
+// overschreven door wat de lokale machine aanlevert (bridge.js:push — "wat
+// verdween wordt gearchiveerd"), en een klant-escalatie ontstaat hier in
+// Neon, niet lokaal. Zou hij als sync_item leven, dan verdwijnt hij bij de
+// eerstvolgende sync omdat de lokale machine hem nooit heeft aangeleverd.
+// Een eigen, kleine tabel + eigen endpoints voorkomt die botsing volledig.
+
+async function whatsappList(res, tenant) {
+  const rows = await sql`
+    SELECT id, wa_id, project, question, reason, status, reply_text, created_at, answered_at
+    FROM whatsapp_escalations WHERE tenant = ${tenant} AND status = 'open'
+    ORDER BY created_at ASC LIMIT 50`;
+  return json(res, 200, { escalations: rows });
+}
+
+async function whatsappReply(req, res, tenant) {
+  const { id, text } = req.body || {};
+  const body = String(text || '').trim();
+  if (!body) return json(res, 400, { error: 'Lege tekst' });
+  const row = (await sql`
+    SELECT id, wa_id, phone_number_id, status FROM whatsapp_escalations
+    WHERE id = ${id} AND tenant = ${tenant}`)[0];
+  if (!row) return json(res, 404, { error: 'Niet gevonden' });
+  if (row.status !== 'open') return json(res, 400, { error: 'Deze escalatie is al afgehandeld' });
+  // Direct via het gedeelde WHATSAPP_TOKEN — geen omweg via decisions/bridge_sync
+  // nodig, want versturen vergt geen lokale data of credential.
+  const ok = await sendText(row.phone_number_id, row.wa_id, body);
+  if (!ok) return json(res, 502, { error: 'Versturen via WhatsApp mislukt — probeer opnieuw' });
+  await sql`
+    UPDATE whatsapp_escalations SET status = 'answered', reply_text = ${body}, answered_at = now()
+    WHERE id = ${id} AND tenant = ${tenant}`;
+  // Thread-continuïteit: Vincents antwoord terugschrijven naar de klant-draad
+  // zodat klant-Iris het bij de volgende klantvraag in context heeft. Zonder
+  // dit wist Iris bij een vervolgvraag die naar Vincents antwoord verwijst
+  // (bijv. "en wat kost dat dan?") de context en herhaalt of escaleert ze
+  // nutteloos. We plakken het als assistent-bericht (Vincent = de menselijke
+  // "assistent" in dit gesprek) en houden de draad binnen MAX_CUSTOMER_TURNS.
+  try {
+    const rows = await sql`
+      SELECT messages FROM whatsapp_threads WHERE tenant = ${tenant} AND wa_id = ${row.wa_id}`;
+    const messages = rows[0]?.messages || [];
+    messages.push({ role: 'assistant', content: body });
+    const trimmed = messages.slice(-10);
+    await sql`
+      INSERT INTO whatsapp_threads (tenant, wa_id, messages, updated_at)
+      VALUES (${tenant}, ${row.wa_id}, ${JSON.stringify(trimmed)}::jsonb, now())
+      ON CONFLICT (tenant, wa_id) DO UPDATE SET
+        messages = EXCLUDED.messages, updated_at = now()`;
+  } catch (e) {
+    console.error('whatsappReply: thread-update mislukt (niet fataal)', e);
+  }
+  return json(res, 200, { ok: true });
+}
+
+async function whatsappDismiss(req, res, tenant) {
+  const { id } = req.body || {};
+  await sql`
+    UPDATE whatsapp_escalations SET status = 'dismissed', answered_at = now()
+    WHERE id = ${id} AND tenant = ${tenant} AND status = 'open'`;
+  return json(res, 200, { ok: true });
+}
+
+// ── WhatsApp — managementoverzicht ──────────────────────────────────────────
+// Wat er tot 19 aug 2026 ontbrak: er bestond geen enkele plek die volume,
+// escalatiegraad of rate-limit-druk toonde — alleen de kale escalatielijst
+// hierboven. Deze functie voegt niets nieuws toe aan wat al gemeten wordt
+// (`whatsapp_rate_limit` telt al per (tenant, wa_id, dag), `whatsapp_escalations`
+// draagt al `created_at`/`answered_at`); hij leest alleen wat er al ligt.
+//
+// `near_limit` gebruikt 75% van `WHATSAPP_CUSTOMER_DAILY_LIMIT` (default 40,
+// zelfde env-var als `_customer_core.js`) als signaal — de klant die er tegen
+// aanloopt is interessanter dan de klant die hem al raakte, want de eerste
+// kun je nog vóór zijn.
+//
+// `escalation_rate_7d` deelt door actieve gesprékken, niet door berichten:
+// "hoe vaak moest Iris een mens erbij halen" is een uitspraak per gesprek,
+// niet per bericht — een lang gesprek met 20 berichten en 1 escalatie is een
+// ander signaal dan 20 gesprekken met 1 escalatie elk.
+async function whatsappStats(res, tenant) {
+  const limit = Number(process.env.WHATSAPP_CUSTOMER_DAILY_LIMIT || 40);
+  const nearLimitThreshold = Math.round(limit * 0.75);
+
+  const [volume] = await sql`
+    SELECT
+      COALESCE(SUM(count) FILTER (WHERE day = CURRENT_DATE), 0)::int AS messages_today,
+      COALESCE(SUM(count) FILTER (WHERE day >= CURRENT_DATE - 6), 0)::int AS messages_7d,
+      COUNT(DISTINCT wa_id) FILTER (WHERE day >= CURRENT_DATE - 6)::int AS active_conversations_7d
+    FROM whatsapp_rate_limit WHERE tenant = ${tenant}`;
+
+  const nearLimit = await sql`
+    SELECT wa_id, count FROM whatsapp_rate_limit
+    WHERE tenant = ${tenant} AND day = CURRENT_DATE AND count >= ${nearLimitThreshold}
+    ORDER BY count DESC LIMIT 10`;
+
+  const [esc] = await sql`
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'open')::int AS open,
+      COUNT(*) FILTER (WHERE created_at >= now() - interval '7 days')::int AS created_7d,
+      COUNT(*) FILTER (WHERE status = 'answered' AND answered_at >= now() - interval '7 days')::int AS answered_7d,
+      COUNT(*) FILTER (WHERE status = 'dismissed' AND answered_at >= now() - interval '7 days')::int AS dismissed_7d,
+      AVG(EXTRACT(EPOCH FROM (answered_at - created_at)))
+        FILTER (WHERE status = 'answered' AND answered_at >= now() - interval '7 days')::int AS avg_response_seconds
+    FROM whatsapp_escalations WHERE tenant = ${tenant}`;
+
+  const openByProject = await sql`
+    SELECT COALESCE(project, 'onbekend') AS project, COUNT(*)::int AS open
+    FROM whatsapp_escalations WHERE tenant = ${tenant} AND status = 'open'
+    GROUP BY project ORDER BY open DESC`;
+
+  return json(res, 200, {
+    daily_limit: limit,
+    messages_today: volume.messages_today,
+    messages_7d: volume.messages_7d,
+    active_conversations_7d: volume.active_conversations_7d,
+    near_limit: nearLimit,
+    escalations: {
+      open: esc.open,
+      created_7d: esc.created_7d,
+      answered_7d: esc.answered_7d,
+      dismissed_7d: esc.dismissed_7d,
+      avg_response_seconds: esc.avg_response_seconds,
+      escalation_rate_7d: volume.active_conversations_7d
+        ? Math.round(100 * esc.created_7d / volume.active_conversations_7d)
+        : null,
+    },
+    open_by_project: openByProject,
+  });
 }
 
 async function briefing(res, tenant) {
