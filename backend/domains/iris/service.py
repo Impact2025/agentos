@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 from datetime import datetime
@@ -48,6 +49,12 @@ _MAX_SEO_REFRESH_PER_RUN = 1
 _MAX_LINKBUILD_RUNS_PER_RUN = 1
 _MAX_LEAD_SEARCH_PER_RUN = 1
 _MAX_ACTIVE_LESSONS_IN_PROMPT = 20
+
+# Vloer onder het aantal actieve doelen (draft+running): het systeem mag niet
+# op 0 blijven staan als er ergens een bewezen kans ligt. Instelbaar, niet
+# "massa" — Vincent wil wereldklasse, geen vulling. Zie _ensure_goal_coverage.
+_MIN_ACTIVE_GOALS = int(os.getenv("IRIS_MIN_ACTIVE_GOALS", "1"))
+_GOAL_FLOOR_AUTOSTART = os.getenv("IRIS_GOAL_AUTOSTART", "1") not in ("0", "false", "no")
 
 # De analyse-JSON is fors (oordeel + advies + voorspellingen); een wispelturig
 # backend kapt bij een krappe limiet halverwege af en dan is de hele analyse
@@ -443,7 +450,124 @@ async def _apply_draft_goal(project: str, title: str, objective: str, reason: st
                     next_step="Beoordeel Iris' concept-doel in het Actiecentrum")
         return {"detail": detail, "goal_id": gid}
     except Exception as e:
-        logger.warning("[iris] Concept-doel aanmaken mislukt: %s", e)
+        from ...shared.prompt_safety import PromptInjectionDetected
+        if isinstance(e, PromptInjectionDetected):
+            # Iris' eigen voorstel bevatte een injectie-patroon — blijft weg
+            # als concept, maar dat mag geen stille log-regel zijn: Iris'
+            # analyse-input komt deels uit externe bronnen (mail, radar,
+            # geplakte kennisbank-tekst).
+            log_outcome(project or "Agent OS", "iris_bijsturing_geweigerd",
+                        f"Concept-doel '{title}' geweigerd: {e}", status="error",
+                        next_step="Controleer welke bron Iris' analyse heeft beïnvloed.")
+        else:
+            logger.warning("[iris] Concept-doel aanmaken mislukt: %s", e)
+        return None
+
+
+def _active_goal_count() -> int:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM goals WHERE status IN ('draft', 'running')"
+        ).fetchone()
+    return row["n"] if row else 0
+
+
+def _project_has_active_goal(project: str) -> bool:
+    from ...shared.projects import squash_project
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT project FROM goals WHERE status IN ('draft', 'running')"
+        ).fetchall()
+    doel = squash_project(project)
+    return any(squash_project(r["project"] or "") == doel for r in rows)
+
+
+async def _ensure_goal_coverage(goal_created_this_run: bool) -> Optional[str]:
+    """Vangnet: als het systeem géén actief doel heeft (draft of running) en
+    Iris' eigen advies er deze ronde geen aanmaakte, kijkt zij zelf of er een
+    bewezen kans ligt en start die — anders blijft de teller stilzwijgend op
+    0 staan totdat een mens toevallig zelf een doel begint.
+
+    Géén verzonnen onderwerp: de enige bron is de al bestaande Kansen-gate
+    (`opportunity_quality` via `engine.list_opportunities_truth`) — dezelfde
+    deterministische toets die het Kansen-paneel en de nachtmotor gebruiken.
+    Geen kans die daar doorheen komt = geen doel, ook als de teller op 0
+    staat (zie CLAUDE.md 7a: "geen kansen" mag nooit als "niets te doen"
+    verschijnen als de gate zelf niet draaide — maar hier geldt het
+    omgekeerde net zo hard: geen écht bewezen kans, dan ook geen doel).
+
+    Start het doel meteen (zoals de Strategist met STRATEGIST_AUTOSTART) in
+    plaats van op 'draft' te laten verstoffen: de executor publiceert/
+    verstuurt zelf nooit, dus de Wachtrij-gate blijft intact. Uitzetten kan
+    met IRIS_GOAL_AUTOSTART=0 (dan blijft het als concept staan)."""
+    if goal_created_this_run or _active_goal_count() >= _MIN_ACTIVE_GOALS:
+        return None
+    from ..seo import engine as demand_engine
+    from ..seo import potential
+    from . import actions as iris_actions
+
+    with get_conn() as conn:
+        sites = [dict(r) for r in conn.execute("SELECT id, name FROM sites").fetchall()]
+
+    kansen: List[Dict[str, Any]] = []
+    for site in sites:
+        if _project_has_active_goal(site["name"]):
+            continue  # spreid over projecten, stapel niet op wie toevallig al draait
+        if iris_actions.pending_review_count(site["id"]) >= iris_actions.QUEUE_JAM:
+            continue  # zelfde doorvoer-rem als content_run: een volle Wachtrij is geen invoer
+        try:
+            opps = demand_engine.list_opportunities_truth(site_id=site["id"], status="new")
+        except Exception:
+            logger.warning("[iris] goal-coverage: kansen ophalen mislukt voor %s", site["name"])
+            continue
+        for o in opps:
+            o["_site"] = site
+            kansen.append(o)
+
+    if not kansen:
+        return None
+    kansen = potential.annotate(kansen)  # gemeten vraag eerst, grootste winst binnen die groep
+    best = kansen[0]
+    site = best["_site"]
+    keyword = (best.get("query") or "").strip()
+    if not keyword:
+        return None
+
+    title = f"Schrijf over '{keyword}'"[:120]
+    objective = (f"Schrijf en publiceer één artikel voor {site['name']} over het "
+                 f"zoekwoord '{keyword}' ({potential.describe(best)}). Deze kans komt "
+                 "uit de Kansen-gate (opportunity_quality) — niet verzonnen.")
+    reason = (f"Er stond geen actief doel meer in het systeem, en dit is de sterkste "
+              f"nog openstaande kans: {potential.describe(best)}")
+    try:
+        from ..goal.service import create_and_plan, confirm_plan, start_goal_async
+        plan = await create_and_plan(
+            title=f"[Iris] {title}", objective=objective, project=site["name"],
+        )
+        gid = plan.get("goal_id") if isinstance(plan, dict) else None
+        if not gid:
+            return None
+        auto_started = False
+        if _GOAL_FLOOR_AUTOSTART:
+            try:
+                confirm_plan(gid)
+                await start_goal_async(gid)
+                auto_started = True
+            except Exception as e:
+                logger.warning("[iris] Vloer-doel '%s' kon niet autostarten: %s", title, e)
+        detail = (f"Vloer-doel {'gestart' if auto_started else 'voorgesteld'} voor "
+                  f"{site['name']}: {title}. Reden: {reason}")
+        log_outcome(site["name"], "iris_bijsturing", detail, artifact=f"/api/goals/{gid}",
+                    next_step="" if auto_started else "Bevestig het doel in het Actiecentrum")
+        return detail
+    except Exception as e:
+        from ...shared.prompt_safety import PromptInjectionDetected
+        if isinstance(e, PromptInjectionDetected):
+            log_outcome(site["name"], "iris_bijsturing_geweigerd",
+                        f"Vloer-doel '{title}' geweigerd: {e}", status="error",
+                        next_step="Controleer de bron (kans-titel) op prompt-injectie.")
+        else:
+            logger.warning("[iris] Vloer-doel aanmaken mislukt: %s", e)
         return None
 
 
@@ -1233,6 +1357,7 @@ async def run_morning_briefing() -> Dict[str, Any]:
     predicted = 0
     saved_sugs = 0
     from . import fix as fix_module
+    active_goals_before = _active_goal_count()
     if parsed:
         applied = await _apply_improvements(parsed.get("verbeteringen") or [])
         lesson_ids = _upsert_lessons(parsed.get("lessen") or [])
@@ -1248,6 +1373,17 @@ async def run_morning_briefing() -> Dict[str, Any]:
         # wat een mens vergt of niet kan, wordt een fix-aanbieding.
         applied, leftovers = await _apply_rule_based(snapshot)
         saved_sugs = fix_module.upsert_suggestions(report_date, leftovers)
+
+    # Vangnet: geen enkele bovenstaande route creëert per definitie een doel
+    # (alleen kind=='doel' in _apply_improvements, opportunistisch). Staat de
+    # teller na dit alles nog op 0, dan kijkt Iris zelf naar een bewezen kans.
+    try:
+        goal_created = _active_goal_count() > active_goals_before
+        coverage = await _ensure_goal_coverage(goal_created)
+        if coverage:
+            applied.append(coverage)
+    except Exception:
+        logger.exception("[iris] goal-coverage-check mislukt")
 
     markdown = _build_markdown(report_date, snapshot, parsed, applied,
                                llm_used=parsed is not None, validation=validation,
