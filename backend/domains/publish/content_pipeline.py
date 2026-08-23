@@ -858,8 +858,8 @@ async def review_and_improve(site: Dict, keyword: str, html_body: str,
     check het artikel met zichzelf en faalt hij per definitie.
 
     Retourneert (html_body, review)."""
-    from ...shared.config import CONTENT_MIN_SCORE, CONTENT_MAX_ROUNDS
-    goal = int(target_score or CONTENT_MIN_SCORE)
+    from ...shared.config import content_min_score, CONTENT_MAX_ROUNDS
+    goal = int(target_score or content_min_score(site.get("name")))
     effective_max = max(max_rounds, CONTENT_MAX_ROUNDS)
     corpus = _fetch_published_texts(site["id"], exclude_job_id=exclude_job_id)
 
@@ -950,12 +950,12 @@ async def review_and_improve(site: Dict, keyword: str, html_body: str,
         # en dan willen we niet de mindere laatste versie opleveren.
         if review["score"] > best_review["score"]:
             best_html, best_review = html_body, review
-    if best_review["score"] < CONTENT_MIN_SCORE:
+    if best_review["score"] < goal:
         # Ook na de maximale verbeterrondes nog onder de grens: log het expliciet
         # en laat de learning-loop er een les van trekken (zie record_under85).
         logger.warning("[content-pipeline] Artikel '%s' blijft onder grens na %s rondes "
                        "(beste score %s < %s) — naar needs_work, agent leert hiervan.",
-                       keyword, rounds, best_review["score"], CONTENT_MIN_SCORE)
+                       keyword, rounds, best_review["score"], goal)
         try:
             from ...domains.publish import learning
             learning.record_under85(site, keyword, best_review)
@@ -1807,6 +1807,56 @@ def mark_superseded(job_id: str, published_job_id: str) -> None:
         _update_job(published_job_id, orchestrator_attempts=geërfd)
 
 
+def reset_stuck_attempts(job_id: str) -> Dict[str, Any]:
+    """Handmatige reset van een vastgelopen content-job naar de Wachtrij.
+
+    Een job komt op 'stuck' als de verbeteraar én de Orchestrator beide hun
+    pogingencap hebben bereikt (CONTENT_IMPROVER_MAX_ATTEMPTS en
+    ORCHESTRATOR_MAX_ATTEMPTS) zonder de kwaliteitsgrens te halen. Dat is een
+    *bewuste* stop — geen LLM-meer-verspillen aan een artikel dat systematisch
+    onder de grens blijft.
+
+    Deze functie is de *menselijke overbruggingsactie*: Vincent kan een
+    vastgelopen artikel handmatig resetten wanneer hij een nieuw perspectief
+    heeft (bv. een ander zoekwoord, een aangepaste benchmark, of de site heeft
+    inmiddels nieuwe GSC-data). Reset zet de pogingentellers terug naar 0 en
+    de status naar 'needs_work' zodat zowel de content_improver als de
+    Orchestrator het opnieuw kunnen oppakken.
+
+    Gegeven een superseded_by-relatie: als de job een opvolger heeft die
+    'rejected' bleef, breekt deze functie die ketting af door de opvolger ook
+    terug te zetten. Zo komt er geen dubbel werk bij.
+    """
+    job = get_job(job_id)
+    if not job:
+        return {"ok": False, "error": f"Job {job_id} niet gevonden"}
+    if job.get("status") not in ("stuck", "rejected", "needs_work"):
+        return {"ok": False,
+                "error": f"Job {job_id} heeft status '{job.get('status')}', "
+                         f"reset alleen van toepassing op stuck/rejected/needs_work"}
+
+    reset_ids = [job_id]
+    opvolger = job.get("superseded_by")
+    if opvolger:
+        opv = get_job(opvolger)
+        if opv and opv.get("status") in ("rejected", "stuck", "needs_work"):
+            reset_ids.append(opvolger)
+
+    with get_conn() as conn:
+        for jid in reset_ids:
+            conn.execute(
+                "UPDATE content_jobs SET status='needs_work', "
+                "improve_attempts=0, orchestrator_attempts=0, "
+                "superseded_by=NULL, error=NULL "
+                "WHERE id=?",
+                (jid,),
+            )
+
+    return {"ok": True, "reset_ids": reset_ids,
+            "old_score": job.get("seo_score"), "old_status": job.get("status"),
+            "old_title": job.get("title")}
+
+
 # ── Genereer één content-job voor één site ──────────────────────────────────
 
 async def generate_content_job(site: Dict, keyword: Optional[str] = None,
@@ -1854,8 +1904,9 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
         # deterministische Pillow-render (kleurvlak + titel), geen LLM-call —
         # "traag op de cloud-LLM" is geen reden om die over te slaan. Zonder dit
         # bleef elk light-mode-artikel zonder thumbnail (Ictusgo: 19 augustus 2026).
-        from ...shared.config import CONTENT_MIN_SCORE
-        passed = review["score"] >= CONTENT_MIN_SCORE
+        from ...shared.config import content_min_score
+        _gate = content_min_score(site.get("name"))
+        passed = review["score"] >= _gate
         social_copy: Dict[str, str] = {}
         image_bytes = _generate_cover_image(site, title)
         infographic_bytes = None
@@ -1866,7 +1917,7 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
                     case_study_id=case_study_id)
         _log_activity(site["name"], "auto-content-klaar",
                       f"'{title}' (SEO-score {review['score']}) klaar voor review [light-mode]"
-                      + ("" if passed else f" — onder kwaliteitsgrens {CONTENT_MIN_SCORE}, naar needs_work"),
+                      + ("" if passed else f" — onder kwaliteitsgrens {_gate}, naar needs_work"),
                       next_step=("Keur goed of wijs af in de Wachtrij"
                                  if passed else "Laat de agent eerst verbeteren"))
         # Haal het zojuist aangemaakte job-id op voor batch-tracking
@@ -1884,8 +1935,9 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
     social_copy = await _generate_social_copy(site, title, keyword, html_body)
     image_bytes = _generate_cover_image(site, title)
 
-    from ...shared.config import CONTENT_MIN_SCORE
-    passed = review["score"] >= CONTENT_MIN_SCORE
+    from ...shared.config import content_min_score
+    _gate = content_min_score(site.get("name"))
+    passed = review["score"] >= _gate
     # Infographic alleen voor artikelen die de gate halen — anders verspilde LLM-calls.
     infographic_bytes = (await _generate_article_infographic(site, title, keyword, html_body)
                          if passed else None)
@@ -1901,7 +1953,7 @@ async def generate_content_job(site: Dict, keyword: Optional[str] = None,
     else:
         _log_activity(site["name"], "auto-content-onder-grens",
                       f"'{title}' haalde na verbeterrondes {review['score']}/100 "
-                      f"(grens {CONTENT_MIN_SCORE}) — niet publiceerbaar",
+                      f"(grens {_gate}) — niet publiceerbaar",
                       next_step="Laat de agent het opnieuw proberen of wijs af (Actiecentrum)")
     return job_id
 
@@ -2216,8 +2268,9 @@ async def create_job_from_listicle(site: Dict, keyword: str, rationale: str,
     social_copy = await _generate_social_copy(site, title, keyword, html_body)
     image_bytes = _generate_cover_image(site, title)
 
-    from ...shared.config import CONTENT_MIN_SCORE
-    passed = review["score"] >= CONTENT_MIN_SCORE
+    from ...shared.config import content_min_score
+    _gate = content_min_score(site.get("name"))
+    passed = review["score"] >= _gate
     infographic_bytes = (await _generate_article_infographic(site, title, keyword, html_body)
                          if passed else None)
     job_id = create_job(site["id"], title, keyword, rationale, html_body,
@@ -2226,7 +2279,7 @@ async def create_job_from_listicle(site: Dict, keyword: str, rationale: str,
                         infographic_bytes=infographic_bytes)
     _log_activity(site["name"], "radar-listicle-in-wachtrij",
                   f"'{title}' (SEO-score {review['score']}) vanuit Mission Radar "
-                  + ("klaar voor review" if passed else f"onder kwaliteitsgrens {CONTENT_MIN_SCORE} — eerst verbeteren"))
+                  + ("klaar voor review" if passed else f"onder kwaliteitsgrens {_gate} — eerst verbeteren"))
     return job_id
 
 
@@ -2257,9 +2310,53 @@ async def run_content_batch(site: Dict, count: Optional[int] = None,
     return job_ids
 
 
-async def run_biweekly_content_job() -> Dict:
-    """Draai voor elke site met auto_content_enabled=1 een content-batch
-    (content_batch_size artikelen, default 1)."""
+# Terugval voor sites zonder eigen `content_schedule` (22 aug 2026): het oude,
+# voor alle sites gelijke ritme. Nieuwe sites die nog geen bewust gekozen
+# schema hebben, vallen hierop terug in plaats van stil te zwijgen.
+_LEGACY_DEFAULT_SCHEDULE = [
+    {"day": "tue", "hour": 9, "minute": 0},
+    {"day": "fri", "hour": 9, "minute": 0},
+]
+
+
+def _site_content_schedule(site: Dict) -> List[Dict]:
+    raw = (site.get("content_schedule") or "").strip()
+    if not raw:
+        return _LEGACY_DEFAULT_SCHEDULE
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return _LEGACY_DEFAULT_SCHEDULE
+    return parsed if isinstance(parsed, list) and parsed else _LEGACY_DEFAULT_SCHEDULE
+
+
+def _site_scheduled_now(site: Dict, weekday: str, hour: int, minute: int) -> bool:
+    """Staat dit project voor dit exacte dag/tijd-slot op de planning?
+
+    Elk project heeft zijn eigen doelgroep en dus zijn eigen beste moment
+    (WeAreImpact = ochtend/LinkedIn, DatingAssistent = avond) — zie CLAUDE.md
+    §7 voor de onderbouwing per project. Deze toets vergelijkt het slot van de
+    scheduler-run tegen `sites.content_schedule`."""
+    for entry in _site_content_schedule(site):
+        try:
+            if ((entry.get("day") or "").strip().lower() == weekday
+                    and int(entry.get("hour")) == hour
+                    and int(entry.get("minute", 0)) == minute):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+async def run_biweekly_content_job(at: Optional[Tuple[str, int, int]] = None) -> Dict:
+    """Draai voor elke site met auto_content_enabled=1 die op dit moment op
+    de planning staat een content-batch (content_batch_size artikelen).
+
+    `at` = (weekday, hour, minute) van het scheduler-slot dat deze run
+    triggerde ('tue'/'wed'/... zoals in `content_schedule`); zonder `at`
+    (bijv. een handmatige aanroep) draait de batch voor alle auto_content-
+    sites, ongeacht hun schema — de dag/tijd-filtering is een verfijning van
+    wannéér de scheduler het aanzwengelt, geen vervanging van de knop."""
     # Circuit-breaker: stop de hele batch als de dagbudget op is.
     from ...shared.outcomes import require_llm_budget
     try:
@@ -2272,6 +2369,8 @@ async def run_biweekly_content_job() -> Dict:
         full_site = sites_service.get_site(site["id"])
         if not full_site or not full_site.get("auto_content_enabled"):
             continue
+        if at is not None and not _site_scheduled_now(full_site, *at):
+            continue
         try:
             job_ids = await run_content_batch(full_site)
             results[site["name"]] = f"{len(job_ids)} jobs" if job_ids else "geen kansen"
@@ -2279,7 +2378,7 @@ async def run_biweekly_content_job() -> Dict:
             logger.exception("[content-pipeline] Auto-content mislukt voor %s", site["name"])
             _log_activity(site["name"], "auto-content-fout", str(e)[:300], status="error")
             results[site["name"]] = f"fout: {e}"
-    logger.info("[content-pipeline] Biweekly content-run klaar: %s", results)
+    logger.info("[content-pipeline] Biweekly content-run klaar (slot=%s): %s", at, results)
     return results
 
 
@@ -2293,9 +2392,20 @@ async def run_content_improver_job() -> Dict:
     de score niet verhoogt, laten we de job staan (de agent leert er in de
     learning-loop van). Nooit meer dan een beperkt aantal jobs per run, zodat een
     opstopping de event loop niet blokkeert. Retourneert een kort verslag."""
-    from ...shared.config import CONTENT_MIN_SCORE, CONTENT_IMPROVER_MAX_PER_RUN
+    from ...shared.config import content_min_score, CONTENT_MIN_SCORE, CONTENT_IMPROVER_MAX_PER_RUN
     MAX_JOBS_PER_RUN = CONTENT_IMPROVER_MAX_PER_RUN
     improved, still_low, failed, stuck = [], [], [], []
+    _site_name_cache: Dict[str, str] = {}
+
+    def _gate_for(site_id: Optional[str]) -> int:
+        # Deze functie loopt over jobs van alle sites tegelijk, dus de grens
+        # moet per job worden opgezocht in plaats van één keer vooraf.
+        if not site_id:
+            return CONTENT_MIN_SCORE
+        if site_id not in _site_name_cache:
+            s = sites_service.get_site(site_id)
+            _site_name_cache[site_id] = (s or {}).get("name") or ""
+        return content_min_score(_site_name_cache[site_id])
     # Circuit-breaker: geen LLM-verkeer meer als de dagbudget op is.
     from ...shared.outcomes import require_llm_budget
     try:
@@ -2310,7 +2420,7 @@ async def run_content_improver_job() -> Dict:
     # (incident 2026-07-16: twee jobs op 72/83 spamden dagenlang het log).
     jobs = [j for j in (list_jobs(status="needs_work")
                         + list_jobs(status="pending_review"))
-            if int(j.get("seo_score") or 0) < CONTENT_MIN_SCORE]
+            if int(j.get("seo_score") or 0) < _gate_for(j.get("site_id"))]
     # Sla jobs die al op 'stuck' staan over vóór de LLM-dans — die zijn al
     # CONTENT_IMPROVER_MAX_ATTEMPTS keer vastgelopen en horen niet opnieuw
     # verbrand te worden (incident 2026-07-10).
@@ -2329,7 +2439,7 @@ async def run_content_improver_job() -> Dict:
                 # Cross-run cap geraakt: niet verder proberen, wel melden.
                 stuck.append(f"{j['title']} (na {refreshed.get('improve_attempts')} pogingen)")
                 continue
-            if refreshed and refreshed.get("status") == "pending_review" and new_score >= CONTENT_MIN_SCORE:
+            if refreshed and refreshed.get("status") == "pending_review" and new_score >= _gate_for(j.get("site_id")):
                 improved.append(f"{j['title']} ({new_score})")
                 _log_activity(
                     refreshed.get("site_id") or "?", "content-verbeterd",
@@ -2337,7 +2447,7 @@ async def run_content_improver_job() -> Dict:
                     f"naar {new_score} — boven grens, klaar voor review.",
                     next_step="Wacht in de Wachtrij op Vincents publiceer-klik.",
                 )
-            elif new_score < CONTENT_MIN_SCORE:
+            elif new_score < _gate_for(j.get("site_id")):
                 still_low.append(f"{j['title']} ({new_score})")
             else:
                 still_low.append(f"{j['title']} (status {refreshed.get('status') if refreshed else '?'})")
@@ -2666,7 +2776,9 @@ async def _verify_live_once(url: str) -> Optional[str]:
 async def _publish_to_project_site(site: Dict, title: str, html_body: str,
                                     keyword: str, slug: str, seo_score: int,
                                     publish_date: Optional[str] = None,
-                                    image_bytes: Optional[bytes] = None) -> Dict:
+                                    image_bytes: Optional[bytes] = None,
+                                    meta_title_override: Optional[str] = None,
+                                    meta_desc_override: Optional[str] = None) -> Dict:
     """Publiceer naar de eigen site van een project via de per-project
     publish-endpoint ({PROJECT}_PUBLISH_URL/_PUBLISH_KEY in .env).
 
@@ -2768,8 +2880,11 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
     # paragraaf. De DatingAssistent-blogpagina rendert die velden zelf uit de
     # DB, dus anders verschijnt alles dubbel. Strip ze hier (deploy-onafhankelijk).
     html_body = _strip_duplicate_header(html_body)
-    # meta-description + excerpt uit de (gezuiverde) HTML halen
-    meta_desc = parsed_desc or _derive_meta_desc(html_body)
+    # meta-description + excerpt uit de (gezuiverde) HTML halen. Een expliciete
+    # override (bijv. een gekozen CTR-variant uit de Optimalisatie-tab) wint
+    # altijd — die tekst is al door een mens gekozen, dus mag niet alsnog
+    # overschreven worden door wat uit de body wordt afgeleid.
+    meta_desc = meta_desc_override or parsed_desc or _derive_meta_desc(html_body)
     first_p = re.search(r"<p>(.*?)</p>", html_body or "", re.S)
     raw_excerpt = re.sub(r"<[^>]+>", "", first_p.group(1)).strip() if first_p else ""
     # Woordgrens-afkap zodat een excerpt nooit midden in een woord afbreekt
@@ -2789,7 +2904,7 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
             "title": title,
             "content": (html_body or "").strip(),
             "excerpt": excerpt,
-            "metaTitle": meta_title_for(parsed_title or title),
+            "metaTitle": meta_title_for(meta_title_override or parsed_title or title),
             "metaDescription": meta_desc,
             "tags": [keyword] if keyword else [],
             "status": "published",
@@ -2799,7 +2914,7 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
             "title": title,
             "content": (html_body or "").strip(),
             "slug": slug,
-            "seoTitle": meta_title_for(parsed_title or title),
+            "seoTitle": meta_title_for(meta_title_override or parsed_title or title),
             "seoDescription": meta_desc,
             # 18 aug 2026: ontbrak hier — dit schema kreeg dus nooit onze
             # woordgrens-veilige excerpt (_smart_truncate) en leidde zelf een
@@ -3095,11 +3210,13 @@ async def approve_and_publish(job_id: str,
 
     # Harde kwaliteitsgate: onder de grens wordt er níet gepubliceerd —
     # ook niet met een handmatige goedkeuring. Eerst verbeteren (regenerate).
-    from ...shared.config import CONTENT_MIN_SCORE
-    if int(job.get("seo_score") or 0) < CONTENT_MIN_SCORE:
+    from ...shared.config import content_min_score
+    _site_for_gate = sites_service.get_site(job.get("site_id")) or {}
+    _gate = content_min_score(_site_for_gate.get("name"))
+    if int(job.get("seo_score") or 0) < _gate:
         raise ValueError(
             f"SEO-score {job.get('seo_score')}/100 ligt onder de kwaliteitsgrens "
-            f"({CONTENT_MIN_SCORE}) — laat de agent het artikel eerst verbeteren of wijs het af."
+            f"({_gate}) — laat de agent het artikel eerst verbeteren of wijs het af."
         )
 
     # Publiceerbaarheidsgate: een intern plan/rapport gaat nooit live, hoe hoog
@@ -3336,6 +3453,18 @@ async def approve_and_publish(job_id: str,
         result["social"] = {"skipped": "geen social aangevinkt bij goedkeuren"}
     else:
         if social_copy.get("linkedin") and _wants("linkedin") and linkedin_service.is_configured(site_name):
+            # VIN EXPLICIT BLOCK (2026-08-24): sites met block_linkedin=1 mogen
+            # NOOIT via AgentOS op LinkedIn gepost worden — niet eens als de
+            # reviewer 'linkedin' handmatig aanvinkt. Deze check hier is de
+            # harde stop; is_configured() leunt wel al uit als de override in de
+            # sites-tabel ontbreekt.
+            _blocked = site.get("block_linkedin")
+            if _blocked:
+                raise ValueError(
+                    f"LinkedIn-posting is voor site '{site.get('name')}' "
+                    f"uitdrukkelijk geblokkeerd (block_linkedin=1). Deze wijzer "
+                    f"niemander LinkedIn-posten — gebruik handmatige posting "
+                    f"via de DatingAssistent LinkedIn-uitzender (WeAreImpact).")
             result["social"]["linkedin"] = await _post(
                 "linkedin",
                 linkedin_service.post_update(
@@ -3532,7 +3661,8 @@ async def regenerate_job(job_id: str) -> str:
     # zetten we 'm op 'stuck' en laten we de mens beslissen — in plaats van
     # eindeloos LLM-calls te blijven verbranden (incident 2026-07-10: één
     # oscillerend artikel liep de hele dag door en leegde de OpenModel-quota).
-    from ...shared.config import (CONTENT_MIN_SCORE, CONTENT_IMPROVER_MAX_ATTEMPTS)
+    from ...shared.config import content_min_score, CONTENT_IMPROVER_MAX_ATTEMPTS
+    _gate = content_min_score(site.get("name"))
     attempts = int(job.get("improve_attempts") or 0)
     if attempts >= CONTENT_IMPROVER_MAX_ATTEMPTS:
         _update_job(job_id, status="stuck")
@@ -3547,7 +3677,7 @@ async def regenerate_job(job_id: str) -> str:
                 site["name"],
                 "content-stuck",
                 f"'{job['title']}' ({job['keyword']}) haalt na {attempts} verbeter-pogingen "
-                f"de kwaliteitsgrens ({CONTENT_MIN_SCORE}) niet — vastgezet voor menselijke review.",
+                f"de kwaliteitsgrens ({_gate}) niet — vastgezet voor menselijke review.",
                 artifact=job_id,
                 next_step="Bekijk het artikel en herschrijf/keur handmatig, of verlaag de grens.",
                 status="error",
@@ -3570,8 +3700,7 @@ async def regenerate_job(job_id: str) -> str:
         continued_from_existing = False
     html_body, review = await review_and_improve(site, job["keyword"], html_body)
 
-    from ...shared.config import CONTENT_MIN_SCORE
-    passed = review["score"] >= CONTENT_MIN_SCORE
+    passed = review["score"] >= _gate
     if review["score"] <= 0:
         # Score 0 = de review kon helemaal niet draaien (LLM/quota down), geen
         # oordeel over het artikel. NIET als verbeter-poging tellen — anders
@@ -3582,7 +3711,7 @@ async def regenerate_job(job_id: str) -> str:
         return job_id
     # Teller pas optellen als we écht een verbeter-cyclus hebben gedraaid; een
     # no-op (bestaande versie behouden) telt niet als nieuwe poging.
-    new_attempts = attempts + (1 if review["score"] != old_score or review["score"] < CONTENT_MIN_SCORE else 0)
+    new_attempts = attempts + (1 if review["score"] != old_score or review["score"] < _gate else 0)
     if review["score"] < old_score and not continued_from_existing:
         # Nooit een slechtere versie terugschrijven dan er al stond. Deze
         # vergelijking geldt alleen voor een blanco herschrijving: die kan écht
@@ -3648,7 +3777,8 @@ async def save_manual_edit(job_id: str, html_body: str, force: bool = False) -> 
         raise ValueError("Body te kort — plak de volledige (verbeterde) HTML terug.")
 
     site = sites_service.get_site(job["site_id"]) or {}
-    from ...shared.config import CONTENT_MIN_SCORE
+    from ...shared.config import content_min_score
+    _gate = content_min_score(site.get("name"))
     title = _extract_title(html_body, fallback=job["title"])
     slug = slugify_title(title)
     # Body altijd eerst terugschrijven, ongeacht of scoren lukt.
@@ -3684,20 +3814,20 @@ async def save_manual_edit(job_id: str, html_body: str, force: bool = False) -> 
                     "'Handmatig aanpassen' → 'Opslaan' om alsnog te scoren, of gebruik "
                     "'Toch naar Wachtrij' als je zeker weet dat het artikel goed is.")
 
-    passed = scored and score >= CONTENT_MIN_SCORE
+    passed = scored and score >= _gate
     status = "pending_review" if passed else "needs_work"
     _update_job(job_id, seo_score=score, status=status)
     if scored:
         if passed:
             _log_activity(
                 site.get("name", "?"), "content-handmatig-verbeterd",
-                f"'{title}' handmatig aangepast en haalt nu de grens ({score} ≥ {CONTENT_MIN_SCORE}) — klaar om te publiceren.",
+                f"'{title}' handmatig aangepast en haalt nu de grens ({score} ≥ {_gate}) — klaar om te publiceren.",
                 artifact=job_id, status="ok",
             )
         else:
             _log_activity(
                 site.get("name", "?"), "content-handmatig-verbeterd",
-                f"'{title}' handmatig aangepast maar zit nog onder de grens ({score} < {CONTENT_MIN_SCORE}). Feedback: {feedback[:160]}",
+                f"'{title}' handmatig aangepast maar zit nog onder de grens ({score} < {_gate}). Feedback: {feedback[:160]}",
                 artifact=job_id, status="error",
             )
     return {"job_id": job_id, "score": score, "passed": passed, "scored": scored,

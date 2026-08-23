@@ -30,6 +30,7 @@ def _get_site_data(site_name: Optional[str] = None) -> tuple:
     token = LINKEDIN_ACCESS_TOKEN
     user_urn = LINKEDIN_USER_URN
 
+    site_row = None
     if site_name:
         try:
             from ..domains.seo import sites as sites_service
@@ -44,9 +45,16 @@ def _get_site_data(site_name: Optional[str] = None) -> tuple:
                             token = st
                         if su:
                             user_urn = su
+                        site_row = site_full
                     break
         except Exception:
             pass
+
+    # Harde override: als de site LinkedIn-expliciet geblokkeerd heeft
+    # (bv. DatingAssistent mag nooit via AgentOS op LinkedIn posten),
+    # geven we leeg token/URN terug — zelfs als de globale .env-token aanwezig is.
+    if site_row is not None and site_row.get("block_linkedin"):
+        return "", ""
 
     return token, user_urn
 
@@ -62,7 +70,13 @@ def _make_headers(token: str) -> Dict[str, str]:
 
 
 def is_configured(site_name: Optional[str] = None) -> bool:
-    """Check of er een LinkedIn token is voor deze site (of globaal)."""
+    """Check of er een LinkedIn token is voor deze site (of globaal).
+
+    Een site met `block_linkedin=1` in de sites-tabel geeft altijd False —
+    ook al staat er een globale LINKEDIN_ACCESS_TOKEN in .env. Dit maakt het
+    mogelijk om per project (bv. DatingAssistent) het platform uitsluitend
+    offline te houden terwijl WeAreImpact er wél mag posten (met toestemming).
+    """
     token, _ = _get_site_data(site_name)
     return bool(token) and token.strip() != ""
 
@@ -196,12 +210,22 @@ async def post_update(text: str, article_url: Optional[str] = None,
     }
 
     if article_url:
+        # LinkedIn kan (met een personal token) GEEN reactie plaatsen, dus de
+        # link blijft in de body — maar WEL met UTM (standaard: meetbaarheid).
+        # Opmerking: het "vastpinnen" van een eerste reactie is op LinkedIn
+        # alleen handmatig mogelijk; de API ondersteunt geen comment-post.
+        _u = article_url
+        if "utm_" not in _u:
+            _slug = (site_name or "").lower().replace(" ", "").replace("-", "").replace("_", "")
+            _camp = "social" if not _slug else f"{_slug}_social"
+            _sep = "&" if "?" in _u else "?"
+            _u = f"{_u}{_sep}utm_source=linkedin&utm_medium=organic&utm_campaign={_camp}"
         content["specificContent"]["com.linkedin.ugc.ShareContent"]["shareMediaCategory"] = "ARTICLE"
         content["specificContent"]["com.linkedin.ugc.ShareContent"]["media"] = [
             {
                 "status": "READY",
                 "description": {"text": commentary[:256]},
-                "originalUrl": article_url,
+                "originalUrl": _u,
             }
         ]
 
