@@ -120,6 +120,28 @@ def _personal_mail_details() -> Dict[str, Dict]:
     }
 
 
+def _social_details() -> Dict[str, Dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT m.id, m.platform, m.author_name, m.author_handle, m.text, "
+            "m.kind, m.parent_url, m.draft_body, m.edited_body, i.project, i.label "
+            "FROM social_inbox_msg m JOIN social_inboxes i ON i.id=m.inbox_id "
+            "WHERE m.status IN ('pending_review','edited')"
+        ).fetchall()
+    return {
+        str(r["id"]): {
+            "platform": r["platform"],
+            "author_name": r["author_name"],
+            "author_handle": r["author_handle"],
+            "text": r["text"],
+            "kind": r["kind"],
+            "parent_url": r["parent_url"],
+            "draft_body": r["edited_body"] or r["draft_body"] or "",
+        }
+        for r in rows
+    }
+
+
 def _outreach_details() -> Dict[str, Dict]:
     from ..prospecting import outreach
     from ..prospecting.router import _svc as leads_svc
@@ -152,6 +174,7 @@ def collect_items() -> List[Dict[str, Any]]:
     inbox = ac.build_inbox()
     mail_d = _mail_details()
     personal_mail_d = _personal_mail_details()
+    social_d = _social_details()
     outreach_d = _outreach_details()
     calendar_d = _calendar_details()
 
@@ -169,6 +192,8 @@ def collect_items() -> List[Dict[str, Any]]:
             detail = mail_d.get(item_id)
         elif kind == "personal_mail":
             detail = personal_mail_d.get(item_id)
+        elif kind == "social":
+            detail = social_d.get(item_id)
         elif kind == "outreach":
             detail = outreach_d.get(item_id)
         elif kind == "calendar":
@@ -303,6 +328,102 @@ def _headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {BRIDGE_TOKEN}"}
 
 
+# ── WhatsApp-overzicht proxy ──────────────────────────────────────────────
+# Het :1250-dashboard draait op SQLite, maar de WhatsApp-agent leeft in het
+# remote-systeem (Neon-Postgres). In plaats van twee DB's te koppelen proxy't
+# dit endpoint naar remote/api/ui.js?op=whatsapp-stats-bridge, dat dezelfde
+# Bearer-token verifieert (resolveBridgeTenant) en de data teruggeeft voor de
+# huidige tenant. Remote blijft de bron van waarheid; géén credentials gedeeld.
+async def whatsapp_stats_proxy() -> Dict[str, Any]:
+    if not enabled():
+        return {"ok": False, "detail": "Bridge niet geconfigureerd (BRIDGE_REMOTE_URL/BRIDGE_TOKEN)"}
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, headers=_headers()) as client:
+            r = await client.get(f"{_base()}/api/ui?op=whatsapp-stats-bridge")
+            r.raise_for_status()
+            return {"ok": True, **r.json()}
+    except Exception as e:
+        logger.error("whatsapp_stats_proxy mislukt: %s", e)
+        return {"ok": False, "detail": f"Remote WhatsApp-stats onbereikbaar: {e}"}
+
+
+# ── Communicatie proxy — volledig overzicht, niet alleen de cijfers ────────
+# Vincent wilde het Communicatie-scherm dat op 22 aug 2026 in Iris Remote
+# kwam (escalaties + nieuwe contacten + alle gesprekken + transcript) ook op
+# :1250 zien, niet alleen op zijn telefoon. Zelfde proxy-patroon als
+# whatsapp_stats_proxy hierboven — remote/api/ui.js kreeg er vijf `-bridge`-
+# varianten bij die met dezelfde BRIDGE_TOKEN verifiëren (resolveBridgeTenant)
+# in plaats van een sessiecookie. Twee schrijvende routes (reply/dismiss)
+# gaan hier ook doorheen: het antwoord verstuurt Vercel zelf naar Meta (het
+# WHATSAPP_TOKEN leeft alleen daar), dus deze machine hoeft geen WhatsApp-
+# credential te hebben om vanaf :1250 te kunnen reageren.
+async def _bridge_get(op: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if not enabled():
+        return {"ok": False, "detail": "Bridge niet geconfigureerd (BRIDGE_REMOTE_URL/BRIDGE_TOKEN)"}
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, headers=_headers()) as client:
+            r = await client.get(f"{_base()}/api/ui", params={"op": op, **(params or {})})
+            r.raise_for_status()
+            return {"ok": True, **r.json()}
+    except Exception as e:
+        logger.error("bridge-proxy '%s' mislukt: %s", op, e)
+        return {"ok": False, "detail": f"Remote '{op}' onbereikbaar: {e}"}
+
+
+async def _bridge_post(op: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not enabled():
+        return {"ok": False, "detail": "Bridge niet geconfigureerd (BRIDGE_REMOTE_URL/BRIDGE_TOKEN)"}
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, headers=_headers()) as client:
+            r = await client.post(f"{_base()}/api/ui?op={op}", json=payload)
+            r.raise_for_status()
+            return {"ok": True, **r.json()}
+    except Exception as e:
+        logger.error("bridge-proxy '%s' mislukt: %s", op, e)
+        return {"ok": False, "detail": f"Remote '{op}' onbereikbaar: {e}"}
+
+
+async def whatsapp_list_proxy() -> Dict[str, Any]:
+    return await _bridge_get("whatsapp-bridge")
+
+
+async def whatsapp_conversations_proxy() -> Dict[str, Any]:
+    return await _bridge_get("whatsapp-conversations-bridge")
+
+
+async def whatsapp_thread_proxy(wa_id: str) -> Dict[str, Any]:
+    return await _bridge_get("whatsapp-thread-bridge", {"wa_id": wa_id})
+
+
+async def whatsapp_reply_proxy(item_id: Any, text: str) -> Dict[str, Any]:
+    return await _bridge_post("whatsapp-reply-bridge", {"id": item_id, "text": text})
+
+
+async def whatsapp_dismiss_proxy(item_id: Any) -> Dict[str, Any]:
+    return await _bridge_post("whatsapp-dismiss-bridge", {"id": item_id})
+
+
+# ── Uitgaand WhatsApp-berichtje (agenda-herinnering, punt 14g-achtig) ──────
+# Het Meta-token leeft alleen in Vercel (Vincents eigen app, zie CLAUDE.md
+# 14e-b) — dus stuurt de lokale machine geen WhatsApp zelf, maar vraagt de
+# remote-kant het te doen: /api/bridge?op=reminder stuurt naar het EERSTE
+# nummer in tenants.whatsapp_allowed_from (Vincent zelf), zelfde route als
+# notifyMe(). Stil (False) als de bridge niet geconfigureerd is — een
+# agenda-reminder die geen WhatsApp kan versturen mag de scheduler-job niet
+# laten crashen, alleen 0 verstuurde herinneringen opleveren.
+async def send_whatsapp_reminder(text: str) -> bool:
+    if not enabled():
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, headers=_headers()) as client:
+            r = await client.post(f"{_base()}/api/bridge?op=reminder", json={"text": text})
+            r.raise_for_status()
+            return bool(r.json().get("ok"))
+    except Exception as e:
+        logger.warning("send_whatsapp_reminder mislukt: %s", e)
+        return False
+
+
 async def sync_once() -> Dict[str, Any]:
     """Eén volledige cyclus: push state → pull besluiten → toepassen → ack."""
     global _last_sync
@@ -344,6 +465,12 @@ async def sync_once() -> Dict[str, Any]:
                 r.raise_for_status()
                 summary["notes"] = len(synced_ids)
         _note_sync_ok()
+
+        # Impact Calculator-leads: eigen try/except binnen impact_leads zelf,
+        # dus een mislukte verrijking/analyse mag de rest van de sync-cyclus
+        # (die net geslaagd is) niet alsnog als 'failed' laten boeken.
+        from . import impact_leads
+        summary["impact_leads"] = await impact_leads.process_pending()
     except Exception as e:
         logger.warning("Bridge-sync mislukt: %s", failures.describe_exception(e))
         summary = {"ok": False, "detail": failures.describe_exception(e)[:300],

@@ -87,6 +87,39 @@ async def _personal_mail_reject(item_id: str, payload: Dict) -> Tuple[bool, str]
     return True, "Concept afgewezen"
 
 
+async def _social_send(item_id: str, payload: Dict) -> Tuple[bool, str]:
+    """Plaatst het (evt. bewerkte) concept op het social-kanaal — via dezelfde
+    router-functie als de knop in de Social-tab (post_reply achter de gate)."""
+    from ..social_inbox.router import approve_msg
+    from fastapi import HTTPException
+    try:
+        result = await approve_msg(int(item_id))
+    except HTTPException as e:
+        return False, str(e.detail)[:300]
+    if result.get("manual"):
+        return True, result.get("detail") or "Geen API-antwoord mogelijk — kopieer en plaats handmatig"
+    return True, "Geplaatst" + (f" ({result['url']})" if result.get("url") else "")
+
+
+async def _social_reject(item_id: str, payload: Dict) -> Tuple[bool, str]:
+    from ..social_inbox.router import reject_msg
+    reject_msg(int(item_id))
+    return True, "Afgewezen"
+
+
+async def _social_edit(item_id: str, payload: Dict) -> Tuple[bool, str]:
+    from ..social_inbox.router import edit_msg
+    text = (payload.get("text") or "").strip()
+    if not text:
+        return False, "Lege tekst — bewerking genegeerd"
+    from fastapi import HTTPException
+    try:
+        edit_msg(int(item_id), {"text": text})
+    except HTTPException as e:
+        return False, str(e.detail)[:300]
+    return True, "Bewerking opgeslagen (blijft ter review staan)"
+
+
 async def _outreach_approve(item_id: str, payload: Dict) -> Tuple[bool, str]:
     # Bewust via de routerfunctie: die bevat de volledige verzendketen
     # (adres-validatie, Outlook-check, funnel-tijdstempel, uitkomst-kaart).
@@ -246,6 +279,19 @@ async def _cmd_helpdesk_run(payload: Dict) -> Tuple[bool, str]:
     import asyncio
     result = await asyncio.to_thread(mail.run_all_mailboxes)
     total = sum(v for v in result.values() if isinstance(v, int))
+    return True, f"{total} nieuw(e) concept(en) klaargezet ter review"
+
+
+async def _cmd_social_run(payload: Dict) -> Tuple[bool, str]:
+    """Social-inboxen langsgaan: reacties/DM's ophalen + concepten schrijven,
+    niets plaatsen. `run_all_inboxes` doet zelf `asyncio.run()` per inbox
+    (zelfde patroon als de scheduler-job), dus via to_thread — anders botst
+    hij met de al lopende event loop van deze bridge-cyclus."""
+    from ...shared import social_inbox as social
+    import asyncio
+    inbox_id = str(payload.get("inbox_id") or "").strip() or None
+    result = await asyncio.to_thread(social.run_all_inboxes, inbox_id)
+    total = sum(v for v in result.values() if isinstance(v, int) and v > 0)
     return True, f"{total} nieuw(e) concept(en) klaargezet ter review"
 
 
@@ -596,6 +642,7 @@ _COMMANDS = {
     "mail_rule": _cmd_mail_rule,
     "mail_archive": _cmd_mail_archive,
     "helpdesk_run": _cmd_helpdesk_run,
+    "social_run": _cmd_social_run,
     "iris_briefing": _cmd_iris_briefing,
     "context_refresh": _cmd_context_refresh,
     "digest": _cmd_digest,
@@ -623,6 +670,9 @@ _HANDLERS = {
     ("mail", "edit"): _mail_edit,
     ("personal_mail", "send"): _personal_mail_send,
     ("personal_mail", "reject"): _personal_mail_reject,
+    ("social", "send"): _social_send,
+    ("social", "reject"): _social_reject,
+    ("social", "edit"): _social_edit,
     ("outreach", "approve"): _outreach_approve,
     ("outreach", "reject"): _outreach_reject,
     ("calendar", "approve"): _calendar_approve,
@@ -633,8 +683,8 @@ _HANDLERS = {
 # hoorde er vanaf het begin bij te staan (build_inbox produceert die kaarten)
 # maar ontbrak — een scheduler-fout was daardoor het enige item op de telefoon
 # waarvan zelfs 'Wegklikken' een fout gaf.
-_DISMISSABLE = {"content", "mail", "personal_mail", "outreach", "calendar", "goal", "task",
-                "error", "vacancies", "leads", "linkbuilding", "scheduler"}
+_DISMISSABLE = {"content", "mail", "personal_mail", "social", "outreach", "calendar", "goal",
+                "task", "error", "vacancies", "leads", "linkbuilding", "scheduler"}
 
 
 async def apply_decision(decision: Dict[str, Any]) -> Tuple[bool, str]:

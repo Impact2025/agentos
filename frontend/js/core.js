@@ -22,21 +22,44 @@ function apertureMark(size, cls) {
 const PROJECTS = ['WeAreImpact', 'IctusGo', 'Pootgelukkig', 'BewaardVoorJou', 'Kappersassistent', 'DatingAssistent', 'Finance Expert', 'Bijeen', 'Brickme', 'Vrijwilligersmatch', 'Skillkaart', 'Steentjeapp', 'Zorgblik', 'Teambuildingmetimpact', 'Daar'];
 const COLORS = { WeAreImpact: ['from-indigo-500 to-indigo-600','indigo'], Pootgelukkig: ['from-emerald-500 to-emerald-600','emerald'], BewaardVoorJou: ['from-amber-500 to-amber-600','amber'], Kappersassistent: ['from-violet-500 to-violet-600','violet'], DatingAssistent: ['from-red-500 to-red-600','red'], 'Finance Expert': ['from-rose-500 to-rose-600','rose'], Bijeen: ['from-cyan-500 to-cyan-600','cyan'], Brickme: ['from-orange-500 to-orange-600','orange'], Vrijwilligersmatch: ['from-teal-500 to-teal-600','teal'], Skillkaart: ['from-pink-500 to-pink-600','pink'], Steentjeapp: ['from-sky-500 to-sky-600','sky'], Zorgblik: ['from-lime-500 to-lime-600','lime'], Teambuildingmetimpact: ['from-amber-500 to-amber-600','amber'], IctusGo: ['from-cyan-700 to-emerald-600','emerald'] };
 const DESCS = { WeAreImpact: 'AI en innovatie voor zorg, welzijn en gemeenten', Pootgelukkig: 'Adoptieplatform voor asieldieren', BewaardVoorJou: 'Digitaal levensboek voor 65-plussers', Kappersassistent: 'Project kappersbranche (in opstart)', DatingAssistent: 'AI dating coach & datingadvies', 'Finance Expert': 'Financiele rapportage en analyse', Bijeen: 'Sociale verbinding & bijeenkomsten', Brickme: 'Bouw & constructie', Vrijwilligersmatch: 'Vrijwilligers matching platform', Skillkaart: 'Vaardigheden & competenties', Steentjeapp: 'Mobiele app Steentjebijsteentje', Zorgblik: 'Zorginnovatie & inzicht', Teambuildingmetimpact: 'Bedrijfsvrijwilligerswerk, impact days & LEGO Serious Play', IctusGo: 'GPS teambuilding met sociale impact (Hoofddorp/Schiphol)' };
-const TABS = ['Dashboard', 'Agenten', 'Postvak', 'Kansen', 'Optimalisatie', 'GEO', 'Wachtrij', 'Concurrentie', 'Radar', 'Doelen', 'Geheugen', 'Leads', 'Links', 'Opdrachten', 'Technisch', 'Activiteit', 'Social Creatie', 'Omni', 'Gauntlet', 'Facebook', 'Helpdesk', 'Instellingen'];
+// 'SEO Loop' is geen eigen tab meer (22 aug 2026) — de maandelijkse KPI-loop
+// is nu een sectie ónderaan Optimalisatie i.p.v. een los scherm, want beide
+// beantwoordden dezelfde vraag ("welke bestaande pagina verdient aandacht")
+// met een andere tijdshorizon. Zie renderOptimalisatieTab in tabs-memory.js.
+const TABS = ['Dashboard', 'Agenten', 'Postvak', 'Kansen', 'Optimalisatie', 'GEO', 'Wachtrij', 'Prestaties', 'Radar', 'Doelen', 'Geheugen', 'Leads', 'Links', 'Opdrachten', 'Technisch', 'Activiteit', 'Social Creatie', 'Omni', 'Gauntlet', 'Facebook', 'Helpdesk', 'WhatsApp', 'Agenda', 'Instellingen'];
 // Menu-iconen. Bewust één monochrome familie (geometrische vormen + pijlen) en
 // géén emoji: emoji krijgen op Windows een eigen kleur en een eigen optische
 // maat, waardoor een menu van zeventien regels zeventien verschillende hoogtes
 // krijgt. Tot 10 aug 2026 stonden hier losse hoofdletters ('D', 'K', 'Q') —
 // leesbaar als afkorting náást het woord dat er al stond, dus ruis; en
 // 'Social Creatie' en 'Instellingen' deelden allebei de 'S'.
-const TAB_ICONS = { Dashboard: '▦', Agenten: '⌘', Postvak: '✉︎', Kansen: '◎', Optimalisatie: '↗', GEO: '◉', Wachtrij: '◷', Concurrentie: '⧉', Radar: '✦', Doelen: '◉', Geheugen: '❖', Leads: '⊕', Links: '⇄', Opdrachten: '▤', Technisch: '◫', Activiteit: '⟳', 'Social Creatie': '◐', Omni: '⬡', Gauntlet: '⛓', Facebook: 'ⓕ', Helpdesk: '↩', Instellingen: '⚙︎', Health: '♥' };
+const TAB_ICONS = { Dashboard: '▦', Agenten: '⌘', Postvak: '✉︎', Kansen: '◎', Optimalisatie: '↗', GEO: '◉', Wachtrij: '◷', Prestaties: '⧉', Radar: '✦', Doelen: '◉', Geheugen: '❖', Leads: '⊕', Links: '⇄', Opdrachten: '▤', Technisch: '◫', Activiteit: '⟳', 'Social Creatie': '◐', Omni: '⬡', Gauntlet: '⛓', Facebook: 'ⓕ', Agenda: '▤', Helpdesk: '↩', WhatsApp: '✆', Instellingen: '⚙︎', Health: '♥' };
 // Zijbalk-indeling voor desktop: dezelfde 19 tabs, geclusterd per categorie
 // i.p.v. als platte lijst — puur een presentatie-groepering, geen eigen
 // gating (die blijft volledig bij TAB_DOMAIN/visibleTabs()).
+// 'Communicatie' heeft twee subsecties (Mail / Social Media) i.p.v. een platte
+// tabs-lijst — dat verduidelijkt dat Postvak/Helpdesk over mail gaan en Social
+// Creatie/Facebook over social, in plaats van alles onder één "Postvak"-label
+// te stoppen terwijl Social Creatie eigenlijk bij Content & SEO stond (22 aug 2026).
 const NAV_GROUPS = [
-  { label: 'Overzicht', tabs: ['Dashboard'] },
-  { label: 'Postvak', tabs: ['Postvak', 'Helpdesk'] },
-  { label: 'Content & SEO', tabs: ['Kansen', 'Optimalisatie', 'Wachtrij', 'Concurrentie', 'Technisch', 'Radar', 'Social Creatie', 'Facebook', 'Omni'] },
+  { label: 'Overzicht', tabs: ['Dashboard', 'Agenda'] },
+  { label: 'Communicatie', subs: [
+    { label: 'Mail', tabs: ['Postvak', 'Helpdesk'] },
+    { label: 'Social Media', tabs: ['Social Creatie', 'Facebook'] },
+    { label: 'WhatsApp', tabs: ['WhatsApp'] },
+  ] },
+  // Drie subsecties naar wat je ermee doet i.p.v. een platte lijst van acht
+  // (22 aug 2026, zelfde reden als de Communicatie-groep): Werkstroom is waar
+  // je dagelijks/wekelijks een besluit neemt, Inzicht is bekijken zonder dat
+  // er meestal een knop bij hoort, Verkenning is los gereedschap dat je op
+  // eigen initiatief pakt. 'Prestaties' (was 'Concurrentie') toont eigen
+  // trends/PageSpeed/keyword-gaps — geen concurrentiedata, dus de oude naam
+  // beloofde iets wat de tab niet gaf.
+  { label: 'Content & SEO', subs: [
+    { label: 'Werkstroom', tabs: ['Kansen', 'Optimalisatie', 'Wachtrij'] },
+    { label: 'Inzicht', tabs: ['Prestaties', 'Technisch'] },
+    { label: 'Verkenning', tabs: ['Radar', 'Omni'] },
+  ] },
   { label: 'Groei', tabs: ['Doelen', 'Leads', 'Links', 'Opdrachten'] },
   { label: 'Systeem', tabs: ['Agenten', 'Gauntlet', 'Geheugen', 'Activiteit', 'Health', 'Instellingen'] },
 ];
@@ -46,7 +69,7 @@ const NAV_GROUPS = [
 // Postvak hoort bij 'outlook_legacy' (Graph/OAuth), niet bij 'mail' — dat laatste
 // is het generieke POP3-mailboxen-domein achter de Helpdesk-tab, een ander
 // systeem met een andere auth-vorm (zie domains/outlook/service.py-docstring).
-const TAB_DOMAIN = { Agenten: 'agentctl', Postvak: 'outlook_legacy', Kansen: 'seo', Optimalisatie: 'seo', Wachtrij: 'publish', Concurrentie: 'seo', Radar: 'radar', Doelen: 'goal', Leads: 'prospecting', Links: 'linkbuilding', Opdrachten: 'vacancies', Technisch: 'seo', 'Social Creatie': 'social', Omni: 'seo', Gauntlet: 'pipeline', Helpdesk: 'mail' };
+const TAB_DOMAIN = { Agenten: 'agentctl', Postvak: 'outlook_legacy', Kansen: 'seo', Optimalisatie: 'seo', Wachtrij: 'publish', Prestaties: 'seo', Radar: 'radar', Doelen: 'goal', Leads: 'prospecting', Links: 'linkbuilding', Opdrachten: 'vacancies', Technisch: 'seo', 'Social Creatie': 'social', Omni: 'seo', Gauntlet: 'pipeline', Helpdesk: 'mail' };
 // Eén check voor "hoort dit domein bij deze instance" — gebruikt door de
 // tab-filter én door de Control Room-secties die verwijzen naar routes die op
 // een beperkte instance niet gemonteerd zijn (Linkbuilding, Strategist/Doelen).
@@ -54,10 +77,19 @@ function domainOn(d) {
   return !window.__enabledDomains || window.__enabledDomains.indexOf(d) >= 0;
 }
 function visibleTabs() {
-  return TABS.filter(function(t) { return !TAB_DOMAIN[t] || domainOn(TAB_DOMAIN[t]); });
+  return TABS.filter(function(t) {
+    if (!TAB_DOMAIN[t] || domainOn(TAB_DOMAIN[t])) {
+      // Agenda is een WeAreImpact-only tab: verberg voor andere projecten.
+      if (t === 'Agenda' && currentProject && currentProject !== 'WeAreImpact') return false;
+      return true;
+    }
+    return false;
+  });
 }
 
 let currentProject = null, currentTab = 'Dashboard', weSuggestions = [], oppStatusFilter = 'open', scanningInProgress = false, chartInstances = {};
+// Agenda-tab: onthoud welke week getoond wordt (zodat navigeren niet terugspringt).
+let _agendaWeekStart = null;
 let _agentStatusTimer = null;
 
 // ── Recent Activity Logs (Vercel-stijl) ────────────────────────────
@@ -148,10 +180,19 @@ function startAgentStatusPoll() {
 function stopAgentStatusPoll() {
   if (_agentStatusTimer) { clearInterval(_agentStatusTimer); _agentStatusTimer = null; }
 }
+var _agentStatusInFlight = false;
 function pollAgentStatus() {
   // Eén call naar de geconsolideerde healthcheck geeft backend-gezondheid,
   // tokengebruik en actieve-status in één keer — geen 2 aparte fetches meer.
+  // Bewaakt tegen overlap: startAgentStatusPoll() vuurt bij élke tabwissel
+  // binnen een project meteen een poll af (naast de 15s-interval), en
+  // /api/healthcheck kan traag zijn (externe providers). Zonder deze guard
+  // stapelen snel doorklikken meerdere gelijktijdige 8-9s-requests op —
+  // gemeten: 4 tegelijk na één projectwissel (20 aug 2026).
+  if (_agentStatusInFlight) return;
+  _agentStatusInFlight = true;
   fetch('/api/healthcheck').then(function(r){return r.json();}).catch(function(){return null;}).then(function(h){
+    _agentStatusInFlight = false;
     if (!h) return;
     var b = h.backend || {};
     var active = b.active || '?';
@@ -192,21 +233,30 @@ function pollAgentStatus() {
       + ' · ' + escHtml(extra)
       + (pct != null ? ' · ' + pct + '% tokens' : '') + '</span>';
 
-    // Mislukte doelen tonen nog steeds de Oplossen-knop (bestaand gedrag).
-    var failed = (h.active_work && h.active_work.goals) ? h.active_work.goals.filter(function(g){return g.status==='failed';}).length : 0;
+    // Vastgelopen doelen tonen de Oplossen-knop. `active_work.goals` bevat
+    // alléén status running/draft/paused (20 aug 2026 nagemeten) — 'failed' en
+    // 'partial' zitten daar per query nooit in, dus telde deze check altijd 0
+    // en verscheen de knop nooit, ook niet als de badge "4 vastgelopen doel(en)"
+    // toonde. `bugs.stalled_goals` is exact dezelfde bron als die badge-tekst
+    // (health/router.py:_status_reden) — failed én partial.
+    var stalled = (h.bugs && h.bugs.stalled_goals) ? h.bugs.stalled_goals.length : 0;
     var resEl = document.getElementById('resolve-failed-btn-container');
-    if (resEl) resEl.innerHTML = failed ? '<button onclick="resolveAllFailed()" style="padding:3px 10px;background:#ef4444;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">\u{1F9E0} Oplossen</button>' : '';
+    if (resEl) resEl.innerHTML = stalled ? '<button onclick="resolveAllFailed()" style="padding:3px 10px;background:#ef4444;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">\u{1F9E0} Oplossen (' + stalled + ')</button>' : '';
   });
 }
 
 // ── Resolve all failed goals ────────────────────────────────────────
 function resolveAllFailed() {
-  if (!confirm('Alle mislukte doelen resetten en opnieuw proberen met AI?')) return;
+  if (!confirm('Alle vastgelopen doelen (mislukt + deels voltooid) resetten en opnieuw proberen met AI?')) return;
   var btn = document.querySelector('[onclick="resolveAllFailed()"]');
   if (btn) { btn.disabled = true; btn.textContent = 'Bezig...'; }
+  // status='partial' hoort er bewust bij: /api/goals/retry-failed accepteert
+  // 'failed' én 'partial' (goal/service.py:retry_failed_goal) en dat is precies
+  // wat de badge-teller (bugs.stalled_goals) meetelt — anders lost deze knop
+  // niet op wat hij belooft op te lossen.
   fetch('/api/goals?limit=50').then(function(r){return r.json();}).then(function(goals){
-    var failed = goals.filter(function(g){return g.status==='failed';});
-    if (!failed.length) { alert('Geen mislukte doelen meer.'); pollAgentStatus(); return; }
+    var failed = goals.filter(function(g){return g.status==='failed' || g.status==='partial';});
+    if (!failed.length) { alert('Geen vastgelopen doelen meer.'); pollAgentStatus(); return; }
     var done = 0;
     failed.forEach(function(g){
       fetch('/api/goals/retry-failed', {
@@ -239,6 +289,31 @@ function resolveAllFailed() {
 }
 
 function escHtml(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// ── Toast — vervangt een alert() voor niet-blokkerende bevestigingen/fouten.
+// Blijft zichtbaar (geen weg-te-klikken popup) en verdwijnt vanzelf na 5s.
+function showToast(message, tone) {
+  var container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-width:360px';
+    document.body.appendChild(container);
+  }
+  var colors = {
+    ok: {bg: '#f0fdf4', border: '#86efac', fg: '#166534'},
+    error: {bg: '#fef2f2', border: '#fca5a5', fg: '#991b1b'},
+    info: {bg: '#eff6ff', border: '#93c5fd', fg: '#1e40af'},
+  };
+  var c = colors[tone] || colors.info;
+  var el = document.createElement('div');
+  el.style.cssText = 'background:' + c.bg + ';border:1px solid ' + c.border + ';color:' + c.fg +
+    ';padding:10px 14px;border-radius:8px;font-size:12px;line-height:1.4;box-shadow:0 2px 8px rgba(0,0,0,0.1);cursor:pointer';
+  el.textContent = message;
+  el.onclick = function(){ el.remove(); };
+  container.appendChild(el);
+  setTimeout(function(){ el.remove(); }, 5000);
+}
 
 // POST met JSON-body. De `detail` uit een FastAPI-HTTPException wordt de
 // foutmelding, zodat de gebruiker leest wat er stuk is ("Websearch niet
@@ -371,10 +446,11 @@ function route() {
     renderHome(main);
   }
   else if (currentTab === 'Chat') renderChat(main);
+  else if (currentTab === 'Voice') renderVoiceTab(main);
   else renderProjectView(main);
 }
 function selectProject(name) { currentProject = name; currentTab = 'Dashboard'; weSuggestions = []; history.pushState(null, '', '#project=' + encodeURIComponent(name)); route(); }
 function goHome() { currentProject = null; currentTab = 'Dashboard'; weSuggestions = []; history.pushState(null, '', '#'); route(); }
-function switchView(view) { if (view === 'home') { goHome(); return; } if (view === 'chat') { currentTab = 'Chat'; route(); return; } currentTab = view; route(); }
+function switchView(view) { if (view === 'home') { goHome(); return; } if (view === 'chat') { currentTab = 'Chat'; route(); return; } if (view === 'voice') { currentTab = 'Voice'; route(); return; } currentTab = view; route(); }
 window.addEventListener('popstate', route);
 

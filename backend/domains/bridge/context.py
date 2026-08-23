@@ -52,6 +52,7 @@ TZ = ZoneInfo("Europe/Amsterdam")
 # TTL per sectie, in seconden. Mail beweegt het snelst, GA het traagst (en is
 # het duurst om op te halen — GA4 levert bovendien pas cijfers t/m gisteren).
 TTL_MAIL = 5 * 60
+TTL_SOCIAL = 10 * 60
 TTL_AGENDA = 15 * 60
 TTL_ANALYTICS = 6 * 60 * 60
 TTL_SEO = 60 * 60
@@ -302,6 +303,67 @@ def build_mail() -> Dict[str, Any]:
     }
 
 
+# ── Social ──────────────────────────────────────────────────────────────────
+
+def build_social() -> Dict[str, Any]:
+    """Wat er op de social-kanalen omgaat — concepten die wachten, en welke
+    kanalen zichzelf gepauzeerd hebben na een verlopen token (zie
+    `shared/social_inbox.py:run_inbox`). Geen inboxen = geen kaart: dit is een
+    feature die per klant opt-in aangezet wordt, dus 'off' hier betekent 'nog
+    niet ingesteld', niet 'kapot'."""
+    with get_conn() as conn:
+        inboxes = conn.execute(
+            "SELECT id, project, platform, label, enabled FROM social_inboxes"
+        ).fetchall()
+        if not inboxes:
+            return {"status": "off", "reason": "Geen social-inboxen ingesteld"}
+        pending = conn.execute(
+            "SELECT m.id, m.platform, m.author_name, m.author_handle, m.text, "
+            "m.kind, m.draft_body, m.created_at, i.project "
+            "FROM social_inbox_msg m JOIN social_inboxes i ON i.id=m.inbox_id "
+            "WHERE m.status IN ('pending_review','edited') "
+            "ORDER BY m.created_at DESC LIMIT 20"
+        ).fetchall()
+        oldest = conn.execute(
+            "SELECT m.created_at FROM social_inbox_msg m "
+            "WHERE m.status IN ('pending_review','edited') "
+            "ORDER BY m.created_at ASC LIMIT 1"
+        ).fetchone()
+
+    oldest_days = None
+    if oldest and oldest["created_at"]:
+        try:
+            oldest_days = (datetime.now(timezone.utc) - datetime.fromisoformat(
+                str(oldest["created_at"]).replace("Z", "+00:00"))).days
+        except (ValueError, TypeError):
+            oldest_days = None
+
+    return {
+        "channels": [
+            {"id": r["id"], "project": r["project"], "platform": r["platform"],
+             "label": r["label"], "enabled": bool(r["enabled"])}
+            for r in inboxes
+        ],
+        # Een kanaal dat zichzelf uitzette (verlopen token) is geen rustig
+        # kanaal — zonder dit apart te tonen leest "0 nieuwe berichten" als
+        # "alles rustig" in plaats van "we luisteren niet meer" (zelfde regel
+        # als de mail-token-check bij het Postvak).
+        "paused_channels": [
+            {"project": r["project"], "platform": r["platform"], "label": r["label"]}
+            for r in inboxes if not r["enabled"]
+        ],
+        "pending": len(pending),
+        "oldest_pending_days": oldest_days,
+        "recent": [
+            {"id": r["id"], "platform": r["platform"], "project": r["project"],
+             "author": r["author_name"] or r["author_handle"] or "iemand",
+             "kind": r["kind"], "text": (r["text"] or "")[:200],
+             "draft": (r["draft_body"] or "")[:200], "created_at": r["created_at"]}
+            for r in pending
+        ],
+    }
+
+
 # ── Agenda ──────────────────────────────────────────────────────────────────
 
 # Een werkdag loopt van 08:00 tot 18:00 — buiten die uren is "vrij" geen gat
@@ -451,6 +513,20 @@ async def build_agenda() -> Dict[str, Any]:
             next_up = row
             break
 
+    # Privacy-veilige vrij/bezet-reeks voor de komende 8 dagen — alleen
+    # start/eind, nooit een titel of deelnemer. Dit voedt straks óók
+    # klant-Iris (zie build_helpdesk): een klant die naar een afspraak vraagt
+    # mag zien wanneer Vincent tijd heeft, nooit waaróver zijn agenda gaat.
+    free_by_day = []
+    for i in range(8):
+        d = day0 + timedelta(days=i)
+        ds = d.date().isoformat()
+        day_events = [r for r in (today if ds == today_str else upcoming) if r["date"] == ds]
+        free_by_day.append({
+            "date": ds,
+            "free": _free_gaps(day_events, d, not_before=now if ds == today_str else None),
+        })
+
     return {
         "today": today,
         "today_date": today_str,
@@ -461,6 +537,7 @@ async def build_agenda() -> Dict[str, Any]:
         "free_tomorrow": _free_gaps(
             [r for r in upcoming if r["date"] == (day0 + timedelta(days=1)).date().isoformat()],
             day0 + timedelta(days=1)),
+        "free_by_day": free_by_day,
         "pending_proposals": pending,
         # Onbereikbare agenda's zijn geen detail: ze betekenen dat dit
         # overzicht niet compleet is.
@@ -540,6 +617,69 @@ def build_seo() -> Dict[str, Any]:
         except Exception:  # noqa: BLE001
             logger.warning("Bridge-context: SEO voor %s mislukt", site["id"], exc_info=True)
     return {"sites": out}
+
+
+# ── Klantkennis voor WhatsApp-klantgesprekken ───────────────────────────────
+
+def build_helpdesk(free_by_day: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """Per-project kennis die Iris nodig heeft om een klánt (niet Vincent) via
+    WhatsApp te woord te staan: merkprofiel, CTA's, live pagina's — zelfde
+    lagen als de mail-helpdesk (`mail/knowledge.py`), maar losgekoppeld van
+    een mailbox. Er is bij WhatsApp geen vaste afzendbox om 'geleerde Q&A' op
+    te scopen, dus die laag ontbreekt hier bewust; de rest is identiek genoeg
+    om apart op te bouwen in plaats van `mail.knowledge` te importeren (dat
+    zou de bridge aan mailbox-interne structuur koppelen voor iets dat er
+    niets mee te maken heeft).
+
+    Een site zonder profiel-tekst levert bewust niets op — zelfde regel als
+    `cold_start_opportunities`: een leeg profiel is geen kans, hier geen kennis
+    om een klant tegen aan te laten praten.
+
+    `free_by_day` komt van `build_agenda()` (al berekend, geen dubbele
+    Google-call) en bevat UITSLUITEND start/eind van vrije blokken — geen
+    titel, geen deelnemer. Dat is met opzet: klant-Iris mag een afspraak
+    voorstellen ("Vincent heeft morgen 14:00 vrij"), maar nooit zien wáár
+    Vincent de rest van zijn dag mee vult. Het voorstel zelf gaat, net als
+    wanneer Vincent het zelf via WhatsApp vraagt, als `calendar_add`-commando
+    de bestaande review-gate in (`calendar_proposals`, `pending_review`) —
+    er wordt nooit automatisch geboekt, ook niet namens een klant.
+    """
+    with get_conn() as conn:
+        sites = conn.execute(
+            "SELECT id, name, base_url, profile, ctas FROM sites WHERE TRIM(COALESCE(profile, '')) != ''"
+        ).fetchall()
+        out = []
+        for s in sites:
+            try:
+                ctas = json.loads(s["ctas"] or "[]")
+                ctas = [str(c).strip() for c in ctas if str(c).strip()] if isinstance(ctas, list) else []
+            except (json.JSONDecodeError, TypeError):
+                ctas = []
+            try:
+                pages = conn.execute(
+                    "SELECT title, url FROM published_pages WHERE site_id=? AND url != '' "
+                    "ORDER BY updated_at DESC LIMIT 12", (s["id"],)
+                ).fetchall()
+            except Exception:  # noqa: BLE001
+                pages = []
+            out.append({
+                "project": s["name"],
+                "base_url": (s["base_url"] or "").strip(),
+                "profile": (s["profile"] or "").strip()[:2500],
+                "ctas": ctas[:6],
+                "live_pages": [{"title": p["title"] or p["url"], "url": p["url"]} for p in pages],
+            })
+
+    maker = ""
+    try:
+        from ...shared.vault_reader import VaultReader
+        vr = VaultReader()
+        if vr.is_configured:
+            maker = (vr.get_core_context("WeAreImpact") or "")[:2000]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Bridge-context: helpdesk-vault mislukt: %s", e)
+
+    return {"sites": out, "maker": maker, "free_by_day": free_by_day or []}
 
 
 # ── Google-config voor live agenda/GSC zonder AgentOS ──────────────────────
@@ -704,6 +844,23 @@ def _pulse_mail(mail: Dict, good: List, bad: List) -> None:
                     "why": "Zonder triage kan Iris urgentie niet zien."})
 
 
+def _pulse_social(social: Dict, good: List, bad: List) -> None:
+    if social.get("status") != "ok":
+        return
+    for ch in social.get("paused_channels") or []:
+        bad.append({"area": "social", "severity": "hoog",
+                    "what": f"{ch['project']}: {ch['platform']}-kanaal gepauzeerd (token verlopen)",
+                    "why": "Er komt niets meer binnen totdat het token vernieuwd is."})
+    days = social.get("oldest_pending_days")
+    if days is not None and days >= 3:
+        bad.append({"area": "social", "severity": "midden",
+                    "what": f"Oudste onbeantwoorde social-reactie is {days} dagen oud",
+                    "why": "Een reactie die te lang blijft liggen voelt genegeerd."})
+    pending = social.get("pending") or 0
+    if pending and not days:
+        good.append({"area": "social", "what": f"{pending} concept(en) klaar ter review"})
+
+
 def _pulse_agenda(agenda: Dict, good: List, bad: List) -> None:
     if agenda.get("status") != "ok":
         return
@@ -763,14 +920,14 @@ def _pulse_seo(seo: Dict, good: List, bad: List) -> None:
         if clicks is None:
             continue
         if clicks <= -10:
-            bad.append({"area": "seo", "severity": "midden",
+            bad.append({"area": "seo", "project": site["name"], "severity": "midden",
                         "what": f"{site['name']}: {abs(clicks)} klikken minder (week-op-week)",
                         "why": "Dalende klikken vóór dalende posities = verlies van zichtbaarheid."})
         elif clicks >= 10:
-            good.append({"area": "seo",
+            good.append({"area": "seo", "project": site["name"],
                          "what": f"{site['name']}: {clicks} klikken meer (week-op-week)"})
         for faller in (site.get("fallers") or [])[:1]:
-            bad.append({"area": "seo", "severity": "laag",
+            bad.append({"area": "seo", "project": site["name"], "severity": "laag",
                         "what": f"{site['name']}: pagina zakt weg",
                         "detail": str(faller.get("page_url") or "")[:120],
                         "why": "Wegzakkende pagina's zijn de goedkoopste winst — refresh i.p.v. nieuw."})
@@ -788,6 +945,7 @@ def build_pulse(sections: Dict[str, Dict]) -> Dict[str, Any]:
     good: List[Dict] = []
     bad: List[Dict] = []
     _pulse_mail(sections.get("mail") or {}, good, bad)
+    _pulse_social(sections.get("social") or {}, good, bad)
     _pulse_agenda(sections.get("agenda") or {}, good, bad)
     _pulse_analytics(sections.get("analytics") or {}, good, bad)
     _pulse_seo(sections.get("seo") or {}, good, bad)
@@ -837,6 +995,7 @@ async def build_context() -> Dict[str, Any]:
     eigen status, en één kapotte integratie mag de rest niet meenemen."""
     sections = {
         "mail": await _section("mail", TTL_MAIL, build_mail),
+        "social": await _section("social", TTL_SOCIAL, build_social),
         "agenda": await _section("agenda", TTL_AGENDA, build_agenda),
         "analytics": await _section("analytics", TTL_ANALYTICS, build_analytics),
         "seo": await _section("seo", TTL_SEO, build_seo),
@@ -869,6 +1028,17 @@ async def build_context() -> Dict[str, Any]:
     orch_sec.setdefault("status", "ok")
     orch_sec["generated_at"] = _iso(_now())
     sections["orchestrator"] = orch_sec
+
+    try:
+        agenda_sec = sections.get("agenda") or {}
+        free_by_day = agenda_sec.get("free_by_day") if agenda_sec.get("status") == "ok" else None
+        helpdesk_sec = build_helpdesk(free_by_day)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Bridge-context: helpdesk-sectie mislukt: %s", e)
+        helpdesk_sec = {"status": "error", "error": str(e)[:200]}
+    helpdesk_sec.setdefault("status", "ok")
+    helpdesk_sec["generated_at"] = _iso(_now())
+    sections["helpdesk"] = helpdesk_sec
 
     sections["pulse"] = build_pulse(sections)
     return sections
