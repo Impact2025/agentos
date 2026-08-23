@@ -61,6 +61,7 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from ...shared.database import get_conn
 from ...shared.outcomes import log_outcome
+from ...shared.projects import squash_project
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +284,103 @@ def _check_slug_onveilig() -> List[Bevinding]:
                     f"dus deze pagina geeft vrijwel zeker 404 "
                     f"(artikel: '{(r['title'] or '')[:50]}')"),
             project=_project_van_site(r["site_id"]),
+        ))
+    return uit
+
+
+def _check_werkbon_in_de_wachtrij() -> List[Bevinding]:
+    """Staat er werk klaar dat naar zichzélf verwijst in plaats van naar een artikel?
+
+    Incident 15 aug 2026: de Wachtrij toonde "Artikel klaar (SEO 88/100) —
+    goedkeuren publiceert echt op de site" onder de kop "Herschrijf het artikel
+    'Zo vind je als organisatie sneller vrijwilligers' tot wereldklasse
+    SEO-content (1200-1500 woorden)". Het artikel eronder was af en droeg de
+    juiste H1; alleen de titel — en dus de slug, en dus de URL — beschreef de
+    opdracht. 179 van de 188 wachtende items hadden die vorm.
+
+    Waarom dit een eigen toets is en niet op `interne_taakopdracht_live` kan
+    meeliften: die kijkt naar wat al gepubliceerd IS. Hier is de hele winst dat
+    je het ziet vóórdat een mens op Publiceer drukt — daarna is er een URL in de
+    wereld en is 301-en het enige antwoord. Vandaar `pending_review` en niet
+    `published`, en vandaar blokkerend ondanks dat er nog niets buiten staat:
+    één klik scheidt dit van een werkbon als webpagina.
+
+    De toets hergebruikt `is_internal_document` — hetzelfde antwoord op dezelfde
+    vraag als de publicatiegate, want twee oordelen over "is dit publiceerbaar?"
+    is precies hoe ze uit elkaar lopen.
+    """
+    from ..publish.content_pipeline import is_internal_document
+
+    uit: List[Bevinding] = []
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, site_id, title, content_type FROM content_jobs "
+            "WHERE status = 'pending_review'"
+        ).fetchall()
+    for r in rijen:
+        # Alleen wat als pagina bedoeld is: een 'hook' of LinkedIn-tekst krijgt
+        # geen URL en mag een opdracht als werktitel houden.
+        if (r["content_type"] or "blog") != "blog":
+            continue
+        reden = is_internal_document(r["title"] or "")
+        if not reden:
+            continue
+        uit.append(Bevinding(
+            subject=f"job:{r['id']}",
+            detail=(f"wacht op goedkeuring als artikel, maar de titel is geen kop: "
+                    f"'{(r['title'] or '')[:70]}' — {reden}"),
+            project=_project_van_site(r["site_id"]),
+        ))
+    return uit
+
+
+_VERZONNEN_AUTORITEIT_RE = re.compile(
+    r"\bin mijn (?:\d+\s+)?jaren? als\b"
+    r"|\bals (?:directeur|oprichter|eigenaar|ceo|manager|coördinator|voorzitter)\s+van\b"
+    r"|\bmet (?:mijn |onze )?\d+\+?\s*jaar(?:en)?\s+ervaring als\b",
+    re.IGNORECASE,
+)
+
+
+def _check_merkbrief_verkeerd_project() -> List[Bevinding]:
+    """Schrijft een niet-WeAreImpact artikel alsof het Vincent zelf is?
+
+    Incident 19 aug 2026: `brand_brief.get_brand_brief()` werd zonder project
+    aangeroepen en dus voor élke Gauntlet-run gebruikt — ook Bijeen,
+    Pootgelukkig, LiefdeVoorIedereen en TeambuildingMetImpact. De brief zegt
+    letterlijk "SCHRIJF ALS VINCENT VAN MUNSTER, eerste persoon", en zonder een
+    echte biografie voor het betreffende project verzon het model er zelf een
+    bij: een Bijeen-artikel opende met "in mijn jaren als directeur van
+    Stichting de Baan draaide ik meer dan veertig van die dagen, met 180+
+    vrijwilligers... 70.000+ geluksmomenten" — een naam, functie en trackrecord
+    die niet bestaan. De code-fix scoped de brief nu op project
+    (`get_brand_brief(project)`); deze toets is de tweede helft — hij vindt wat
+    er vóór de fix al de Wachtrij in is geglipt én vangt een toekomstige
+    regressie (een nieuwe caller die de oude, ongescopeerde aanroep terugzet).
+    Deterministisch: eerste-persoon functietitel-bij-organisatie-patronen,
+    zonder LLM, want een fabricatie-detector die zelf een gateway nodig heeft
+    valt stil precies wanneer je hem nodig hebt.
+    """
+    uit: List[Bevinding] = []
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT cj.id, cj.site_id, cj.title, cj.blog_html, s.name AS project "
+            "FROM content_jobs cj JOIN sites s ON s.id = cj.site_id "
+            "WHERE cj.status IN ('pending_review', 'published') "
+            "AND COALESCE(cj.blog_html, '') != ''"
+        ).fetchall()
+    for r in rijen:
+        if squash_project(r["project"] or "") == "weareimpact":
+            continue
+        m = _VERZONNEN_AUTORITEIT_RE.search(r["blog_html"] or "")
+        if not m:
+            continue
+        uit.append(Bevinding(
+            subject=f"job:{r['id']}",
+            detail=(f"'{(r['title'] or '')[:60]}' claimt persoonlijke autoriteit "
+                    f"('{m.group(0)}') op een project waar geen echte biografie "
+                    f"voor beschikbaar is — waarschijnlijk verzonnen."),
+            project=r["project"] or "",
         ))
     return uit
 
@@ -633,6 +731,53 @@ def _check_kans_vastgelopen() -> List[Bevinding]:
     return uit
 
 
+def _check_goal_vastgelopen_zonder_voortgang() -> List[Bevinding]:
+    """Een 'running' goal waar niets meer aan te wachten valt.
+
+    20 aug 2026: 'G2 — AEO-contentmotor WeAreImpact' (en twee zusje-goals voor
+    andere projecten) stonden al sinds 13 aug op status='running', met een fase
+    waarin alle vier de publicatietaken op 'failed'/'aborted' eindigden (elk
+    artikel haalde de kwaliteitsgate niet) en géén enkele op 'completed'. De
+    executie-lus markeert een fase alleen als 'completed' als er minstens één
+    voltooide taak in zit; bij nul completed taken bleef de fase openstaan en
+    de goal draaide zijn while-lus voor altijd rond zonder iets te doen —
+    permanent 'running', zonder voortgang. Dat is dubbel onzichtbaar: een
+    lopend doel wordt bewust gedempt in het Actiecentrum (7c-bis, "een lopend
+    doel is een status, geen actie"), en zelfherstel (`iris/selfheal.py`)
+    opereert op status='error', niet op een oneindige lus die zichzelf nooit
+    als fout meldt. De executie-lus markeert zo'n fase nu 'failed' zodat de
+    goal kan doorlopen naar 'partial' (`goal/service.py::_execution_loop`) —
+    deze invariant vangt wat er vóór die fix al vastzat, en een toekomstige
+    variant van dezelfde dood.
+    """
+    with get_conn() as conn:
+        goals = conn.execute(
+            "SELECT id, title, project, updated_at FROM goals WHERE status = 'running'"
+        ).fetchall()
+        uit: List[Bevinding] = []
+        for g in goals:
+            rows = conn.execute(
+                "SELECT status FROM goal_tasks WHERE goal_id = ?", (g["id"],)
+            ).fetchall()
+            if not rows:
+                continue
+            statussen = {r["status"] for r in rows}
+            # Nog iets te doen of nog iets bezig — geen deadlock, gewoon werk.
+            if statussen & {"pending", "ready", "running"}:
+                continue
+            # Alles is terminaal (completed/failed/aborted) maar de goal zelf
+            # staat nog op 'running': de lus heeft nergens meer iets aan te
+            # wachten en komt hier nooit meer uit vanzelf.
+            uit.append(Bevinding(
+                subject=f"goal:{g['id']}",
+                detail=(f"'{g['title']}' staat op 'running' maar elke taak is al "
+                        f"afgerond (completed/failed/aborted) — de goal-lus zit "
+                        f"vast en zal zichzelf niet meer afsluiten"),
+                project=g["project"] or "",
+            ))
+    return uit
+
+
 # Onder dit aantal gepubliceerde artikelen zegt 'geen eigen bewijs' niets over
 # de site: dan is er simpelweg nog nauwelijks gepubliceerd.
 _BEWIJS_MIN_ARTIKELEN = 3
@@ -871,7 +1016,7 @@ def _check_voorspelling_niet_afgerekend() -> List[Bevinding]:
 # en een artefact eisen zou van deze invariant een ruisgenerator maken.
 _ARTEFACT_PLICHTIG = (
     "publiceren", "publicatie", "artikel", "content_run", "seo_refresh",
-    "outreach", "linkbuilding",
+    "outreach", "linkbuilding", "agentctl",
 )
 
 
@@ -902,6 +1047,266 @@ def _check_uitkomst_zonder_artefact() -> List[Bevinding]:
     return uit
 
 
+def _check_agentctl_run_zonder_effect() -> List[Bevinding]:
+    """Agent Control's 'Voer allemaal uit' (13 aug 2026) spawnde 13 Gauntlet-
+    runs zonder tool-access; niets in de codebase las het `run_id` ooit terug,
+    dus landde er niets in de Wachtrij of het Actiecentrum — de kern-fout van
+    dit hele bestand, hier zelf gevonden. `agentctl_deploys` + een poller per
+    pijler (agentctl/suggest.py) lossen dat op. Deze toets vangt de regressie
+    waarin de poller zelf sterft — bv. een serverherstart tijdens het pollen,
+    dezelfde asyncio-val die elders in CLAUDE.md staat — en een 'running'-rij
+    voor altijd open laat staan.
+    """
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, run_id, project, pillar, created_at FROM agentctl_deploys "
+            "WHERE status = 'running' AND created_at < datetime('now', '-1 hour')"
+        ).fetchall()
+    return [Bevinding(
+        subject=f"agentctl_deploy:{r['id']}",
+        detail=(f"'{r['pillar']}'-deploy voor {r['project']} (run {r['run_id'] or '-'}) "
+                f"staat sinds {r['created_at']} nog op 'running' — de poller heeft 'm "
+                "nooit afgesloten."),
+        project=r["project"] or "",
+    ) for r in rijen]
+
+
+def _check_pijler_dubbel_ingezet() -> List[Bevinding]:
+    """Iris' briefing (`iris/actions.py:content_run`/`seo_refresh`) en Agent
+    Control se pijler-dispatcher (`agentctl/suggest.py`) zijn twee
+    onafhankelijke besliswegen naar hetzelfde werk — allebei lezen ze dezelfde
+    pijlerscores en allebei mogen ze zelfstandig een contentmotor- of
+    SEO-run starten.
+
+    Incident 22 aug 2026 (gemeten tijdens een architectuur-analyse, vóór het
+    ooit een kaart opleverde): `iris/metrics.py:_content_pillar` telt alleen
+    `status='published'` mee, nooit `pending_review`. Schreef Iris om 06:45 een
+    artikel, dan bleef de content-score van dat project laag — het concept
+    stond pas ter goedkeuring. Om 07:00 zag de scheduler-job `iris_auto_deploy`
+    exact diezelfde pijler nog als de zwakste en startte een tweede, volledige
+    Gauntlet-run voor dezelfde site — het duurste pad in het systeem (zie
+    `orchestrator_teller_teruggezet` voor wat zo'n dubbele weg kan kosten).
+    `iris/pillar_guard.py` is de gedeelde toets die beide mechanismen nu vóór
+    het starten raadplegen; deze invariant bewijst dat de guard het ook echt
+    tegenhoudt. Vergelijkt twee administraties (`activity_log` actie
+    `iris_actie` tegen `agentctl_deploys`) op dezelfde dag + project + pijler
+    — niet twee velden, dezelfde reden als `orchestrator_teller_teruggezet`.
+    """
+    prefixmap = {"content": "Contentmotor gestart", "seo": "SEO-refresh gestart"}
+    with get_conn() as conn:
+        deploys = conn.execute(
+            "SELECT project, pillar, date(created_at) AS d FROM agentctl_deploys "
+            "WHERE pillar IN ('content','seo') AND status IN ('staged','running','no_effect') "
+            "AND created_at >= datetime('now', '-14 day')"
+        ).fetchall()
+        uit: List[Bevinding] = []
+        for r in deploys:
+            prefix = prefixmap.get(r["pillar"])
+            if not prefix or not r["project"]:
+                continue
+            row = conn.execute(
+                "SELECT 1 FROM activity_log WHERE action = 'iris_actie' AND project = ? "
+                "AND detail LIKE ? AND date(created_at) = ? LIMIT 1",
+                (r["project"], prefix + "%", r["d"]),
+            ).fetchone()
+            if row:
+                uit.append(Bevinding(
+                    subject=f"pijler_dubbel:{r['project']}:{r['pillar']}:{r['d']}",
+                    detail=(f"Op {r['d']} deden zowel Iris' briefing als Agent Control "
+                            f"de pijler '{r['pillar']}' voor {r['project']} — twee "
+                            "onafhankelijke runs voor hetzelfde werk op dezelfde dag."),
+                    project=r["project"],
+                ))
+    return uit
+
+
+def _check_content_job_meervoudig_herschreven() -> List[Bevinding]:
+    """Hetzelfde artikel meerdere keren tegelijk 'in bewerking' — het
+    structurele signaal dat een herschrijf-mechanisme een bronrecord niet
+    afsluit en het dus telkens opnieuw oppakt.
+
+    Incident 14 aug 2026: `orchestrator.process_one_under_threshold` liet een
+    succesvol herschreven 'rejected'-bronrecord gewoon 'rejected' staan (geen
+    `mark_superseded`), dus vond de volgende aanroep hetzelfde record terug en
+    herschreef het opnieuw — één Bijeen- en één WeAreImpact-artikel elk 10+
+    keer op één dag, genoeg om de hele dagbudget leeg te trekken. De code-fix
+    (cross-run cap + `mark_superseded`) voorkomt het orchestrator-pad; deze
+    toets is generiek (elke bron die dupliceert in plaats van sluit — ook een
+    toekomstige regressie of een ánder mechanisme) en telt gewoon rijen.
+    """
+    from ..seo.opportunity_quality import squash
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT site_id, title, status, id FROM content_jobs "
+            "WHERE status IN ('pending_review','needs_work','rejected','stuck') "
+            "AND created_at >= datetime('now', '-14 day')"
+        ).fetchall()
+    groepen: Dict[Tuple[str, str], List[sqlite3.Row]] = {}
+    for r in rijen:
+        sleutel = (r["site_id"], squash(r["title"] or ""))
+        if not sleutel[1]:
+            continue
+        groepen.setdefault(sleutel, []).append(r)
+    uit: List[Bevinding] = []
+    for (site_id, _), groep in groepen.items():
+        if len(groep) <= 2:
+            continue  # 2 gelijktijdige versies is een normale herschrijfronde
+        project = _project_van_site(site_id)
+        titel = groep[0]["title"]
+        statussen = ", ".join(sorted({r["status"] for r in groep}))
+        uit.append(Bevinding(
+            subject=f"content_job_dup:{site_id}:{squash(titel)}",
+            detail=(f"{len(groep)}x '{titel}' tegelijk in de content-pijplijn "
+                    f"(statussen: {statussen}) — een herschrijf-mechanisme sluit het "
+                    "bronrecord niet af en dupliceert in plaats van te herstellen."),
+            project=project,
+        ))
+    return uit
+
+
+def _check_orchestrator_teller_teruggezet() -> List[Bevinding]:
+    """De pogingenteller van een bronrecord vergeleken met de échte Gauntlet-
+    historie — twee werelden, niet twee velden.
+
+    Incident 15 aug 2026: `scripts/bijeen_worldclass_engine.py` POST'te
+    rechtstreeks naar `/api/gauntlet` (dus buiten `process_one_under_threshold`
+    om) en schreef na elke escalatie `orchestrator_attempts=1, status='stuck'`
+    terug op het bronrecord. Daarmee zette het precies de twee velden terug
+    waarop de cross-run cap besluit: na elke ronde stond het artikel er weer
+    bij als "nog maar één keer geprobeerd, nog steeds onder de grens". Eén
+    WeAreImpact-artikel is zo 17x herschreven en er kwamen 128 bijna-identieke
+    duplicaten in de Wachtrij te staan; 6,2M tokens op één dag, waarmee het
+    dagbudget brak en álle andere autonome runs stil kwamen te liggen.
+
+    `content_job_meervoudig_herschreven` zag het gevólg (de duplicaten in de
+    Wachtrij) en deed dat correct. Deze toets zoekt de óórzaak, en dat is een
+    ander soort vraag: klopt wat het systeem over zijn eigen pogingen bijhoudt
+    nog met wat er werkelijk gedraaid heeft? Zolang de teller liegt, is elke
+    rem die erop rust een decoratie. Precies daarom telt hij niet de rijen in
+    `content_jobs` maar de runs in `gauntlet_runs`: een tweede administratie
+    bevestigt de eerste alleen als hij onafhankelijk is.
+
+    De koppeling loopt via de artikeltitel in de objective-tekst — de Gauntlet
+    kent geen bron-job-id. Dat is losjes, dus de drempel ligt bewust hoog
+    (≥3 runs) en de bevinding valt weg zodra de teller ze allemaal kent.
+
+    Eén ding moet er nog uit vóórdat er geteld wordt: de Gauntlet staget zijn
+    uitvoer als een nieuwe job met de titel *"Herschrijf het artikel 'X'"*, en
+    die kan later zélf weer bron worden. Een substring-telling ziet dan drie
+    titels waar één artikel staat, en meldt 3x, 22x én 25x voor hetzelfde stuk.
+    `_kern_titel` pelt die omhulsels af zodat de bevinding telt wat er
+    werkelijk is: één artikel, één keer.
+    """
+    with get_conn() as conn:
+        bronnen = conn.execute(
+            "SELECT id, site_id, title, status, seo_score, "
+            "       COALESCE(orchestrator_attempts, 0) AS pogingen "
+            "FROM content_jobs "
+            "WHERE status IN ('stuck', 'rejected') "
+            "  AND COALESCE(title, '') <> '' "
+            "  AND created_at >= datetime('now', '-30 day')"
+        ).fetchall()
+        runs = conn.execute(
+            "SELECT objective FROM gauntlet_runs "
+            "WHERE created_at >= datetime('now', '-30 day')"
+        ).fetchall()
+
+    objectives = [_kern_titel(r["objective"] or "") for r in runs]
+    # Per artikel de zwaarste bron bewaren, niet per rij: de keten
+    # bron → herschrijving → bron levert anders drie meldingen voor één stuk.
+    per_artikel: Dict[Tuple[str, str], Tuple[int, int, sqlite3.Row]] = {}
+    for bron in bronnen:
+        kern = _kern_titel(bron["title"] or "")
+        # Korte titels matchen te makkelijk op een ander stuk; die overslaan is
+        # hier de veilige kant — vals alarm op een teller ondermijnt precies het
+        # vertrouwen dat deze toets moet opleveren.
+        if len(kern) < 25:
+            continue
+        gedraaid = sum(1 for o in objectives if kern in o)
+        if gedraaid < 3:
+            continue
+        pogingen = int(bron["pogingen"] or 0)
+        # Eén run mag ontbreken: een ronde die nu loopt heeft de teller al
+        # opgehoogd vóór de run bestaat, en andersom.
+        if pogingen >= gedraaid - 1:
+            continue
+        sleutel = (bron["site_id"] or "", kern)
+        vorige = per_artikel.get(sleutel)
+        if vorige is None or gedraaid > vorige[0]:
+            per_artikel[sleutel] = (gedraaid, pogingen, bron)
+
+    uit: List[Bevinding] = []
+    for (site_id, kern), (gedraaid, pogingen, bron) in per_artikel.items():
+        # Twee verschillende storingen met dezelfde meting, en ze verdienen
+        # niet dezelfde zin. Staat de teller op 0 terwijl er tig runs zijn, dan
+        # is er nooit gételd — het stuk liep langs een pad dat de cap helemaal
+        # niet kent (Agent Control, een script). Staat hij op 1 of 2, dan is er
+        # wél geteld en heeft iets de stand daarna teruggezet. De eerste vraagt
+        # om een pad dat gaat tellen, de tweede om een schrijver die stopt.
+        if pogingen == 0:
+            oorzaak = ("het bronrecord heeft nooit één poging geteld — dit stuk is "
+                       "de Gauntlet in gegaan langs een pad dat de cross-run cap "
+                       "(ORCHESTRATOR_MAX_ATTEMPTS) helemaal niet kent")
+        else:
+            oorzaak = (f"het bronrecord staat op {pogingen} poging(en) — iets zet de "
+                       "teller terug, waardoor de cross-run cap "
+                       "(ORCHESTRATOR_MAX_ATTEMPTS) nooit aanslaat")
+        uit.append(Bevinding(
+            subject=f"orchestrator_teller:{site_id}:{kern[:80]}",
+            detail=(f"'{kern[:90]}' is {gedraaid}x door de Gauntlet gehaald, maar "
+                    f"{oorzaak} (status '{bron['status']}'). Zo blijft hetzelfde stuk "
+                    "herschreven worden zolang het onder de grens staat."),
+            project=_project_van_site(site_id),
+        ))
+    # Tweede detectieweg, dezelfde vraag (15 aug 2026). De telling hierboven
+    # koppelt via de artikeltitel in de objective-tekst en heeft daarom een hoge
+    # drempel (≥3 runs) — losse koppeling, dus voorzichtig. De supersede-keten
+    # is een échte verwijzing (`superseded_by`), dus daar kan het exact: telt de
+    # opvolger minder pogingen dan zijn bron, dan is de teller onderweg verloren
+    # en begint de cap bij elke generatie opnieuw. Dat was de tweede oorzaak van
+    # dezelfde storm — `mark_superseded` gaf de telling niet door — en hij is
+    # zichtbaar vanaf de eerste keer, niet pas na drie runs.
+    uit.extend(_check_herschrijfteller_gereset())
+    return uit
+
+
+# De Gauntlet staget zijn uitvoer als een nieuwe job met de titel
+# "Herschrijf het artikel 'X' (project Y) naar …". Wordt die later zélf bron,
+# dan ontstaat "Herschrijf het artikel 'Herschrijf het artikel 'X''". Zonder
+# afpellen telt een substring-toets dezelfde X drie keer als drie artikelen.
+# Bewust op de aanhalingstekens en niet op de woorden die erop volgen ('tot
+# wereldklasse…', '(project X) naar…'). Een non-greedy match tot 'tot' of
+# 'naar' knipt namelijk in de titel zélf: 'Van plan tot nazorg: een geslaagd
+# evenement' werd 'Van plan', en twee ongelijke artikelen belandden daarmee in
+# één groep — bij het opruimen van duplicaten is dat het verschil tussen een
+# overbodige versie sluiten en een uniek artikel weggooien.
+# Greedy tot het láátste aanhalingsteken, want titels bevatten zelf apostrofs
+# ("de 3 zwakst scorende pagina's van X"); non-greedy breekt precies daarop.
+_OMHULSEL = re.compile(
+    r"^\s*herschrijf\s+(?:het\s+)?artikel\s*['\"‘“](.+)['\"’”]",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _kern_titel(tekst: str) -> str:
+    """Pel de 'Herschrijf het artikel …'-omhulsels af tot de kale artikeltitel.
+
+    Meerdere rondes, want de omhulsels stapelen. Levert de tekst ongewijzigd
+    terug zodra er niets meer af kan — een objective die geen herschrijfopdracht
+    is (een [SEO Copywriter]-taak bijvoorbeeld) hoort onaangeroerd te blijven.
+    """
+    huidig = (tekst or "").strip()
+    for _ in range(5):
+        m = _OMHULSEL.match(huidig)
+        if not m:
+            break
+        kern = m.group(1).strip().strip("'\"‘’“”").strip()
+        if not kern or kern == huidig:
+            break
+        huidig = kern
+    return huidig
+
+
 def _check_radar_signaal_verlopen() -> List[Bevinding]:
     with get_conn() as conn:
         rij = conn.execute(
@@ -917,6 +1322,65 @@ def _check_radar_signaal_verlopen() -> List[Bevinding]:
                 f"drie weken oud valt niemand meer aan; ze verdringen alleen de verse"),
         project="Systeem",
     )]
+
+
+def _check_impact_lead_niet_vastgelegd() -> List[Bevinding]:
+    """Een Impact Calculator-lead die het logboek 'vastgelegd' noemt, moet ook
+    echt in de Leads-tab staan.
+
+    Incident 22 aug 2026: bij een uitgeputte OpenModel-quota brak de toenmalige
+    `_process_one` af vóórdat `capture_impact_calculator_lead` werd aangeroepen
+    — de uitkomstkaart zei letterlijk "staat als 'Geverifieerd' in de
+    Leads-tab", maar er kwam nooit een rij bij. Twee échte inbound-leads (o.a.
+    Impact Box: 185 FTE, EUR 1.440.691 berekende besparing/jaar) verdwenen zo
+    spoorloos — alleen de permanente rij in Neons `impact_leads`-tabel bewees
+    dat ze ooit waren binnengekomen. De fix (capture altijd vóór het
+    LLM-verslag, nooit erna) stond al een tijd op schijf maar was niet live
+    omdat de server sinds 20 aug niet herstart was — code op schijf is geen
+    garantie, alleen een herstarte server telt.
+
+    Matcht op de vrije tekst in `detail` (geen aparte kolom met het e-mailadres
+    beschikbaar) — dezelfde reden waarom deze toets nooit met een LLM werkt:
+    een deterministische regex over eigen loggegevens hoort nooit te kunnen
+    liegen over wat hij zelf heeft weggeschreven.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, detail, created_at FROM activity_log "
+            "WHERE action IN ('impact_lead_verslag_mislukt', "
+            "'impact_lead_verslag_verstuurd', 'impact_lead_niet_vastgelegd') "
+            "ORDER BY created_at DESC LIMIT 200"
+        ).fetchall()
+        leads = conn.execute(
+            "SELECT org_name, email FROM leads WHERE lead_type='impact_calculator'"
+        ).fetchall()
+    bekend = set()
+    for l in leads:
+        if l["org_name"]:
+            bekend.add(l["org_name"].strip().lower())
+        if l["email"]:
+            bekend.add(l["email"].strip().lower())
+
+    uit: List[Bevinding] = []
+    gezien = set()
+    for r in rows:
+        m = re.search(r"Impact Calculator-lead van (.+?)(?: is gemaild| \(| staat )",
+                      r["detail"] or "")
+        if not m:
+            continue
+        naam_of_org = m.group(1).strip().lower()
+        if naam_of_org in gezien:
+            continue
+        gezien.add(naam_of_org)
+        if naam_of_org not in bekend:
+            uit.append(Bevinding(
+                subject=f"impact_lead:{naam_of_org}",
+                detail=(f"'{naam_of_org}' werd op {r['created_at']} in het logboek als "
+                        f"Impact Calculator-lead gemeld, maar staat nergens in de "
+                        f"Leads-tab — de lead is vermoedelijk kwijt."),
+                project="WeAreImpact",
+            ))
+    return uit
 
 
 def _check_lead_geen_organisatie() -> List[Bevinding]:
@@ -1053,6 +1517,41 @@ def _check_publicatiefout_zonder_kaart() -> List[Bevinding]:
                 f"({(r['error'] or 'reden onbekend')[:50]}) zonder dat er een "
                 f"fout-kaart voor openstaat — niemand krijgt dit te zien"),
         project=_project_van_site(r["site_id"]),
+    ) for r in rijen]
+
+
+_LINKEDIN_ONGEPLAATST_UUR = 12
+
+
+def _check_linkedin_antwoord_niet_geplaatst() -> List[Bevinding]:
+    """Een goedgekeurd LinkedIn-antwoord dat lang op 'approved' blijft staan.
+
+    LinkedIn heeft geen partner-API voor DM's/reacties; een goedkeuring in de
+    Social-tab of het Actiecentrum zet zo'n bericht daarom niet meteen op
+    'sent' maar op 'approved' — de browserautomatisering (via /loop, geen
+    achtergrond-scheduler, want er moet een ingelogde Chrome-sessie open
+    staan) plaatst 'm daarna echt en bevestigt dat via /msg/{id}/mark-sent
+    (20 aug 2026, zie CLAUDE.md punt over social_inbox_msg-status). Blijft een
+    bericht lang op 'approved' staan, dan draait die automatisering niet — een
+    Vincent die dacht dat zijn antwoord de deur uit was, terwijl het alleen in
+    de wachtrij stond, is precies de 'activiteit is geen effect'-fout die dit
+    bestand bestrijdt.
+    """
+    grens = (datetime.now() - timedelta(hours=_LINKEDIN_ONGEPLAATST_UUR)).isoformat()
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT m.id, m.author_name, m.author_handle, m.created_at, i.project "
+            "FROM social_inbox_msg m JOIN social_inboxes i ON i.id=m.inbox_id "
+            "WHERE m.status='approved' AND m.manual=1 AND m.created_at < ?",
+            (grens,),
+        ).fetchall()
+    return [Bevinding(
+        subject=f"social_msg:{r['id']}",
+        detail=(f"Antwoord aan {r['author_name'] or r['author_handle'] or 'iemand'} "
+                f"op LinkedIn staat al {_dagen_sinds(r['created_at'])} dag(en) "
+                f"goedgekeurd maar niet geplaatst — de browserautomatisering "
+                f"heeft het niet opgepakt"),
+        project=r["project"] or "",
     ) for r in rijen]
 
 
@@ -1351,6 +1850,100 @@ def _check_radar_trendbrug_stil() -> List[Bevinding]:
     )]
 
 
+def _check_suggestie_pijler_zonder_agent() -> List[Bevinding]:
+    """Een pijler in de Iris-cijfers waar de suggestie-engine niets mee kan.
+
+    16 aug 2026: `metrics.project_scores` kreeg een vijfde pijler `geo` in het
+    `pillars`-blok, met de docstring "niet meegeteld in de totaalscore". Dat
+    klopte voor de optelsom, maar iedereen die over `pillars` itereert telde hem
+    wél. `agentctl/suggest.py` sorteert alle pijlers op score om de zwakste te
+    vinden, en dat brak twee keer: een site zonder GEO-scan heeft `score: None`,
+    dus viel de sortering om met "'<' not supported between 'NoneType' and 'int'"
+    en lag de scheduler-job `iris_auto_deploy` een etmaal plat; en zodra een site
+    wél een (0-100) GEO-score onder de andere pijlers (0-25) heeft, wordt `geo`
+    de "zwakste", vindt hij geen agent en levert dat project stílzwijgend geen
+    suggestie meer op.
+
+    Het tweede geval is het gevaarlijke: dat gooit niets. Deze toets meet de
+    voorwaarde in plaats van het gevolg — elke pijler moet óf een agent hebben,
+    óf expliciet als informatief zijn aangemerkt. Een nieuwe pijler dwingt zo een
+    besluit af in plaats van geruisloos gedrag te veranderen.
+    """
+    from ..agentctl.suggest import _PILLAR_AGENT, _INFORMATIEVE_PIJLERS
+    from . import metrics as iris_metrics
+    bekend = set(_PILLAR_AGENT) | set(_INFORMATIEVE_PIJLERS)
+    try:
+        scores = iris_metrics.project_scores()
+    except Exception as exc:  # noqa: BLE001
+        return [Bevinding(
+            subject="pijlers:onleesbaar",
+            detail=f"de Iris-cijfers zijn niet op te halen, dus de suggestie-engine "
+                   f"kan er ook niets uit afleiden: {str(exc)[:120]}",
+            project="Agent Control",
+        )]
+    onbekend: Dict[str, set] = {}
+    for p in scores:
+        for key, blok in (p.get("pillars") or {}).items():
+            if key not in bekend:
+                onbekend.setdefault(key, set()).add(p["project"])
+            elif key in _PILLAR_AGENT and not isinstance((blok or {}).get("score"), (int, float)):
+                # Een pijler mét agent maar zónder getal: de sortering kan hem
+                # niet wegen, en dat is precies hoe de crash hierboven ontstond.
+                onbekend.setdefault(f"{key} (score ontbreekt)", set()).add(p["project"])
+    return [Bevinding(
+        subject=f"pijler:{key}",
+        detail=(f"pijler '{key}' staat in de Iris-cijfers van {len(projecten)} project(en) "
+                f"({', '.join(sorted(projecten)[:3])}) maar heeft geen agent in "
+                "_PILLAR_AGENT en staat niet in _INFORMATIEVE_PIJLERS — de "
+                "suggestie-engine slaat dat project stil over"),
+        project="Agent Control",
+    ) for key, projecten in sorted(onbekend.items())]
+
+
+def _check_kans_zonder_gemeten_vraag() -> List[Bevinding]:
+    """Een site waarvan élke openstaande kans giswerk is.
+
+    16 aug 2026, WeAreImpact: 24 openstaande kansen, allemaal met 0 impressies en
+    positie 0 — geen enkele kwam uit Search Console. De Demand Engine leverde
+    voor deze site niets, dus was de hele lijst gevuld door de trend-brug met
+    koppen van andermans nieuwsberichten. Het dashboard bood er onder één knop 22
+    tegelijk aan.
+
+    Dat is geen storing die zich meldt: elke afzonderlijke kans zag er normaal
+    uit en de wekelijkse scan rapporteerde gewoon 'ok'. De vraag die niemand
+    stelde is of er onder de hele voorraad één meting zat. Alleen sites die
+    genoeg voorraad hebben om iets over te beweren tellen mee — een site met
+    twee kansen is niet stuk, die is jong.
+    """
+    _MIN_VOORRAAD = 8
+    from ..seo import engine as demand_engine
+    from ..seo import sites as sites_service
+    out: List[Bevinding] = []
+    for site in sites_service.list_sites():
+        if not (site.get("gsc_property") or "").strip():
+            continue  # zonder GSC-koppeling is 'geen gemeten vraag' geen oordeel
+        try:
+            kansen = demand_engine.list_opportunities_truth(
+                site_id=site["id"], include_filtered=True)
+        except Exception:  # noqa: BLE001
+            continue
+        open_kansen = [k for k in kansen if k.get("status") in ("new", "in_progress")]
+        if len(open_kansen) < _MIN_VOORRAAD:
+            continue
+        gemeten = [k for k in open_kansen if k.get("demand") == "gemeten"]
+        if gemeten:
+            continue
+        out.append(Bevinding(
+            subject=f"kansen:{site['id']}",
+            detail=(f"alle {len(open_kansen)} openstaande kansen zijn speculatief — "
+                    "nul gemeten vraag in Search Console. De Demand Engine levert voor "
+                    "deze site niets en de voorraad komt volledig uit de trend-brug; "
+                    "elk artikel eruit is een gok"),
+            project=site["name"],
+        ))
+    return out
+
+
 def _check_stilstand_dubbel_gemeld() -> List[Bevinding]:
     """Eén stilstand, twee kaarten in dezelfde inbox.
 
@@ -1617,6 +2210,119 @@ def _volledige_titel(html_body: str) -> str:
         return (meta_title or _extract_title(cleaned, fallback="")).strip()
     except Exception:  # noqa: BLE001 — een audit struikelt niet over één body
         return ""
+
+
+def _woorden(tekst: str) -> set:
+    """Inhoudswoorden uit een tekst — kleingeletterd, zonder stopwoorden."""
+    from ..seo.opportunity_quality import _STOPWORDS
+    import re as _re
+    return {w for w in _re.findall(r"[a-zà-ÿ]{4,}", (tekst or "").lower())
+            if w not in _STOPWORDS}
+
+
+def _check_content_hoort_bij_andere_site() -> List[Bevinding]:
+    """Een stuk in de Wachtrij gaat aantoonbaar over een ánder project.
+
+    15 aug 2026: `publish_to_weareimpact` viel bij een onherleidbaar project
+    stil terug op WeAreImpact — de eerste site die er ooit was. Gemeten stonden
+    er 25 stukken in die Wachtrij die over Bijeen, Pootgelukkig, Liefde voor
+    Iedereen of TeambuildingMetImpact gingen ('De 10 beste cadeaus voor
+    koppels', 'Advies hond adopteren in Antwerpen', 'WMO-rapportage evenement
+    software: zo meet je impact met Bijeen'), en twee ervan zijn écht live
+    gegaan op weareimpact.nl.
+
+    De code-terugval is geschrapt, maar dit is de toets eronder: elke ándere
+    weg naar een verkeerde site valt er ook onder — een handmatige klik met het
+    verkeerde project, een goal die bij de verkeerde site staat, een import.
+
+    Waarom dit deterministisch kan: elke site draagt zijn eigen woordenschat
+    (profiel + de koppen die er al live staan). We vergelijken niet met een
+    absolute drempel — "past dit bij de site" is een smaakvraag — maar tússen
+    sites, en dat is een feitelijke: hoort dit stuk méétbaar beter bij een
+    ander project dan bij het zijne? Alleen bij een duidelijke winnaar (≥2
+    woorden overlap én minstens 2 méér dan de eigen site) slaat hij aan, want
+    een nieuw onderwerp op de eigen site moet gewoon mogen.
+    """
+    from ..seo import sites as sites_service
+
+    with get_conn() as conn:
+        sites = conn.execute(
+            "SELECT id, name FROM sites WHERE COALESCE(is_test, 0) = 0"
+        ).fetchall()
+        open_jobs = conn.execute(
+            "SELECT id, site_id, title FROM content_jobs "
+            "WHERE status IN ('pending_review', 'needs_work') "
+            "AND COALESCE(title, '') <> ''"
+        ).fetchall()
+
+    naam = {s["id"]: s["name"] for s in sites}
+
+    # Zelfde toets als de publiceer-gate (`approve_and_publish`) — één antwoord
+    # op "hoort dit bij deze site?", anders lopen audit en gate uiteen zoals
+    # `is_same_topic` dat elders al moest voorkomen.
+    uit: List[Bevinding] = []
+    for j in open_jobs:
+        eigen = j["site_id"]
+        if eigen not in naam:
+            continue
+        beter = sites_service.better_matching_site(j["title"], eigen)
+        if beter:
+            uit.append(Bevinding(
+                subject=f"job:{j['id']}",
+                detail=(f"'{(j['title'] or '')[:60]}' staat in de Wachtrij van "
+                        f"{naam.get(eigen, eigen)}, maar hoort qua onderwerp bij "
+                        f"{beter['name']} — publiceren zet het op de verkeerde site"),
+                project=naam.get(eigen, str(eigen)),
+            ))
+    return uit
+
+
+def _check_herschrijfteller_gereset() -> List[Bevinding]:
+    """Tweede detectieweg voor `orchestrator_teller_teruggezet` — niet zelf een
+    invariant, want het is dezelfde vraag: is de cap-teller te vertrouwen?
+
+    Een opvolger in een supersede-keten telt minder pogingen dan zijn bron.
+
+    De cross-run cap (`ORCHESTRATOR_MAX_ATTEMPTS`) is de enige rem op de
+    herschrijflus, en hij telt op `content_jobs.orchestrator_attempts`. Zodra
+    een schakel die teller niet doorgeeft, begint elke generatie weer op nul en
+    bijt de cap per constructie nooit — zonder dat er ooit iets faalt.
+
+    Dat is twee keer gebeurd, langs twee verschillende wegen. 14-15 aug 2026
+    schreef `scripts/bijeen_worldclass_engine.py` na elke ronde letterlijk
+    `orchestrator_attempts=1, status='stuck'` terug, waarmee het bronrecord na
+    elke run exact in de begintoestand stond. En `mark_superseded` gaf de
+    telling niet door aan de nieuwe job. Gemeten: 244 WeAreImpact-jobs allemaal
+    op 0, terwijl één artikel zestien herschrijvingen had en er 128 duplicaten
+    in de Wachtrij stonden — 20,5 miljoen tokens in drie dagen.
+
+    Deze toets kijkt naar de keten zelf en niet naar één mechanisme, want beide
+    incidenten kwamen van een andere kant. Elke toekomstige schakel die de
+    teller verliest valt er ook onder.
+    """
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT bron.id AS bron_id, bron.orchestrator_attempts AS bron_n, "
+            "       bron.site_id AS site_id, bron.title AS titel, "
+            "       opv.id AS opv_id, opv.orchestrator_attempts AS opv_n "
+            "FROM content_jobs bron "
+            "JOIN content_jobs opv ON opv.id = bron.superseded_by "
+            "WHERE COALESCE(bron.superseded_by, '') <> '' "
+            "  AND COALESCE(opv.orchestrator_attempts, 0) "
+            "      < COALESCE(bron.orchestrator_attempts, 0) "
+            "  AND bron.created_at >= datetime('now', '-14 day')"
+        ).fetchall()
+    uit: List[Bevinding] = []
+    for r in rijen:
+        uit.append(Bevinding(
+            subject=f"job:{r['opv_id']}",
+            detail=(f"'{(r['titel'] or '')[:60]}' is herschreven, maar de opvolger telt "
+                    f"{r['opv_n'] or 0} poging(en) tegen {r['bron_n'] or 0} op de bron — "
+                    f"de cross-run cap begint bij deze generatie opnieuw en stopt de "
+                    f"herschrijflus dus niet"),
+            project=str(r["site_id"] or ""),
+        ))
+    return uit
 
 
 def _check_kwaliteitsscore_is_stopregel() -> List[Bevinding]:
@@ -2036,6 +2742,18 @@ def _check_uitvoertaak_zonder_uitvoering() -> List[Bevinding]:
     binnenkwam (4 aug 2026: 127 van 1143 voltooide taken openden met plan- of
     instructietaal). Sinds die datum eindigen zulke taken op `failed`; deze
     toets bewijst dat, en vangt elke nieuwe route die de regel omzeilt.
+
+    `outreach`-taken die via de generieke concept-route lopen (er bestaat geen
+    partnership-outreach-systeem om écht in te staan, alleen de B2B-leadsfunnel)
+    krijgen daar in code de `_CONCEPT_BANNER` voorgeplakt — dat is precies het
+    "concept" dat deze toets zoekt. Vóór 13 aug 2026 herkende de toets alleen
+    de twee bewijsvormen van andere paden (Wachtrij-job-id, `outreach_review`),
+    dus vlagde hij élke correct gelabelde outreach-concepttaak als fabricatie
+    — inclusief taken ná de fix van 4 aug (Bewaard voor Jou, 7 aug: 'Outreach-
+    campagne voor 7 artikelen' opende netjes met "⚠️ CONCEPT — geen echte actie
+    uitgevoerd" en werd toch gemeld). Dat is een andere fout dan het incident
+    hierboven: die banner wordt deterministisch door code voorgeplakt, een LLM
+    kan hem niet nabootsen, dus is hij net zo hard bewijs als een job-id.
     """
     with get_conn() as conn:
         rijen = conn.execute(
@@ -2047,12 +2765,14 @@ def _check_uitvoertaak_zonder_uitvoering() -> List[Bevinding]:
     uit: List[Bevinding] = []
     for r in rijen:
         resultaat = r["result"] or ""
-        # Bewijs van de echte actie: een Wachtrij-job of een aantoonbaar
-        # weggeschreven concept. Bewust géén trefwoordenjacht op de tekst —
-        # "checklist" in een artikeltitel is geen bewijs van iets (dezelfde
-        # valkuil als de eerste versie van `slug_onveilig`, die de kolom las in
-        # plaats van de wereld).
-        if re.search(r"job `[^`]+`", resultaat) or "outreach_review" in resultaat:
+        # Bewijs van de echte actie: een Wachtrij-job, een aantoonbaar
+        # weggeschreven concept, of de deterministische concept-banner die
+        # `_route_by_skill` zelf voorplakt (nooit door een LLM na te bootsen).
+        # Bewust géén trefwoordenjacht op de tekst — "checklist" in een
+        # artikeltitel is geen bewijs van iets (dezelfde valkuil als de eerste
+        # versie van `slug_onveilig`, die de kolom las in plaats van de wereld).
+        if (re.search(r"job `[^`]+`", resultaat) or "outreach_review" in resultaat
+                or "CONCEPT — geen echte actie uitgevoerd" in resultaat):
             continue
         uit.append(Bevinding(
             subject=f"taak:{r['id']}",
@@ -2432,12 +3152,157 @@ def _check_onboarding_onvolledig_maar_actief() -> List[Bevinding]:
     return uit
 
 
+def _check_ticket_notificatie_genegeerd() -> List[Bevinding]:
+    """Een 'nieuw ticket'-melding die als bulkmail is weggegooid.
+
+    13 aug 2026: Bewaardvoorjou's eigen contactformulier stuurt supportvragen
+    niet rechtstreeks maar als 'nieuw ticket'-melding vanaf een no-reply-adres,
+    met de échte vraag + het échte antwoordadres verpakt in de body
+    (Ticket/Van/E-mail/Bericht). `bulk.bulk_reason()` herkent 'noreply' in het
+    lokale deel en concludeert "een antwoord komt nergens aan" — de mail ging
+    als 'newsletter' weg, MET geleegde body_text, en twee échte klantvragen
+    (BVJ-0002, BVJ-0003) bleven zo onopgemerkt. `mail/ticket.py` ontpakt dit
+    patroon nu vóór die beslissing, maar deze toets is het vangnet voor de
+    volgende site met een net iets ander sjabloon of een tweede eigen domein:
+    de onderwerpregel van zo'n melding overleeft de body-wis wél.
+    """
+    with get_conn() as conn:
+        try:
+            rows = conn.execute(
+                "SELECT i.id, i.subject, i.from_addr, i.classified, "
+                "m.project, m.address "
+                "FROM mail_inbox i JOIN mailboxes m ON m.id = i.mailbox_id "
+                "WHERE i.classified IN ('newsletter','spam','other','ignored') "
+                "AND ("
+                "  lower(i.subject) LIKE '%nieuwe vraag%' "
+                "  OR lower(i.subject) LIKE '%nieuw ticket%' "
+                "  OR lower(i.subject) LIKE '%nieuw supportticket%' "
+                "  OR lower(i.subject) LIKE '%support ticket%'"
+                ")"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+    return [
+        Bevinding(
+            subject=f"mail_inbox:{r['id']}",
+            detail=(f"'{r['subject']}' van {r['from_addr']} kreeg classificatie "
+                    f"'{r['classified']}' i.p.v. een klantvraag ({r['address']})."),
+            project=r["project"] or "",
+        )
+        for r in rows
+    ]
+
+
+def _check_campagnepost_over_datum() -> List[Bevinding]:
+    """Een campagne-post waarvan het plaatsmoment verstreken is en die nog wacht.
+
+    Dit is de toets die het incident zélf had gevonden: het zes-weken-socialplan
+    voor BewaardVoorJou stond volledig uitgeschreven klaar en er is geen enkele
+    post van geplaatst — zes weken lang, zonder één signaal. Een plan in een
+    markdown-bestand kan niet melden dat het stilstaat; een pack met een
+    plaatsdatum wel.
+
+    Eén dag speling, want een post van gisteravond 19:30 die vanmorgen nog niet
+    goedgekeurd is, is geen storing. De 'stil'-klasse legt daar nog drie dagen
+    bovenop voordat er een kaart komt — een gemiste maandag die op donderdag nog
+    steeds open staat is een gemiste slot, geen weekendje geduld.
+    """
+    grens = (datetime.now() - timedelta(days=1)).isoformat()
+    with get_conn() as conn:
+        try:
+            rows = conn.execute(
+                "SELECT project, campaign, campaign_post, theme, scheduled_for "
+                "FROM social_posts "
+                "WHERE campaign <> '' AND scheduled_for <> '' AND scheduled_for < ? "
+                "AND status = 'pending_review' "
+                "ORDER BY scheduled_for",
+                (grens,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+    return [
+        Bevinding(
+            subject=f"campagne:{r['project']}:{r['campaign']}:{r['campaign_post']}",
+            detail=(f"Post {r['campaign_post']} '{r['theme']}' stond gepland voor "
+                    f"{(r['scheduled_for'] or '')[:16].replace('T', ' ')} en wacht nog "
+                    f"op goedkeuring."),
+            project=r["project"] or "",
+        )
+        for r in rows
+    ]
+
+
 # ── Het register ───────────────────────────────────────────────────────────
 #
 # Dit is de institutionele herinnering van het systeem: elke regel is een
 # storing die geld of vertrouwen heeft gekost, omgezet in een dagelijkse toets.
 
 INVARIANTEN: List[Invariant] = [
+    Invariant(
+        key="impact_lead_niet_vastgelegd",
+        titel="Impact Calculator-lead niet in de Leads-tab",
+        incident="22 aug 2026: bij een uitgeputte OpenModel-quota brak de "
+                 "verwerking van een Impact Calculator-inzending af vóórdat de "
+                 "lead werd vastgelegd — de uitkomstkaart beweerde 'staat als "
+                 "Geverifieerd in de Leads-tab' terwijl er nooit een rij bijkwam. "
+                 "Twee échte leads (o.a. Impact Box: 185 FTE, EUR 1.440.691 "
+                 "berekende besparing/jaar) waren zo spoorloos, en alleen de "
+                 "permanente rij in Neon bewees dat ze ooit binnenkwamen. De "
+                 "fix stond al op schijf maar was niet live: de server was "
+                 "sinds 20 aug niet herstart.",
+        severity=BLOKKEREND,
+        stap="Bekijk het logboek voor de exacte cijfers en leg de lead "
+             "handmatig vast in de Leads-tab, of herprocesseer 'm via de "
+             "Impact Calculator-rij in Neon (impact_leads-tabel).",
+        check=_check_impact_lead_niet_vastgelegd,
+    ),
+    Invariant(
+        key="goal_vastgelopen_zonder_voortgang",
+        titel="Doel staat vast op 'running' zonder voortgang",
+        incident="20 aug 2026: 'G2 — AEO-contentmotor WeAreImpact' (en twee "
+                 "zusje-goals) stonden sinds 13 aug op 'running' terwijl elke "
+                 "publicatietaak al terminaal was (failed/aborted, nul "
+                 "completed) — de fase kon daardoor nooit 'completed' worden en "
+                 "de executie-lus liep voor altijd rond zonder iets te doen. "
+                 "Onzichtbaar in het Actiecentrum (lopende doelen worden bewust "
+                 "gedempt) én buiten bereik van zelfherstel (dat op "
+                 "status='error' opereert, niet op een stille oneindige lus).",
+        severity=STIL,
+        stap="Open het doel in de Doelen-tab en start het opnieuw (herstart de "
+             "goal, of wijs de mislukte taken af) — de lus is vastgelopen en "
+             "komt er zonder ingreep niet meer uit.",
+        check=_check_goal_vastgelopen_zonder_voortgang,
+    ),
+    Invariant(
+        key="campagnepost_over_datum",
+        titel="Campagne-post staat over datum te wachten",
+        incident="16 aug 2026: het communicatie- en socialmediaplan voor "
+                 "BewaardVoorJou (18 posts, 6 juli t/m 16 augustus, compleet met "
+                 "teksten, beeldbriefs en posttijden) is nooit uitgevoerd. Niet "
+                 "omdat het slecht was, maar omdat het een markdown-bestand in "
+                 "een Downloads-map was: niets in het systeem wist dat post 3.1 "
+                 "op maandag 19:30 hoorde te staan, dus kon ook niets melden dat "
+                 "hij er niet stond. Zes weken lang leek er niets aan de hand.",
+        severity=STIL,
+        stap="Open Social Creatie, keur de wachtende campagne-posts goed en plaats "
+             "ze — of verschuif de campagne (POST /api/social-content/campaign/import "
+             "met een nieuwe startmaandag) als de reeks niet meer past.",
+        check=_check_campagnepost_over_datum,
+    ),
+    Invariant(
+        key="ticket_notificatie_genegeerd",
+        titel="Ticket-melding als bulkmail weggegooid",
+        incident="13 aug 2026: Bewaardvoorjou's contactformulier stuurt supportvragen "
+                 "als 'nieuw ticket'-melding vanaf noreply@ met de échte vraag in de "
+                 "body; de no-reply-heuristiek gooide BVJ-0002 en BVJ-0003 stil weg "
+                 "(classificatie 'newsletter', body_text geleegd) — twee klanten "
+                 "wachtten op een antwoord dat nooit kwam.",
+        severity=BLOKKEREND,
+        stap="Open de mail bij de hoster (POP/webmail) en beantwoord de klant "
+             "handmatig; controleer of mail/ticket.py dit sjabloon herkent — zo "
+             "niet, breid het patroon uit voor dit project.",
+        check=_check_ticket_notificatie_genegeerd,
+    ),
     Invariant(
         key="interne_taakopdracht_live",
         titel="Interne taakopdracht staat gepubliceerd",
@@ -2446,6 +3311,37 @@ INVARIANTEN: List[Invariant] = [
         severity=BLOKKEREND,
         stap="Haal deze pagina offline in het CMS en zet een 301 naar een relevant artikel.",
         check=_check_interne_taakopdracht_live,
+    ),
+    Invariant(
+        key="werkbon_in_de_wachtrij",
+        titel="Wachtrij-item heet naar de opdracht in plaats van naar het artikel",
+        incident="15 aug 2026: 179 van de 188 wachtende items heetten 'Herschrijf het "
+                 "artikel X tot wereldklasse SEO-content (1200-1500 woorden)'. De slug "
+                 "wordt van de titel afgeleid, dus één klik op Publiceer had de werkbon "
+                 "als URL op de site gezet. `publish_to_weareimpact` viel bij een "
+                 "ontbrekende titel terug op de objective van de run, en de Orchestrator "
+                 "nam die titel daarna van generatie op generatie over.",
+        severity=BLOKKEREND,
+        stap="Open het item in de Wachtrij en zet de titel op de H1 van het artikel zelf "
+             "(die staat bovenaan de tekst); wijs het af als er geen artikel onder zit. "
+             "Publiceer niet met deze titel — de slug volgt hem.",
+        check=_check_werkbon_in_de_wachtrij,
+    ),
+    Invariant(
+        key="merkbrief_verkeerd_project",
+        titel="Artikel claimt Vincents identiteit op een ander project",
+        incident="19 aug 2026: de Gauntlet-merkbrief ('SCHRIJF ALS VINCENT VAN "
+                 "MUNSTER, eerste persoon') werd zonder project aangeroepen en dus "
+                 "voor élke run gebruikt. Een Bijeen-artikel opende met 'in mijn "
+                 "jaren als directeur van Stichting de Baan draaide ik meer dan "
+                 "veertig van die dagen, met 180+ vrijwilligers... 70.000+ "
+                 "geluksmomenten' — een volledig verzonnen naam, functie en "
+                 "trackrecord, want er was voor Bijeen geen echte biografie.",
+        severity=BLOKKEREND,
+        stap="Wijs het item af (of haal het offline als het al gepubliceerd staat) — "
+             "een verzonnen persoonlijke autoriteit is geen SEO-detail maar een "
+             "geloofwaardigheids- en reputatierisico. Laat het opnieuw genereren.",
+        check=_check_merkbrief_verkeerd_project,
     ),
     Invariant(
         key="slug_onveilig",
@@ -2608,6 +3504,24 @@ INVARIANTEN: List[Invariant] = [
         check=_check_bevinding_blijft_liggen,
     ),
     Invariant(
+        key="linkedin_antwoord_niet_geplaatst",
+        titel="Goedgekeurd LinkedIn-antwoord staat niet daadwerkelijk geplaatst",
+        incident="20 aug 2026: LinkedIn heeft geen partner-API voor DM's/reacties, dus "
+                 "plaatst een browserautomatisering (via /loop) het antwoord na "
+                 "goedkeuring — niet de review-klik zelf. Vóór deze toets zette "
+                 "'Plaats antwoord' een LinkedIn-concept meteen op 'sent' zonder dat er "
+                 "ooit iets op LinkedIn was geplaatst, dezelfde fout als de "
+                 "social-campagne vóór `mark_posted_manually` (7g). Bewust "
+                 "BLOKKEREND en niet STIL: er wacht een echt persoon op antwoord, en "
+                 "de standaard STIL-vertraging (3 dagen bovenop de 12 uur hierboven) "
+                 "zou dat gesprek onnodig laten doodbloeden.",
+        severity=BLOKKEREND,
+        stap="Open Iris Remote of de Social-tab en plaats het antwoord handmatig op "
+             "LinkedIn (kopieer-knop), of start de LinkedIn-loop opnieuw als die "
+             "gestopt is.",
+        check=_check_linkedin_antwoord_niet_geplaatst,
+    ),
+    Invariant(
         key="indexnow_keyfile_ontbreekt",
         titel="IndexNow-aanmeldingen worden genegeerd (keybestand onbereikbaar)",
         incident="4 aug 2026: 28 publicaties droegen `indexnow: {status: fout, "
@@ -2711,6 +3625,21 @@ INVARIANTEN: List[Invariant] = [
         check=_check_kans_vastgelopen,
     ),
     Invariant(
+        key="content_hoort_bij_andere_site",
+        titel="Een stuk in de Wachtrij gaat over een ander project",
+        incident="15 aug 2026: de terugval `_resolve_weareimpact_site_id()` liet elke "
+                 "run zonder herleidbaar project bij WeAreImpact landen. Er stonden 25 "
+                 "stukken over Bijeen, Pootgelukkig, Liefde voor Iedereen en "
+                 "TeambuildingMetImpact in die Wachtrij ('De 10 beste cadeaus voor "
+                 "koppels', 'Advies hond adopteren in Antwerpen'), en twee gingen "
+                 "écht live op weareimpact.nl.",
+        severity=BLOKKEREND,
+        stap="Zet het stuk op de juiste site (of wijs het af) vóór je publiceert. "
+             "Komen er nieuwe bij, dan raadt een aanroeper het project nog steeds "
+             "in plaats van te stoppen — zie `OnbekendProject` in gauntlet/service.py.",
+        check=_check_content_hoort_bij_andere_site,
+    ),
+    Invariant(
         key="leerlus_leeg",
         titel="Iris' lessen raken niet aan voorspellingen gekoppeld",
         incident="27 jul 2026: 51 actieve lessen, 2 koppelingen. De leerlus was gebouwd "
@@ -2753,6 +3682,79 @@ INVARIANTEN: List[Invariant] = [
         stap="Zoek de aanroeper op en geef `log_outcome` een artifact mee — of laat de "
              "actie eerlijk falen als er niets is opgeleverd.",
         check=_check_uitkomst_zonder_artefact,
+    ),
+    Invariant(
+        key="agentctl_run_zonder_effect",
+        titel="Agent Control-deploy nooit afgesloten",
+        incident="13 aug 2026: 'Voer allemaal uit' spawnde 13 Gauntlet-runs zonder "
+                 "tool-access; niets las het run_id ooit terug, dus landde er niets in "
+                 "de Wachtrij of het Actiecentrum. agentctl_deploys + een poller per "
+                 "pijler lossen dat op; deze toets vangt de regressie waarin de poller "
+                 "zelf sterft (bv. een serverherstart tijdens het pollen) en een "
+                 "'running'-rij voor altijd open blijft staan.",
+        severity=STIL,
+        stap="Bekijk de Gauntlet-run (indien van toepassing) in de Gauntlet-tab en "
+             "sluit de rij handmatig af, of klik de suggestie opnieuw uit vanaf "
+             "Agent Control.",
+        check=_check_agentctl_run_zonder_effect,
+    ),
+    Invariant(
+        key="content_job_meervoudig_herschreven",
+        titel="Hetzelfde artikel meerdere keren tegelijk in bewerking",
+        incident="14 aug 2026: `orchestrator.process_one_under_threshold` sloot een "
+                 "succesvol herschreven bronrecord nooit af (geen mark_superseded), dus "
+                 "vond de volgende aanroep hetzelfde 'rejected'-record terug en "
+                 "herschreef het opnieuw — één Bijeen- en één WeAreImpact-artikel elk "
+                 "10+ keer op één dag, wat de hele dagbudget (5M tokens) opsoupeerde en "
+                 "tien+ bijna-identieke duplicaten in de Wachtrij achterliet.",
+        severity=BLOKKEREND,
+        stap="Bekijk de duplicaten in de Wachtrij, keur de beste versie goed en wijs de "
+             "rest af; controleer of het aanmakende mechanisme (orchestrator, "
+             "content_improver, een goal-taak) het bronrecord afsluit i.p.v. dupliceert.",
+        check=_check_content_job_meervoudig_herschreven,
+    ),
+    Invariant(
+        key="orchestrator_teller_teruggezet",
+        titel="Pogingenteller liegt over hoe vaak dit al herschreven is",
+        incident="15 aug 2026: `scripts/bijeen_worldclass_engine.py` POST'te "
+                 "rechtstreeks naar `/api/gauntlet` — dus buiten "
+                 "`process_one_under_threshold` en zijn cross-run cap om — en schreef "
+                 "na elke escalatie `orchestrator_attempts=1, status='stuck'` terug op "
+                 "het bronrecord. Daarmee zette het precies de twee velden terug "
+                 "waarop de rem besluit. Eén WeAreImpact-artikel werd zo 17x "
+                 "herschreven, met 128 bijna-identieke duplicaten in de Wachtrij en "
+                 "6,2M tokens op één dag tot gevolg — genoeg om het dagbudget te "
+                 "breken en alle andere autonome runs stil te leggen. De duplicaten "
+                 "werden wél gemeld (`content_job_meervoudig_herschreven`); dat de "
+                 "teller zélf onbetrouwbaar was, zag niemand. Tweede oorzaak, "
+                 "dezelfde dag gevonden: `mark_superseded` gaf de telling niet door "
+                 "aan de opvolger, dus begon de cap bij élke generatie opnieuw — alle "
+                 "244 WeAreImpact-jobs stonden op 0 terwijl één artikel zestien "
+                 "herschrijvingen had. Beide wegen worden nu getoetst.",
+        severity=BLOKKEREND,
+        stap="Zoek wat er in `content_jobs.orchestrator_attempts` schrijft buiten "
+             "`content_pipeline.bump_orchestrator_attempts` om (scripts, handmatige "
+             "SQL, een tweede pad naar de Gauntlet) en haal dat weg — er hoort maar "
+             "één weg naar de Gauntlet te zijn.",
+        check=_check_orchestrator_teller_teruggezet,
+    ),
+    Invariant(
+        key="pijler_dubbel_ingezet",
+        titel="Iris en Agent Control pakten dezelfde pijler dubbel op",
+        incident="22 aug 2026: Iris' briefing (06:45) en de scheduler-job "
+                 "iris_auto_deploy (07:00) beslisten allebei onafhankelijk welk project "
+                 "welke pijler nodig had, zonder van elkaar te weten. Omdat de "
+                 "content-score alleen 'published' meet en nooit 'pending_review', bleef "
+                 "een project na Iris' contentrun voor Agent Control de zwakste pijler — "
+                 "en kreeg het dezelfde ochtend een tweede, volledige Gauntlet-run. "
+                 "`iris/pillar_guard.py` is de gedeelde toets die beide kanten nu vóór "
+                 "het starten raadplegen.",
+        severity=BLOKKEREND,
+        stap="Controleer of `pillar_guard.pillar_handled_today` in beide callers "
+             "(iris/actions.py:content_run/seo_refresh en "
+             "agentctl/suggest.py:_today_has_deploy) nog daadwerkelijk wordt aangeroepen "
+             "vóórdat er werk gestart wordt.",
+        check=_check_pijler_dubbel_ingezet,
     ),
     Invariant(
         key="radar_signaal_verlopen",
@@ -2861,6 +3863,41 @@ INVARIANTEN: List[Invariant] = [
         stap="Draai POST /api/demand/trend-sync en lees de uitkomst. Levert hij nog "
              "steeds niets, dan zit het gat tussen signaal en zoekwoord.",
         check=_check_radar_trendbrug_stil,
+    ),
+    Invariant(
+        key="suggestie_pijler_zonder_agent",
+        titel="Pijler in de Iris-cijfers waar geen agent bij hoort",
+        incident="16 aug 2026: `metrics.project_scores` kreeg een vijfde pijler `geo` "
+                 "in het pillars-blok met de aantekening 'niet meegeteld'. Dat gold voor "
+                 "de optelsom, niet voor de code die erover itereert. De suggestie-engine "
+                 "sorteert álle pijlers op score: bij een site zonder GEO-scan is die "
+                 "None en viel de scheduler-job iris_auto_deploy een etmaal om; bij een "
+                 "site mét een lage GEO-score (schaal 0-100 tussen pijlers van 0-25) "
+                 "wordt geo de 'zwakste', vindt geen agent en verdwijnt dat project "
+                 "stilzwijgend uit de suggesties.",
+        severity=STIL,
+        stap="Geef de pijler een agent in `_PILLAR_AGENT`, of zet hem in "
+             "`_INFORMATIEVE_PIJLERS` als hij alleen inzicht is. Beide zijn een "
+             "besluit; geen van beide is de huidige toestand.",
+        check=_check_suggestie_pijler_zonder_agent,
+    ),
+    Invariant(
+        key="kans_zonder_gemeten_vraag",
+        titel="Alle kansen van een site zijn giswerk",
+        incident="16 aug 2026: WeAreImpact bood 24 openstaande kansen aan waarvan er nul "
+                 "één impressie in Search Console had. De Demand Engine leverde voor deze "
+                 "site niets, dus was de voorraad volledig gevuld door de trend-brug met "
+                 "koppen van andermans nieuwsberichten ('Inspiratiebijeenkomst Hybride "
+                 "Zorg en AI in de ggz'). Het dashboard bood er onder één knop 22 tegelijk "
+                 "aan. Elke afzonderlijke kans zag er normaal uit en de wekelijkse scan "
+                 "meldde 'ok' — de vraag of er onder de héle voorraad één meting zat "
+                 "stelde niemand.",
+        severity=STIL,
+        stap="Controleer de GSC-koppeling en draai de Demand-scan opnieuw. Levert die "
+             "nog steeds geen striking-distance-kansen, dan is de site te jong voor "
+             "gemeten vraag en is elk artikel eruit expliciet een gok — schrijf er "
+             "weinig en meet wat ze doen.",
+        check=_check_kans_zonder_gemeten_vraag,
     ),
 
     # ── Beursmeester ──────────────────────────────────────────────────────

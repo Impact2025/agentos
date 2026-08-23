@@ -517,6 +517,309 @@ Regels:
         return {**lead, "id": lead_id, "contacts": contacts, "tags": tags,
                 "created_at": now, "updated_at": now}
 
+    # ── Nederlandse zin → zoekquery (de "type één zin" instap) ─────────────
+
+    def describe_to_query(self, sentence: str) -> str:
+        """Zet een vrije Nederlandse omschrijving om in een scherpe zoekquery.
+
+        Gebruikt Hermes (OpenRouter/lokaal), Claude als fallback. Blijft altijd
+        een nuttige query teruggeven — bij LLM-fout geeft het de ruwe zin terug,
+        zodat de pipeline nooit leeg draait. Dit is stap 1 (DESCRIBE) van de
+        Hermes Lead Machine, vertaald naar iets dat search_web() kan eten.
+        """
+        sentence = (sentence or "").strip()
+        if not sentence:
+            return ""
+        prompt = (
+            "Je vertaalt een vrije Nederlandse omschrijving van een ideale "
+            "zakelijke prospect naar ÉÉN korte, scherpe zoekopdracht (3-8 woorden) "
+            "die bruikbaar is in Google/ Bing. Gebruik concrete beroepen, "
+            "bedrijfstypen of diensten, geen vage termen. Voeg indien logisch "
+            "'Nederland' of een regio toe.\n\n"
+            f"Omschrijving: {sentence}\n\n"
+            "Geef ALLEEN de zoekopdracht terug, geen uitleg, geen aanhalingstekens."
+        )
+        raw = self._hermes_complete(prompt, max_tokens=60)
+        if not raw:
+            return sentence
+        q = raw.strip().strip('"\'')
+        # Sommige modellen geven toch nog een label terug — pak de laatste regel.
+        q = q.splitlines()[-1].strip() if q else sentence
+        return q or sentence
+
+    # ── Auto-capture: afzender → prospect (geen handwerk meer) ─────────────
+    # Wanneer een afspraak-voorstel of inhoudelijke mail binnenkomt van een
+    # afzender die (nog) niet in de leads-tafel staat, leggen we die vast als
+    # prospect. Zo wordt de lead-herkenning in het Actiecentrum (de groene
+    # "bekende klant/lead"-badge) automatisch, zónder dat Vincent hem met de
+    # hand aan hoeft te maken. De Obsidian-vault is de single source of truth:
+    # bij een nieuwe lead schrijven we meteen een notitie (Leads/<slug>.md) en
+    # onthouden we het pad op de lead. Bestaande handmatige contact-notities in
+    # de vault worden via een lokale scan herkend en niet dubbel aangemaakt.
+    _SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+    def ensure_lead_for_contact(self, from_addr: str, from_name: str = "",
+                               context: str = "", source: str = "") -> Dict:
+        """Zoek een bestaande lead op email, anders maak er een aan.
+
+        Returns altijd een lead-dict (met 'id', 'is_new', 'obsidian_path').
+        Bij fouten (DB down, vault weg) degradeert dit netjes: er komt geen
+        crash uit de agenda-/mail-pipeline, hoogstens een 'is_new': False met
+        de reden in de log.
+        """
+        if not from_addr or "@" not in from_addr:
+            return {"id": None, "is_new": False, "obsidian_path": "",
+                    "reason": "geen geldig e-mailadres"}
+        email = from_addr.strip().lower()
+        name = (from_name or "").strip() or email.split("@")[0].replace(".", " ").title()
+
+        try:
+            with get_conn() as conn:
+                row = conn.execute(
+                    "SELECT * FROM leads WHERE lower(email)=?", (email,)
+                ).fetchone()
+                if row:
+                    return {"id": row["id"], "is_new": False,
+                            "obsidian_path": row["obsidian_path"] or "",
+                            "org_name": row["org_name"], "status": row["status"]}
+        except Exception as e:
+            log.warning("[leads] ensure_lead lookup mislukt: %s", e)
+
+        # Nog geen lead in de DB — check de vault (handmatige notities).
+        vault_hit = self._find_in_vault(email, name)
+        if vault_hit:
+            return self._capture_from_vault(vault_hit, email, name, context, source)
+
+        # Echt nieuw: maak prospect + vault-notitie.
+        return self._capture_new(email, name, context, source)
+
+    def _lead_slug(self, name: str) -> str:
+        base = self._SLUG_RE.sub("-", name.lower()).strip("-") or "contact"
+        return base[:60]
+
+    def _find_in_vault(self, email: str, name: str) -> Optional[Dict]:
+        """Zoek in de Obsidian-vault naar een notitie over deze afzender.
+
+        Lokale scan: eerst de Leads-map op e-mail/naam, daarna de hele vault
+        op e-mail. Geen externe zoekindex nodig, dus ook offline robuust.
+        """
+        try:
+            from ..chat.obsidian import ObsidianService
+            from ...shared.config import OBSIDIAN_VAULT_PATH
+            obs = ObsidianService(OBSIDIAN_VAULT_PATH)
+            if not obs.is_configured:
+                return None
+            needles = [email.lower(), name.lower()]
+            leads_dir = obs.vault_path / "Leads"
+            if leads_dir.exists():
+                for f in leads_dir.rglob("*.md"):
+                    try:
+                        txt = f.read_text(encoding="utf-8", errors="ignore").lower()
+                    except Exception:
+                        continue
+                    if any(n in txt for n in needles if n):
+                        return {"path": str(f.relative_to(obs.vault_path)),
+                                "name": f.stem}
+            for f in obs.vault_path.rglob("*.md"):
+                try:
+                    txt = f.read_text(encoding="utf-8", errors="ignore").lower()
+                except Exception:
+                    continue
+                if email.lower() in txt:
+                    return {"path": str(f.relative_to(obs.vault_path)),
+                            "name": f.stem}
+        except Exception as e:
+            log.debug("[leads] vault-zoek overgeslagen: %s", e)
+        return None
+
+    def _capture_from_vault(self, vault_hit: Dict, email: str, name: str,
+                           context: str, source: str) -> Dict:
+        lead = {
+            "org_name": name,
+            "email": email,
+            "summary": (f"Bestaande contact-notitie in de vault ({vault_hit['path']}). "
+                        + (context or "")).strip(),
+            "status": "prospect",
+            "lead_type": "personal",
+            "relevance": "hoog",
+            "score": 80,
+            "search_query": source or "vault-sync",
+            "obsidian_path": vault_hit["path"],
+            "tags": ["vault-sync", "warm"],
+        }
+        saved = self.save_to_db(lead)
+        log.info("[leads] bestaande vault-contact '%s' opgenomen als lead %s",
+                 name, saved["id"])
+        return {"id": saved["id"], "is_new": True,
+                "obsidian_path": saved["obsidian_path"], "org_name": name,
+                "status": "prospect", "from_vault": True}
+
+    def _capture_new(self, email: str, name: str, context: str, source: str) -> Dict:
+        slug = self._lead_slug(name)
+        obs_path = f"Leads/{slug}.md"
+        summary = (f"Automatisch vastgelegd vanuit {source or 'binnenkomende mail'} "
+                   f"(lead-capture). " + (context or "")).strip()
+        lead = {
+            "org_name": name,
+            "email": email,
+            "summary": summary,
+            "status": "prospect",
+            "lead_type": "personal",
+            "relevance": "gemiddeld",
+            "score": 60,
+            "search_query": source or "auto-capture",
+            "obsidian_path": obs_path,
+            "tags": ["auto-capture", "warm"],
+        }
+        saved = self.save_to_db(lead)
+        # Schrijf de bijbehorende vault-notitie (single source of truth).
+        try:
+            from ..chat.obsidian import ObsidianService
+            from ...shared.config import OBSIDIAN_VAULT_PATH
+            obs = ObsidianService(OBSIDIAN_VAULT_PATH)
+            if obs.is_configured:
+                path = obs.vault_path / obs_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                md = self._lead_markdown(name, email, saved["id"], summary, context)
+                if not path.exists():
+                    path.write_text(md, encoding="utf-8")
+                    log.info("[leads] vault-notitie geschreven: %s", obs_path)
+        except Exception as e:
+            log.warning("[leads] vault-schrijf mislukt (lead wel in DB): %s", e)
+        return {"id": saved["id"], "is_new": True,
+                "obsidian_path": saved["obsidian_path"], "org_name": name,
+                "status": "prospect"}
+
+    @staticmethod
+    def _lead_markdown(name: str, email: str, lead_id: str, summary: str,
+                       context: str) -> str:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        context_block = f"## Context\n{context}\n\n" if context else ""
+        return (
+            f"---\n"
+            f"tags: [lead, auto-capture, warm]\n"
+            f"lead_id: {lead_id}\n"
+            f"email: {email}\n"
+            f"status: prospect\n"
+            f"created: {now}\n"
+            f"---\n\n"
+            f"# {name}\n\n"
+            f"**E-mail:** {email}\n\n"
+            f"## Samenvatting\n{summary}\n\n"
+            f"{context_block}"
+            f"## Relatie\n- Automatisch vastgelegd door Agent OS lead-capture.\n"
+            f"- Nog geen contact geweest vanuit WeAreImpact.\n\n"
+            f"## Notities\n- \n"
+        )
+
+    # ── Impact Calculator (weareimpact.nl) → een rij in de leads-funnel ────
+    # Zelf-gekwalificeerd: de bezoeker vulde eigen cijfers in en gaf zijn
+    # e-mail vrijwillig om het rapport te ontvangen. Dat is warmer dan een
+    # koud zoekresultaat, dus start direct op 'valid' (Geverifieerd) in
+    # plaats van de 'new' waar Tavily-resultaten instromen — er valt niets
+    # te verrijken/verifiëren wat de bezoeker niet al zelf heeft aangeleverd.
+    def capture_impact_calculator_lead(self, lead: Dict, verslag: str,
+                                       enrichment: Dict) -> Dict:
+        """Dedupe op e-mail (zelfde patroon als ensure_lead_for_contact): een
+        herhaalde ontgrendeling van hetzelfde adres wordt geen tweede rij,
+        maar update wel Iris' verslag zodat het laatste bezoek zichtbaar
+        blijft — een lead die al verder in de funnel staat (bijv. gebeld)
+        wordt daarbij nooit teruggezet."""
+        email = (lead.get("email") or "").strip().lower()
+        if not email:
+            return {"id": None, "is_new": False, "reason": "geen e-mailadres"}
+        naam = (lead.get("naam") or "").strip()
+        organisatie = (lead.get("organisatie") or "").strip()
+        org_name = organisatie or naam or email
+        inputs = lead.get("inputs") or {}
+        results = lead.get("results") or {}
+
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM leads WHERE lower(email)=?", (email,)
+            ).fetchone()
+        if row:
+            existing = dict(row)
+            with get_conn() as conn:
+                conn.execute(
+                    "UPDATE leads SET summary = ?, updated_at = ? WHERE id = ?",
+                    (verslag, _now(), existing["id"]),
+                )
+            return {"id": existing["id"], "is_new": False,
+                    "org_name": existing["org_name"], "status": existing["status"]}
+
+        score = 75
+        try:
+            if float(results.get("grossSavingsPerYear") or 0) >= 20000:
+                score += 10
+            if float(results.get("sroiRatio") or 0) >= 3:
+                score += 5
+        except (TypeError, ValueError):
+            pass
+        score = min(score, 95)
+
+        slug = self._lead_slug(org_name)
+        obs_path = f"Leads/{slug}.md"
+        contacts = [{"naam": naam, "email": email}] if naam else []
+        lead_row = {
+            "org_name": org_name,
+            "website": enrichment.get("website", ""),
+            "email": email,
+            "contacts": contacts,
+            "summary": verslag,
+            "relevance": "hoog",
+            "status": "valid",
+            "search_query": "impact-calculator",
+            "obsidian_path": obs_path,
+            "lead_type": "impact_calculator",
+            "score": score,
+            "tags": ["impact-calculator", "inbound", "warm"],
+        }
+        saved = self.save_to_db(lead_row)
+
+        try:
+            from ..chat.obsidian import ObsidianService
+            from ...shared.config import OBSIDIAN_VAULT_PATH
+            obs = ObsidianService(OBSIDIAN_VAULT_PATH)
+            if obs.is_configured:
+                path = obs.vault_path / obs_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if not path.exists():
+                    md = self._impact_calculator_markdown(
+                        org_name, naam, email, saved["id"], inputs, results, verslag)
+                    path.write_text(md, encoding="utf-8")
+        except Exception as e:
+            log.warning("[leads] vault-schrijf impact-calculator-lead mislukt: %s", e)
+
+        log.info("[leads] Impact Calculator-lead vastgelegd: %s (%s)", org_name, saved["id"])
+        return {"id": saved["id"], "is_new": True, "org_name": org_name, "status": "valid"}
+
+    @staticmethod
+    def _impact_calculator_markdown(org_name: str, naam: str, email: str, lead_id: str,
+                                    inputs: Dict, results: Dict, verslag: str) -> str:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        return (
+            f"---\n"
+            f"tags: [lead, impact-calculator, warm]\n"
+            f"lead_id: {lead_id}\n"
+            f"email: {email}\n"
+            f"status: valid\n"
+            f"created: {now}\n"
+            f"---\n\n"
+            f"# {org_name}\n\n"
+            f"**Contactpersoon:** {naam or 'onbekend'}\n"
+            f"**E-mail:** {email}\n\n"
+            f"## Impact Calculator-invoer\n"
+            f"- Teamomvang: {inputs.get('fte', 'onbekend')} FTE\n"
+            f"- Administratiedruk: {inputs.get('adminPct', 'onbekend')}%\n"
+            f"- Huidige AI-adoptie: {inputs.get('aiPct', 'onbekend')}%\n"
+            f"- Berekende tijdwinst: {results.get('weeklyHoursSaved', 'onbekend')} uur/week\n"
+            f"- Berekende besparing: EUR {results.get('grossSavingsPerYear', 'onbekend')}/jaar\n"
+            f"- SROI: {results.get('sroiRatio', 'onbekend')} : 1\n\n"
+            f"## Iris' verslag\n{verslag}\n\n"
+            f"## Notities\n- \n"
+        )
+
     def enrich_lead(self, lead_id: str) -> Optional[Dict]:
         """
         Scrape website opnieuw + AI-analyse + automatische Hunter-verrijking.
@@ -574,6 +877,41 @@ Regels:
                     updates["email_status"] = "deliverable"
                     updates["status"] = "valid"
                 updates["hunter_verified"] = 1
+
+        # Waterfall-fallback: na de primaire Hunter-verrijking hierboven loop
+        # de keten (Hunter opnieuw + GetLeads → Apollo) en verrijk telefoon via
+        # Lead Magic. Key-gated: zonder key slaat elke provider over. De keten
+        # stopt zodra een e-mail gevonden is, dus de Hunter-call hier is
+        # onschadelijk als de stap hierboven al een e-mail zette (dan ziet
+        # run_waterfall die via `email` in updates en slaat Hunter over).
+        try:
+            from .waterfall import run_waterfall
+            feed = {**lead, **updates, "contacts": merged_contacts}
+            # Geef de reeds-gevonden e-mail door zodat run_waterfall geen
+            # dubbele Hunter-call doet als enrich_lead() die al zette.
+            if updates.get("email"):
+                feed["email"] = updates["email"]
+            wf = run_waterfall(feed)
+            if wf["added_contacts"]:
+                # Voeg de via waterfall gevonden contacten samen met de
+                # bestaande (dedupliceer op e-mail, zie _dedupe in waterfall).
+                have = {c.get("email", "").lower() for c in merged_contacts
+                        if c.get("email")}
+                for wc in wf["added_contacts"]:
+                    if wc.get("email", "").lower() not in have:
+                        merged_contacts.append(wc)
+                        have.add(wc.get("email", "").lower())
+                if wf["primary_email"] and not updates.get("email"):
+                    updates["email"] = wf["primary_email"]
+                    updates["email_status"] = "deliverable"
+                    if lead.get("status") in ("new", "enriched", ""):
+                        updates["status"] = "valid"
+                if wf["primary_phone"] and not updates.get("phone"):
+                    updates["phone"] = wf["primary_phone"]
+                log.info("[leads] Waterfall verrijkte lead %s via %s",
+                         lead_id, ",".join(wf["sources_used"]) or "geen nieuwe")
+        except Exception as e:  # noqa: BLE001
+            log.warning("[leads] Waterfall-fallback mislukt (niet fataal): %s", e)
 
         updates["contacts"] = json.dumps(merged_contacts, ensure_ascii=False)
 
@@ -646,6 +984,57 @@ Regels:
             row = conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone()
 
         return self._row_to_dict(dict(row))
+
+    def waterfall_enrich(self, lead_id: str,
+                         *, include_phone: bool = True) -> Optional[Dict]:
+        """Expliciete waterfall-verrijking voor één lead (naast Hunter).
+
+        Loopt de goedkopere/nauwkeurigere keten (GetLeads → Apollo) voor e-mail
+        en Lead Magic voor telefoon. Key-gated: providers zonder key slaan over.
+        Retourneert het bijgewerkte lead-dict + een waterfall-rapport, of None
+        als de lead niet bestaat.
+        """
+        with get_conn() as conn:
+            row = conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone()
+        if not row:
+            return None
+        lead = self._row_to_dict(dict(row))
+
+        try:
+            from .waterfall import run_waterfall
+            wf = run_waterfall(lead, include_phone=include_phone)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[leads] waterfall_enrich mislukt voor %s: %s", lead_id, e)
+            return {**lead, "waterfall": {"error": str(e)[:200]}}
+
+        # Bestaande contacten samenvoegen met de nieuwe (dedupliceer op e-mail).
+        existing = lead.get("contacts") or []
+        have = {c.get("email", "").lower() for c in existing if c.get("email")}
+        for wc in wf["added_contacts"]:
+            if wc.get("email", "").lower() not in have:
+                existing.append(wc)
+                have.add(wc.get("email", "").lower())
+
+        updates: Dict = {
+            "contacts": json.dumps(existing, ensure_ascii=False),
+            "updated_at": _now(),
+        }
+        if wf["primary_email"] and not lead.get("email"):
+            updates["email"] = wf["primary_email"]
+            updates["email_status"] = "deliverable"
+            if lead.get("status") in ("new", "enriched", ""):
+                updates["status"] = "valid"
+        if wf["primary_phone"] and not lead.get("phone"):
+            updates["phone"] = wf["primary_phone"]
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        vals = list(updates.values()) + [lead_id]
+        with get_conn() as conn:
+            conn.execute(f"UPDATE leads SET {set_clause} WHERE id = ?", vals)
+            row = conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone()
+        result = self._row_to_dict(dict(row))
+        result["waterfall"] = wf
+        return result
 
     def save_to_obsidian(self, lead: Dict) -> Optional[str]:
         if not self.vault_path or not self.vault_path.exists():
@@ -827,6 +1216,8 @@ Status: **{lead.get('status', 'prospect').title()}**
         # Wrap plain text in simpele HTML voor Graph API
         html_body = email_body.replace("\n", "<br>")
 
+        from ...shared.outcomes import log_outcome
+
         try:
             result = asyncio.run(outlook.send_new_email(
                 to=target_email,
@@ -838,6 +1229,11 @@ Status: **{lead.get('status', 'prospect').title()}**
                 # telt deze verstuurde mail niet mee in de conversieformule.
                 from . import funnel
                 funnel.advance_lead(lead_id, "contacted")
+                log_outcome(
+                    "Leads", "outreach_sent",
+                    f"Outreach verstuurd aan {org_name} ({target_email}): '{subject}'",
+                    next_step="Reply-detectie staat aan — je hoort het zodra ze reageren.",
+                )
                 return {
                     "status": "sent",
                     "to": target_email,
@@ -845,25 +1241,49 @@ Status: **{lead.get('status', 'prospect').title()}**
                     "body": email_body,
                 }
             else:
-                return {
-                    "status": "error",
-                    "detail": f"Graph API fout: {result}",
-                    "body": email_body,
-                }
+                detail = f"Graph API fout: {result}"
+                log_outcome(
+                    "Leads", "outreach_send_mislukt",
+                    f"Outreach naar {org_name} ({target_email}) is niet verstuurd: {detail}",
+                    next_step="Probeer het opnieuw of benader de lead handmatig.",
+                    status="error",
+                )
+                return {"status": "error", "detail": detail, "body": email_body}
         except RuntimeError as e:
-            return {
-                "status": "error",
-                "detail": f"Authenticatiefout: {e}. Log opnieuw in via Instellingen -> Outlook.",
-                "body": email_body,
-            }
+            detail = f"Authenticatiefout: {e}. Log opnieuw in via Instellingen -> Outlook."
+            log_outcome(
+                "Leads", "outreach_send_mislukt",
+                f"Outreach naar {org_name} ({target_email}) is niet verstuurd: {detail}",
+                next_step="Log opnieuw in via Instellingen -> Outlook en probeer het daarna opnieuw.",
+                status="error",
+            )
+            return {"status": "error", "detail": detail, "body": email_body}
         except Exception as e:
-            return {
-                "status": "error",
-                "detail": f"Versturen mislukt: {e}",
-                "body": email_body,
-            }
+            detail = f"Versturen mislukt: {e}"
+            log_outcome(
+                "Leads", "outreach_send_mislukt",
+                f"Outreach naar {org_name} ({target_email}) is niet verstuurd: {detail}",
+                next_step="Probeer het opnieuw of benader de lead handmatig.",
+                status="error",
+            )
+            return {"status": "error", "detail": detail, "body": email_body}
 
     def get_stats(self) -> Dict:
+        """KPI's voor de Leads-tab.
+
+        `valid` en `contacted` ontbraken hier tot 20 aug 2026 volledig — de
+        frontend las `stats.valid`/`stats.contacted` die nooit bestonden, dus
+        stonden de tegels "Geverifieerd"/"Gecontacteerd" altijd op 0 (default
+        `|| 0`), ongeacht hoeveel leads er echt geverifieerd of benaderd waren
+        (op het moment van de fix: 20 resp. 1). Zelfde soort fout als de
+        Doelen-tab (3a in CLAUDE.md): een getal dat nooit klopt, ongeacht het
+        werk dat er al ligt. Beide tellen CUMULATIEF ("ooit bereikt"), niet de
+        actuele status — anders zakt "Gecontacteerd" weer terug zodra een lead
+        naar 'replied' of 'won' doorschuift, en dat is een stap vooruit, geen
+        stap terug. `enriched` deed dit al goed (`enriched_at != ''`); `valid`
+        en `contacted` volgen nu dezelfde regel via hun eigen tijdstempel-/
+        vlagveld (`hunter_verified`, `contacted_at`).
+        """
         with get_conn() as conn:
             total = conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
             by_status = dict(conn.execute(
@@ -875,6 +1295,12 @@ Status: **{lead.get('status', 'prospect').title()}**
             enriched = conn.execute(
                 "SELECT COUNT(*) FROM leads WHERE enriched_at != ''"
             ).fetchone()[0]
+            valid = conn.execute(
+                "SELECT COUNT(*) FROM leads WHERE hunter_verified = 1"
+            ).fetchone()[0]
+            contacted = conn.execute(
+                "SELECT COUNT(*) FROM leads WHERE contacted_at != ''"
+            ).fetchone()[0]
             with_phone = conn.execute(
                 "SELECT COUNT(*) FROM leads WHERE phone != ''"
             ).fetchone()[0]
@@ -884,6 +1310,8 @@ Status: **{lead.get('status', 'prospect').title()}**
         return {
             "total": total,
             "enriched": enriched,
+            "valid": valid,
+            "contacted": contacted,
             "with_phone": with_phone,
             "with_email": with_email,
             "by_status": by_status,
