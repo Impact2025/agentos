@@ -5,6 +5,7 @@
 import { sql, json, resolveBridgeTenant } from './_lib.js';
 import { pushToAll } from './_push.js';
 import { encrypt } from './_crypto.js';
+import { sendText } from './_whatsapp_send.js';
 
 export default async function handler(req, res) {
   const tenant = await resolveBridgeTenant(req, res);
@@ -17,6 +18,10 @@ export default async function handler(req, res) {
     if (op === 'ack' && req.method === 'POST') return await ack(req, res, tenant);
     if (op === 'notes' && req.method === 'GET') return await notes(res, tenant);
     if (op === 'notes-ack' && req.method === 'POST') return await notesAck(req, res, tenant);
+    if (op === 'reminder' && req.method === 'POST') return await reminder(req, res, tenant);
+    if (op === 'impact-lead' && req.method === 'POST') return await impactLead(req, res, tenant);
+    if (op === 'impact-leads' && req.method === 'GET') return await impactLeads(res, tenant);
+    if (op === 'impact-leads-ack' && req.method === 'POST') return await impactLeadsAck(req, res, tenant);
     return json(res, 400, { error: `onbekende op '${op}'` });
   } catch (e) {
     console.error('bridge error', e);
@@ -136,6 +141,64 @@ async function notesAck(req, res, tenant) {
     await sql`UPDATE notes SET status = 'synced' WHERE tenant = ${tenant} AND id = ANY(${ids})`;
   }
   return json(res, 200, { ok: true, acked: ids.length });
+}
+
+// Agenda-herinnering (1 uur van tevoren) vanaf de lokale machine: die kent
+// het Meta-token niet (leeft alleen hier in Vercel, zie CLAUDE.md 14e-b), dus
+// stuurt hij de tekst en versturen wij naar het EERSTE nummer in
+// whatsapp_allowed_from — dat is Vincent zelf (zelfde afspraak als notifyMe
+// in whatsapp.js). Geen WhatsApp gekoppeld voor deze tenant → ok:false, geen
+// 500: de scheduler-job aan de andere kant telt dat gewoon als 0 verstuurd.
+async function reminder(req, res, tenant) {
+  const text = String((req.body && req.body.text) || '').trim();
+  if (!text) return json(res, 400, { error: 'text ontbreekt' });
+  const rows = await sql`
+    SELECT whatsapp_phone_number_id, whatsapp_allowed_from FROM tenants WHERE slug = ${tenant}`;
+  const t = rows[0];
+  const managerNumber = String((t && t.whatsapp_allowed_from) || '')
+    .split(',').map((s) => s.trim()).filter(Boolean)[0];
+  if (!t || !t.whatsapp_phone_number_id || !managerNumber) {
+    return json(res, 200, { ok: false, error: 'whatsapp niet gekoppeld voor deze tenant' });
+  }
+  const ok = await sendText(t.whatsapp_phone_number_id, managerNumber, text);
+  return json(res, 200, { ok });
+}
+
+// Impact Calculator (weareimpact.nl): de website roept dit zelf aan zodra een
+// bezoeker het dashboard ontgrendelt. Geen tenant-content om te archiveren
+// (zie push()) — dit is een gebeurtenis, geen state, dus gewoon een insert.
+async function impactLead(req, res, tenant) {
+  const body = req.body || {};
+  const email = String(body.email || '').trim();
+  if (!email || !email.includes('@')) {
+    return json(res, 400, { error: 'ongeldig e-mailadres' });
+  }
+  await sql`
+    INSERT INTO impact_leads (tenant, email, naam, organisatie, inputs, results)
+    VALUES (${tenant}, ${email}, ${body.naam || null}, ${body.organisatie || null},
+            ${JSON.stringify(body.inputs || {})}::jsonb,
+            ${JSON.stringify(body.results || {})}::jsonb)`;
+  return json(res, 200, { ok: true });
+}
+
+async function impactLeads(res, tenant) {
+  const rows = await sql`
+    SELECT id, email, naam, organisatie, inputs, results, created_at
+    FROM impact_leads WHERE tenant = ${tenant} AND status = 'pending'
+    ORDER BY created_at ASC LIMIT 20`;
+  return json(res, 200, { leads: rows });
+}
+
+async function impactLeadsAck(req, res, tenant) {
+  const acks = (req.body && req.body.acks) || [];
+  for (const a of acks) {
+    const status = a.status === 'processed' ? 'processed' : 'failed';
+    await sql`
+      UPDATE impact_leads SET status = ${status},
+             error = ${String(a.error || '').slice(0, 500) || null}, processed_at = now()
+      WHERE id = ${a.id} AND tenant = ${tenant} AND status = 'pending'`;
+  }
+  return json(res, 200, { ok: true, acked: acks.length });
 }
 
 async function ack(req, res, tenant) {

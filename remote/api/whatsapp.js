@@ -19,6 +19,15 @@
 // (agents starten, mail sturen, publiceren) loopt via manager-Iris altijd nog
 // door de bestaande `decisions`-gate.
 //
+// ── Afbeeldingen (toegevoegd 20 aug 2026) ─────────────────────────────────
+//   Alleen het manager-kanaal (whatsapp_allowed_from) mag een foto sturen —
+//   bv. een wedstrijdrooster — en Iris leest 'm zelf via vision (zie
+//   _whatsapp_media.js + _iris_core.js:toMultimodalUserMessage) om er per
+//   regel een plan_agenda-voorstel uit te trekken. Klant-Iris blijft foto's
+//   negeren: een publiek nummer krijgt bewust geen vision-kosten opengezet.
+//   De ruwe afbeelding wordt nooit in whatsapp_threads opgeslagen — alleen de
+//   tekst van het gesprek, dus een afbeelding telt maar één keer mee.
+//
 // ── Wereldklasse-garanties (toegevoegd 18 aug 2026) ──────────────────────
 //   • Deduplicatie is NU een claim/state-machine: het message_id wordt pas
 //     als "verwerkt" gemarkeerd NADAT het antwoord daadwerkelijk is verzonden.
@@ -36,6 +45,7 @@ import { sql } from './_lib.js';
 import { converse, MAX_TURNS } from './_iris_core.js';
 import { resolveOrAskProject, customerConverse, MAX_CUSTOMER_TURNS } from './_customer_core.js';
 import { sendText, markRead } from './_whatsapp_send.js';
+import { downloadWhatsappImage } from './_whatsapp_media.js';
 
 // bodyParser:false is vereist om de exacte bytes te krijgen die Meta ook
 // hashte voor X-Hub-Signature-256 — een her-JSON.stringify van req.body kan
@@ -172,23 +182,29 @@ async function loadThread(tenant, waId) {
   return rows[0] || { messages: [], project: null };
 }
 
-async function saveThread(tenant, waId, messages, project, maxTurns) {
+// `contactName` schrijft alleen weg als er al géén naam bekend is (COALESCE
+// tegen de bestaande kolom) — zelfde patroon als `project` hieronder. Meta
+// stuurt de displaynaam bij elk bericht opnieuw mee, maar de eerste die we
+// zagen is genoeg en voorkomt dat een leeg vervolgbericht 'm overschrijft.
+async function saveThread(tenant, waId, messages, project, maxTurns, contactName) {
   const trimmed = messages.slice(-maxTurns);
   await sql`
-    INSERT INTO whatsapp_threads (tenant, wa_id, messages, project, updated_at)
-    VALUES (${tenant}, ${waId}, ${JSON.stringify(trimmed)}::jsonb, ${project}, now())
+    INSERT INTO whatsapp_threads (tenant, wa_id, messages, project, contact_name, updated_at)
+    VALUES (${tenant}, ${waId}, ${JSON.stringify(trimmed)}::jsonb, ${project}, ${contactName || null}, now())
     ON CONFLICT (tenant, wa_id) DO UPDATE SET
       messages = EXCLUDED.messages, project = COALESCE(EXCLUDED.project, whatsapp_threads.project),
+      contact_name = COALESCE(whatsapp_threads.contact_name, EXCLUDED.contact_name),
       updated_at = now()`;
 }
 
-async function handleManagerMessage(tenant, phoneNumberId, from, text) {
+async function handleManagerMessage(tenant, phoneNumberId, from, text, image) {
   const thread = await loadThread(tenant, from);
-  const convo = [...thread.messages, { role: 'user', content: text }];
+  const messageText = text || (image ? '(afbeelding zonder bijschrift)' : '(leeg bericht)');
+  const convo = [...thread.messages, { role: 'user', content: messageText }];
 
   let result;
   try {
-    result = await converse(tenant, convo, 'whatsapp');
+    result = await converse(tenant, convo, 'whatsapp', image);
   } catch (e) {
     console.error('whatsapp manager-converse mislukt', tenant, e);
     await sendText(phoneNumberId, from,
@@ -219,7 +235,7 @@ async function notifyMe(phoneNumberId, managerNumber, text) {
   await sendText(phoneNumberId, managerNumber, text);
 }
 
-async function handleCustomerMessage(tenant, phoneNumberId, from, text, managerNumber) {
+async function handleCustomerMessage(tenant, phoneNumberId, from, text, managerNumber, contactName) {
   const thread = await loadThread(tenant, from);
   let project = thread.project;
 
@@ -230,7 +246,7 @@ async function handleCustomerMessage(tenant, phoneNumberId, from, text, managerN
       // vragen. De vraag zelf dient meteen als AI-disclosure.
       await saveThread(tenant, from,
         [...thread.messages, { role: 'user', content: text }, { role: 'assistant', content: resolved.ask }],
-        null, MAX_CUSTOMER_TURNS);
+        null, MAX_CUSTOMER_TURNS, contactName);
       await sendText(phoneNumberId, from, resolved.ask);
       return;
     }
@@ -260,7 +276,7 @@ async function handleCustomerMessage(tenant, phoneNumberId, from, text, managerN
 
   const nextHistory = [...thread.messages,
     { role: 'user', content: text }, { role: 'assistant', content: result.reply }];
-  await saveThread(tenant, from, nextHistory, project, MAX_CUSTOMER_TURNS);
+  await saveThread(tenant, from, nextHistory, project, MAX_CUSTOMER_TURNS, contactName);
   await sendText(phoneNumberId, from, result.reply);
 
   if (result.escalated) {
@@ -277,12 +293,16 @@ async function handleCustomerMessage(tenant, phoneNumberId, from, text, managerN
   }
 }
 
-async function handleMessage(phoneNumberId, msg) {
-  // v1: alleen tekst. Spraakberichten/foto's negeren we bewust in plaats van
-  // een verwarrend "dat snap ik niet" — de afzender ziet toch geen antwoord en
-  // leert vanzelf dat hij het moet typen; een halve feature is hier erger dan
-  // geen feature.
-  if (msg.type !== 'text' || !msg.text?.body?.trim()) return;
+async function handleMessage(phoneNumberId, msg, contactName) {
+  // Tekst, en sinds 20 aug 2026 ook afbeeldingen — maar dat laatste alleen op
+  // het manager-kanaal (zie hieronder). Spraakberichten/documenten/video's
+  // negeren we nog steeds bewust in plaats van een verwarrend "dat snap ik
+  // niet" — de afzender ziet toch geen antwoord en leert vanzelf dat hij het
+  // moet typen of als foto sturen; een halve feature is hier erger dan geen
+  // feature.
+  const isText = msg.type === 'text' && !!msg.text?.body?.trim();
+  const isImage = msg.type === 'image' && !!msg.image?.id;
+  if (!isText && !isImage) return;
 
   const messageId = String(msg.id || '');
   if (!messageId) return; // geen id ⇒ niets om te dedupe'en, veilig negeren
@@ -311,14 +331,36 @@ async function handleMessage(phoneNumberId, msg) {
   const allowed = String(tenant.whatsapp_allowed_from || '')
     .split(',').map((s) => s.trim()).filter(Boolean);
   const from = String(msg.from || '');
-  const text = String(msg.text.body).slice(0, 4000);
+  const text = isText ? String(msg.text.body).slice(0, 4000) : String(msg.image?.caption || '').slice(0, 4000);
 
   markRead(phoneNumberId, msg.id);
 
   if (allowed.includes(from)) {
-    await handleManagerMessage(tenant.slug, phoneNumberId, from, text);
+    // Vision is bewust alléén hier: het manager-nummer is Vincent zelf
+    // (whitelist), dus geen kostenrisico van een publiek nummer dat foto's
+    // spamt — klant-Iris (hieronder) blijft foto's negeren, precies zoals
+    // vóór deze uitbreiding.
+    let image = null;
+    if (isImage) {
+      try {
+        image = await downloadWhatsappImage(msg.image.id);
+      } catch (e) {
+        console.error('whatsapp media-download mislukt', tenant.slug, from, e);
+        await sendText(phoneNumberId, from,
+          'Kon de afbeelding niet ophalen bij WhatsApp. Probeer het nog eens of typ het rooster over.');
+        await markReplied(messageId);
+        return;
+      }
+    }
+    await handleManagerMessage(tenant.slug, phoneNumberId, from, text, image);
+  } else if (isImage) {
+    // Klant-Iris ziet nog geen afbeeldingen (kleiner toolset, publiek nummer,
+    // geen reden om vision-kosten open te zetten voor iedereen). Gewoon
+    // markeren en klaar — een retry hoeft dit niet opnieuw te proberen.
+    await markReplied(messageId);
+    return;
   } else {
-    await handleCustomerMessage(tenant.slug, phoneNumberId, from, text, allowed[0]);
+    await handleCustomerMessage(tenant.slug, phoneNumberId, from, text, allowed[0], contactName);
   }
 
   // Pas NA het versturen markeren we als 'replied' — daarmee is de state-machine
@@ -368,8 +410,14 @@ export default async function handler(req, res) {
         const value = change.value || {};
         const phoneNumberId = value.metadata?.phone_number_id;
         if (!phoneNumberId) continue;
+        // Meta stuurt de displaynaam van de afzender als apart `contacts`-array,
+        // parallel aan `messages` (niet erin) — vandaar een losse lookup per wa_id.
+        const names = {};
+        for (const c of value.contacts || []) {
+          if (c?.wa_id && c?.profile?.name) names[c.wa_id] = String(c.profile.name).slice(0, 120);
+        }
         for (const msg of value.messages || []) {
-          await handleMessage(phoneNumberId, msg).catch((e) => {
+          await handleMessage(phoneNumberId, msg, names[msg.from]).catch((e) => {
             console.error('whatsapp bericht verwerken mislukt', msg.id, e);
           });
         }

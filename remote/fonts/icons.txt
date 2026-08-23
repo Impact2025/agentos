@@ -25,6 +25,7 @@ event_available
 event_busy
 expand_more
 flag
+forum
 fyi
 group_add
 hoog
@@ -53,6 +54,7 @@ self_improvement
 send
 settings_input_component
 shield
+social
 sticky_note_
 stop
 support_agent

@@ -86,6 +86,105 @@ uit stap 3, en kies "Zet op beginscherm" — dan gedraagt het zich als app
 "Meldingen inschakelen". Op iPhone werkt web-push alléén vanuit de
 op-het-beginscherm-gezette app (iOS 16.4+), niet vanuit Safari zelf.
 
+### 6. WhatsApp (optioneel — Iris appen)
+
+Praat met Iris via WhatsApp, met dezelfde tool-lus als de app-chat: ze leest
+de snapshot, mag `start_werk`/`plan_agenda` in de rij zetten (landt achter de
+gates, uitgevoerd door de lokale `bridge_sync` zoals altijd) en kan een
+besluit alleen vóórstellen, nooit zelf goedkeuren. Het webhook-endpoint is
+`api/whatsapp.js`; de tool-lus zelf staat in `api/_iris_core.js`, gedeeld met
+`api/iris.js` — er is maar één plek waar staat wat Iris mag.
+
+**Wat alleen jij kunt doen (Meta-account, buiten mijn bereik):**
+1. Maak een Meta Business-account + een **App** (type "Business") op
+   [developers.facebook.com](https://developers.facebook.com/apps). Voeg het
+   product **WhatsApp** toe.
+2. **Voeg je 06-nummer toe** onder WhatsApp → API Setup → "Add phone number".
+   Dat nummer mag op geen enkel toestel al als gewone WhatsApp actief staan
+   (zie de waarschuwing hieronder) — Meta stuurt een SMS/belcode ter
+   verificatie, dat moet je zelf ontvangen op dat nummer.
+3. Genereer een **permanent System User access token** (Business Settings →
+   System Users → nieuwe system user → toegang tot de WhatsApp-app →
+   "Generate token" met de scopes `whatsapp_business_messaging` en
+   `whatsapp_business_management`). Een tijdelijk token uit de Quickstart-tab
+   verloopt na 24 uur en is dus niks voor productie.
+4. Noteer het **phone_number_id** (WhatsApp → API Setup, staat naast je
+   nummer) — dat is *niet* hetzelfde als het telefoonnummer zelf.
+5. Verzin een **verify token** (een willekeurige string van jezelf, geen Meta-
+   waarde) voor stap 8 hieronder.
+6. Zet in de Vercel-environment-variables (gedeeld over alle tenants, net als
+   `OPENROUTER_API_KEY` — dit is jouw Meta-app, geen klantgeheim):
+   ```
+   WHATSAPP_TOKEN=<het permanente System User-token>
+   WHATSAPP_APP_SECRET=<App Dashboard → Settings → Basic → App Secret>
+   WHATSAPP_VERIFY_TOKEN=<de string die je in stap 5 verzon>
+   ```
+   Redeploy zodat de nieuwe env meegaat.
+7. Draai `node migrate.mjs` (voegt `whatsapp_phone_number_id`,
+   `whatsapp_allowed_from` en de thread/dedupe-tabellen toe).
+8. Koppel het nummer aan een tenant en zeg wie ermee mag praten:
+   ```
+   node scripts/add-whatsapp.mjs weareimpact <phone_number_id> 31612345678
+   ```
+   Het laatste argument is jouw eigen 06-nummer in E.164 zónder `+` (zoals
+   Meta het aanlevert), kommagescheiden als je later iemand anders als
+   manager toegang geeft — zíj krijgen de volle Iris (start_werk, agenda
+   plannen, besluiten voorstellen). **Iedereen die niet op die lijst staat
+   komt automatisch bij klant-Iris terecht**, niet bij stilte: een aparte,
+   veel beperkte assistent die alleen uit de kennisbank van je projecten
+   antwoordt (`sites.profile` moet gevuld zijn — een site zonder profiel
+   levert geen klantkennis) en bij twijfel of bij iets met gevolgen
+   (offerte, afspraak, klacht, persoonsgegevens) niets verzint maar een
+   kaart voor je klaarzet op het Vandaag-scherm in Iris Remote, met een
+   tekstveld om zelf te reageren — dat antwoord gaat direct de deur uit,
+   geen wachten op een sync. Zie CLAUDE.md 14f voor het ontwerp.
+
+   **Beveiligingsgrens (verifieerbaar):** klant-Iris mag *nooit* bij de
+   manager-toolset komen. Dat rust niet alleen op "het model krijgt een
+   kleinere toolset" — er zit defense-in-depth bovenop: elke tool-call die
+   het model teruggeeft, wordt tégen een harde allowlist gecheckt vóór
+   uitvoering. Een model dat per ongeluk `start_werk` of `stel_besluit_voor`
+   teruggeeft, wordt geweigerd en resulteert in een escalatie naar Vincent —
+   zo kan een verkeerd uitgelijnd model de review-gate nooit omzeilen. Dit is
+   bewezen door `tests/whatsapp-security.test.js` (`node --test`).
+
+   **Betrouwbaarheid (geen verdwenen berichten):** deduplicatie is een
+   state-machine (`whatsapp_processed.status` = `received` → `replied`). Een
+   bericht wordt pas als verwerkt gemarkeerd *nadat* het antwoord daadwerkelijk
+   is verzonden. Een Vercel-timeout of crash laat het op `received` staan, dus
+   Meta's retry krijgt een nieuwe kans in plaats van dat het bericht stil
+   gedropt wordt. Alleen een retry op een al-verzonden (`replied`) bericht
+   wordt vroeg gedropt.
+
+   **Kostenbescherming:** per-afzender rate-limit (`whatsapp_throttle`):
+   > 20 berichten/uur of > 6 berichten/60s ⇒ het bericht wordt vóór de LLM
+   gedropt. Beschermt tegen spam-loops en LLM-kosten; legitieme
+   klantengesprekken (een handvol berichten per dag) raken dit nooit.
+
+   **Thread-continuïteit:** wanneer jij een escalatie beantwoordt vanuit Iris
+   Remote (`whatsapp-reply`), wordt jouw antwoord teruggeschreven naar de
+   klant-draad. Een vervolgvraag van de klant die naar jouw antwoord verwijst
+   ("en wat kost dat dan?") heeft Iris dus in context — ze herhaalt of
+   escaleert niet nutteloos.
+9. Terug in het Meta App Dashboard: WhatsApp → Configuration → Webhook →
+   *Edit* → callback-URL `https://<jouw-domein>/api/whatsapp`, verify token =
+   de string uit stap 5. Klik *Verify and save* (dat is de GET-verificatie die
+   `api/whatsapp.js` afhandelt), abonneer daarna op het veld **messages**.
+10. Stuur een appje naar je eigen nieuwe nummer. Eerste antwoord kan een paar
+    seconden duren (een LLM-call plus eventueel een paar tool-rondes).
+
+⚠️ **Het nummer wordt daarna een puur zakelijk WhatsApp Business-nummer.**
+Zodra het aan de Cloud API hangt, kun je er niet ook de gewone WhatsApp-app
+mee gebruiken op je telefoon — dat is een harde regel van Meta, geen
+instelling. Gebruik dus een vrij 06-nummer (een tweede simkaart of een
+eSIM/VoIP-nummer volstaat, WhatsApp hoeft er nooit op te bellen), nooit het
+nummer dat je privé al gebruikt.
+
+**Meerdere klanten**: `whatsapp_phone_number_id` staat op de tenant-rij, dus
+Nicole kan later haar eigen 06-nummer krijgen zonder een nieuwe deploy — wel
+een tweede Meta-app-nummer (WHATSAPP_TOKEN blijft gedeeld: één Meta-app kan
+meerdere nummers dragen) en een eigen `add-whatsapp.mjs`-koppeling.
+
 ## Live agenda + GSC-trend (zonder AgentOS)
 
 Agenda en GSC-cijfers hoeven niet te wachten op de eerstvolgende `bridge_sync`

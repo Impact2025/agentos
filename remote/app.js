@@ -261,6 +261,7 @@
     content: { icon: 'article', label: 'Wachtrij · Artikel' },
     mail: { icon: 'mail', label: 'Helpdesk · Mail' },
     personal_mail: { icon: 'mark_email_read', label: 'Postvak · Concept' },
+    social: { icon: 'forum', label: 'Social · Concept' },
     outreach: { icon: 'alternate_email', label: 'Outreach' },
     calendar: { icon: 'calendar_month', label: 'Agenda-voorstel' },
     goal: { icon: 'flag', label: 'Doel' },
@@ -304,12 +305,14 @@
   const GROUP_OF = {
     content: 'actie', outreach: 'actie', calendar: 'actie',
     mail: 'mail', personal_mail: 'mail',
+    social: 'social',
     error: 'fout',
   };
   const GROUPS = [
     ['all', 'Alles', 'inbox'],
     ['fout', 'Fouten', 'error'],
     ['mail', 'Mail', 'mail'],
+    ['social', 'Social', 'forum'],
     ['actie', 'Wachtrij', 'pending_actions'],
     ['info', 'Info', 'info'],
   ];
@@ -317,9 +320,9 @@
   function rankOf(it) {
     if (it.decision_status === 'failed') return 0;
     if (it.dismiss_kind === 'error') return 1;
-    // Mail telt hier als 'actie': een eigen filtergroep mag niet betekenen dat
-    // een wachtend antwoord onder de artikelen zakt.
-    if (['actie', 'mail'].includes(groupOf(it))) return it.decision_status === 'pending' ? 3 : 2;
+    // Mail en social tellen hier als 'actie': een eigen filtergroep mag niet
+    // betekenen dat een wachtend antwoord onder de artikelen zakt.
+    if (['actie', 'mail', 'social'].includes(groupOf(it))) return it.decision_status === 'pending' ? 3 : 2;
     return 4;
   }
   let inboxFilter = 'all';
@@ -437,13 +440,14 @@
   // ── Detail bottom-sheet + acties ─────────────────────────────────────────
   const ACTION_LABELS = {
     approve: { content: 'Goedkeuren & publiceren', outreach: 'Versturen', calendar: 'Goedkeuren' },
-    send: { mail: 'Versturen', personal_mail: 'Versturen' },
-    reject: { content: 'Afwijzen', mail: 'Afwijzen', personal_mail: 'Afwijzen', outreach: 'Afwijzen (→ lost)', calendar: 'Afwijzen' },
-    edit: { mail: 'Bewerking opslaan' },
+    send: { mail: 'Versturen', personal_mail: 'Versturen', social: 'Plaats antwoord' },
+    reject: { content: 'Afwijzen', mail: 'Afwijzen', personal_mail: 'Afwijzen', social: 'Afwijzen', outreach: 'Afwijzen (→ lost)', calendar: 'Afwijzen' },
+    edit: { mail: 'Bewerking opslaan', social: 'Bewerking opslaan' },
   };
   const ACTIONS_PER_KIND = {
     content: ['approve', 'reject'], mail: ['send', 'edit', 'reject'],
     personal_mail: ['send', 'reject'],
+    social: ['send', 'edit', 'reject'],
     outreach: ['approve', 'reject'], calendar: ['approve', 'reject'],
   };
   const inputCls = 'w-full bg-[#020617] border-none rounded-lg p-4 text-on-surface font-body-md focus:ring-2 focus:ring-primary/50 mt-2';
@@ -471,6 +475,15 @@
         ${d.ai_summary ? `<p class="font-body-md text-[12px] text-on-surface-variant/70 mt-1">${esc(d.ai_summary)}</p>` : ''}
         <p class="font-body-md text-body-md text-on-surface-variant mt-3">Iris' conceptantwoord — bewerk gerust vóór versturen:</p>
         <textarea id="edit-text" rows="10" class="${inputCls}">${esc(d.draft_body || '')}</textarea>`;
+    }
+    if (it.dismiss_kind === 'social') {
+      return `
+        <p class="font-body-md text-body-md text-on-surface-variant mt-2">
+          <b class="text-on-surface">${esc(d.platform || '?')}</b> · ${esc(d.author_name || d.author_handle || 'iemand')}
+          ${d.kind ? ` · ${esc(d.kind)}` : ''}</p>
+        <pre class="whitespace-pre-wrap break-words bg-surface-container-lowest/50 border border-white/5 rounded-lg p-3 font-body-md text-body-md text-on-surface-variant mt-2">${esc(d.text || '')}</pre>
+        <p class="font-body-md text-body-md text-on-surface-variant mt-3">Concept-antwoord — bewerk gerust vóór plaatsen:</p>
+        <textarea id="edit-text" rows="8" class="${inputCls}">${esc(d.draft_body || '')}</textarea>`;
     }
     if (it.dismiss_kind === 'outreach') {
       return `
@@ -508,6 +521,7 @@
   function payloadFor(it, action) {
     const p = {};
     if (it.dismiss_kind === 'mail' && action === 'edit') { const t = $('edit-text'); if (t) p.text = t.value; }
+    if (it.dismiss_kind === 'social' && action === 'edit') { const t = $('edit-text'); if (t) p.text = t.value; }
     if (it.dismiss_kind === 'personal_mail' && action === 'send') {
       const t = $('edit-text'); if (t) p.text = t.value;
     }
@@ -2250,6 +2264,224 @@
 
   // Vandaag: samenvatting. Hooguit drie regels, compact (zonder AI-samenvatting)
   // en met één uitgang naar het volledige scherm.
+  // Klanten die via WhatsApp appten en waar klant-Iris niet zeker van was (of
+  // waar de vraag gevolgen heeft: offerte/afspraak/klacht/persoonsgegevens) —
+  // zie backend `_customer_core.js`. Bewust een eigen, simpel paneel i.p.v.
+  // het sync_items-mechanisme van de rest van deze pagina: dat wordt bij elke
+  // bridge_sync-push volledig overschreven door wat AgentOS lokaal aanlevert,
+  // en een WhatsApp-escalatie ontstaat rechtstreeks in Neon — hij zou binnen
+  // een paar minuten weer verdwijnen. Antwoorden gaat dan ook niet via
+  // `decide` (dat wacht op de eerstvolgende sync) maar rechtstreeks naar Meta
+  // via `whatsapp-reply`, want versturen vergt geen lokale data.
+  // Managementstrip boven de escalatielijst: volume + escalatiegraad +
+  // reactietijd, uit `whatsapp-stats` (aggregeert whatsapp_rate_limit en
+  // whatsapp_escalations — geen nieuwe meting, alleen zichtbaar gemaakt).
+  // Verschijnt óók als de escalatielijst leeg is: "0 klanten wachten" en
+  // "geen WhatsApp-verkeer" zijn twee verschillende toestanden, en zonder
+  // deze strip waren ze niet van elkaar te onderscheiden (zelfde fout als
+  // een lege Kansen-lijst die als "niets te doen" leest).
+  function whatsappStatsStrip(s) {
+    if (!s) return '';
+    const rate = s.escalations.escalation_rate_7d;
+    const rateTone = rate == null ? '' : rate >= 40 ? 'text-error' : rate >= 20 ? 'text-warning' : 'text-tertiary';
+    const avgSec = s.escalations.avg_response_seconds;
+    const avgLabel = avgSec == null ? '—'
+      : avgSec < 3600 ? `${Math.round(avgSec / 60)}m` : `${(avgSec / 3600).toFixed(1)}u`;
+    const nearLimitLine = (s.near_limit || []).length
+      ? `<p class="font-body-md text-[11px] text-warning mt-2">⚠ ${s.near_limit.length} klant${s.near_limit.length === 1 ? '' : 'en'} vandaag boven ${Math.round(s.daily_limit * 0.75)} van ${s.daily_limit} berichten</p>`
+      : '';
+    return `<div class="px-4 pb-3 pt-1 border-b border-white/5">
+      <div class="grid grid-cols-5 gap-2 text-center">
+        <div><p class="font-headline-sm text-[15px] text-on-surface">${s.messages_7d}</p><p class="font-label-caps text-[9px] text-on-surface-variant/70 uppercase">berichten 7d</p></div>
+        <div><p class="font-headline-sm text-[15px] text-on-surface">${s.active_conversations_7d}</p><p class="font-label-caps text-[9px] text-on-surface-variant/70 uppercase">gesprekken 7d</p></div>
+        <div><p class="font-headline-sm text-[15px] text-tertiary">${s.new_contacts_7d ?? 0}</p><p class="font-label-caps text-[9px] text-on-surface-variant/70 uppercase">nieuw 7d</p></div>
+        <div><p class="font-headline-sm text-[15px] ${rateTone}">${rate == null ? '—' : rate + '%'}</p><p class="font-label-caps text-[9px] text-on-surface-variant/70 uppercase">escalatie 7d</p></div>
+        <div><p class="font-headline-sm text-[15px] text-on-surface">${avgLabel}</p><p class="font-label-caps text-[9px] text-on-surface-variant/70 uppercase">reactietijd</p></div>
+      </div>
+      ${nearLimitLine}
+    </div>`;
+  }
+
+  // Eén escalatiekaart — vraag + reden + antwoordveld. Was tot 22 aug 2026
+  // inline in whatsappPanel; nu een eigen functie omdat zowel de Vandaag-kaart
+  // (compact, hooguit 2) als het volle Communicatie-scherm (alles) hem nodig
+  // hebben — twee plekken die 'm los uitschrijven lopen gegarandeerd uit elkaar.
+  function escalationCard(it) {
+    return `<div class="bg-surface-container-lowest/50 border border-white/5 rounded-lg p-3" data-wa-id="${it.id}">
+      <p class="font-label-caps text-[10px] text-primary uppercase truncate">${esc(it.project || 'Onbekend project')} · ${esc(fmtDate(it.created_at))}</p>
+      <p class="font-body-md text-body-md text-on-surface mt-1">${esc(it.question || '')}</p>
+      <p class="font-body-md text-[11px] text-on-surface-variant/70 mt-1">Iris kon dit niet zelf beantwoorden: ${esc(it.reason || '')}</p>
+      <textarea rows="3" class="${inputCls} mt-2" data-wa-text placeholder="Typ je antwoord..."></textarea>
+      <div class="flex gap-2 mt-2">
+        <button class="flex-1 bg-primary text-on-primary font-headline-sm text-[13px] py-2 rounded-lg" data-wa-send="${it.id}">Versturen</button>
+        <button class="px-4 border border-white/10 text-on-surface-variant rounded-lg" data-wa-dismiss="${it.id}">Negeren</button>
+      </div>
+    </div>`;
+  }
+
+  // Vandaag-kaart: samenvatting, hooguit 2 escalaties inline (zelfde regel als
+  // Postvak — kaart ≠ scherm, zie 14c). Alles (gesprekkenlijst, nieuwe
+  // contacten, volledige escalatielijst) leeft in het Communicatie-scherm.
+  function whatsappPanel(list, stats) {
+    const hasTraffic = stats && (stats.messages_7d > 0 || stats.escalations.open > 0 || stats.new_contacts_7d > 0);
+    if ((!list || !list.length) && !hasTraffic) return '';
+    const preview = (list || []).slice(0, 2);
+    const nieuw = (stats && stats.new_contacts_7d) || 0;
+    const metaBits = [];
+    if (list.length) metaBits.push(`${list.length} klant${list.length === 1 ? '' : 'en'} wacht${list.length === 1 ? '' : 'en'} op jou`);
+    if (nieuw) metaBits.push(`${nieuw} nieuw${nieuw === 1 ? '' : 'e'} contact${nieuw === 1 ? '' : 'en'} deze week`);
+    return `<div class="glass-panel rounded-xl overflow-hidden">
+      <div class="mail-head">
+        <button class="mail-head-main" data-open-communicatie-sheet="1">
+          <div class="card-head-icon"><span class="material-symbols-outlined">chat</span></div>
+          <div class="min-w-0 flex-1 text-left">
+            <p class="card-head-title">Communicatie</p>
+            <p class="card-head-meta">${metaBits.length ? esc(metaBits.join(' · ')) : 'Niets wacht — zie de cijfers hieronder'}</p>
+          </div>
+        </button>
+      </div>
+      ${whatsappStatsStrip(stats)}
+      <div class="px-4 pb-4 space-y-3">
+        ${preview.map(escalationCard).join('')}
+        <button class="mail-open-all" data-open-communicatie-sheet="1">
+          Communicatie openen${list.length > preview.length ? `<span class="mail-open-all-count">${list.length}</span>` : ''}
+          <span class="material-symbols-outlined">chevron_right</span>
+        </button>
+      </div>
+    </div>`;
+  }
+
+  // ── Communicatie-scherm ──────────────────────────────────────────────────
+  // Drie secties, gesorteerd naar wat het van je vraagt: eerst wat wacht
+  // (escalaties), dan wie er nieuw is binnengekomen, dan alles — zelfde
+  // opbouw als het Postvak-scherm (mailScreenHtml hierboven).
+  function conversationRow(c) {
+    const who = c.contact_name || c.wa_id;
+    return `<li class="mail-row is-tapbaar" data-open-thread="${esc(c.wa_id)}" role="button" tabindex="0">
+      <span class="mail-avatar" style="background:${avatarTint(who)}">${esc(initials(c.contact_name, ''))}</span>
+      <div class="min-w-0 flex-1">
+        <div class="mail-row-top">
+          <span class="mail-from">${esc(who)}</span>
+          <span class="mail-time">${esc(relTime(c.updated_at))}</span>
+        </div>
+        <p class="mail-subject">${esc(c.project || 'Onbekend project')}${c.is_new ? ' · <span class="text-primary">nieuw contact</span>' : ''}</p>
+        <p class="mail-summary">${c.message_count} bericht${c.message_count === 1 ? '' : 'en'}${c.open_escalations ? ` · ${c.open_escalations} wacht op jou` : ''}</p>
+      </div>
+      <span class="mail-draft-hint"><span class="material-symbols-outlined">chevron_right</span></span>
+    </li>
+    <li class="mail-thread hidden"></li>`;
+  }
+
+  function threadMessagesHtml(thread) {
+    const msgs = thread.messages || [];
+    if (!msgs.length) return '<p class="mail-leeg">Nog geen berichten opgeslagen.</p>';
+    return `<div class="space-y-2 py-2">${msgs.map((m) => `
+      <div class="rounded-lg p-2.5 ${m.role === 'user' ? 'bg-white/5' : 'bg-primary/10'}">
+        <p class="font-label-caps text-[9px] text-on-surface-variant/60 uppercase">${m.role === 'user' ? esc(thread.contact_name || thread.wa_id) : 'Iris'}</p>
+        <p class="font-body-md text-[13px] text-on-surface mt-0.5 whitespace-pre-wrap">${esc(typeof m.content === 'string' ? m.content : JSON.stringify(m.content))}</p>
+      </div>`).join('')}</div>`;
+  }
+
+  // Eén bindfunctie, gedeeld tussen kaart en scherm — zelfde reden als
+  // bindMailRows: twee plekken die dit los binden lopen uit elkaar.
+  // `conversationRow()` kan hetzelfde gesprek in twee secties tonen (Nieuwe
+  // contacten + Alle gesprekken) — de slot is daarom de eerstvolgende <li>
+  // van dezelfde rij, nooit een globale lookup op wa_id, anders opent een tik
+  // op de tweede rij het transcript van de eerste.
+  function bindConversationRows(root) {
+    root.querySelectorAll('[data-open-thread]').forEach((row) => {
+      row.onclick = async () => {
+        const waId = row.dataset.openThread;
+        const slot = row.nextElementSibling;
+        if (!slot) return;
+        if (!slot.classList.contains('hidden')) { slot.classList.add('hidden'); return; }
+        slot.classList.remove('hidden');
+        slot.innerHTML = '<p class="mail-leeg">Laden…</p>';
+        try {
+          // api() bouwt de URL als `?op=${op}` — een tweede queryparam meegeven
+          // via een `&` in de op-string is hier de eenvoudigste weg zonder de
+          // gedeelde api()-helper (en al haar aanroepers) een signatuur erbij
+          // te geven voor dit ene geval.
+          const data = await api(`whatsapp-thread&wa_id=${encodeURIComponent(waId)}`);
+          slot.innerHTML = threadMessagesHtml(data.thread);
+        } catch (e) {
+          slot.innerHTML = `<p class="font-body-md text-[12px] text-error">${esc(e.message)}</p>`;
+        }
+      };
+    });
+  }
+
+  function communicatieScreenHtml(list, stats, conversations) {
+    const nieuwe = (conversations || []).filter((c) => c.is_new);
+    return `
+      ${whatsappStatsStrip(stats)}
+      ${list.length ? `<section class="mail-sectie">
+        <p class="mail-sectie-kop"><span class="flex-1">Wacht op jou</span><span class="mail-sectie-num">${list.length}</span></p>
+        <div class="space-y-3">${list.map(escalationCard).join('')}</div>
+      </section>` : ''}
+      ${nieuwe.length ? `<section class="mail-sectie">
+        <p class="mail-sectie-kop"><span class="flex-1">Nieuwe contacten (7d)</span><span class="mail-sectie-num">${nieuwe.length}</span></p>
+        <ul class="mail-list">${nieuwe.map(conversationRow).join('')}</ul>
+      </section>` : ''}
+      <section class="mail-sectie">
+        <p class="mail-sectie-kop"><span class="flex-1">Alle gesprekken (30d)</span><span class="mail-sectie-num">${(conversations || []).length}</span></p>
+        ${(conversations || []).length
+          ? `<ul class="mail-list">${conversations.map(conversationRow).join('')}</ul>`
+          : '<p class="mail-leeg">Nog geen klantgesprekken via WhatsApp.</p>'}
+      </section>`;
+  }
+
+  async function openCommunicatieSheet() {
+    const card = openSheet('Communicatie', 'WhatsApp-verkeer', '<p class="mail-leeg">Laden…</p>');
+    try {
+      const [waData, waStats, waConvos] = await Promise.all([
+        api('whatsapp'), api('whatsapp-stats'), api('whatsapp-conversations'),
+      ]);
+      const list = (waData && waData.escalations) || [];
+      card.querySelector('.mt-3').innerHTML = communicatieScreenHtml(list, waStats, (waConvos && waConvos.conversations) || []);
+      bindWhatsappCards(card, () => { loadToday(); openCommunicatieSheet(); });
+      bindConversationRows(card);
+    } catch (e) {
+      card.querySelector('.mt-3').innerHTML = `<p class="font-body-md text-[13px] text-error">Kon Communicatie niet laden: ${esc(e.message)}</p>`;
+    }
+  }
+
+  // `onDone` draait ná een geslaagde actie — default ververst alleen Vandaag
+  // (de kaart), maar het Communicatie-scherm geeft hier zijn eigen herlaad mee
+  // zodat de sheet zelf ook bijwerkt in plaats van open te blijven staan met
+  // een net-verstuurde kaart nog zichtbaar.
+  function bindWhatsappCards(root, onDone = loadToday) {
+    root.querySelectorAll('[data-wa-send]').forEach((btn) => {
+      btn.onclick = async () => {
+        const card = btn.closest('[data-wa-id]');
+        const ta = card.querySelector('[data-wa-text]');
+        const text = (ta.value || '').trim();
+        if (!text) { toast('Typ eerst een antwoord', '', 'edit'); return; }
+        btn.disabled = true; btn.textContent = '…';
+        try {
+          await api('whatsapp-reply', 'POST', { id: btn.dataset.waSend, text });
+          toast('Verstuurd', 'ok', 'check_circle');
+          onDone();
+        } catch (e) {
+          toast(e.message, 'err', 'error');
+          btn.disabled = false; btn.textContent = 'Versturen';
+        }
+      };
+    });
+    root.querySelectorAll('[data-wa-dismiss]').forEach((btn) => {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          await api('whatsapp-dismiss', 'POST', { id: btn.dataset.waDismiss });
+          onDone();
+        } catch (e) {
+          toast(e.message, 'err', 'error');
+          btn.disabled = false;
+        }
+      };
+    });
+  }
+
   function mailPanel(m) {
     if (!m || m.status !== 'ok') return m ? sectionOff('mail', 'Postvak', m) : '';
     const top = ((m.sorted || {}).needs_reply || []).slice(0, 3);
@@ -2465,9 +2697,11 @@
     const tbGreet = $('topbar-greeting');
     if (tbGreet) tbGreet.textContent = g;
     try {
-      const [data, outboxData] = await Promise.all([
+      const [data, outboxData, waData, waStats] = await Promise.all([
         api('context'),
         api('outbox').catch(() => null), // niet-fataal: de queue-note is een bonus, geen kernfunctie
+        api('whatsapp').catch(() => null), // idem: geen WhatsApp gekoppeld is geen fout
+        api('whatsapp-stats').catch(() => null), // idem: cijfers zijn een bonus, geen kernfunctie
       ]);
       if (token !== loadToken) return;
       const ctx = data.payload;
@@ -2529,6 +2763,7 @@
       // gebruikt (Postvak-rijen, notities), nu ook hier.
       el.classList.add('stagger');
       el.innerHTML = [
+        whatsappPanel((waData && waData.escalations) || [], waStats),
         agendaPanel(ctx.agenda, data.live?.agenda),
         mailPanel(ctx.mail),
         pulsePanel(ctx.pulse, ['mail', 'agenda']),
@@ -2552,9 +2787,11 @@
         goto.onclick = () => { inboxFilter = 'mail'; show('inbox'); renderItems(); };
       }
       el.querySelectorAll('[data-open-mail-sheet]').forEach((b) => { b.onclick = () => openMailSheet(); });
+      el.querySelectorAll('[data-open-communicatie-sheet]').forEach((b) => { b.onclick = () => openCommunicatieSheet(); });
       const agendaSheetBtn = el.querySelector('[data-open-agenda-sheet]');
       if (agendaSheetBtn) agendaSheetBtn.onclick = () => openAgendaSheet();
       bindMailRows(el, false);
+      bindWhatsappCards(el);
     } catch (e) {
       if (e.message === 'login') return;
       el.innerHTML = `<div class="glass-panel rounded-xl p-6 text-error font-body-md">

@@ -354,6 +354,33 @@ export function pickProvider() {
   return null;
 }
 
+// Eén afbeelding (van WhatsApp) omzetten naar het contentblok-formaat dat de
+// actieve provider verwacht. Wordt precies één keer toegepast, op de laatste
+// (net toegevoegde) user-turn van het gesprek — niet bij elke ronde opnieuw,
+// en nooit teruggeschreven naar whatsapp_threads (zie whatsapp.js): de opgeslagen
+// historie bevat alleen tekst, dus dit blok bestaat uitsluitend binnen één
+// converse()-aanroep.
+export function toMultimodalUserMessage(text, image, providerName) {
+  const { mediaType, base64 } = image;
+  if (providerName === 'openrouter') {
+    return {
+      role: 'user',
+      content: [
+        ...(text ? [{ type: 'text', text }] : []),
+        { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}` } },
+      ],
+    };
+  }
+  // anthropic/openmodel
+  return {
+    role: 'user',
+    content: [
+      { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+      ...(text ? [{ type: 'text', text }] : []),
+    ],
+  };
+}
+
 function toOpenAiTools(tools) {
   return tools.map((t) => ({
     type: 'function',
@@ -485,6 +512,15 @@ function systemPrompt(snapshotAt, pulse, openCount, channel) {
     '- Denk mee als een scherpe stafchef: benoem wat opvalt, wat het betekent, en wat',
     '  de eerstvolgende stap is. Niet opsommen wat hij al ziet.',
     ...stijl,
+    ...(channel === 'whatsapp' ? [
+      '- Krijg je een afbeelding (bv. een wedstrijdrooster of schema), lees die zelf.',
+      '  Beschrijf niet wat erop staat maar ga meteen aan de slag: roep voor ELKE',
+      '  losse afspraak/wedstrijd in de afbeelding een aparte plan_agenda aan, met',
+      '  de exacte datum, tijd en het onderwerp zoals ze in de afbeelding staan. Kun',
+      '  je een datum, tijd of regel niet zeker lezen (onscherp, afgesneden), vraag',
+      '  dan expliciet na welke regel het betreft in plaats van te gokken — een',
+      '  verkeerd gelezen tijdstip in de agenda is erger dan er even naar vragen.',
+    ] : []),
     '- NOOIT een datum of tijdstip uit je hoofd noemen bij agenda-zaken. Roep altijd',
     '  plan_agenda aan en herhaal exact de datum die de tool teruggeeft in je antwoord.',
     '  Een verkeerde dag (bv. "vrijdag 15 augustus" terwijl het de 14e is) is erger',
@@ -526,7 +562,11 @@ function systemPrompt(snapshotAt, pulse, openCount, channel) {
 // `messages` is [{role:'user'|'assistant', content:string}, ...], al getrimd
 // door de aanroeper. Retourneert {reply, commands, proposals} of gooit een
 // Error met een korte, tonbare boodschap.
-export async function converse(tenant, messages, channel = 'app') {
+// `image`, indien meegegeven, hoort bij de LAATSTE (net toegevoegde) user-turn
+// in `messages` en wordt uitsluitend gebruikt binnen déze aanroep — de
+// aanroeper slaat `messages` zelf tekst-only op (zie whatsapp.js), dus een
+// afbeelding wordt nooit herhaald meegestuurd bij een volgend bericht.
+export async function converse(tenant, messages, channel = 'app', image = null) {
   const provider = pickProvider();
   if (!provider) {
     throw new Error('Geen LLM-key in de Vercel-env — zet OPENROUTER_API_KEY (of OPENMODEL_API_KEY). Cloud-Iris staat uit.');
@@ -539,6 +579,12 @@ export async function converse(tenant, messages, channel = 'app') {
 
   const effects = { commands: [], proposals: [] };
   const convo = [...messages];
+  if (image) {
+    const lastIdx = convo.length - 1;
+    if (lastIdx >= 0 && convo[lastIdx].role === 'user') {
+      convo[lastIdx] = toMultimodalUserMessage(convo[lastIdx].content, image, provider.name);
+    }
+  }
 
   let reply = '';
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {

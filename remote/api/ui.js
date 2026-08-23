@@ -126,6 +126,37 @@ export default async function handler(req, res) {
       if (!bt) return; // 401 al gestuurd door helper
       return await whatsappStats(res, bt);
     }
+    // Zelfde reden en patroon als whatsapp-stats-bridge hierboven — Vincent
+    // wil het volle Communicatie-overzicht (niet alleen de cijfers) ook op
+    // :1250 zien, niet alleen op zijn telefoon via Iris Remote. De
+    // handler-functies zelf zijn al tenant-parametrisch (geen sessie-state
+    // erin), dus dit is puur een tweede, bearer-geauthenticeerde ingang naar
+    // exact dezelfde logica — geen nieuwe waarheid, geen dubbele code.
+    if (op === 'whatsapp-bridge' && req.method === 'GET') {
+      const bt = await resolveBridgeTenant(req, res);
+      if (!bt) return;
+      return await whatsappList(res, bt);
+    }
+    if (op === 'whatsapp-conversations-bridge' && req.method === 'GET') {
+      const bt = await resolveBridgeTenant(req, res);
+      if (!bt) return;
+      return await whatsappConversations(res, bt);
+    }
+    if (op === 'whatsapp-thread-bridge' && req.method === 'GET') {
+      const bt = await resolveBridgeTenant(req, res);
+      if (!bt) return;
+      return await whatsappThread(req, res, bt);
+    }
+    if (op === 'whatsapp-reply-bridge' && req.method === 'POST') {
+      const bt = await resolveBridgeTenant(req, res);
+      if (!bt) return;
+      return await whatsappReply(req, res, bt);
+    }
+    if (op === 'whatsapp-dismiss-bridge' && req.method === 'POST') {
+      const bt = await resolveBridgeTenant(req, res);
+      if (!bt) return;
+      return await whatsappDismiss(req, res, bt);
+    }
     if (op === 'login' && req.method === 'POST') {
       // Een onbekende/niet-geprovisioneerde tenant is een serverfout, geen
       // inlogpoging — anders staat de deur open zonder dat iemand het ziet.
@@ -186,6 +217,8 @@ export default async function handler(req, res) {
     if (op === 'whatsapp-reply' && req.method === 'POST') return await whatsappReply(req, res, sessionTenant);
     if (op === 'whatsapp-dismiss' && req.method === 'POST') return await whatsappDismiss(req, res, sessionTenant);
     if (op === 'whatsapp-stats' && req.method === 'GET') return await whatsappStats(res, sessionTenant);
+    if (op === 'whatsapp-conversations' && req.method === 'GET') return await whatsappConversations(res, sessionTenant);
+    if (op === 'whatsapp-thread' && req.method === 'GET') return await whatsappThread(req, res, sessionTenant);
     return json(res, 400, { error: `onbekende op '${op}'` });
   } catch (e) {
     console.error('ui error', e);
@@ -321,11 +354,18 @@ async function whatsappStats(res, tenant) {
     FROM whatsapp_escalations WHERE tenant = ${tenant} AND status = 'open'
     GROUP BY project ORDER BY open DESC`;
 
+  // Geen nieuwe meting — `created_at` op whatsapp_threads staat al vast op het
+  // allereerste bericht van dat nummer (zie schema.sql), dit telt 'm alleen.
+  const [contacts] = await sql`
+    SELECT COUNT(*) FILTER (WHERE created_at >= now() - interval '7 days')::int AS new_contacts_7d
+    FROM whatsapp_threads WHERE tenant = ${tenant} AND project IS NOT NULL`;
+
   return json(res, 200, {
     daily_limit: limit,
     messages_today: volume.messages_today,
     messages_7d: volume.messages_7d,
     active_conversations_7d: volume.active_conversations_7d,
+    new_contacts_7d: contacts.new_contacts_7d,
     near_limit: nearLimit,
     escalations: {
       open: esc.open,
@@ -339,6 +379,45 @@ async function whatsappStats(res, tenant) {
     },
     open_by_project: openByProject,
   });
+}
+
+// ── Communicatie — volledig gespreksoverzicht (22 aug 2026) ────────────────
+// Tot dusver toonde de app alleen escalaties (waar klant-Iris vastliep). Een
+// klant die gewoon een goed antwoord kreeg was nergens te zien. Dit leest
+// dezelfde `whatsapp_threads`-tabel als de rest van dit bestand, alleen niet
+// gefilterd op "vastgelopen" — `project IS NOT NULL` sluit het manager-
+// gesprek (Vincent zelf, project blijft altijd NULL) uit een klantoverzicht.
+async function whatsappConversations(res, tenant) {
+  const rows = await sql`
+    SELECT t.wa_id, t.project, t.contact_name, t.created_at, t.updated_at,
+      jsonb_array_length(t.messages) AS message_count,
+      (t.created_at >= now() - interval '48 hours') AS is_new,
+      COALESCE(e.open, 0)::int AS open_escalations
+    FROM whatsapp_threads t
+    LEFT JOIN (
+      SELECT wa_id, COUNT(*) AS open FROM whatsapp_escalations
+      WHERE tenant = ${tenant} AND status = 'open' GROUP BY wa_id
+    ) e ON e.wa_id = t.wa_id
+    WHERE t.tenant = ${tenant} AND t.project IS NOT NULL
+    ORDER BY t.updated_at DESC LIMIT 100`;
+  return json(res, 200, { conversations: rows });
+}
+
+// Eén klantgesprek in detail — voor de "bekijk transcript"-klik in het
+// Communicatie-scherm. Escalaties erbij (niet alleen open) zodat je ook ziet
+// wat er al opgelost is, niet alleen wat nu nog wacht.
+async function whatsappThread(req, res, tenant) {
+  const waId = String((req.query && req.query.wa_id) || '');
+  if (!waId) return json(res, 400, { error: 'wa_id ontbreekt' });
+  const rows = await sql`
+    SELECT wa_id, project, contact_name, messages, created_at, updated_at
+    FROM whatsapp_threads WHERE tenant = ${tenant} AND wa_id = ${waId}`;
+  if (!rows.length) return json(res, 404, { error: 'Gesprek niet gevonden' });
+  const escalations = await sql`
+    SELECT id, question, reason, status, reply_text, created_at, answered_at
+    FROM whatsapp_escalations WHERE tenant = ${tenant} AND wa_id = ${waId}
+    ORDER BY created_at DESC LIMIT 20`;
+  return json(res, 200, { thread: rows[0], escalations });
 }
 
 async function briefing(res, tenant) {

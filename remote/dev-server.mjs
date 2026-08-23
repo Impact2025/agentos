@@ -32,6 +32,7 @@ const handlers = {
   '/api/bridge': (await import('./api/bridge.js')).default,
   '/api/ui': (await import('./api/ui.js')).default,
   '/api/iris': (await import('./api/iris.js')).default,
+  '/api/whatsapp': (await import('./api/whatsapp.js')).default,
 };
 
 const MIME = {
@@ -51,6 +52,10 @@ const server = http.createServer(async (req, res) => {
   if (handler) {
     let raw = '';
     for await (const chunk of req) raw += chunk;
+    // whatsapp.js leest zelf de raw body (voor de Meta-signature-check) — de
+    // echte productie-runtime levert die via bodyParser:false; hier is er geen
+    // stream meer over om opnieuw te lezen, dus zetten we 'm alvast klaar.
+    req.rawBody = Buffer.from(raw, 'utf8');
     try { req.body = raw ? JSON.parse(raw) : {}; } catch { req.body = {}; }
     try { await handler(req, res); } catch (e) {
       console.error(e);

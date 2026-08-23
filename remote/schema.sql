@@ -150,6 +150,27 @@ UPDATE notes SET tenant = 'weareimpact' WHERE tenant IS NULL;
 ALTER TABLE notes ALTER COLUMN tenant SET NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_notes_tenant ON notes (tenant, status, created_at);
 
+-- Impact Calculator-leads (weareimpact.nl/impact-calculator): de website pusht
+-- elke ontgrendeling hier rechtstreeks naartoe (op=impact-lead) — dit ontstaat
+-- buiten AgentOS om, dus is er geen lokale rij om op te reageren totdat de
+-- bridge-sync 'm ophaalt (op=impact-leads), verrijkt en Iris er een verslag
+-- over laat schrijven. Zelfde pending/ack-vorm als notes, eigen tabel omdat de
+-- payload en verwerking niets met een vault-notitie te maken hebben.
+CREATE TABLE IF NOT EXISTS impact_leads (
+  id           SERIAL PRIMARY KEY,
+  tenant       TEXT NOT NULL,
+  email        TEXT NOT NULL,
+  naam         TEXT,
+  organisatie  TEXT,
+  inputs       JSONB,
+  results      JSONB,
+  status       TEXT NOT NULL DEFAULT 'pending',   -- pending | processed | failed
+  error        TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  processed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_impact_leads_tenant ON impact_leads (tenant, status, created_at);
+
 -- ── Voordeur ───────────────────────────────────────────────────────────────
 -- Sessies staan in de database en niet in een afgeleide HMAC, want een sessie
 -- die je niet kunt intrekken is geen sessie maar een tweede wachtwoord: hij
@@ -220,4 +241,125 @@ CREATE TABLE IF NOT EXISTS oauth_accounts (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (site_id, provider)
+);
+
+-- ── WhatsApp (16 aug 2026) ───────────────────────────────────────────────────
+-- Iris appen: één Meta-app/WABA-token bedient in principe alle klanten (het
+-- token en de webhook-secret zijn dus gewone Vercel-env-vars, net als
+-- OPENROUTER_API_KEY — geen klantgeheim), maar élk 06-nummer hoort bij precies
+-- één tenant en mag alleen antwoorden aan de afzenders die die klant heeft
+-- opgegeven. Zonder die koppeling zou een binnenkomend bericht op het GEEN
+-- tenant weten te kiezen (of, erger, de verkeerde), en Iris zou dan met de
+-- context van klant A tegen klant B praten. `whatsapp_phone_number_id` is het
+-- Meta-ID van Iris' eígen nummer (niet de afzender); daarop routeert de
+-- webhook. `whatsapp_allowed_from` is een kommagescheiden lijst van E.164-
+-- nummers zonder '+' (zoals Meta ze aanlevert) die met dat nummer mogen praten
+-- — een onbekende afzender krijgt nooit antwoord, ook niet "wie ben je": een
+-- vreemde die het nummer weet te raden praat anders zomaar tegen je bedrijfsdata.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS whatsapp_phone_number_id TEXT UNIQUE;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS whatsapp_allowed_from TEXT;
+
+-- Eén WhatsApp-draadje per (tenant, afzender) — WhatsApp kent zelf geen
+-- "sessie" zoals de app-chat (die stuurt zijn hele geschiedenis elke keer
+-- mee); zonder deze tabel zou Iris bij elk bericht met geheugenverlies
+-- beginnen. `messages` is dezelfde vorm als wat iris.js al gebruikt
+-- ([{role, content}, ...]), afgekapt op MAX_TURNS vóór het opslaan.
+CREATE TABLE IF NOT EXISTS whatsapp_threads (
+  tenant     TEXT NOT NULL,
+  wa_id      TEXT NOT NULL,
+  messages   JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant, wa_id)
+);
+-- Welk project een klantengesprek betreft (18 aug 2026, klant-modus). Één
+-- gedeeld nummer bedient alle projecten van een tenant; zonder dit zou Iris
+-- bij élk bericht opnieuw moeten raden of vragen welk bedrijf het betreft.
+-- NULL = nog niet vastgesteld (of dit is een manager-gesprek, waar het niet
+-- van toepassing is).
+ALTER TABLE whatsapp_threads ADD COLUMN IF NOT EXISTS project TEXT;
+
+-- Communicatie-overzicht (22 aug 2026): tot dusver was er geen enkele plek
+-- die liet zien wíe er appt behalve wanneer klant-Iris vastliep (escalaties).
+-- `contact_name` komt uit Meta's `value.contacts[].profile.name`, meegestuurd
+-- bij elk binnenkomend bericht maar tot nu toe nooit opgeslagen — zonder dat
+-- toont elk overzicht alleen een telefoonnummer. `created_at` krijgt bewust
+-- GEEN default bij de ALTER (dat zou elke bestaande rij op "nu" zetten en dus
+-- élk bestaand gesprek als "nieuw contact" laten binnenkomen); backfill op de
+-- enige tijdstip die we al kennen (updated_at), pas dáárna een DEFAULT voor
+-- nieuwe rijen. `ON CONFLICT DO UPDATE` in whatsapp.js:saveThread raakt deze
+-- kolom nooit aan, dus blijft hij vastgepind op het allereerste bericht.
+ALTER TABLE whatsapp_threads ADD COLUMN IF NOT EXISTS contact_name TEXT;
+ALTER TABLE whatsapp_threads ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
+UPDATE whatsapp_threads SET created_at = updated_at WHERE created_at IS NULL;
+ALTER TABLE whatsapp_threads ALTER COLUMN created_at SET DEFAULT now();
+ALTER TABLE whatsapp_threads ALTER COLUMN created_at SET NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_whatsapp_threads_tenant_updated ON whatsapp_threads (tenant, updated_at DESC);
+
+-- Klant-gesprek dat Iris niet uit de kennisbank kon/mocht beantwoorden
+-- (onzeker antwoord, of iets met gevolgen: offerte, afspraak, klacht,
+-- persoonsgegevens). Bewust GEEN local-execution-omweg via `decisions` zoals
+-- de rest van de bridge: het versturen van het antwoord heeft alleen het
+-- gedeelde WHATSAPP_TOKEN nodig (al aanwezig in de Vercel-env), dus Vincents
+-- eigen typewerk in Iris Remote kan meteen naar de klant — geen 3 minuten
+-- wachten op de eerstvolgende bridge_sync voor iets dat al bij Vercel ligt.
+CREATE TABLE IF NOT EXISTS whatsapp_escalations (
+  id              SERIAL PRIMARY KEY,
+  tenant          TEXT NOT NULL,
+  wa_id           TEXT NOT NULL,
+  phone_number_id TEXT NOT NULL,
+  project         TEXT,
+  question        TEXT NOT NULL,
+  reason          TEXT NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'open',   -- open | answered | dismissed
+  reply_text      TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  answered_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_escalations_open
+  ON whatsapp_escalations (tenant, status, created_at);
+
+-- Meta levert 'at least once' — bij een trage reactie (LLM + tool-rondes kan
+-- een paar seconden duren) stuurt hij een webhook soms nog een keer. De
+-- deduplicatie is hier een state-machine (zie api/whatsapp.js: claimMessage /
+-- markReplied) in plaats van een eenmalige "gezien"-flag:
+--   status 'received' = bericht geclaimd, verwerking (nog) niet voltooid.
+--                        Een Vercel-timeout of crash laat het hier staan, dus
+--                        Meta's retry krijgt een nieuwe kans in plaats van dat
+--                        het bericht stil gedropt wordt.
+--   status 'replied'  = antwoord daadwerkelijk verzonden. Een retry op een
+--                        'replied' rij wordt vroeg gedropt (al geleverd).
+-- Alleen zo kan een > 60s durende verwerking nooit een bericht laten
+-- verdwijnen. Oude 'received'-rijen (> 1u) ruimt de webhook zelf op.
+CREATE TABLE IF NOT EXISTS whatsapp_processed (
+  message_id    TEXT PRIMARY KEY,
+  status        TEXT NOT NULL DEFAULT 'received',   -- received | replied
+  processed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_processed_at ON whatsapp_processed (processed_at);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_processed_status ON whatsapp_processed (status, processed_at);
+
+-- Per-afzender rate-limit (kostenbescherming, api/whatsapp.js: throttled).
+-- Eén rij per wa_id; tellers rollen per venster terug naar 1. Beschermt tegen
+-- spam-loops en LLM-kosten zonder legitieme klantengesprekken te breken.
+-- Grenzen: > 20 berichten/uur OF > 6 berichten/60s ⇒ drop vóór de LLM.
+CREATE TABLE IF NOT EXISTS whatsapp_throttle (
+  wa_id         TEXT PRIMARY KEY,
+  count_1h      INT NOT NULL DEFAULT 1,
+  count_1m      INT NOT NULL DEFAULT 1,
+  window_start  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_throttle_win ON whatsapp_throttle (window_start);
+
+-- Kostenrem voor klant-Iris (18 aug 2026): dit nummer staat open voor
+-- iedereen (bewust, zie CLAUDE.md 14f) en elk klantbericht kost een paar
+-- LLM-rondes. Zonder plafond kan één grap, bot, of eindeloze loop de rekening
+-- laten oplopen — dezelfde reden waarom de rest van AgentOS overal
+-- `DAILY_TOKEN_BUDGET`/`require_llm_budget` heeft. Telt per (tenant, wa_id,
+-- dag); simpel genoeg om atomisch bij te werken zonder een aparte lock.
+CREATE TABLE IF NOT EXISTS whatsapp_rate_limit (
+  tenant TEXT NOT NULL,
+  wa_id  TEXT NOT NULL,
+  day    DATE NOT NULL,
+  count  INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (tenant, wa_id, day)
 );
