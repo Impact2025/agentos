@@ -22,6 +22,7 @@ export default async function handler(req, res) {
     if (op === 'impact-lead' && req.method === 'POST') return await impactLead(req, res, tenant);
     if (op === 'impact-leads' && req.method === 'GET') return await impactLeads(res, tenant);
     if (op === 'impact-leads-ack' && req.method === 'POST') return await impactLeadsAck(req, res, tenant);
+    if (op === 'customer-notify' && req.method === 'POST') return await customerNotify(req, res, tenant);
     return json(res, 400, { error: `onbekende op '${op}'` });
   } catch (e) {
     console.error('bridge error', e);
@@ -161,6 +162,48 @@ async function reminder(req, res, tenant) {
     return json(res, 200, { ok: false, error: 'whatsapp niet gekoppeld voor deze tenant' });
   }
   const ok = await sendText(t.whatsapp_phone_number_id, managerNumber, text);
+  return json(res, 200, { ok });
+}
+
+// Bevestiging/afwijzing naar een specifieke klánt (23 aug 2026) — anders dan
+// reminder() hierboven, die altijd naar Vincent zelf gaat, gaat dit naar wie
+// een afspraak via klant-Iris voorstelde (calendar/agent.py:
+// notify_customer_outcome, na approve/reject). We sturen alleen naar een
+// wa_id dat al een whatsapp_threads-rij heeft voor deze tenant — dat is
+// altijd zo voor een klant-Iris-gesprek, en het is een goedkope tweede grens
+// tegen misbruik van BRIDGE_TOKEN als "stuur naar willekeurig nummer"-tool.
+// Zelfde thread-continuïteit als whatsappReply in ui.js: de bevestiging komt
+// terug in whatsapp_threads.messages, zodat een latere "hier is mijn
+// mailadres" van de klant in context staat (deel_emailadres in
+// _customer_core.js) in plaats van uit de lucht te vallen.
+async function customerNotify(req, res, tenant) {
+  const waId = String((req.body && req.body.wa_id) || '').trim();
+  const text = String((req.body && req.body.text) || '').trim();
+  if (!waId || !text) return json(res, 400, { error: 'wa_id en text zijn verplicht' });
+
+  const [t] = await sql`SELECT whatsapp_phone_number_id FROM tenants WHERE slug = ${tenant}`;
+  if (!t || !t.whatsapp_phone_number_id) {
+    return json(res, 200, { ok: false, error: 'whatsapp niet gekoppeld voor deze tenant' });
+  }
+  const [thread] = await sql`
+    SELECT messages FROM whatsapp_threads WHERE tenant = ${tenant} AND wa_id = ${waId}`;
+  if (!thread) {
+    return json(res, 200, { ok: false, error: 'geen bekend gesprek met dit nummer' });
+  }
+
+  const ok = await sendText(t.whatsapp_phone_number_id, waId, text);
+  if (ok) {
+    try {
+      const messages = thread.messages || [];
+      messages.push({ role: 'assistant', content: text });
+      const trimmed = messages.slice(-10);
+      await sql`
+        UPDATE whatsapp_threads SET messages = ${JSON.stringify(trimmed)}::jsonb, updated_at = now()
+        WHERE tenant = ${tenant} AND wa_id = ${waId}`;
+    } catch (e) {
+      console.error('customerNotify: thread-update mislukt (niet fataal)', e);
+    }
+  }
   return json(res, 200, { ok });
 }
 

@@ -143,6 +143,7 @@ async def _calendar_approve(item_id: str, payload: Dict) -> Tuple[bool, str]:
     from ..calendar import agent as calendar_agent
     result = calendar_agent.approve_proposal(int(item_id))
     if result.get("ok"):
+        await calendar_agent.notify_customer_outcome(int(item_id), "booked")
         return True, f"Geboekt: {result.get('link') or result.get('event_id') or 'ok'}"
     return False, result.get("error") or "Boeken mislukt"
 
@@ -150,6 +151,7 @@ async def _calendar_approve(item_id: str, payload: Dict) -> Tuple[bool, str]:
 async def _calendar_reject(item_id: str, payload: Dict) -> Tuple[bool, str]:
     from ..calendar import agent as calendar_agent
     calendar_agent.reject_proposal(int(item_id))
+    await calendar_agent.notify_customer_outcome(int(item_id), "rejected")
     return True, "Voorstel afgewezen"
 
 
@@ -520,10 +522,16 @@ async def _cmd_calendar_add(payload: Dict) -> Tuple[bool, str]:
     Parsed naar een afspraak, conflict-gecontroleerd, en neergelegd als
     calendar_proposal (status=pending_review) — boeken gebeurt pas als Vincent
     het voorstel in Iris Remote goedkeurt.
+
+    Optioneel `customer_wa_id`: gezet door klant-Iris (_customer_core.js:
+    stel_afspraak_voor) — het WhatsApp-nummer om de goedkeur/afwijs-
+    bevestiging naar terug te sturen (zie calendar/agent.py:
+    notify_customer_outcome). Leeg voor elk ander voorstel.
     """
     text = (payload.get("text") or "").strip()
     if not text:
         return False, "Geen opdracht meegegeven (verwacht payload.text)"
+    customer_wa_id = (payload.get("customer_wa_id") or "").strip() or None
     from ...domains.calendar import nl_command as nlc
     from ...domains.calendar import agent as cal_agent
     from ...shared.database import get_conn
@@ -597,9 +605,10 @@ async def _cmd_calendar_add(payload: Dict) -> Tuple[bool, str]:
                (mailbox_id, inbox_id, from_addr, subject, title,
                 proposed_start, proposed_end, location, is_remote,
                 duration_min, travel_buffer_min, priority, conflict_note,
-                conflict_checked, rationale, recur_weekday, recur_count, all_day, status, created_at)
+                conflict_checked, rationale, recur_weekday, recur_count, all_day,
+                customer_wa_id, status, created_at)
                VALUES ('iris-command', 0, 'iris-command', ?, ?, ?, ?, ?, ?,
-                       ?, 0, 'normal', ?, ?, ?, ?, ?, ?, 'pending_review', datetime('now'))""",
+                       ?, 0, 'normal', ?, ?, ?, ?, ?, ?, ?, 'pending_review', datetime('now'))""",
             (text[:120], title,
              cmd.start.isoformat(), cmd.end.isoformat(),
              "Online" if cmd.is_remote else (cmd.location or ""),
@@ -607,7 +616,7 @@ async def _cmd_calendar_add(payload: Dict) -> Tuple[bool, str]:
              conflict_txt, cmd.conflict.get("status") if cmd.conflict else "ok",
              rationale, recur if recur is not None else -1,
              recur_count if recur_count is not None else -1,
-             1 if cmd.all_day else 0),
+             1 if cmd.all_day else 0, customer_wa_id),
         )
         pid = cur.lastrowid
 
@@ -616,6 +625,64 @@ async def _cmd_calendar_add(payload: Dict) -> Tuple[bool, str]:
     conflict_flag = " ⚠️ CONFLICT" if (cmd.conflict and cmd.conflict.get("overlaps")) else ""
     return True, (f"Voorstel {kind} aangemaakt: '{title}' op {when}.{conflict_flag} "
                   f"Keur goed in Iris Remote om te boeken.")
+
+
+async def _cmd_customer_email(payload: Dict) -> Tuple[bool, str]:
+    """Klant deelt uit zichzelf een e-mailadres (_customer_core.js:
+    deel_emailadres) — nooit vooraf gevraagd, alleen ná een afspraakbevestiging
+    ("wil je een agenda-uitnodiging?"). We zetten 'm op de meest recente
+    afspraak van diezelfde klant (customer_wa_id) zodat hij naast de juiste
+    afspraak staat, en loggen een kaart: dit systeem verstuurt zelf nooit mail
+    naar een klant zonder menselijke klik, dus de uitnodiging is aan Vincent.
+    """
+    wa_id = (payload.get("wa_id") or "").strip()
+    email = (payload.get("email") or "").strip()
+    if not wa_id or not email or "@" not in email:
+        return False, "wa_id en een geldig e-mailadres zijn verplicht"
+
+    from datetime import datetime
+    from ...shared.database import get_conn
+    from ...shared.outcomes import log_outcome
+
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, title, proposed_start FROM calendar_proposals "
+            "WHERE customer_wa_id=? AND status IN ('pending_review','booked') "
+            "ORDER BY created_at DESC LIMIT 1",
+            (wa_id,),
+        ).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE calendar_proposals SET customer_email=? WHERE id=?",
+                (email, row["id"]),
+            )
+
+    if not row:
+        # Geen bijbehorende afspraak (meer) gevonden — het mailadres gaat
+        # niet stil verloren, maar Vincent moet 'm zelf koppelen.
+        log_outcome(
+            "Agenda", "customer_email",
+            f"Klant {wa_id} deelde een e-mailadres ({email}), maar er staat geen "
+            "openstaande of geboekte afspraak van dit nummer meer.",
+            next_step="Koppel dit mailadres handmatig aan de juiste afspraak, of "
+                      "stuur zelf een agenda-uitnodiging.",
+            status="ok",
+        )
+        return True, "Mailadres genoteerd (geen gekoppelde afspraak meer gevonden)"
+
+    when = ""
+    try:
+        when = _nl_date(datetime.fromisoformat(str(row["proposed_start"])))
+    except (TypeError, ValueError):
+        pass
+    log_outcome(
+        "Agenda", "customer_email",
+        f"Klant {wa_id} deelde een e-mailadres voor de afspraak '{row['title']}'"
+        + (f" ({when})" if when else "") + f": {email}",
+        next_step="Stuur de klant een agenda-uitnodiging op dit adres.",
+        status="ok",
+    )
+    return True, f"Mailadres gekoppeld aan afspraak #{row['id']}"
 
 
 def _wd_nl(num: Optional[int]) -> str:
@@ -648,6 +715,7 @@ _COMMANDS = {
     "digest": _cmd_digest,
     "orchestrator_run": _cmd_orchestrator_run,
     "calendar_add": _cmd_calendar_add,
+    "customer_email": _cmd_customer_email,
     "ritual_morning_save": _cmd_ritual_morning_save,
     "ritual_evening_save": _cmd_ritual_evening_save,
     "ritual_win_add": _cmd_ritual_win_add,

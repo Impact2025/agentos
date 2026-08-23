@@ -424,6 +424,25 @@ async def send_whatsapp_reminder(text: str) -> bool:
         return False
 
 
+# Anders dan send_whatsapp_reminder hierboven (altijd naar Vincent zelf, het
+# EERSTE nummer in whatsapp_allowed_from) gaat dit naar een specifieke klant —
+# bv. de bevestiging/afwijzing van een afspraak die klant-Iris via WhatsApp
+# voorstelde (calendar/agent.py:notify_customer_outcome). Zelfde route: het
+# Meta-token leeft alleen in Vercel, dus de lokale machine vraagt het te doen.
+async def send_whatsapp_to_customer(wa_id: str, text: str) -> bool:
+    if not enabled():
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, headers=_headers()) as client:
+            r = await client.post(f"{_base()}/api/bridge?op=customer-notify",
+                                   json={"wa_id": wa_id, "text": text})
+            r.raise_for_status()
+            return bool(r.json().get("ok"))
+    except Exception as e:
+        logger.warning("send_whatsapp_to_customer mislukt: %s", e)
+        return False
+
+
 async def sync_once() -> Dict[str, Any]:
     """Eén volledige cyclus: push state → pull besluiten → toepassen → ack."""
     global _last_sync

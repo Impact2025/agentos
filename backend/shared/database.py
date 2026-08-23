@@ -843,6 +843,15 @@ def _migrate(conn) -> None:
             ("reminder_sent", "ALTER TABLE calendar_proposals ADD COLUMN reminder_sent INTEGER DEFAULT 0"),
             ("recur_count", "ALTER TABLE calendar_proposals ADD COLUMN recur_count INTEGER DEFAULT -1"),
             ("all_day", "ALTER TABLE calendar_proposals ADD COLUMN all_day INTEGER DEFAULT 0"),
+            # Alleen gevuld voor voorstellen die via klant-Iris op WhatsApp zijn
+            # gedaan (bridge/actions.py:_cmd_calendar_add) — het adres om de
+            # goedkeur/afwijs-bevestiging naar terug te sturen. NULL voor elk
+            # ander voorstel (uit mail, of Vincent zelf via manager-Iris): daar
+            # bestaat geen "klant" om te melden.
+            ("customer_wa_id", "ALTER TABLE calendar_proposals ADD COLUMN customer_wa_id TEXT"),
+            # Door de klant zelf gegeven, ná de bevestiging, via het
+            # deel_emailadres-tool (nooit vooraf gevraagd — zie _customer_core.js).
+            ("customer_email", "ALTER TABLE calendar_proposals ADD COLUMN customer_email TEXT"),
         ):
             if col not in cp_cols:
                 conn.execute(ddl)

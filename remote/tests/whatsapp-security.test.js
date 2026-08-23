@@ -166,12 +166,32 @@ test('klant-Iris voert stel_afspraak_voor wél uit (landt in review-gate, niet g
   assert.equal(res.proposed, true);
 });
 
-test('CUSTOMER_TOOLS bevat precies de drie verwachte klant-tools, niets anders', () => {
+test('klant-Iris voert deel_emailadres wél uit (alleen als de klant zelf een mailadres geeft)', async () => {
+  const runTool = countingRunTool();
+  let calls = 0;
+  const opts = baseOpts({
+    callModelFn: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return makeStep({ toolCalls: [{ name: 'deel_emailadres', input: { email: 'klant@voorbeeld.nl' } }] });
+      }
+      return makeStep({ text: 'Genoteerd, dank je.' });
+    },
+    runToolFn: runTool,
+  });
+  const res = await customerConverse(
+    'weareimpact', 'Demo', [], 'Mijn mailadres is klant@voorbeeld.nl', '31612345678', opts);
+  assert.equal(res.escalated, false);
+  assert.equal(runTool.executed.includes('deel_emailadres'), true, 'toegestane tool moet draaien');
+});
+
+test('CUSTOMER_TOOLS bevat precies de vier verwachte klant-tools, niets anders', () => {
   const names = CUSTOMER_TOOLS.map((t) => t.name).sort();
   assert.deepEqual(names, [
     'escaleer_naar_vincent',
     'lees_vrije_momenten',
     'stel_afspraak_voor',
+    'deel_emailadres',
   ].sort());
   // Harde eis: géén van de manager-tools mag ooit in de klant-toolset zitten.
   const managerOnly = ['start_werk', 'stel_besluit_voor', 'plan_agenda', 'ritueel_vastleggen',

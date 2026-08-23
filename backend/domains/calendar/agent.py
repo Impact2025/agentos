@@ -303,7 +303,7 @@ def _parse_iso(s: Optional[str]) -> Optional[datetime]:
 
 
 def create_proposal(mailbox_id: str, inbox_id: int, subject: str, from_addr: str,
-                    body: str) -> Optional[Dict]:
+                    body: str, from_name: str = "") -> Optional[Dict]:
     """Bouw een afspraak-voorstel op basis van de mail en schrijf het als
     pending_review. Geen directe agenda-schrijf. Retourneert de rij of None."""
     appt = extract_appointment(subject, body, from_addr)
@@ -372,6 +372,24 @@ def create_proposal(mailbox_id: str, inbox_id: int, subject: str, from_addr: str
             )
             pid = cur.lastrowid
         log.info("[agenda-agent] voorstel %s aangemaakt voor %s", pid, from_addr)
+        # Wereldklasse: elke afspraak-aanvraag van een onbekende afzender wordt
+        # automatisch een prospect in de CRM + Obsidian-vault (geen handwerk).
+        # Draait in een eigen try/except zodat een mislukking hier de agenda-rij
+        # nooit in gevaar brengt — de afspraak blijft altijd leidend.
+        try:
+            from ..prospecting import service as prospecting
+            svc = prospecting.LeadsService()
+            svc.ensure_lead_for_contact(
+                from_addr,
+                from_name=from_name or "",
+                context=(f"Afspraak-voorstel '{subject}' → "
+                         f"{start.strftime('%a %d-%m %H:%M')}–{end.strftime('%H:%M')} "
+                         f"({appt['location'] or 'locatie onbekend'})."),
+                source="agenda-voorstel",
+            )
+        except Exception as e:
+            log.warning("[agenda-agent] lead-capture voor %s mislukt (niet fataal): %s",
+                        from_addr, e)
         return {"id": pid, "title": title, "start": start.isoformat(),
                 "priority": appt["priority"], "conflict": bool(conflicts)}
     except Exception:
@@ -578,3 +596,48 @@ def pending_proposals() -> List[Dict]:
             "ORDER BY created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+_WD_NAMEN = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"]
+_MAAND_NAMEN = ["januari", "februari", "maart", "april", "mei", "juni", "juli",
+                "augustus", "september", "oktober", "november", "december"]
+
+
+def _nl_datum_tijd(dt: datetime) -> str:
+    """NL datum+tijd zonder locale-afhankelijkheid (strftime geeft hier Engels)."""
+    return f"{_WD_NAMEN[dt.weekday()]} {dt.day} {_MAAND_NAMEN[dt.month - 1]} om {dt.strftime('%H:%M')}"
+
+
+# ── Bevestiging naar de klant (23 aug 2026) ─────────────────────────────────
+# Alleen voorstellen die via klant-Iris op WhatsApp zijn gedaan dragen een
+# customer_wa_id (bridge/actions.py:_cmd_calendar_add) — voor mail-voorstellen
+# of Vincents eigen agenda-opdrachten is dit veld leeg en doet deze functie
+# bewust niets: er is dan geen klant om te melden. Wordt aangeroepen ná zowel
+# approve_proposal als reject_proposal, vanuit elk van hun (twee) aanroepers
+# (router.py en bridge/actions.py) — best-effort, mag de goedkeur/afwijs-actie
+# zelf nooit blokkeren of laten falen.
+async def notify_customer_outcome(proposal_id: int, outcome: str) -> None:
+    """outcome: 'booked' of 'rejected'."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT customer_wa_id, proposed_start FROM calendar_proposals WHERE id=?",
+            (proposal_id,),
+        ).fetchone()
+    if not row or not row["customer_wa_id"]:
+        return
+    start = _parse_iso(row["proposed_start"])
+    wanneer = _nl_datum_tijd(start) if start else "het voorgestelde moment"
+    if outcome == "booked":
+        tekst = (f"Je afspraak staat vanaf nu vast: {wanneer}. Wil je ook een "
+                 "agenda-uitnodiging? Stuur gerust je e-mailadres, dan zet Vincent 'm erbij.")
+    else:
+        tekst = (f"Het voorgestelde moment ({wanneer}) past helaas niet bij Vincent. "
+                 "Laat gerust weten of een ander moment beter uitkomt.")
+    try:
+        from ..bridge import service as bridge_service
+        ok = await bridge_service.send_whatsapp_to_customer(row["customer_wa_id"], tekst)
+        if not ok:
+            log.warning("[agenda-agent] bevestiging naar klant %s mislukt (voorstel #%s)",
+                        row["customer_wa_id"], proposal_id)
+    except Exception:
+        log.exception("[agenda-agent] notify_customer_outcome mislukt voor voorstel #%s", proposal_id)

@@ -38,6 +38,14 @@ class CalendarSettings(BaseModel):
     busy_calendar_ids: Optional[str] = None  # komma-gescheiden
 
 
+class AttendeeInfoRequest(BaseModel):
+    name: str
+    email: str = ""
+    event_title: str = ""
+    event_description: str = ""
+    force: bool = False
+
+
 @router.get("/proposals")
 async def proposals():
     """Lijst open afspraak-voorstellen (uit mail gedetecteerd)."""
@@ -63,6 +71,7 @@ async def approve(body: ProposalAction):
     from . import agent as agenda_agent
     res = agenda_agent.approve_proposal(body.proposal_id)
     if res.get("ok"):
+        await agenda_agent.notify_customer_outcome(body.proposal_id, "booked")
         return res
     if res.get("code") == "booking_error":
         raise HTTPException(502, res.get("error", "boeken mislukt"))
@@ -75,6 +84,7 @@ async def reject(body: ProposalAction):
     """Mens wijst af (blijft gesloten)."""
     from . import agent as agenda_agent
     agenda_agent.reject_proposal(body.proposal_id)
+    await agenda_agent.notify_customer_outcome(body.proposal_id, "rejected")
     return {"ok": True}
 
 
@@ -144,6 +154,22 @@ async def block(req: BlockRequest):
     except Exception as e:
         log.exception("Tijd blokkeren mislukt")
         raise HTTPException(502, f"Google Agenda-fout: {e}")
+
+
+@router.post("/attendee-info")
+async def attendee_info(body: AttendeeInfoRequest):
+    """Korte briefing over een deelnemer (websearch + LLM), voor de info-knop
+    naast een naam op de Agenda-tab. Luid falen i.p.v. een lege briefing —
+    de knop toont dan de echte reden (zoekproviders uitgeput, LLM onbereikbaar)."""
+    from . import attendee_info as info_service
+    try:
+        return await info_service.build_briefing(
+            body.name, body.email, body.event_title, body.event_description,
+            force=body.force,
+        )
+    except Exception as e:
+        log.warning("Attendee-info mislukt voor %s: %s", body.name, e)
+        raise HTTPException(502, str(e))
 
 
 @router.get("/today")

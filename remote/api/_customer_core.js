@@ -19,8 +19,10 @@ const ESCALATE_TOOL = {
   description:
     'Meld dat jij dit niet zelf kunt of mag afhandelen. Gebruik dit zodra het antwoord ' +
     'niet met zekerheid uit de meegegeven kennis volgt, OF zodra de vraag iets met ' +
-    'gevolgen betreft die niet via `lees_vrije_momenten`/`stel_afspraak_voor` op te lossen ' +
-    'zijn — een offerte, een klacht, of persoonsgegevens/een bestaand account. Verzin NOOIT ' +
+    'gevolgen betreft die niet via `lees_vrije_momenten`/`stel_afspraak_voor`/' +
+    '`deel_emailadres` op te lossen zijn — een offerte, een klacht, of persoonsgegevens/een ' +
+    'bestaand account. (Een e-mailadres dat de klant uít zichzelf geeft voor een agenda-' +
+    'uitnodiging is GEEN escalatiereden — gebruik daarvoor deel_emailadres.) Verzin NOOIT ' +
     'een prijs, garantie, levertijd of toezegging die niet letterlijk in de kennis staat — ' +
     'escaleer in plaats daarvan. Jij stuurt daarna geen inhoudelijk antwoord meer; Vincent ' +
     'neemt het over.',
@@ -73,7 +75,26 @@ const PROPOSE_APPOINTMENT_TOOL = {
   },
 };
 
-export const CUSTOMER_TOOLS = [ESCALATE_TOOL, FREE_SLOTS_TOOL, PROPOSE_APPOINTMENT_TOOL];
+// Alleen zinvol NÁ een afspraakbevestiging (die vraagt er zelf om, zie
+// calendar/agent.py:notify_customer_outcome) — nooit uit jezelf aan het begin
+// van een gesprek vragen, dat is precies de frictie/PII-vraag die de
+// escalatie-regel hierboven normaal afvangt. Deze tool bestaat om die ene,
+// door de klant zelf aangeboden uitzondering netjes te routeren in plaats van
+// 'm als escalatie te behandelen (wat "ik snap je mailadres niet" zou lijken).
+const SHARE_EMAIL_TOOL = {
+  name: 'deel_emailadres',
+  description:
+    'Sla het e-mailadres van de klant op zodra die het uít zichzelf geeft — typisch als ' +
+    'antwoord op de afspraakbevestiging ("wil je een agenda-uitnodiging?"). Vraag hier NOOIT ' +
+    'proactief naar, alleen gebruiken als de klant al een e-mailadres in zijn bericht noemt.',
+  input_schema: {
+    type: 'object',
+    properties: { email: { type: 'string', description: 'Het e-mailadres zoals de klant het gaf.' } },
+    required: ['email'],
+  },
+};
+
+export const CUSTOMER_TOOLS = [ESCALATE_TOOL, FREE_SLOTS_TOOL, PROPOSE_APPOINTMENT_TOOL, SHARE_EMAIL_TOOL];
 // Harde allowlist van tool-namen die klant-Iris mág aanroepen. Wordt zowel
 // gebruikt om de toolset aan het model door te geven (zodat het ze kan kiezen)
 // als om elke tool-call van het model tégen te checken vóór uitvoering
@@ -163,6 +184,9 @@ function customerSystemPrompt(project, knowledge, isFirstMessage) {
       + "`lees_vrije_momenten` om te zien wanneer Vincent tijd heeft, stel dat voor, en zodra "
       + 'de klant een tijd kiest zet je het met `stel_afspraak_voor` klaar. Nooit zelf een '
       + 'tijd verzinnen of beloven dat het geboekt is — dat doet pas Vincents goedkeuring.',
+    '- Vraag NOOIT uit jezelf om een e-mailadres. Noemt de klant er zelf een (bijvoorbeeld als '
+      + 'antwoord op een afspraakbevestiging), gebruik dan `deel_emailadres` — dat is geen '
+      + 'escalatiereden.',
     '- Kort en vriendelijk, chat-stijl. Geen markdown-koppen, geen lange lappen tekst.',
     "- Geen liggende streepjes (—) en geen emoji's.",
     '',
@@ -190,15 +214,32 @@ async function runCustomerTool(name, input, tenant, freeByDay, waId) {
     const opdracht = (input.opdracht || '').toString().trim();
     if (!opdracht) return 'Geen opdracht meegegeven — beschrijf datum, tijd en onderwerp.';
     const finalText = `Afspraak met Klant ${waId} via WhatsApp: ${opdracht}`;
+    // customer_wa_id gaat los van de vrije tekst mee (niet alleen ingebed in
+    // 'text') — bridge/actions.py:_cmd_calendar_add zet 'm op de
+    // calendar_proposals-rij, zodat calendar/agent.py:notify_customer_outcome
+    // na goedkeuren/afwijzen weet wie te appen. Zonder dit apart veld zou dat
+    // op regex-graven in de tekst aankomen, en dát is precies hoe zulke
+    // koppelingen breken zodra iemand de tekst een keer anders formuleert.
     const rows = await sql`
       INSERT INTO decisions (tenant, item_key, item_kind, item_id, action, payload)
       VALUES (${tenant}, ${`cmd:calendar_add:${Date.now()}`}, 'command', ${'calendar_add'}, ${'calendar_add'},
-              ${JSON.stringify({ text: finalText })}::jsonb)
+              ${JSON.stringify({ text: finalText, customer_wa_id: waId })}::jsonb)
       RETURNING id`;
     if (!rows.length) return 'Kon het voorstel niet klaarzetten — escaleer naar Vincent.';
     return { proposed: true, message:
       'Voorstel klaargezet in Vincents goedkeur-wachtrij. Zeg tegen de klant dat het voorstel '
       + 'klaarstaat en dat Vincent het nog moet bevestigen — het is dus nog geen definitieve boeking.' };
+  }
+  if (name === 'deel_emailadres') {
+    const email = (input.email || '').toString().trim();
+    if (!email || !email.includes('@')) return 'Geen geldig e-mailadres meegegeven.';
+    const rows = await sql`
+      INSERT INTO decisions (tenant, item_key, item_kind, item_id, action, payload)
+      VALUES (${tenant}, ${`cmd:customer_email:${Date.now()}`}, 'command', ${'customer_email'}, ${'customer_email'},
+              ${JSON.stringify({ wa_id: waId, email })}::jsonb)
+      RETURNING id`;
+    if (!rows.length) return 'Kon het mailadres niet opslaan — escaleer naar Vincent.';
+    return 'Mailadres genoteerd, dank je. Vincent stuurt de agenda-uitnodiging erop af.';
   }
   return `Onbekende tool '${name}'.`;
 }
