@@ -41,11 +41,29 @@ function hashToken(t) {
 // instance zijn eigen token (in zijn eigen .env), en zoekt de server via de
 // hash op welke tenant daarbij hoort — dezelfde token kan dus nooit twee
 // klanten laten schrijven, en de Python-kant hoeft niets over tenants te weten.
+// Diagnose voor het whatsapp-bridge/whatsapp-conversations-bridge-401-mysterie
+// (23 aug 2026): dezelfde BRIDGE_TOKEN, dezelfde resolveBridgeTenant-aanroep,
+// en toch faalde het ene op consequent terwijl whatsapp-stats-bridge er
+// naast slaagde. Geen geheime waarden loggen (zelfde patroon als de
+// webhook-signature-check in whatsapp.js) — alleen genoeg om "geen header",
+// "verkeerd token" en "onbekende tenant" van elkaar te onderscheiden zodra
+// dit zich herhaalt.
 export async function resolveBridgeTenant(req, res) {
   const got = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  if (!got) { json(res, 401, { error: 'unauthorized' }); return null; }
+  const op = (req.query && req.query.op) || '(geen op)';
+  if (!got) {
+    console.error('resolveBridgeTenant: geen Authorization-header', { op });
+    json(res, 401, { error: 'unauthorized' });
+    return null;
+  }
   const rows = await sql`SELECT slug FROM tenants WHERE token_hash = ${hashToken(got)}`;
-  if (!rows.length) { json(res, 401, { error: 'unauthorized' }); return null; }
+  if (!rows.length) {
+    console.error('resolveBridgeTenant: token niet gevonden', {
+      op, tokenLen: got.length, hashPrefix: hashToken(got).slice(0, 8),
+    });
+    json(res, 401, { error: 'unauthorized' });
+    return null;
+  }
   return rows[0].slug;
 }
 

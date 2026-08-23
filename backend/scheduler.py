@@ -798,7 +798,16 @@ _SPECS: list[JobSpec] = [
     JobSpec(
         "bridge_sync", "Bridge-sync (review-gates ↔ cloud-companion; besluiten onderweg toepassen)",
         _bridge_sync_job, IntervalTrigger(minutes=_BRIDGE_SYNC_MINUTES),
-        misfire_grace_time=120, coalesce=True, domain="bridge",
+        # 120s was de krapste grace-time van alle jobs, terwijl deze de meest
+        # tijdsgevoelige lading draagt (WhatsApp-toezeggingen, agenda-voorstellen
+        # die een mens ziet aankomen). Gemeten 23 aug 2026: een korte drukte op
+        # de event loop (Gauntlet/content-verbeterrondes) liet bridge_sync rond
+        # 09:36-09:42 zijn vuurmoment missen; met 120s grace werd dat een
+        # misfire (skip) i.p.v. een iets latere, alsnog geslaagde run. 300s
+        # trekt 'm gelijk met calendar_sync/autoheal/iris_selfheal hieronder —
+        # geen uitzondering meer, en ruim genoeg om een korte drukte te
+        # overleven zonder een pull-cyclus over te slaan.
+        misfire_grace_time=300, coalesce=True, domain="bridge",
     ),
     JobSpec(
         "outlook_sync", "Postvak ophalen + triëren (elke 20 min)",
