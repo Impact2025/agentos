@@ -6,12 +6,12 @@ Eindpunten:
   GET  /api/learn/documents  -> lijst geleerde documenten
   DELETE /api/learn/{doc_id} -> document vergeten
 
-De router gebruikt de centrale AgentOS-LLM (iris.service._llm) als extractie-
+De router gebruikt de centrale ImpactOS-LLM (iris.service._llm) als extractie-
 motor, met een OpenModel-directe fallback zodat /learn ook werkt als de
 Claude-route tijdelijk weg is. Alles draait lokaal/privé: geen document
 verlaat de machine behalve naar de LLM die je toch al gebruikt.
 
-Dit is de AgentOS-tegenhanger van Hermes' "/learn" — maar dan met echte
+Dit is de ImpactOS-tegenhanger van Hermes' "/learn" — maar dan met echte
 embeddings-retrieval én een gestructureerde brain file (index/glossary/
 cheat-sheet) die in de Obsidian-vault wordt geschreven (SSOT).
 """
@@ -31,13 +31,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/learn", tags=["knowledge-forge"])
 
 
-# ── LLM-adapter (centrale AgentOS-LLM, met fallback) ────────────────────────
+# ── LLM-adapter (centrale ImpactOS-LLM, met fallback) ────────────────────────
 
 async def _llm_call(system: str, prompt: str, max_tokens: int = 2000) -> Optional[str]:
-    """Centrale AgentOS-LLM voor de brain-file extractie.
+    """Centrale ImpactOS-LLM voor de brain-file extractie.
 
     Volgorde (robust, geen enkele failure mag de ingest breken):
-      1. OpenModel-gateway (de centrale AgentOS-LLM-route, werkt altijd
+      1. OpenModel-gateway (de centrale ImpactOS-LLM-route, werkt altijd
          zolang de key er is — géén fragile iris/chat import nodig).
       2. iris.service._llm (Claude eerst, Hermes-terugval) als secundair.
       3. None -> forge valt terug op de naïeve extractie (nooit leeg).

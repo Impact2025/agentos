@@ -1,6 +1,6 @@
 # Canva Autofill — agents vullen je vaste template automatisch
 
-Doel: elke keer dat Agent OS een "content pack" genereert, kopieert de agent je
+Doel: elke keer dat Impact OS een "content pack" genereert, kopieert de agent je
 bestaande **'Insta/FB advertenties Bewaardvoorjou'**-template in Canva en vult de
 tekstvelden (kop / onderschrift) automatisch in — dus niet meer handmatig
 overtypen. De code staat klaar in `backend/shared/canva.py` +
@@ -27,7 +27,7 @@ template één keer klaar; daarna doet de agent de rest.
 ## Stap 2 — Refresh-token verkrijgen / vernieuwen
 Je huidige refresh-token is verlopen (Canva gaf `invalid_grant`). Draai:
 ```
-cd D:/APPS/agentos
+cd D:/APPS/impactos
 .venv/Scripts/python.exe canva_reauth.py
 ```
 Volg de geprinte URL, log in, plak de `code`, en het script schrijft de nieuwe
@@ -55,7 +55,7 @@ Optioneel: `CANVA_FOLDER_ID=<folder-id>` zodat nieuwe designs netjes in één ma
 belanden. `CANVA_TEMPLATE_FIELDS` pas je alleen aan als je andere veldnamen gebruikt.
 
 ## Stap 4 — Testen
-1. Herstart Agent OS (kill PID op :1250, start uvicorn opnieuw).
+1. Herstart Impact OS (kill PID op :1250, start uvicorn opnieuw).
 2. Ga naar de tab **Social Creatie**, kies project `Bewaardvoorjou`, typ een thema,
    klik **Genereer content pack**.
 3. Open het pack. Bij de Beeld-brief zie je nu:

@@ -222,7 +222,7 @@ def coverage(conn, project: str, mailbox: Dict) -> Dict:
     if qa_n == 0:
         hints.append("Nog geen verstuurde antwoorden — na je eerste goedkeuringen gaat de helpdesk jouw stijl imiteren.")
     if not signature_ok:
-        hints.append("Geen handtekening ingesteld — klanten krijgen nu de generieke Agent OS-footer.")
+        hints.append("Geen handtekening ingesteld — klanten krijgen nu de generieke Impact OS-footer.")
 
     return {
         "vault": bool(vault),

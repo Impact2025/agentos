@@ -180,7 +180,7 @@ def _pagina_status(url: str) -> str:
 
     uitkomst = ONBEKEND
     try:
-        headers = {"User-Agent": "AgentOS-waarheidsaudit"}
+        headers = {"User-Agent": "ImpactOS-waarheidsaudit"}
         with httpx.Client(timeout=15, follow_redirects=True, headers=headers) as client:
             resp = client.get(url)
             if resp.status_code == 404 or resp.status_code == 410:
@@ -190,7 +190,7 @@ def _pagina_status(url: str) -> str:
                 uitkomst = ONBEKEND
             else:
                 basis, _, _ = url.rstrip("/").rpartition("/")
-                probe_url = f"{basis}/agentos-bestaat-niet-{uuid.uuid4().hex[:12]}"
+                probe_url = f"{basis}/impactos-bestaat-niet-{uuid.uuid4().hex[:12]}"
                 try:
                     probe = client.get(probe_url)
                 except Exception:  # noqa: BLE001
@@ -483,7 +483,7 @@ def _check_cluster_kannibalisatie() -> List[Bevinding]:
 
     De wereld-versie van `zoekwoord_kannibalisatie`. Die toets leest
     `content_jobs.keyword` — een bewering van het systeem over zijn eigen werk,
-    en dus blind voor alles wat buiten Agent OS om is gepubliceerd. Bij Bewaard
+    en dus blind voor alles wat buiten Impact OS om is gepubliceerd. Bij Bewaard
     voor Jou stonden 102 pagina's live waarvan er acht op 'levensverhaal
     vastleggen' vertoonden; `content_jobs` kende er daarvan twee, dus de
     bestaande toets zweeg terwijl de site zichzelf op zijn kernzoekwoord
@@ -655,7 +655,7 @@ def _check_afgewezen_maar_live() -> List[Bevinding]:
 
     Ontdekt op 2 aug 2026 door deze audit zelf, en meteen de scherpste toets van
     de set: hij vergelijkt niet twee velden maar twee wérelden. Negen pagina's
-    stonden live terwijl hun job op `rejected` stond — waaronder 'Agent OS
+    stonden live terwijl hun job op `rejected` stond — waaronder 'Impact OS
     end-to-end publicatietest' op ictusgo.nl, de site van een klant.
 
     Zo ontstaat het: een job wordt gepubliceerd, iemand wijst hem daarna in de
@@ -1324,6 +1324,45 @@ def _check_radar_signaal_verlopen() -> List[Bevinding]:
     )]
 
 
+def _check_besluit_onzichtbaar_op_eigen_dashboard() -> List[Bevinding]:
+    """Een item zonder resolveerbaar project (Agenda-voorstel, Leads,
+    Scheduler-fout) moet zichtbaar zijn in het WeAreImpact-Actiecentrum —
+    dat is Vincents eigen dashboard, niet een klantproject.
+
+    Incident 23 aug 2026: een WhatsApp-afspraakvoorstel (Steentjebij
+    Steentje, 24 aug 14:00) stond keurig in de globale Control Room-inbox
+    maar toonde 'Wacht op jou (0)' op het WeAreImpact-dashboard zelf, waar
+    Vincent hem juist verwachtte te kunnen afhandelen — `_item_belongs_to_
+    project` gaf zulke items nooit mee aan ÉÉN per-project view, WeAreImpact
+    incluis. De Agenda-tab kende deze uitzondering al in de frontend
+    (zichtbaar op WeAreImpact, verborgen op klantprojecten); de backend-
+    filter volgde die regel niet. Vergelijkt de globale inbox met de
+    WeAreImpact-scoped inbox in plaats van een vaste lijst item-kinds te
+    verwachten — zo vangt hij elke toekomstige bron van 'geen project',
+    niet alleen Agenda.
+    """
+    from ..action_center.service import build_inbox
+    global_items = build_inbox().get("items", [])
+    wai_keys = {
+        f"{i.get('dismiss_kind')}:{i.get('id')}"
+        for i in build_inbox(project="WeAreImpact").get("items", [])
+    }
+    uit: List[Bevinding] = []
+    for it in global_items:
+        if it.get("project") not in (None, "Agenda", "Leads", "Scheduler", "Systeem", "Bridge", "Postvak", "Linkbuilding"):
+            continue  # heeft een eigen (klant)project — hoort daar, niet bij WeAreImpact
+        key = f"{it.get('dismiss_kind')}:{it.get('id')}"
+        if key not in wai_keys:
+            uit.append(Bevinding(
+                subject=f"besluit:{key}",
+                detail=(f"'{(it.get('title') or '')[:60]}' (project '{it.get('project')}') staat in de "
+                        f"globale inbox maar niet in het WeAreImpact-Actiecentrum — onzichtbaar op "
+                        f"Vincents eigen dashboard."),
+                project="WeAreImpact",
+            ))
+    return uit
+
+
 def _check_impact_lead_niet_vastgelegd() -> List[Bevinding]:
     """Een Impact Calculator-lead die het logboek 'vastgelegd' noemt, moet ook
     echt in de Leads-tab staan.
@@ -1636,7 +1675,7 @@ def _check_indexnow_keyfile() -> List[Bevinding]:
         key = (r["indexnow_key"] or "").strip()
         key_url = f"{(r['base_url'] or '').rstrip('/')}/{key}.txt"
         try:
-            headers = {"User-Agent": "AgentOS-waarheidsaudit"}
+            headers = {"User-Agent": "ImpactOS-waarheidsaudit"}
             with httpx.Client(timeout=15, follow_redirects=True, headers=headers) as client:
                 resp = client.get(key_url)
         except Exception:
@@ -2188,7 +2227,7 @@ def _live_metatitel(url: str) -> Optional[str]:
 
     uitkomst: Optional[str] = None
     try:
-        headers = {"User-Agent": "AgentOS-waarheidsaudit"}
+        headers = {"User-Agent": "ImpactOS-waarheidsaudit"}
         with httpx.Client(timeout=15, follow_redirects=True, headers=headers) as client:
             resp = client.get(url)
         if resp.status_code == 200:
@@ -2637,7 +2676,7 @@ def _check_weekrapport_niet_vastgelegd() -> List[Bevinding]:
             subject="weekrapport:geen-vastlegging",
             detail=f"weekrun slaagde op {ok_dag}, maar `weekly_insights` is leeg — "
                    "het rapport ging alleen naar de mail",
-            project="Agent OS",
+            project="Impact OS",
         )]
     # De vastlegging hoort niet ouder te zijn dan de laatste geslaagde run.
     if (laatste["created_at"] or "")[:10] < ok_dag:
@@ -2645,7 +2684,7 @@ def _check_weekrapport_niet_vastgelegd() -> List[Bevinding]:
             subject="weekrapport:vastlegging-verouderd",
             detail=f"weekrun slaagde op {ok_dag}, maar het laatst vastgelegde weekbeeld "
                    f"is {laatste['week_label']} van {(laatste['created_at'] or '')[:10]}",
-            project="Agent OS",
+            project="Impact OS",
         )]
     return []
 
@@ -3239,6 +3278,22 @@ def _check_campagnepost_over_datum() -> List[Bevinding]:
 
 INVARIANTEN: List[Invariant] = [
     Invariant(
+        key="besluit_onzichtbaar_op_eigen_dashboard",
+        titel="Besluit onzichtbaar op WeAreImpact's eigen dashboard",
+        incident="23 aug 2026: een WhatsApp-afspraakvoorstel (Steentjebij "
+                 "Steentje, 24 aug 14:00) stond in de globale Control "
+                 "Room-inbox maar toonde 'Wacht op jou (0)' op het "
+                 "WeAreImpact-dashboard zelf — de per-project-filter kende "
+                 "geen uitzondering voor items zonder resolveerbaar project "
+                 "(Agenda, Leads, Scheduler), terwijl WeAreImpact Vincents "
+                 "eigen bedrijf is en geen klantproject.",
+        severity=BLOKKEREND,
+        stap="Bekijk de globale Control Room-inbox (geen project geselecteerd) "
+             "voor het item, of herstart de server als de fix in "
+             "action_center/service.py niet actief blijkt.",
+        check=_check_besluit_onzichtbaar_op_eigen_dashboard,
+    ),
+    Invariant(
         key="impact_lead_niet_vastgelegd",
         titel="Impact Calculator-lead niet in de Leads-tab",
         incident="22 aug 2026: bij een uitgeputte OpenModel-quota brak de "
@@ -3384,7 +3439,7 @@ INVARIANTEN: List[Invariant] = [
                  "'levensverhaal vastleggen' vertoonden — samen goed voor positie "
                  "25 en 15 klikken in 28 dagen. `zoekwoord_kannibalisatie` zweeg: "
                  "die leest `content_jobs.keyword` en kende maar twee van die acht, "
-                 "want de rest was buiten Agent OS om gepubliceerd.",
+                 "want de rest was buiten Impact OS om gepubliceerd.",
         severity=BLOKKEREND,
         stap="Kies per zoekwoord één hoofdpagina, laat de andere daarheen linken of "
              "voeg ze samen met een 301 — en schrijf er géén nieuw artikel bij.",
@@ -3476,7 +3531,7 @@ INVARIANTEN: List[Invariant] = [
         key="afgewezen_maar_live",
         titel="Afgewezen in de database, live op het web",
         incident="2 aug 2026: negen pagina's stonden op 'rejected' terwijl ze gewoon "
-                 "live waren, waaronder 'Agent OS end-to-end publicatietest' op de site "
+                 "live waren, waaronder 'Impact OS end-to-end publicatietest' op de site "
                  "van een klant. Afwijzen verandert alleen de rij, niet de wereld. "
                  "Diezelfde dag bleek de toets zélf de wereld niet te raadplegen: vijf "
                  "van de negen waren al offline en de kaart kon nooit dichtgaan.",
@@ -3533,7 +3588,7 @@ INVARIANTEN: List[Invariant] = [
                  "terwijl de Wachtrij bij elke goedkeuring 'aangemeld' meldde.",
         severity=BLOKKEREND,
         stap="Plaats het keybestand op de site-root met exact de key als inhoud. Voor "
-             "Netlify-sites deployt Agent OS het mee (publiceer één artikel); een "
+             "Netlify-sites deployt Impact OS het mee (publiceer één artikel); een "
              "extern gehoste site moet het bestand zelf serveren — let erop dat de "
              "catch-all route van een SPA het niet opslokt.",
         check=_check_indexnow_keyfile,
@@ -3541,7 +3596,7 @@ INVARIANTEN: List[Invariant] = [
     Invariant(
         key="publicatiekanaal_dood",
         titel="Geen enkel artikel van deze site staat live",
-        incident="17 jul – 3 aug 2026: alle 22 artikelen die Agent OS naar ictusgo.nl "
+        incident="17 jul – 3 aug 2026: alle 22 artikelen die Impact OS naar ictusgo.nl "
                  "publiceerde gaven 404. De publicatie-API antwoordde elke keer '201 "
                  "created' en de artikelen stonden gewoon in de database van de site; "
                  "de site zelf viel over een Date die hij als string behandelde en "
@@ -3552,7 +3607,7 @@ INVARIANTEN: List[Invariant] = [
         stap="Publiceer niet opnieuw — dat lukte al. Controleer de ontvangende site "
              "zelf: haalt hij de artikelen wél uit zijn database op, en slikt hij "
              "daarbij fouten in als 'niet gevonden'? Kijk in de runtime-logs van de "
-             "site, niet in die van Agent OS.",
+             "site, niet in die van Impact OS.",
         check=_check_publicatiekanaal_dood,
     ),
     Invariant(
@@ -4112,7 +4167,7 @@ INVARIANTEN: List[Invariant] = [
         key="postvak_beantwoord_niet_waargenomen",
         titel="Postvak met verkeer waarin nooit een antwoord is waargenomen",
         incident="11 aug 2026: `is_replied` werd alleen gezet door de verstuurknop in "
-                 "Agent OS. Alles wat in Outlook zelf beantwoord werd telde nooit mee, "
+                 "Impact OS. Alles wat in Outlook zelf beantwoord werd telde nooit mee, "
                  "dus stond er permanent '0% beantwoord (7d)' en kon de achterstand "
                  "alleen groeien — een cijfer dat nooit iets anders kón worden.",
         severity=STIL,
@@ -4434,7 +4489,7 @@ def run_audit(*, source: str = "scheduler") -> Dict[str, Any]:
             detail=(f"{len(resultaat['mislukt'])} invariant(en) konden niet draaien: "
                     + ", ".join(m["invariant"] for m in resultaat["mislukt"])),
             artifact="/api/iris/integrity",
-            next_step="Een toets die zelf stuk is, meet niets — bekijk de fout in logs/agentos.log.",
+            next_step="Een toets die zelf stuk is, meet niets — bekijk de fout in logs/impactos.log.",
             status="error",
         )
 

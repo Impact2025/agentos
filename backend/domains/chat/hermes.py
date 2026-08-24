@@ -101,7 +101,7 @@ async def stream_response(
     purpose: str = "",
     project: str | None = None,
 ) -> AsyncGenerator[str, None]:
-    # Opt-in: alleen als AGENTOS_USE_HERMES_SKILLS=true en de caller géén eigen
+    # Opt-in: alleen als IMPACTOS_USE_HERMES_SKILLS=true en de caller géén eigen
     # prompt meegaf, verrijk de default met Hermes-skills + schrijf-DNA.
     # Bestaande callers die wél een prompt meesturen veranderen niet van gedrag.
     if system_prompt == _DEFAULT_SYSTEM:
@@ -201,7 +201,7 @@ async def _stream_openai_compat(
             "Content-Type": "application/json",
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "HTTP-Referer": "http://localhost:8000",
-            "X-Title": "Agent OS",
+            "X-Title": "Impact OS",
         }
 
     if backend == "openmodel":

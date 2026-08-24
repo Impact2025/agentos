@@ -1,6 +1,6 @@
 """Tests voor de AEO-autonomie-uitbreiding.
 
-Deze tests draaien tegen een wegwerp-DB (conftest zet AGENTOS_DB_PATH).
+Deze tests draaien tegen een wegwerp-DB (conftest zet IMPACTOS_DB_PATH).
 We mocken de agent-runner zodat we de pijplijn-logica testen zonder echte
 LLM-backend, en testen de deterministic fallback los daarvan.
 """

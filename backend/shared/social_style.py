@@ -82,12 +82,27 @@ class OverlaySpec:
     font_path_regular: str = ""
     kop_kleur: str = "#f5de82"      # zacht goud
     subtekst_kleur: str = "#fffaf0"  # warm wit
+    accent_kleur: str = "#e5a500"   # merk-accent (Bijeen: oranje #E4603B)
+    nacht_kleur: str = "#171F27"     # donker vlak / nacht-achtergrond
+    achtergrond_kleur: str = "#FAF6F0"  # lichte achtergrond (crème)
     vlak: bool = False              # donker transparant vlak achter de tekst
     vlak_opacity: float = 0.55
     logo_path: str = ""
     logo_positie: str = "top-left"
     logo_breedte: int = 180
-    footer_tekst: str = ""          # bijv. 'www.BewaardVoorJou.nl'
+    footer_tekst: str = ""          # bijv. 'www.BewaardVoorJou.nl' of een tagline
+    wordmark: str = ""              # merknaam naast het logo in het onderschrift-vlak
+    badge_tekst: str = ""           # pil-label boven de kop, modus 'stelling' (bv. 'Stelling')
+    modus: str = "foto"             # 'foto' = vignet-overlay op stockfoto;
+                                    # 'typografisch' = crème achtergrond, serif-kop,
+                                    # geen foto (Bijeen "Inzicht"-formaat);
+                                    # 'foto-onderschrift' = foto boven, accent-balk,
+                                    # crème onderschrift-vlak met kop + logo/wordmark/
+                                    # tagline onderaan (DatingAssistent, 21 aug 2026);
+                                    # 'stelling' = crème achtergrond, gekleurde badge-pil
+                                    # ('Stelling') linksboven, grote stelling-kop, grijs
+                                    # onderschrift, logo rechtsonder — geen foto
+                                    # (LiefdeVoorIedereen, 21 aug 2026)
 
 
 @dataclass
@@ -179,13 +194,13 @@ class SocialStyle:
         return url + sep + "&".join(parts)
 
     def resolve(self, relpath: str) -> Optional[Path]:
-        """Zoek een bestand: absoluut → projectmap → repo-root (als video_template)."""
+        """Zoek een bestand: absoluut → elke gelijkgespelde projectmap → repo-root."""
         if not relpath:
             return None
         p = Path(relpath)
         if p.is_absolute():
             return p if p.exists() else None
-        for base in (_project_dir(self.project), REPO_ROOT):
+        for base in _project_dirs(self.project) + [REPO_ROOT]:
             cand = base / relpath
             if cand.exists():
                 return cand
@@ -200,29 +215,40 @@ def _norm(name: str) -> str:
     return (name or "").lower().replace(" ", "").replace("-", "").replace("_", "")
 
 
-def _style_path(project: str) -> Optional[Path]:
-    """Vind het profiel, ook als de projectnaam anders gespeld is.
+def _project_dirs(project: str) -> List[Path]:
+    """Alle projectmappen die dezelfde squash-vorm delen, exacte naam eerst.
 
     `projects/` bevat zowel 'bewaard voor jou' als 'bewaardvoorjou' — dezelfde
     spellingssplitsing die `shared/projects.py:squash_project` elders opruimt.
+    Beide normaliseren naar hetzelfde, dus is niet met normaliseren alléén te
+    kiezen welke de échte inhoud draagt (assets, style.json) en welke een lege
+    restmap is; `resolve()`/`_style_path()` proberen daarom élke match, niet
+    zomaar de eerste — anders laadt het profiel wel, maar wijst elk relatief
+    pad erin (logo, font) in het niets, stil, want het beeld rendert gewoon
+    alleen zonder logo."""
+    dirs: List[Path] = []
+    direct = _project_dir(project)
+    if direct.is_dir():
+        dirs.append(direct)
+    root = REPO_ROOT / "projects"
+    doel = _norm(project)
+    if root.is_dir() and doel:
+        for d in sorted(root.iterdir()):
+            if d.is_dir() and _norm(d.name) == doel and d not in dirs:
+                dirs.append(d)
+    return dirs
+
+
+def _style_path(project: str) -> Optional[Path]:
+    """Vind het profiel in de eerste projectmap die het écht bevat.
+
     Een profiel dat alleen bij exacte mapnaam gevonden wordt, is voor de helft
     van de aanroepers onvindbaar, en dan valt de huisstijl stil terug op de
-    generieke stem zonder dat iemand het merkt.
-    """
-    direct = _project_dir(project) / STYLE_RELPATH
-    if direct.exists():
-        return direct
-    root = REPO_ROOT / "projects"
-    if not root.is_dir():
-        return None
-    doel = _norm(project)
-    if not doel:
-        return None
-    for d in sorted(root.iterdir()):
-        if d.is_dir() and _norm(d.name) == doel:
-            cand = d / STYLE_RELPATH
-            if cand.exists():
-                return cand
+    generieke stem zonder dat iemand het merkt."""
+    for d in _project_dirs(project):
+        cand = d / STYLE_RELPATH
+        if cand.exists():
+            return cand
     return None
 
 
@@ -291,12 +317,18 @@ def load_style(project: str, *, refresh: bool = False) -> SocialStyle:
             font_path_regular=str(ov.get("font_regular", "") or ""),
             kop_kleur=str(ov.get("kop_kleur", OverlaySpec.kop_kleur)),
             subtekst_kleur=str(ov.get("subtekst_kleur", OverlaySpec.subtekst_kleur)),
+            accent_kleur=str(ov.get("accent_kleur", OverlaySpec.accent_kleur)),
+            nacht_kleur=str(ov.get("nacht_kleur", OverlaySpec.nacht_kleur)),
+            achtergrond_kleur=str(ov.get("achtergrond_kleur", OverlaySpec.achtergrond_kleur)),
             vlak=bool(ov.get("vlak", False)),
             vlak_opacity=float(ov.get("vlak_opacity", 0.55) or 0.55),
             logo_path=str(ov.get("logo", "") or ""),
             logo_positie=str(ov.get("logo_positie", "top-left")),
             logo_breedte=int(ov.get("logo_breedte", 180) or 180),
             footer_tekst=str(ov.get("footer", "") or ""),
+            wordmark=str(ov.get("wordmark", "") or ""),
+            badge_tekst=str(ov.get("badge", "") or ""),
+            modus=str(beeld.get("modus", "foto") or "foto").lower(),
         )
 
     for slot in (data.get("ritme") or []):

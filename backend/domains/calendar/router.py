@@ -1,5 +1,5 @@
 """
-Google Agenda API-router voor Agent OS.
+Google Agenda API-router voor Impact OS.
 
 Endpoints:
   GET  /api/calendar/status      Config-status + verbonden calendar

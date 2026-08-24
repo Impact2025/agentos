@@ -142,12 +142,21 @@ VENDOR_NOISE_DOMAINS = (
     "dmarcreport", "dmarc", "getsentry.com", "sentry", "neon.tech",
     "noreply", "no-reply", "mailer-daemon", "postmaster", "bounce",
     "googlealerts", "googlealerts-noreply",
+    # Cloud / hosting platform notificaties (GitHub, Vercel, etc.)
+    "notifications@github", "github.com", "noreply@github",
+    "vercel.com", "vercel.app", "notifications@vercel",
+    "noreply+ci@", "github-actions",
 )
 # Losse afzenders die wél op naam-mailen maar géén klant zijn (eigen
 # automatische mailingen, nieuwsbrieven van eigen projecten). Worden herkend
 # op (sub)string in het adres.
 VENDOR_NOISE_SENDERS = (
     "shop-canda.com", "bewaardvoorjou.nl", "weareimpact.nl",
+    # Eigen geautomatiseerde rapportages / dagbladen
+    "weareimpactnl@gmail.com",
+    "hello@skillkaart.nl",
+    "v.munster@weareimpact.nl",
+    "noreply@weareimpact.nl",
 )
 
 

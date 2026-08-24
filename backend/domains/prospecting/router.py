@@ -7,6 +7,7 @@ Endpoints:
   POST /api/leads/batch               Batch-zoekactie (template + regio) via SSE
   POST /api/leads/{id}/enrich         Herverrijking (scrape + AI + Hunter)
   POST /api/leads/{id}/hunter         Expliciete Hunter.io-verrijking (domein-zoek + verify)
+  POST /api/leads/{id}/waterfall      Waterfall-verrijking (GetLeads → Apollo + Lead Magic telefoon)
   POST /api/leads/{id}/outreach       Start outreach-kwaliteitslus (→ status contacted)
   POST /api/leads/{id}/outreach-send  Genereer + verstuur outreach-mail via SMTP
   GET  /api/leads/stats         Statistieken
@@ -402,6 +403,34 @@ async def hunter_enrich(lead_id: str):
     return updated
 
 
+class WaterfallRequest(BaseModel):
+    include_phone: bool = True   # ook Lead Magic (telefoon) proberen
+
+
+@router.post("/{lead_id}/waterfall")
+async def waterfall_enrich(lead_id: str, body: WaterfallRequest = WaterfallRequest()):
+    """Waterfall-verrijking: GetLeads → Apollo (e-mail) + Lead Magic (telefoon).
+
+    Loopt de goedkopere/nauwkeurigere keten als Hunter geen e-mail opleverde.
+    Elke provider is KEY-GATED: zonder key in .env slaat die provider over
+    (zie waterfall_report). Geen enkele key → leeg rapport, geen fout.
+    """
+    loop = asyncio.get_event_loop()
+    updated = await loop.run_in_executor(
+        None, lambda: _svc.waterfall_enrich(lead_id, include_phone=body.include_phone)
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Lead niet gevonden")
+    return updated
+
+
+@router.get("/waterfall-status")
+def waterfall_status():
+    """Welke waterfall-providers zijn geconfigureerd (voor de UI)."""
+    from .waterfall import waterfall_report
+    return waterfall_report()
+
+
 # ── Outreach (kwaliteitslus) ──────────────────────────────────────────────────
 
 @router.post("/{lead_id}/outreach", status_code=201)
@@ -528,6 +557,15 @@ async def approve_outreach(lead_id: str, body: OutreachApproveRequest = Outreach
             detail=f"Dit adres ({target}) is geen serieus prospect-adres ({why}) — versturen geweigerd. "
                    "Zoek een specifiek contact of wijs de lead af.",
         )
+    # GDPR-opt-out-guard: staat het adres (of zijn domein) op de blocklist,
+    # dan gaan we hard op slot — iemand die 'STOP' zei mag nooit herdreigen.
+    from . import opt_out
+    if opt_out.is_opted_out(target):
+        raise HTTPException(
+            status_code=422,
+            detail=f"{target} staat op de opt-out-blocklist (afgemeld). Versturen geweigerd — "
+                   "dat is wettelijk verplicht.",
+        )
     # Echte token-check (niet alleen de gecachte account): een verlopen
     # refresh-token laat is_authenticated() op True staan maar geeft géén
     # token -> dat zou anders een ongevangen RuntimeError (HTTP 500) geven.
@@ -589,6 +627,36 @@ def dismiss_outreach(lead_id: str):
     return {"status": "dismissed", "lead_id": lead_id, "back_to": "lost"}
 
 
+# ── Opt-out (Telecommunicatiewet art. 11.7) ───────────────────────────────────
+
+class OptOutRequest(BaseModel):
+    email: str
+    snippet: str = ""        # optioneel: de reply-tekst waarin 'STOP' stond
+
+
+@router.post("/opt-out")
+def register_opt_out(body: OptOutRequest):
+    """Blokkeer een adres (én domein) voor toekomstige outreach.
+
+    Wordt aangeroepen als een reply 'STOP' / 'afmelden' bevat, of handmatig
+    vanuit de UI. Returns of er iets nieuws geblokkeerd is."""
+    from . import opt_out
+    blocked = opt_out.record_opt_out(body.email, source="manual", raw_snippet=body.snippet)
+    return {"status": "opted_out" if blocked else "already_blocked", "email": body.email}
+
+
+@router.get("/opt-out/list")
+def list_opt_outs():
+    from . import opt_out
+    return {"opt_outs": opt_out.list_opt_outs()}
+
+
+@router.post("/opt-out/check")
+def check_opt_out(email: str):
+    from . import opt_out
+    return {"email": email, "opted_out": opt_out.is_opted_out(email)}
+
+
 @router.get("/funnel")
 def funnel_overview():
     """De conversieformule: funnel-standen, ratio's en geleverde inputs (7 dagen)."""
@@ -615,6 +683,159 @@ async def send_lead_outreach(lead_id: str, body: OutreachSendRequest = OutreachS
 @router.get("/stats")
 def get_stats():
     return _svc.get_stats()
+
+
+# ── Quality Gate (Hermes Lead Machine: "gooi de mismatches weg") ───────────────
+
+@router.post("/quality-gate")
+def quality_gate(dry_run: bool = False):
+    """Beoordeel elke onbenaderde lead op fit en zet mismatches naar 'lost'.
+
+    De automatische versie van de SCORE-stap uit de video: rangschikt 0-100 en
+    verwijdert stil de leads die niet passen (status → 'lost', reden
+    'quality_gate'). Verstuurt en verwijdert niets; de lead blijft in de DB."""
+    from . import quality_gate
+    return quality_gate.run_quality_gate(dry_run=dry_run)
+
+
+@router.get("/quality-gate/summary")
+def quality_gate_summary():
+    from . import quality_gate
+    return quality_gate.quality_summary()
+
+
+@router.get("/top")
+def top_leads(limit: int = Query(10, ge=1, le=50)):
+    """De schone lijst voor bovenaan de pagina: scherpe fits die nog wachten
+    op een besluit (nog niet gecontacteerd/verloren), hoogste score eerst.
+    Dit is het antwoord op 'wat zijn nu mijn beste leads' zonder dat je door
+    de volle tabel hoeft te scrollen."""
+    from . import quality_gate
+    with_status = ("new", "enriched", "valid")
+    leads = [
+        l for l in _svc.list_leads()
+        if l.get("status") in with_status
+        and int(l.get("quality_score") or l.get("score") or 0) >= quality_gate.QUALITY_TARGET_SCORE
+    ]
+    leads.sort(key=lambda l: int(l.get("quality_score") or l.get("score") or 0), reverse=True)
+    return leads[:limit]
+
+
+# ── Beschrijf-in-1-zin → volledige pipeline (video-UX: "type one sentence") ───
+
+class DescribeRequest(BaseModel):
+    sentence: str                      # vrije taal, bv. "SEO agencies die linkbuilding doen"
+    max_results: int = 5
+    lead_type: str = "overig"
+    run_quality_gate: bool = True      # gooi mismatches direct weg na verrijking
+    run_waterfall: bool = True         # haal telefoon/e-mail op voor score >= 70 (A/B)
+
+
+@router.post("/describe")
+async def describe_run(body: DescribeRequest):
+    """De 'type één zin' instap uit de video.
+
+    Beschrijft wie je wil bereiken in gewone taal, zet dat om in een zoekquery,
+    draait de volledige find→enrich→verify→score-pipeline en (optioneel) de
+    Quality Gate. Streamt voortgang via SSE, net als /search maar met een
+    natuurlijke-taal-front. Verstuurt NIETS — dat blijft achter de review-gate.
+    """
+    async def generate():
+        loop = asyncio.get_event_loop()
+        yield _sse({"type": "start",
+                    "message": f"Pipeline gestart voor: '{body.sentence}'"})
+
+        # 1. DESCRIBE → gestructureerde zoekquery via Hermes (NL zin → query)
+        query = await loop.run_in_executor(
+            None, lambda: _svc.describe_to_query(body.sentence)
+        )
+        yield _sse({"type": "describe", "query": query})
+
+        # 2-4. FIND → ENRICH → VERIFY via de bestaande zoekketen
+        results = await loop.run_in_executor(
+            None, lambda: _svc.search_web(query, body.max_results)
+        )
+        results = [r for r in results if not _svc.is_duplicate(r["url"])] if results else []
+        if not results:
+            yield _sse({"type": "done", "message": "Geen organisaties gevonden voor die omschrijving."})
+            return
+
+        saved = []
+        for r in results:
+            geschikt, reden = validate.looks_like_organisation(
+                r.get("title", ""), r.get("url", ""), r.get("snippet", ""))
+            if not geschikt:
+                continue
+            org_name = validate.clean_org_name(r["title"], r["url"])
+            scraped = await loop.run_in_executor(
+                None, lambda r=r, o=org_name: _svc.scrape_and_enrich(r["url"], o))
+            analysis = await loop.run_in_executor(
+                None, lambda r=r, s=scraped, o=org_name: _svc.analyze_lead(
+                    o, r["url"], r["snippet"], s))
+            lead_data = {
+                "org_name": org_name, "website": r["url"],
+                "summary": analysis.get("summary", ""),
+                "contacts": analysis.get("contacts", []),
+                "relevance": analysis.get("relevance", "gemiddeld"),
+                "tags": analysis.get("tags", []),
+                "status": "new", "search_query": body.sentence,
+                "lead_type": body.lead_type,
+                "phone": scraped.get("phone") or analysis.get("phone", ""),
+                "email": scraped.get("email") or analysis.get("email", ""),
+                "address": scraped.get("address") or scraped.get("address_raw", "") or analysis.get("address", ""),
+                "city": scraped.get("city") or analysis.get("city", ""),
+                "postal_code": scraped.get("postal_code") or analysis.get("postal_code", ""),
+                "kvk_number": scraped.get("kvk_number") or analysis.get("kvk_number", ""),
+                "enriched_at": "",
+                "score": analysis.get("score", 50),
+            }
+            has_naw = bool(lead_data["phone"] or lead_data["address"] or lead_data["email"])
+            if has_naw:
+                from .service import _now
+                lead_data["enriched_at"] = _now()
+                lead_data["status"] = "enriched"
+            obs_path = await loop.run_in_executor(
+                None, lambda d=lead_data: _svc.save_to_obsidian(d))
+            lead_data["obsidian_path"] = obs_path or ""
+            saved_lead = await loop.run_in_executor(
+                None, lambda d=lead_data: _svc.save_to_db(d))
+            saved.append(saved_lead)
+            yield _sse({"type": "lead_saved", "lead": saved_lead})
+
+        # 5. SCORE + (optioneel) discard — de Quality Gate
+        if body.run_quality_gate and saved:
+            from . import quality_gate
+            gate = await loop.run_in_executor(None, lambda: quality_gate.run_quality_gate())
+            yield _sse({"type": "quality_gate",
+                        "promoted": len(gate["promoted"]),
+                        "discarded": len(gate["discarded"]),
+                        "kept": len(gate["kept"])})
+
+        # 6. WATERFALL — alleen voor de scherpe fits (score >= 70, A/B), en
+        # alleen als de Quality Gate ook echt draaide (anders weten we het
+        # label niet en zou dit voor élke gevonden lead gelden, incl. ruis).
+        top_ids = []
+        if body.run_waterfall and body.run_quality_gate and saved:
+            from . import quality_gate
+            for s in saved:
+                score = s.get("score") or 0
+                try:
+                    score = int(score)
+                except (TypeError, ValueError):
+                    score = 0
+                if score >= quality_gate.QUALITY_TARGET_SCORE:
+                    top_ids.append(s["id"])
+            for lead_id in top_ids:
+                updated = await loop.run_in_executor(
+                    None, lambda lid=lead_id: _svc.waterfall_enrich(lid, include_phone=True))
+                if updated:
+                    yield _sse({"type": "waterfall_enriched", "lead": updated})
+
+        yield _sse({"type": "done",
+                    "message": f"{len(saved)} lead(s) gevonden"
+                               f"{f', {len(top_ids)} topfit verrijkt met contactgegevens' if top_ids else ''}. "
+                               f"Review ze in het overzicht — nog niets verstuurd."})
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 # ── Export ────────────────────────────────────────────────────────────────────

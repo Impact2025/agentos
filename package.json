@@ -1,8 +1,8 @@
 {
-  "name": "agentos-frontend",
+  "name": "impactos-frontend",
   "version": "1.0.0",
   "private": true,
-  "description": "Frontend build (Tailwind CSS) voor het Agent OS dashboard",
+  "description": "Frontend build (Tailwind CSS) voor het Impact OS dashboard",
   "scripts": {
     "build:css": "tailwindcss -i ./tailwind.input.css -o ./frontend/tailwind.css --minify",
     "watch:css": "tailwindcss -i ./tailwind.input.css -o ./frontend/tailwind.css --watch"

@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, r"D:/APPS/agentos")
+sys.path.insert(0, r"D:/APPS/impactos")
 
 from backend.shared.video_render import render_short, Scene  # noqa: E402
 from backend.shared.video_template import load_template  # noqa: E402
@@ -24,7 +24,7 @@ def main() -> None:
     tpl = load_template(project)
     print("template:", tpl.source, "| logo:", tpl.logo.resolved, "| tts:", tpl.tts_provider,
           "| eigen beeld:", len(tpl.footage.images))
-    out = Path(r"D:/APPS/agentos/projects/datingassistent/video/_smoke_pro.mp4")
+    out = Path(r"D:/APPS/impactos/projects/datingassistent/video/_smoke_pro.mp4")
     res = render_short(project, SCENES, out, template=tpl)
     print(json.dumps(res.__dict__, ensure_ascii=False, indent=2, default=str))
 

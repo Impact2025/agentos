@@ -51,7 +51,7 @@ def _get_site_data(site_name: Optional[str] = None) -> tuple:
             pass
 
     # Harde override: als de site LinkedIn-expliciet geblokkeerd heeft
-    # (bv. DatingAssistent mag nooit via AgentOS op LinkedIn posten),
+    # (bv. DatingAssistent mag nooit via ImpactOS op LinkedIn posten),
     # geven we leeg token/URN terug — zelfs als de globale .env-token aanwezig is.
     if site_row is not None and site_row.get("block_linkedin"):
         return "", ""
@@ -299,8 +299,8 @@ async def get_my_posts(site_name: Optional[str] = None, limit: int = 20) -> Dict
     Een gewone personal token (w_member_social + openid, zoals Vincent die
     heeft) krijgt GEEN toegang tot /rest/posts of /v2/shares?q=owners — die
     geven 404 / 400. Daarom lezen we de analytics uit onze EIGEN database:
-    elke post die AgentOS plaatst (via post_update / publish_pack) wordt
-    hieronder gelogd, zodat je wél een overzicht + analyse in AgentOS hebt.
+    elke post die ImpactOS plaatst (via post_update / publish_pack) wordt
+    hieronder gelogd, zodat je wél een overzicht + analyse in ImpactOS hebt.
 
     We proberen eerst de API (voor wie wél partner-toegang heeft), en vallen
     anders terug op de lokale `linkedin_posts`-tabel.
@@ -347,7 +347,7 @@ async def get_my_posts(site_name: Optional[str] = None, limit: int = 20) -> Dict
     except Exception:
         pass  # API niet beschikbaar — val terug op lokale logging
 
-    # 2) Lokale fallback: wat AgentOS zélf heeft geplaatst
+    # 2) Lokale fallback: wat ImpactOS zélf heeft geplaatst
     try:
         from ..shared.database import get_conn
         with get_conn() as conn:
@@ -358,6 +358,6 @@ async def get_my_posts(site_name: Optional[str] = None, limit: int = 20) -> Dict
         posts = [dict(r) for r in rows]
         return {"success": True, "count": len(posts), "posts": posts,
                 "author_urn": author, "source": "local",
-                "note": "API-statistieken vereisen partner-toegang; tonen lokale AgentOS-posts."}
+                "note": "API-statistieken vereisen partner-toegang; tonen lokale ImpactOS-posts."}
     except Exception as e:
         return {"success": False, "error": str(e)[:300], "posts": [], "source": "none"}

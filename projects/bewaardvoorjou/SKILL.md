@@ -132,7 +132,7 @@ Kies per artikel één van de drie:
 ## Kwaliteitsparameters
 - Minimale personalisatie: elke outreach bevat minstens 2 bedrijfsspecifieke elementen
 - Maximum volume: 20 leads/week
-- Wekelijkse review in Agent OS dashboard
+- Wekelijkse review in Impact OS dashboard
 - Maandelijkse aanpassing zoektermen
 
 ## Contentmachine & Podcast

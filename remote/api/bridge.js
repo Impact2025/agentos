@@ -1,4 +1,4 @@
-// Bridge-endpoint — alleen voor lokale AgentOS-machines (bearer-token → tenant).
+// Bridge-endpoint — alleen voor lokale ImpactOS-machines (bearer-token → tenant).
 //   POST /api/bridge?op=push       → volledige actieve set items + briefing
 //   GET  /api/bridge?op=decisions  → openstaande besluiten (pending)
 //   POST /api/bridge?op=ack        → uitslag per besluit terugmelden
@@ -80,7 +80,7 @@ async function push(req, res, tenant) {
                                          generated_at = EXCLUDED.generated_at`;
   }
 
-  // Google-config voor live agenda/GSC zonder AgentOS (zie context.py:
+  // Google-config voor live agenda/GSC zonder ImpactOS (zie context.py:
   // build_google_config). Nooit laten falen op de rest van de push — één
   // tenant met een kapotte sleutel mag de items/context-sync niet meeslepen.
   if (body.google && body.google.client_email && body.google.private_key) {

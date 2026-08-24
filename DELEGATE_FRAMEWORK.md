@@ -1,6 +1,6 @@
 # Delegate Tool — Subagent Framework
 
-Parallelle multi-agent-laag bovenop Agent OS. De **Lead Agent** (chat) splitst een
+Parallelle multi-agent-laag bovenop Impact OS. De **Lead Agent** (chat) splitst een
 grote opdracht op en delegeert onafhankelijke deeltaken aan **workers** die
 parallel in de achtergrond draaien. Resultaten stromen asynchroon terug naar de
 UI als zelfstandige berichten.

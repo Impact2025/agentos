@@ -1,4 +1,4 @@
-// Live agenda + GSC-trend, rechtstreeks vanuit Vercel — geen AgentOS nodig.
+// Live agenda + GSC-trend, rechtstreeks vanuit Vercel — geen ImpactOS nodig.
 //
 // Spiegelt (bewust minimaal, alleen het leesgedeelte):
 //   backend/domains/calendar/service_google.py:get_events_range()
@@ -35,7 +35,7 @@ const FETCH_TIMEOUT_MS = 10000;
 //      andere tenants. We regelen hier zelf het access-token via de
 //      refresh-token (Google OAuth), en cachen dat per token.
 //   2. De (legacy) service-account-kolommen in `tenants` (calendar_client_email
-//      + calendar_private_key_enc), gevuld door de lokale AgentOS-push.
+//      + calendar_private_key_enc), gevuld door de lokale ImpactOS-push.
 // Een lege return = "niet geconfigureerd" → de aanroeper valt terug op cache.
 export async function getGoogleTenantConfig(tenant) {
   // 1. Eigen OAuth-account van deze tenant (de echte wereldklasse-route).

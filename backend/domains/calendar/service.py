@@ -1,5 +1,5 @@
 """
-Agenda-integratie voor Agent OS — backend-dispatcher.
+Agenda-integratie voor Impact OS — backend-dispatcher.
 
 CALENDAR_BACKEND kiest de agenda-provider per instance: 'google'
 (serviceaccount, default — WeAreImpact) of 'outlook' (Microsoft Graph via

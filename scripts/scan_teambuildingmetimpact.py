@@ -5,7 +5,7 @@ zodat de signalen-geschiedenis compleet wordt. Schrijft een kort rapport naar st
 import asyncio
 import sys
 
-sys.path.insert(0, "D:/apps/agentos")
+sys.path.insert(0, "D:/apps/impactos")
 
 from backend.domains.radar.service import RadarService
 from backend.domains.radar import scorer

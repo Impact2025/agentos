@@ -1,5 +1,6 @@
 import logging
 import sqlite3
+import datetime
 from contextlib import contextmanager
 from .config import DB_PATH
 
@@ -723,6 +724,77 @@ def init_db() -> None:
     with get_conn() as conn:
         conn.executescript(DDL)
         _migrate(conn)
+    # Domein-specifieke schema's (radar, analytics, geo, researcher, rituals,
+    # knowledge_forge, …) leven bewust buiten deze core-DDL zodat domeinen
+    # zelfstandig te verwijderen zijn. Ze werden echter nergens centraal bij
+    # startup aangeroepen — alleen lazy bij eerst gebruik. Gevolg: een server
+    # die al draaide vóórdat een domein bestond, crashte bij de eerste job
+    # met "no such table: radar_momentum" tot de service toevallig werd
+    # aangeroepen. We roepen ze hier één keer idempotent aan: geen restart
+    # nodig, géén tabel-missers meer bij een lopende instance.
+    ensure_all_schemas()
+
+
+# Volgorde-onafhankelijk: elke ensure_*_schema() is idempotent (CREATE TABLE
+# IF NOT EXISTS + kolom-migraties op PRAGMA), dus dubbel aanroepen is veilig.
+# Mode "noarg": fnc() — de meeste domeinen openen zelf een connectie.
+# Mode "conn":  fnc(conn) — bv. knowledge_forge.forge.ensure_schema(conn).
+# Mislukt één domein, dan loggen we dat en gaan we door — de rest blijft heel.
+_SCHEMA_MODULES = (
+    # (naam, module-pad, functie, mode)
+    ("radar",          ".domains.radar.models",            "ensure_schema",          "noarg"),
+    ("radar_momentum", ".domains.radar.momentum",          "ensure_momentum_schema", "noarg"),
+    ("analytics",      ".domains.analytics.facebook_store", "ensure_schema",          "noarg"),
+    ("geo",            ".domains.geo.citation",            "ensure_schema",          "noarg"),
+    ("geo_service",    ".domains.geo.service",             "ensure_schema",          "noarg"),
+    ("researcher",     ".domains.researcher.service",       "ensure_schema",          "noarg"),
+    ("rituals",        ".domains.rituals.models",          "ensure_schema",          "noarg"),
+    ("orders",         ".domains.orders.models",           "ensure_schema",          "noarg"),
+    ("knowledge_forge", ".knowledge_forge.forge",           "ensure_schema",          "conn"),
+)
+
+
+def ensure_all_schemas() -> dict[str, str]:
+    """Roep elke domein-schema-bootstrap eenmalig idempotent aan.
+
+    Retourneert {module: 'ok' | 'skipped' | '<foutmelding>'}. 'skipped' betekent
+    dat het domein (nog) niet bestaat — geen probleem, de dependency is optioneel.
+    """
+    import importlib
+
+    results: dict[str, str] = {}
+    for name, modpath, fn, mode in _SCHEMA_MODULES:
+        # Absolute import op basis van het 'backend'-package, onafhankelijk van
+        # wie ensure_all_schemas() aanroept. Een relatieve import_module(path,
+        # __name__) zou '.domains.radar.models' foutief tégen database.py
+        # resolven ('backend.shared.database.domains' bestaat niet).
+        full = "backend" + modpath
+        try:
+            mod = importlib.import_module(full)
+        except ModuleNotFoundError:
+            results[name] = "skipped"
+            continue
+        fnc = getattr(mod, fn, None)
+        if fnc is None:
+            results[name] = "skipped"
+            continue
+        try:
+            if mode == "conn":
+                with get_conn() as conn:
+                    fnc(conn)
+            else:
+                fnc()
+            results[name] = "ok"
+        except Exception as e:  # noqa: BLE001 — één domein mag de boot niet breken
+            logger.warning("Schema-bootstrap '%s' mislukt: %s", name, e)
+            results[name] = f"{type(e).__name__}: {e}"
+    failed = {k: v for k, v in results.items() if v not in ("ok", "skipped")}
+    if failed:
+        logger.warning("Schema-bootstrap: %d domein(en) met fout: %s", len(failed), failed)
+    else:
+        logger.info("Schema-bootstrap: alle domein-schema's OK (%d modules)",
+                    sum(1 for v in results.values() if v == "ok"))
+    return results
 
 
 def _migrate(conn) -> None:
@@ -746,6 +818,9 @@ def _migrate(conn) -> None:
         ("started_at", "ALTER TABLE tasks ADD COLUMN started_at TEXT DEFAULT ''"),
         ("finished_at", "ALTER TABLE tasks ADD COLUMN finished_at TEXT DEFAULT ''"),
         ("duration_ms", "ALTER TABLE tasks ADD COLUMN duration_ms INTEGER DEFAULT 0"),
+        # Hoe vaak een gecrashte taak automatisch is herprobeerd (revive_stalled_chains).
+        # Zonder teller zou een permanent kapotte taak oneindig blijven herstarten.
+        ("retry_count", "ALTER TABLE tasks ADD COLUMN retry_count INTEGER DEFAULT 0"),
     ):
         if col not in task_cols:
             conn.execute(ddl)
@@ -778,6 +853,11 @@ def _migrate(conn) -> None:
         # Outreach-leerlus: welke concept-stijl dit concept gebruikte (JSON:
         # opening/toon/lengte) — de koppeling tussen aanpak en reply-uitkomst.
         ("outreach_variant", "ALTER TABLE leads ADD COLUMN outreach_variant TEXT DEFAULT ''"),
+        # Quality Gate (Hermes Lead Machine "gooi de mismatches weg"): fit-score +
+        # label (A/B/C/D) + reden waarom een lead wel/niet door de gate kwam.
+        ("quality_score", "ALTER TABLE leads ADD COLUMN quality_score INTEGER DEFAULT 0"),
+        ("quality_label", "ALTER TABLE leads ADD COLUMN quality_label TEXT DEFAULT ''"),
+        ("quality_reason", "ALTER TABLE leads ADD COLUMN quality_reason TEXT DEFAULT ''"),
     ):
         if col not in lead_cols:
             conn.execute(ddl)
@@ -805,12 +885,39 @@ def _migrate(conn) -> None:
         duration_ms INTEGER DEFAULT 0, created_at TEXT NOT NULL,
         FOREIGN KEY (subtask_id) REFERENCES gauntlet_subtasks(id) ON DELETE CASCADE)""")
 
+    # Lead Opt-out blocklist (Telecommunicatiewet art. 11.7): wie 'STOP' antwoordt
+    # op een commercial mail moet blijvend uit het bestand. Adres + domein.
+    conn.execute("""CREATE TABLE IF NOT EXISTS lead_opt_outs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL,
+        domain TEXT DEFAULT '',
+        source TEXT DEFAULT '',
+        snippet TEXT DEFAULT '',
+        created_at TEXT NOT NULL)""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_opt_outs_email ON lead_opt_outs(email)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_opt_outs_domain ON lead_opt_outs(domain)")
+
     # Gauntlet: zorg dat published_job_id bestaat op reeds-bestaande DB's
     # (CREATE TABLE IF NOT EXISTS vangt alleen nieuwe DB's; een live DB die al
     # draaide vóór deze kolom is aangelegd mist 'm zonder deze idempotente ALTER).
     _gauntlet_cols = {row["name"] for row in conn.execute("PRAGMA table_info(gauntlet_runs)").fetchall()}
     if "published_job_id" not in _gauntlet_cols:
         conn.execute("ALTER TABLE gauntlet_runs ADD COLUMN published_job_id TEXT DEFAULT ''")
+
+    # Agent Control (agentctl): trackt elke "Voer allemaal uit"-deploy per project+
+    # pijler zodat een suggestie een echt landingsplek en historie krijgt i.p.v.
+    # een fire-and-forget event (zie backend/domains/agentctl/suggest.py). run_id
+    # is nullable: alleen de content-pijler spawnt een Gauntlet-run; seo/uitvoering/
+    # hygiëne roepen een synchrone service direct aan.
+    conn.execute("""CREATE TABLE IF NOT EXISTS agentctl_deploys (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT DEFAULT '',
+        project TEXT NOT NULL, pillar TEXT NOT NULL, agent TEXT DEFAULT '',
+        task TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'running',
+        artifact TEXT DEFAULT '', created_at TEXT NOT NULL, resolved_at TEXT DEFAULT '')""")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agentctl_deploys_project_pillar "
+        "ON agentctl_deploys(project, pillar, created_at)"
+    )
 
     # Status-funnel migratie: oude generieke waarden → nieuwe funnel-stappen
     _STATUS_MAP = {
@@ -831,30 +938,54 @@ def _migrate(conn) -> None:
         conn.execute("ALTER TABLE agent_profiles ADD COLUMN memory_session TEXT DEFAULT ''")
     if "mcp_servers" not in profile_cols:
         conn.execute("ALTER TABLE agent_profiles ADD COLUMN mcp_servers TEXT DEFAULT '[]'")
+    # Agent-identiteit (wereldklasse roster): één source of truth voor code/UI/
+    # marketing. `name` blijft de interne rol-sleutel; deze kolommen leggen het
+    # marketing-gezicht + laag vast. face_key koppelt aan backend/agents-roster.
+    for col, ddl in (
+        ("display_name", "ALTER TABLE agent_profiles ADD COLUMN display_name TEXT DEFAULT ''"),
+        ("persona",      "ALTER TABLE agent_profiles ADD COLUMN persona TEXT DEFAULT ''"),
+        ("layer",        "ALTER TABLE agent_profiles ADD COLUMN layer TEXT DEFAULT 'role'"),
+        ("face_key",     "ALTER TABLE agent_profiles ADD COLUMN face_key TEXT DEFAULT ''"),
+    ):
+        if col not in profile_cols:
+            conn.execute(ddl)
+    # Manager-profiel (Iris) als concreet anker in de DB zodat de keten
+    # profiel → face → manager altijd sluit. Idempotent op naam.
+    try:
+        iris_row = conn.execute(
+            "SELECT id FROM agent_profiles WHERE name = 'Iris (AI Manager)'"
+        ).fetchone()
+        if not iris_row:
+            _ts = datetime.datetime.utcnow().isoformat()
+            conn.execute(
+                "INSERT INTO agent_profiles (name, model, system_prompt, memory_session, "
+                "mcp_servers, layer, face_key, created_at) VALUES (?, ?, ?, '', '[]', 'manager', 'iris', ?)",
+                ("Iris (AI Manager)", "deepseek-v4-flash",
+                 "Jij bent Iris, de AI-manager van Vincent's portfolio. Je houdt overzicht "
+                 "over alle projecten, informeert Vincent proactief over wat aandacht vraagt, "
+                 "en stuurt de specialist-agents (Mara/Content, Bram/Outreach, Noor/Analyse) "
+                 "aan op de pijlers met de grootste hefboom. Je bent de spin in het web, "
+                 "geen uitvoerder — je delegeert concreet werk naar de experts.",
+                 _ts),
+            )
+    except Exception as e:  # pragma: no cover
+        logger.warning("Kon Iris-managerprofiel niet seeden: %s", e)
 
-    # Calendar proposals: terugkerende blokken + herinnerings-flag (idempotent)
-    cp_exists = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='calendar_proposals'"
-    ).fetchone()
-    if cp_exists:
-        cp_cols = {row["name"] for row in conn.execute("PRAGMA table_info(calendar_proposals)").fetchall()}
-        for col, ddl in (
-            ("recur_weekday", "ALTER TABLE calendar_proposals ADD COLUMN recur_weekday INTEGER DEFAULT -1"),
-            ("reminder_sent", "ALTER TABLE calendar_proposals ADD COLUMN reminder_sent INTEGER DEFAULT 0"),
-            ("recur_count", "ALTER TABLE calendar_proposals ADD COLUMN recur_count INTEGER DEFAULT -1"),
-            ("all_day", "ALTER TABLE calendar_proposals ADD COLUMN all_day INTEGER DEFAULT 0"),
-            # Alleen gevuld voor voorstellen die via klant-Iris op WhatsApp zijn
-            # gedaan (bridge/actions.py:_cmd_calendar_add) — het adres om de
-            # goedkeur/afwijs-bevestiging naar terug te sturen. NULL voor elk
-            # ander voorstel (uit mail, of Vincent zelf via manager-Iris): daar
-            # bestaat geen "klant" om te melden.
-            ("customer_wa_id", "ALTER TABLE calendar_proposals ADD COLUMN customer_wa_id TEXT"),
-            # Door de klant zelf gegeven, ná de bevestiging, via het
-            # deel_emailadres-tool (nooit vooraf gevraagd — zie _customer_core.js).
-            ("customer_email", "ALTER TABLE calendar_proposals ADD COLUMN customer_email TEXT"),
-        ):
-            if col not in cp_cols:
-                conn.execute(ddl)
+    # LET OP: de calendar_proposals-migratie zelf staat verderop (zie
+    # "Agenda-voorstellen" hieronder), NA de CREATE TABLE die de tabel voor
+    # het eerst aanmaakt. Er stond hier vroeger een tweede, vroegtijdige
+    # kopie van diezelfde migratie — die controleerde `cp_exists` vóórdat de
+    # tabel ooit was aangemaakt, dus sloeg zichzelf op een verse installatie
+    # altijd over. reminder_sent en all_day stonden ALLEEN in die vroegtijdige
+    # kopie (recur_weekday/recur_count stonden toevallig in beide), dus
+    # ontbraken die twee kolommen op elke fabrieksnieuwe database — de
+    # reminder-job (calendar/reminder.py) en de agenda-opdracht-tool
+    # (bridge/actions.py:_cmd_calendar_add) crashten daar hard op zodra ze
+    # voor het eerst draaiden. Nu in de CREATE TABLE zelf + de ALTER-lijst
+    # erna (beide hieronder), zodat verse én bestaande installaties dezelfde
+    # kolommen krijgen. Gevonden 19 aug 2026 doordat een testbestand dat
+    # geïsoleerd draait (dus met precies één migratie-pass, zoals een echte
+    # verse installatie) op "no such column: all_day" stukliep.
 
     # Outlook-emails: nieuwe kolommen (idempotent)
     oe_exists = conn.execute(
@@ -941,6 +1072,18 @@ def _migrate(conn) -> None:
         # Met de vlag exporteert de pipeline het klaar-artikel naar de vault i.p.v.
         # een HTTP-publish te proberen, en telt dat als afgeronde levering.
         ("manual_publish",     "ALTER TABLE sites ADD COLUMN manual_publish INTEGER DEFAULT 0"),
+        # Social Auto-Poster: per-project vlag + platform-keuze. auto_post staat
+        # UIT tenzij de mens dit expliciet aanzet (default 0). De engine leest
+        # deze velden in backend/shared/social_auto.py — nooit automatisch aan.
+        ("auto_social_enabled",   "ALTER TABLE sites ADD COLUMN auto_social_enabled INTEGER DEFAULT 0"),
+        ("auto_social_platforms", "ALTER TABLE sites ADD COLUMN auto_social_platforms TEXT DEFAULT ''"),
+        # Per-project blog-dagen/tijden (22 aug 2026): elk project heeft een
+        # eigen doelgroep en dus een eigen beste moment om te posten — de oude
+        # situatie (één gezamenlijke di/vr 09:00-run voor alle sites) negeerde
+        # dat verschil volledig. JSON-lijst [{"day":"tue","hour":8,"minute":0},...]
+        # dagen als mon/tue/wed/thu/fri/sat/sun. Leeg = terugval op het oude
+        # gedrag (di+vr 09:00), zodat sites zonder eigen schema niet stilvallen.
+        ("content_schedule", "ALTER TABLE sites ADD COLUMN content_schedule TEXT DEFAULT ''"),
     ):
         if col not in site_cols:
             conn.execute(ddl)
@@ -975,6 +1118,12 @@ def _migrate(conn) -> None:
         # en de UI weten wat ze ermee moeten doen. blog = site-pagina; linkedin_outreach
         # = LinkedIn-berichten (NOOIT als site-pagina publiceren); landing_page = pagina.
         ("content_type", "ALTER TABLE content_jobs ADD COLUMN content_type TEXT DEFAULT 'blog'"),
+        # Orchestrator/Gauntlet cross-run cap + sluiting (14 aug 2026, zie
+        # ORCHESTRATOR_MAX_ATTEMPTS in shared/config.py): zonder deze twee kolommen
+        # bleef een herschreven bronrecord voor altijd 'rejected'/'stuck' en werd
+        # het bij elke volgende ronde opnieuw gevonden en opnieuw (duur) herschreven.
+        ("orchestrator_attempts", "ALTER TABLE content_jobs ADD COLUMN orchestrator_attempts INTEGER DEFAULT 0"),
+        ("superseded_by", "ALTER TABLE content_jobs ADD COLUMN superseded_by TEXT DEFAULT ''"),
     ):
         if cj_cols and col not in cj_cols:
             conn.execute(ddl)
@@ -1111,6 +1260,36 @@ def _migrate(conn) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_weekly_insights_week "
         "ON weekly_insights(week_label DESC, site_id)"
+    )
+
+    # Facebook-snapshots (Agent "Deluxe"): opgeslagen analyses per site, zodat
+    # de UI en Iris nooit live de Graph API hoeven te raken (zie
+    # backend/domains/analytics/facebook_store.py). Upsert per site_name.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS fb_insights (
+            site_name    TEXT NOT NULL,
+            page_id      TEXT,
+            captured_at  TEXT NOT NULL,
+            status       TEXT NOT NULL,            -- 'ok' | 'error'
+            error        TEXT,
+            snapshot     TEXT,                      -- JSON: volledige analyse_page()-uitvoer
+            PRIMARY KEY (site_name)
+        )"""
+    )
+
+    # Facebook-geplaatste posts — de meetlus FB→SEO. Elke post die via de agent
+    # wordt geplaatst (incl. de query→artikel-koppeling) wordt hier gelogd, zodat
+    # fb_seo_impact.py de GSC-positie van de gelinkte pagina vóór/après de post
+    # kan meten. Best-effort: een logging-fout mag de post nooit breken.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS fb_posts (
+            post_id     TEXT PRIMARY KEY,
+            site_name   TEXT NOT NULL,
+            query       TEXT,
+            article_url TEXT,
+            placed_at   TEXT NOT NULL,
+            message     TEXT
+        )"""
     )
 
     # Iris — de manager-agent: dagelijkse briefing (rapport per dag) en het
@@ -1435,7 +1614,7 @@ def _migrate(conn) -> None:
 
     # ── Mail helpdesk (review-gate): per project een eigen mailbox ──────────
     # Een mailbox koppelt een project aan zijn POP3-inbox + SMTP-verzender.
-    # AgentOS haalt mail op, filtert spam, laat de LLM een concept-antwoord
+    # ImpactOS haalt mail op, filtert spam, laat de LLM een concept-antwoord
     # schrijven en zet dat klaar in mail_reply (status=pending_review). Niets
     # vertrekt zonder Vincents expliciete klik — zelfde discipline als de
     # content-wachtrij / Iris "publiceert nooit zelf".
@@ -1494,12 +1673,17 @@ def _migrate(conn) -> None:
             edited_body  TEXT DEFAULT '',
             created_at   TEXT DEFAULT (datetime('now')),
             sent_at      TEXT DEFAULT '',
-            poot_referral TEXT DEFAULT ''          -- Iris-regel: signaal dat een Pootgelukkig-kans zag
+            poot_referral TEXT DEFAULT '',         -- Iris-regel: signaal dat een Pootgelukkig-kans zag
+            customer_status TEXT DEFAULT ''        -- 'bekend'|'nieuw': eerdere correspondentie op dit adres?
         )"""
     )
     # Idempotente aanvulling voor bestaande DB's waarin de kolom nog ontbreekt.
     try:
         conn.execute("ALTER TABLE mail_reply ADD COLUMN poot_referral TEXT DEFAULT ''")
+    except Exception:
+        pass  # kolom bestond al — negeren
+    try:
+        conn.execute("ALTER TABLE mail_reply ADD COLUMN customer_status TEXT DEFAULT ''")
     except Exception:
         pass  # kolom bestond al — negeren
     conn.execute(
@@ -1514,6 +1698,18 @@ def _migrate(conn) -> None:
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             pattern      TEXT NOT NULL UNIQUE,     -- 'x@y.nl' of '@y.nl'
             reason       TEXT DEFAULT '',           -- bv. onderwerp van de mail die ertoe leidde
+            created_at   TEXT DEFAULT (datetime('now'))
+        )"""
+    )
+    # Bekende afzenders: Vincent markeert hier handmatig wie een contact is
+    # (bv. 10x-hire) zónder dat er een lead-rij nodig is. Een afzender in dit
+    # register is géén 'Nieuwe afzender' meer in het Actiecentrum. Handmatig
+    # beheerd via de 'Markeer als bekend'-knop; niet door de agent gevuld.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS known_senders (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            addr         TEXT NOT NULL UNIQUE,      -- lowercase e-mailadres
+            name         TEXT DEFAULT '',           -- optioneel leesbare naam
             created_at   TEXT DEFAULT (datetime('now'))
         )"""
     )
@@ -1552,7 +1748,11 @@ def _migrate(conn) -> None:
             parent_url      TEXT DEFAULT '',           -- link naar de post (UI-context)
             thread_json     TEXT DEFAULT '[]',         -- eerdere reacties in dezelfde thread
             draft_body      TEXT DEFAULT '',
-            status          TEXT DEFAULT 'pending_review', -- pending_review|sent|edited|rejected|ignored
+            status          TEXT DEFAULT 'pending_review', -- pending_review|edited|approved|sent|rejected|ignored
+            -- 'approved' = goedgekeurd op een 'manual'-kanaal maar nog niet
+            -- daadwerkelijk geplaatst (zie /queued + /mark-sent) — een
+            -- goedkeuring is geen plaatsing, zelfde les als de 'Geplaatst'-knop
+            -- van de social-campagne (7g in CLAUDE.md).
             edited_body     TEXT DEFAULT '',
             manual          INTEGER DEFAULT 0,         -- 1 = kanaal staat geen API-antwoord toe (plak-adapter)
             created_at      TEXT DEFAULT (datetime('now')),
@@ -1599,8 +1799,42 @@ def _migrate(conn) -> None:
     sp_cols = {row["name"] for row in conn.execute("PRAGMA table_info(social_posts)").fetchall()}
     if "video_path" not in sp_cols:
         conn.execute("ALTER TABLE social_posts ADD COLUMN video_path TEXT DEFAULT ''")
+    # ── Eén post-ledger, ongeacht de bron (6 aug 2026-principe toegepast op social):
+    # een pack uit de gated pipeline én een post uit de Facebook Deluxe-composer
+    # landen allebei hier, met dezelfde herkomst-velden. Zonder dit kon
+    # analyse_page() nooit terugkoppelen WELK thema/WELKE bron een goed scorende
+    # post had — de helft van de posts (Deluxe) had geen herkomst-metadata.
+    if "origin" not in sp_cols:
+        conn.execute("ALTER TABLE social_posts ADD COLUMN origin TEXT DEFAULT 'pipeline'")
+    if "idea_source" not in sp_cols:
+        conn.execute("ALTER TABLE social_posts ADD COLUMN idea_source TEXT DEFAULT ''")
+    if "idea_query" not in sp_cols:
+        conn.execute("ALTER TABLE social_posts ADD COLUMN idea_query TEXT DEFAULT ''")
+    if "idea_evidence" not in sp_cols:
+        conn.execute("ALTER TABLE social_posts ADD COLUMN idea_evidence TEXT DEFAULT ''")
+    if "idea_url" not in sp_cols:
+        conn.execute("ALTER TABLE social_posts ADD COLUMN idea_url TEXT DEFAULT ''")
+    # ── Campagne-velden (16 aug 2026). Een social-plan is geen losse verzameling
+    # posts maar een reeks met een volgorde en een datum: het BewaardVoorJou-plan
+    # van 6 weken lag zes weken stil zonder dat iets of iemand dat kon zien, want
+    # een pack zonder plaatsdatum is niet te onderscheiden van een pack dat nog
+    # niet aan de beurt is. `campaign_post` is de stabiele sleutel uit het
+    # plan-bestand ('3.1') waarmee een herimport niets dupliceert.
+    if "campaign" not in sp_cols:
+        conn.execute("ALTER TABLE social_posts ADD COLUMN campaign TEXT DEFAULT ''")
+    if "campaign_post" not in sp_cols:
+        conn.execute("ALTER TABLE social_posts ADD COLUMN campaign_post TEXT DEFAULT ''")
+    if "scheduled_for" not in sp_cols:
+        conn.execute("ALTER TABLE social_posts ADD COLUMN scheduled_for TEXT DEFAULT ''")
+    if "post_type" not in sp_cols:
+        conn.execute("ALTER TABLE social_posts ADD COLUMN post_type TEXT DEFAULT ''")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_social_posts_campagne "
+        "ON social_posts(project, campaign, campaign_post) "
+        "WHERE campaign <> ''"
+    )
 
-    # ── LinkedIn posts log (eigen posts die AgentOS plaatst) ──────────────
+    # ── LinkedIn posts log (eigen posts die ImpactOS plaatst) ──────────────
     # Basis voor de lokale analyse-laag: de LinkedIn Posts API (statistieken
     # lezen) vereist partner-toegang die een solo-founder niet heeft, dus houden
     # we hier bij wat wij zélf hebben geplaatst.
@@ -1718,6 +1952,8 @@ def _migrate(conn) -> None:
             status           TEXT NOT NULL DEFAULT 'pending_review',
             booked_event_id  TEXT DEFAULT '',
             booked_link      TEXT DEFAULT '',
+            all_day          INTEGER DEFAULT 0,
+            reminder_sent    INTEGER DEFAULT 0,
             created_at       TEXT DEFAULT (datetime('now')),
             decided_at       TEXT DEFAULT ''
         )"""
@@ -1734,10 +1970,44 @@ def _migrate(conn) -> None:
     for col, ddl in (
         ("recur_weekday", "ALTER TABLE calendar_proposals ADD COLUMN recur_weekday INTEGER DEFAULT -1"),
         ("recur_count", "ALTER TABLE calendar_proposals ADD COLUMN recur_count INTEGER DEFAULT -1"),
+        ("all_day", "ALTER TABLE calendar_proposals ADD COLUMN all_day INTEGER DEFAULT 0"),
+        ("reminder_sent", "ALTER TABLE calendar_proposals ADD COLUMN reminder_sent INTEGER DEFAULT 0"),
+        # Alleen gevuld voor voorstellen die via klant-Iris op WhatsApp zijn
+        # gedaan (bridge/actions.py:_cmd_calendar_add) — het adres om de
+        # goedkeur/afwijs-bevestiging naar terug te sturen. NULL voor elk
+        # ander voorstel (uit mail, of Vincent zelf via manager-Iris): daar
+        # bestaat geen "klant" om te melden.
+        ("customer_wa_id", "ALTER TABLE calendar_proposals ADD COLUMN customer_wa_id TEXT"),
+        # Door de klant zelf gegeven, ná de bevestiging, via het
+        # deel_emailadres-tool (nooit vooraf gevraagd — zie _customer_core.js).
+        ("customer_email", "ALTER TABLE calendar_proposals ADD COLUMN customer_email TEXT"),
     ):
         if col not in cp_cols:
             conn.execute(ddl)
 
+    # Dedupe voor de WhatsApp-herinnering 1 uur van tevoren (calendar/
+    # whatsapp_reminder.py). Sleutel is event-id + starttijd (niet alleen
+    # event-id): een verzet event met dezelfde id moet wél opnieuw melden.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS calendar_hourly_reminders (
+            event_key TEXT PRIMARY KEY,
+            sent_at   TEXT DEFAULT (datetime('now'))
+        )"""
+    )
+
+    # Cache voor de "wie is dit"-info-knop op de Agenda-tab (calendar/
+    # attendee_info.py). Sleutel = hash(e-mail of naam) i.p.v. het event, want
+    # dezelfde deelnemer komt in meerdere afspraken terug en de briefing over
+    # een persoon/bedrijf verandert niet per meeting.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS calendar_attendee_briefings (
+            cache_key  TEXT PRIMARY KEY,
+            name       TEXT DEFAULT '',
+            email      TEXT DEFAULT '',
+            summary    TEXT DEFAULT '',
+            updated_at TEXT DEFAULT (datetime('now'))
+        )"""
+    )
 
     # ── Google Agenda-cache (Fase 1: lezen + blokkeren) ────────────────────
     # Lokale kopie van gesyncte events zodat de UI/Iris ook werkt als Google
@@ -1915,6 +2185,23 @@ def _migrate(conn) -> None:
     site_cols_onboarding = {row["name"] for row in conn.execute("PRAGMA table_info(sites)").fetchall()}
     if "onboarded_at" not in site_cols_onboarding:
         conn.execute("ALTER TABLE sites ADD COLUMN onboarded_at TEXT DEFAULT NULL")
+
+    # Voice-gallery: één ledger van wat de spraaklaag (Apollo-achtig) bouwde.
+    # Geen tweede administratie van content_jobs — dit is een voice-specifieke
+    # index: wat je hardop vroeg (transcript) -> wat ervan kwam (artifact).
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS voice_artifacts (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            project        TEXT NOT NULL DEFAULT '',
+            goal_id        TEXT DEFAULT '',
+            title          TEXT NOT NULL DEFAULT '',
+            transcript     TEXT DEFAULT '',
+            artifact       TEXT DEFAULT '',
+            artifact_type  TEXT DEFAULT 'goal',
+            status         TEXT DEFAULT 'created',
+            created_at     TEXT NOT NULL
+        )"""
+    )
 
     _migrate_projectnamen(conn)
     _migrate_postvak(conn)

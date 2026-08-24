@@ -1,8 +1,8 @@
 """Draai één Mission Radar-scan voor project 'steentjebijsteentje' en rapporteer."""
 import asyncio, sys
 from pathlib import Path
-AGENTOS = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(AGENTOS))
+IMPACTOS = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(IMPACTOS))
 from backend.domains.radar import service as radar  # noqa
 
 

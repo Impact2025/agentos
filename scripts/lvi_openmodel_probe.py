@@ -4,7 +4,7 @@ import sys
 
 import httpx
 
-sys.path.insert(0, r"D:/APPS/agentos")
+sys.path.insert(0, r"D:/APPS/impactos")
 
 from backend.shared.config import (  # noqa: E402
     OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL,

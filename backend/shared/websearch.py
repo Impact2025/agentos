@@ -33,12 +33,23 @@ import time
 import re
 from typing import Dict, List, Optional
 
-from .config import BRAVE_SEARCH_API_KEY, TAVILY_API_KEY
+from .config import BRAVE_SEARCH_API_KEY, GOOGLE_PSE_API_KEY, GOOGLE_PSE_CX, TAVILY_API_KEY
 
 logger = logging.getLogger(__name__)
 
 _QUOTA_MARKERS = ("quota", "usage", "limit", "credits", "429", "432", "payment",
                   "upgrade your plan")
+
+
+class EmptiesError(RuntimeError):
+    """Een provider gaf een 200 OK maar 0 resultaten terug.
+
+    Zonder deze fout valt de keten stil met `[]`: een lege lijst wordt als
+    'succes' gezien en de volgende provider in de fallback-keten wordt nooit
+    geprobeerd. Eén provider die wél resultaten hád, wordt dan nooit bereikt —
+    precies wat er gebeurde bij de ~10 linkbuilding-sites die 'alle providers
+    faalden' terwijl Bing/DDG wél hits hadden. We gooien dus ook bij 0 hits,
+    zodat de keten naar de volgende, onafhankelijke provider doorschuift."""
 
 # Hoe lang een provider die quota-uitputting meldt wordt overgeslagen.
 _QUOTA_BACKOFF_SECONDS = 6 * 3600
@@ -220,6 +231,40 @@ def _bing_search(query: str, max_results: int,
     return out
 
 
+def _google_pse_search(query: str, max_results: int,
+                       exclude_domains: Optional[List[str]]) -> List[Dict]:
+    """Keyed backbone op éigen index (Programmable Search Engine) — onafhankelijk
+    van Bing/DDG/Tavily. GRATIS 100 queries/dag, gecontracteerd (geen bot-block).
+
+    Waarom dit de ontbrekende pijler is: DDG + DDG_HTML zijn dezelfde
+    infrastructuur, dus 'onafhankelijk' was tot nu toe Tavily + DDG + Bing.
+    Als Bing ons IP blokkeert én DDG rate-limiteert (beide gebeuren bij
+    geautomatiseerd verkeer), valt de hele keten terug op 0 poten. Google PSE
+    heeft een eigen crawl-index en een contractuele SLA → een échte derde
+    onafhankelijke pijler. Wordt door `providers_configured()` alleen in de
+    keten gezet als zowel GOOGLE_PSE_API_KEY als GOOGLE_PSE_CX ingesteld zijn.
+    """
+    if not (GOOGLE_PSE_API_KEY and GOOGLE_PSE_CX):
+        raise WebSearchError("GOOGLE_PSE_API_KEY/GOOGLE_PSE_CX niet ingesteld")
+    import httpx
+    params = {"key": GOOGLE_PSE_API_KEY, "cx": GOOGLE_PSE_CX,
+              "q": query, "num": min(max_results + 4, 10), "lr": "lang_nl",
+              "gl": "nl"}
+    if exclude_domains:
+        params["siteSearch"] = " OR ".join(exclude_domains)
+        params["siteSearchFilter"] = "e"
+    resp = httpx.get("https://www.googleapis.com/customsearch/v1",
+                     params=params, timeout=15)
+    resp.raise_for_status()
+    items = (resp.json() or {}).get("items") or []
+    out = [{"title": r.get("title", ""), "url": r.get("link", ""),
+            "snippet": (r.get("snippet") or "")[:300]} for r in items
+           if r.get("link")]
+    if not out:
+        raise EmptiesError("Google PSE leverde 0 resultaten op")
+    return out[:max_results]
+
+
 def brave_search(query: str, max_results: int = 6,
                  exclude_domains: Optional[List[str]] = None) -> List[Dict]:
     """Alleen de Brave-provider — voor flows met een Tavily-specifieke primaire
@@ -246,6 +291,8 @@ def providers_configured() -> List[str]:
         out.append("tavily")
     if BRAVE_SEARCH_API_KEY:
         out.append("brave")
+    if GOOGLE_PSE_API_KEY and GOOGLE_PSE_CX:
+        out.append("google_pse")
     out.append("ddg")
     out.append("ddg_html")
     out.append("bing")
@@ -255,8 +302,71 @@ def providers_configured() -> List[str]:
 # Naam → functienaam, niet → functieobject: het object wordt pas op aanroepmoment
 # opgezocht, zodat monkeypatchen in tests (en een latere provider-swap) werkt.
 _PROVIDERS = {"tavily": "_tavily_search", "brave": "_brave_search",
+              "google_pse": "_google_pse_search",
               "ddg": "_ddg_search", "ddg_html": "_ddg_html_search",
               "bing": "_bing_search"}
+
+
+def provider_health() -> Dict[str, str]:
+    """Status per provider voor dashboards/Iris: 'ok' | 'no_key' | 'quota'.
+    Keyed providers met een lege key melden 'no_key' (niet geconfigureerd);
+    providers in de actieve quota-backoff melden 'quota'. Keyless providers
+    (ddg/ddg_html/bing) rapporteren altijd 'ok' — die kunnen niet op quota
+    stuklopen, alleen tijdelijk rate-limited raken (en dat herstelt vanzelf)."""
+    out: Dict[str, str] = {}
+    for name in ("tavily", "brave", "google_pse"):
+        key = {"tavily": TAVILY_API_KEY, "brave": BRAVE_SEARCH_API_KEY,
+               "google_pse": (GOOGLE_PSE_API_KEY and GOOGLE_PSE_CX)}.get(name)
+        if not key:
+            out[name] = "no_key"
+        elif _blocked(name):
+            out[name] = "quota"
+        else:
+            out[name] = "ok"
+    for name in ("ddg", "ddg_html", "bing"):
+        out[name] = "quota" if _blocked(name) else "ok"
+    return out
+
+
+def probe_health(ref_query: str = "vrijwilligerswerk nederland") -> Dict[str, str]:
+    """Meet de échte bereikbaarheid van elke geconfigureerde provider met één
+    live call (niet alleen de key/quota-status). Nuttig voor de selfheal-
+    watchdog: die kan daarmee zien of een 'quota'-blokkade inmiddels is
+    opgeheven en de backoff veilig geheven mag worden.
+
+    Geeft per provider 'ok' | 'down' | 'no_key'. Een provider die 0 resultaten
+    of een exception geeft telt als 'down'; een keyless provider zonder key
+    bestaat niet ('no_key')."""
+    import httpx  # noqa: F401  (zekerheid dat httpx beschikbaar is)
+    out: Dict[str, str] = {}
+    for name in ("tavily", "brave", "google_pse", "ddg", "ddg_html", "bing"):
+        if name in ("tavily", "brave", "google_pse"):
+            key = {"tavily": TAVILY_API_KEY, "brave": BRAVE_SEARCH_API_KEY,
+                   "google_pse": (GOOGLE_PSE_API_KEY and GOOGLE_PSE_CX)}.get(name)
+            if not key:
+                out[name] = "no_key"
+                continue
+        try:
+            hits = globals()[_PROVIDERS[name]](ref_query, 3, None)
+            out[name] = "ok" if hits else "down"
+        except Exception:
+            out[name] = "down"
+    return out
+
+
+def clear_recovered_blocks(ref_query: str = "vrijwilligerswerk nederland") -> List[str]:
+    """Selfheal-Watchdog: meet elke provider live en hef de quota-backoff op
+    voor providers die inmiddels wél resultaten geven. Zo herstelt de keten
+    zichzelf zodra een abonnement is bijgevuld of een rate-limit is gezakt —
+    zonder dat een mens de server hoeft te herstarten. Geeft de lijst met
+    providers terug waarvan de blokkade is opgeheven."""
+    health = probe_health(ref_query)
+    lifted: List[str] = []
+    for name, status in health.items():
+        if status == "ok" and _blocked(name):
+            _quota_block.pop(name, None)
+            lifted.append(name)
+    return lifted
 
 
 def simplify_query(query: str) -> str:
@@ -290,7 +400,7 @@ def search(query: str, max_results: int = 6,
     plain = simplify_query(query)
     try:
         return _run_chain(query, max_results, exclude_domains)
-    except WebSearchError as e:
+    except (WebSearchError, EmptiesError) as e:
         if plain == query:
             raise
         logger.info("[websearch] '%s' leverde niets op — opnieuw als '%s'",
@@ -307,7 +417,7 @@ def _run_chain(query: str, max_results: int,
             errors.append(f"{name}: quota-backoff actief, overgeslagen")
             continue
         try:
-            return globals()[_PROVIDERS[name]](query, max_results, exclude_domains)
+            res = globals()[_PROVIDERS[name]](query, max_results, exclude_domains)
         except Exception as e:  # noqa: BLE001
             _note_error(name, e)
             remaining = [p for p in chain[chain.index(name) + 1:] if not _blocked(p)]
@@ -316,4 +426,18 @@ def _run_chain(query: str, max_results: int,
                        " (quota)" if _looks_like_quota(e) else "", str(e)[:200],
                        f"probeer {remaining[0]}" if remaining else "geen terugval meer")
             errors.append(f"{name}: {str(e)[:200]}")
+            continue
+        if not res:
+            # Een lege lijst van één provider is géén succes: de volgende,
+            # onafhankelijke provider krijgt alsnog een kans. `ddgs` geeft bv.
+            # [] terug bij rate-limit (niet bij een echte 0-hits) — zonder
+            # deze check stopte de keten stil op [] en vielen DDG_HTML/Bing/
+            # Google PSE nooit in. Pas ná alle providers pas geven we [] terug.
+            remaining = [p for p in chain[chain.index(name) + 1:] if not _blocked(p)]
+            errors.append(f"{name}: 0 resultaten")
+            logger.log(logging.WARNING if remaining else logging.ERROR,
+                       "[websearch] %s gaf 0 resultaten — %s", name,
+                       f"probeer {remaining[0]}" if remaining else "geen terugval meer")
+            continue
+        return res
     raise WebSearchError("Alle zoekproviders faalden: " + " | ".join(errors))

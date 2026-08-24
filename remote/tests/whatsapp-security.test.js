@@ -1,4 +1,4 @@
-// Beveiligingsgrens-test voor het WhatsApp-systeem van Agent OS.
+// Beveiligingsgrens-test voor het WhatsApp-systeem van Impact OS.
 //
 // Dit is de harde garantie die het hele ontwerp draagt: een KLANT (ieder
 // willekeurig nummer dat niet op whatsapp_allowed_from staat) mag via klant-Iris

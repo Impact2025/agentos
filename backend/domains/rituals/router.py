@@ -45,6 +45,7 @@ class EveningPayload(BaseModel):
     tomorrowTop3: List[str] = []
     gratitude: str = ""
     adhdScores: Dict[str, int] = {}
+    focusCheck: List[Dict[str, Any]] = []
 
 
 class WeeklyStartPayload(BaseModel):
@@ -113,7 +114,11 @@ class GoalPatch(BaseModel):
 @router.get("/status")
 def status():
     svc = get_service()
-    return {"today": svc.get_today_status(), "streaks": svc.get_streaks()}
+    return {
+        "today": svc.get_today_status(),
+        "streaks": svc.get_streaks(),
+        "focus_completion": svc.get_focus_completion(_today()),
+    }
 
 
 @router.get("/next-required")

@@ -50,10 +50,30 @@ def test_stap1_schrijft_naar_sites_profile(onb_site):
     assert site["profile"] == "Wij helpen coaches aan hun eerste 10 klanten."
 
 
-def test_stap1_onbekende_site_geeft_valueerror(onb_site):
+def test_stap1_lege_site_id_geeft_valueerror(onb_site):
+    """Een leeg of blanco site_id is geen tenant-slug maar een fout.
+
+    Sinds b8e1587 maakt `_require_site` voor een onbekend site_id een virtuele
+    site-rij aan, zodat de wizard ook werkt voor een tenant-eigen klant zonder
+    SEO-site (Nicole). Die terugval mag nooit op een leeg id aanslaan — dan
+    creëert een lege formulier-post stilzwijgend een naamloze site.
+    """
     from backend.domains.onboarding import service
-    with pytest.raises(ValueError):
-        service.save_step1("bestaat-niet", "profiel")
+    for leeg in ("", "   "):
+        with pytest.raises(ValueError):
+            service.save_step1(leeg, "profiel")
+
+
+def test_stap1_onbekende_slug_maakt_virtuele_site(onb_site):
+    """Tenant-eigen klant zonder SEO-site: de wizard moet gewoon werken."""
+    from backend.domains.onboarding import service
+    from backend.domains.seo import sites as sites_service
+
+    service.save_step1("nicole-tenant", "Wij begeleiden teams bij verandering.")
+
+    site = sites_service.get_site("nicole-tenant")
+    assert site is not None, "een tenant-slug hoort een virtuele site op te leveren"
+    assert site["profile"] == "Wij begeleiden teams bij verandering."
 
 
 # ── Stap 2: schrijfstijl → iris_knowledge, scope geforceerd op het project ─

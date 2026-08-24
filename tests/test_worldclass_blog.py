@@ -1,4 +1,4 @@
-"""Wereldklasse-garanties voor AgentOS/Iris blogproductie (aug 2026).
+"""Wereldklasse-garanties voor ImpactOS/Iris blogproductie (aug 2026).
 
 Drie harde eisen die standaard moeten gelden voor elk gegenereerd artikel:
 1. Geen zichtbare Metadata-afval op de live pagina (zie test_content_meta).

@@ -9,10 +9,12 @@ Alles anders blijft in mail_inbox met een label, niets vertrekt.
 """
 import logging
 import smtplib
-from typing import List, Dict, Optional
+from datetime import datetime, timezone
+from typing import Any, List, Dict, Optional
 
 from ...shared.database import get_conn
 from . import inbox, classify, drafter, bulk, knowledge as knowledge_mod
+from . import ticket as ticket_mod
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +116,43 @@ def unignore_sender(ignored_id: int) -> bool:
         return cur.rowcount > 0
 
 
+def mark_sender_known(reply_id: int) -> Optional[Dict]:
+    """'Markeer als bekend': zet de afzender van dit concept in het
+    bekende-afzenders-register (known_senders). Daarna is hij géén 'Nieuwe
+    afzender' meer in het Actiecentrum, ook zonder lead-rij. Idempotent."""
+    with get_conn() as conn:
+        r = conn.execute(
+            "SELECT i.from_addr, i.from_name "
+            "FROM mail_reply r LEFT JOIN mail_inbox i ON i.id=r.inbox_id "
+            "WHERE r.id=?", (reply_id,),
+        ).fetchone()
+        if not r:
+            return None
+        addr = _extract_email(r["from_addr"] or "")
+        if not addr or "@" not in addr:
+            return None
+        conn.execute(
+            "INSERT OR IGNORE INTO known_senders (addr, name, created_at) "
+            "VALUES (?, ?, datetime('now'))",
+            (addr.strip().lower(), (r["from_name"] or "").strip()),
+        )
+        return {"address": addr}
+
+
+def list_known_senders() -> List[Dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, addr, name, created_at FROM known_senders ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def unmark_sender_known(known_id: int) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM known_senders WHERE id=?", (known_id,))
+        return cur.rowcount > 0
+
+
 def _run_mailbox_graph(mailbox: Dict) -> int:
     """Office365/Exchange-mailbox via Microsoft Graph (OAuth2 client_credentials).
 
@@ -145,9 +184,55 @@ def _run_mailbox_graph(mailbox: Dict) -> int:
             auto_sub = graph_mod._is_auto_submitted(m)
             label = "auto" if auto_sub else "unknown"
             from_addr = m["from_addr"]
+            subject = m["subject"]
+            body_text = m["body_text"]
             hdrs = m.get("headers") or []
-            bulk_reden = bulk.bulk_reason(hdrs, from_addr, m["subject"], m["body_text"])
-            if graph_mod._should_ignore(from_addr, m["subject"], m["body_text"],
+            # Zelfde ontpak-stap als de POP3-flow (inbox.py) — een ticket-
+            # notificatie van het eigen domein draagt de échte klantvraag +
+            # het échte antwoordadres in de body, niet in From.
+            own_domain = (mailbox.get("address") or "").split("@", 1)[-1]
+            ticket = ticket_mod.unwrap_ticket_notification(
+                subject, body_text, from_addr, own_domain)
+            if ticket:
+                from_addr = ticket["customer_email"]
+                from_name = ticket["customer_name"]
+                subject = ticket["subject"]
+                body_text = ticket["question"]
+                cur = conn.execute(
+                    "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
+                    "classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (mid, uidl, from_addr, from_name, subject, body_text,
+                     "unknown", m.get("message_id"), m.get("in_reply_to"),
+                     m.get("references"), 0),
+                )
+                if is_ignored_sender(conn, from_addr):
+                    conn.execute("UPDATE mail_inbox SET classified='ignored' WHERE id=?",
+                                 (cur.lastrowid,))
+                    continue
+                conn.execute("UPDATE mail_inbox SET classified='question' WHERE id=?",
+                             (cur.lastrowid,))
+                pending.append((cur.lastrowid, from_addr, subject, body_text, "question"))
+                continue
+            # Vangnet: ruikt naar een ticketmelding maar het velden-sjabloon
+            # hierboven kende het niet — hou de body intact i.p.v. hem als
+            # 'newsletter' te legen. Zelfde redenering als inbox.py (POP3).
+            if ticket_mod.looks_like_ticket_notification(subject, from_addr, own_domain):
+                cur = conn.execute(
+                    "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
+                    "classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (mid, uidl, from_addr, m["from_name"], subject, body_text, "unknown",
+                     m.get("message_id"), m.get("in_reply_to"), m.get("references"), 0),
+                )
+                # Bewust NIET in `pending`: dat pad drafte automatisch een
+                # antwoord (_process_classified behandelt alles buiten
+                # 'appointment' als 'question'), en we weten hier alleen dát
+                # dit een klantvraag is, niet wát er precies gevraagd wordt.
+                # De reguliere triage-sweep classificeert 'unknown' verder.
+                continue
+            bulk_reden = bulk.bulk_reason(hdrs, from_addr, subject, body_text)
+            if graph_mod._should_ignore(from_addr, subject, body_text,
                                         auto_sub, headers=hdrs):
                 label = "auto" if auto_sub else (
                     "newsletter"
@@ -215,12 +300,22 @@ def _process_classified(mailbox: Dict, inbox_id: int, from_addr: str,
                  else from_addr)
     if kind == "appointment":
         from ..calendar import agent as agenda_agent
-        prop = agenda_agent.create_proposal(mid, inbox_id, subject, from_addr, body)
+        # Geef de leesbare afzendernaam mee (als die uit de mail-header kwam)
+        # zodat de automatische lead-capture een nette naam krijgt i.p.v.
+        # alleen het e-mailadres.
+        _fn = (mailbox.get("last_from_name") or from_name) if isinstance(mailbox, dict) else from_name
+        prop = agenda_agent.create_proposal(mid, inbox_id, subject, from_addr, body, from_name=_fn)
         return 1 if prop else 0
     # question → concept-antwoord
     with get_conn() as conn:  # korte leesfase
         knowledge = knowledge_mod.build_knowledge(conn, mailbox.get("project", ""), mailbox)
         history = knowledge_mod.thread_history(conn, mid, from_addr, inbox_id)
+    # "Bestaande klant?" — de enige waarheid die Impact OS hierover heeft is
+    # zijn eigen mailhistorie (geen koppeling met een ledenadministratie):
+    # heeft dit adres al eerder een vraag gesteld of een antwoord gehad op
+    # déze mailbox? `thread_history` is precies die vraag, dus hergebruiken
+    # i.p.v. een tweede antwoord op dezelfde vraag te bouwen.
+    known_customer = bool(history.strip())
     signature = (mailbox.get("signature") or "").strip()
     draft, opp = drafter.draft_reply_with_referral(
         from_name=from_name or from_addr,
@@ -230,6 +325,7 @@ def _process_classified(mailbox: Dict, inbox_id: int, from_addr: str,
         knowledge=knowledge,
         history=history,
         has_signature=bool(signature),
+        known_customer=known_customer,
     )
     if signature:
         draft = draft.rstrip() + "\n\n" + signature
@@ -242,10 +338,10 @@ def _process_classified(mailbox: Dict, inbox_id: int, from_addr: str,
     with get_conn() as conn:  # korte schrijffase, ná de LLM-call
         conn.execute(
             "INSERT INTO mail_reply(mailbox_id,inbox_id,to_addr,subject,draft_body,"
-            "in_reply_to,\"references\",poot_referral) "
-            "VALUES(?,?,?,?,?,?,?,?)",
+            "in_reply_to,\"references\",poot_referral,customer_status) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
             (mid, inbox_id, from_addr, "Re: " + subject, draft, irt, refs,
-             poot_signal or ""),
+             poot_signal or "", "bekend" if known_customer else "nieuw"),
         )
     return 1
 
@@ -278,8 +374,13 @@ def run_mailbox(mailbox: Dict) -> int:
                         (m["id"],),
                     )
                     continue
-                kind = classify.classify(m["subject"], m["body_text"],
-                                         m["from_addr"], headers=m.get("headers"))
+                # Ticket-notificaties zijn door inbox.fetch_new al ontpakt en
+                # aantoonbaar een échte vraag (het contactformulier zei het
+                # al) — de generieke woordheuristiek hoeft dat niet over te
+                # doen, en zou een korte klacht zoals "Ik kan niet meer
+                # inloggen" (geen "?", één zwak signaal) alsnog missen.
+                kind = m.get("_forced_kind") or classify.classify(
+                    m["subject"], m["body_text"], m["from_addr"], headers=m.get("headers"))
                 conn.execute(
                     "UPDATE mail_inbox SET classified=? WHERE id=?",
                     (kind, m["id"]),
@@ -378,7 +479,7 @@ def _send_reply_impl(reply_id: int):
                              row.get("mailbox_id") or "?")
                 return False, None
             body = row["edited_body"] or row["draft_body"]
-            text = body + (f"\n\n—\n{row['project']} helpdesk · dit bericht is voorbereid met Agent OS. "
+            text = body + (f"\n\n—\n{row['project']} helpdesk · dit bericht is voorbereid met Impact OS. "
                            f"Tip: stuur gewoon een reply, we lezen mee." if not (row.get("signature") or "").strip() else "")
             try:
                 graph_mod.send_message(
@@ -409,7 +510,7 @@ def _send_reply_impl(reply_id: int):
             text = body
         else:
             text = body + (
-                f"\n\n—\n{r['project']} helpdesk · dit bericht is voorbereid met Agent OS. "
+                f"\n\n—\n{r['project']} helpdesk · dit bericht is voorbereid met Impact OS. "
                 f"Tip: stuur gewoon een reply, we lezen mee."
             )
         msg = MIMEMultipart("alternative")
@@ -626,7 +727,8 @@ def pending_replies(project: Optional[str] = None) -> List[Dict]:
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT r.id, r.mailbox_id, r.to_addr, r.subject, r.draft_body, "
-            "r.edited_body, r.status, r.created_at, m.project, m.address, "
+            "r.edited_body, r.status, r.created_at, r.customer_status, "
+            "m.project, m.address, "
             "i.from_name, i.from_addr, i.subject AS question_subject, "
             "i.body_text AS question_body "
             "FROM mail_reply r "
@@ -671,3 +773,52 @@ def delete_mailbox(mailbox_id: str) -> bool:
         conn.execute("PRAGMA foreign_keys=ON")
         cur = conn.execute("DELETE FROM mailboxes WHERE id=?", (mailbox_id,))
         return cur.rowcount > 0
+
+
+def bulk_triage(email_ids: List[str], label: str, priority: Optional[int] = None) -> Dict[str, Any]:
+    """Bulk-triage van meerdere e-mails in één database-call.
+
+    De postvak-inbox groeit sneller dan handmatige triage hem kan wegwerken
+    (incident 23 aug 2026: 73 onbeantwoorde mails, 26 niet getrieerd). Deze
+    functie is de bulk-actie die achter de 'Allemaal triëren'-knop in het
+    Actiecentrum zit: één klik → één SQL-update → alle IDs tegelijk gemarkeerd.
+
+    Args:
+        email_ids: lijst van outlook_emails.id-waarden.
+        label: triage_label-waarde ('actie', 'info', 'urgent', 'wacht', 'archief', 'spam').
+        priority: optionele override voor de prioriteit (handig voor bulk-'urgent').
+
+    Returns:
+        dict met 'updated' (aantal gewijzigde rijen), 'label', 'skipped' (niet
+        in inbox / al gelabeld) en 'errors'.
+    """
+    if not email_ids or not label:
+        return {"ok": False, "error": "email_ids en label zijn verplicht"}
+    placeholders = ",".join("?" * len(email_ids))
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        # Alleen inbox-mails updaten die nog niet door een filterrule zijn weggefilterd.
+        sql = (
+            "UPDATE outlook_emails "
+            "SET triage_label=?, triaged_at=?, "
+            + ("priority=?," if priority is not None else "")
+            + " is_read=1 "
+            "WHERE id IN (" + placeholders + ") "
+            "AND folder='inbox' AND filter_rule_id IS NULL "
+            "AND triage_label != ?"
+        )
+        params = list(email_ids) + [label, now]
+        if priority is not None:
+            params.insert(0, priority)
+        cur = conn.execute(sql, params)
+        updated = cur.rowcount
+        # Hoeveel werden niet aangepast (al gelabeld of niet in inbox)?
+        skip_sql = (
+            "SELECT COUNT(*) c FROM outlook_emails "
+            "WHERE id IN (" + placeholders + ") "
+            "AND (folder != 'inbox' OR filter_rule_id IS NOT NULL OR triage_label = ?)"
+        )
+        skip_params = list(email_ids) + [label]
+        skipped = conn.execute(skip_sql, skip_params).fetchone()["c"]
+    return {"ok": True, "updated": updated, "label": label,
+            "skipped": skipped}

@@ -1,10 +1,10 @@
-# fly.toml — Agent OS always-on (mobiel bereikbaar, ook laptop uit)
+# fly.toml — Impact OS always-on (mobiel bereikbaar, ook laptop uit)
 # Deploy:  fly launch --no-deploy   (één keer), daarna:  fly deploy
 # Secrets zetten (NOOIT in dit bestand):
-#   fly secrets set AGENTOS_PASSWORD="<jouw-sterk-wachtwoord>"
+#   fly secrets set IMPACTOS_PASSWORD="<jouw-sterk-wachtwoord>"
 #   fly secrets set ANTHROPIC_API_KEY="sk-..."  (en de rest van je .env)
 #   fly secrets set OBSIDIAN_VAULT_PATH="/app/data"  # of leeg als niet nodig
-#   fly secrets set AGENTOS_SECURE_COOKIE="1"        # HTTPS-on (Fly doet TLS)
+#   fly secrets set IMPACTOS_SECURE_COOKIE="1"        # HTTPS-on (Fly doet TLS)
 #   fly secrets set HOST="0.0.0.0" PORT="8080"
 
 app = "agent-os"
@@ -16,8 +16,8 @@ primary_region = "ams"   # Amsterdam — dicht bij NL, lage latency op je telefo
 [env]
   HOST = "0.0.0.0"
   PORT = "8080"
-  AGENTOS_DB_PATH = "/app/data/agentos.db"
-  AGENTOS_SECURE_COOKIE = "1"
+  IMPACTOS_DB_PATH = "/app/data/impactos.db"
+  IMPACTOS_SECURE_COOKIE = "1"
 
 [mounts]
   source = "agentos_data"

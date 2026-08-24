@@ -1,4 +1,4 @@
-# Iris Remote × Agent OS — productplan
+# Iris Remote × Impact OS — productplan
 
 *Opgesteld 25 juli 2026. Uitgangspunt: de code zoals die er vandaag staat, niet zoals we hem graag zouden hebben.*
 
@@ -6,8 +6,8 @@
 
 ## 1. Wat het is
 
-### Agent OS — de motor (lokaal, dik)
-Een FastAPI-monoliet met 29 domein-packages op `localhost:1250`, met eigen SQLite (`data/agentos.db`), een APScheduler met ~15 terugkerende jobs, een Obsidian-vault als kennis-substraat, en een LLM-keten via de OpenModel-gateway. Hij dóét het werk: zoekwoorden kiezen, artikelen schrijven, leads verrijken, outreach opstellen, mail beantwoorden, agenda-voorstellen maken, links prospecteren, cijfers ophalen.
+### Impact OS — de motor (lokaal, dik)
+Een FastAPI-monoliet met 29 domein-packages op `localhost:1250`, met eigen SQLite (`data/impactos.db`), een APScheduler met ~15 terugkerende jobs, een Obsidian-vault als kennis-substraat, en een LLM-keten via de OpenModel-gateway. Hij dóét het werk: zoekwoorden kiezen, artikelen schrijven, leads verrijken, outreach opstellen, mail beantwoorden, agenda-voorstellen maken, links prospecteren, cijfers ophalen.
 
 Hij publiceert of verstuurt **nooit** uit zichzelf. Alles wat naar buiten gaat stopt bij een review-gate: Wachtrij (content), `outreach_review` (sales), helpdesk-concepten (mail), `calendar_proposals` (agenda). Dat is geen voorzichtigheid, dat is het productkenmerk.
 
@@ -18,7 +18,7 @@ Een PWA op Vercel + Neon (Frankfurt) van ~4.000 regels. Hij doet geen werk. Hij 
 `bridge_sync` draait elke 3 minuten op de lokale machine en belt zélf naar buiten. Geen open poort, geen tunnel, geen inkomende verbinding naar het klantnetwerk.
 
 ```
-   Agent OS (lokaal)                       Neon (Frankfurt)          Telefoon
+   Impact OS (lokaal)                       Neon (Frankfurt)          Telefoon
    ─────────────────                       ────────────────          ────────
    build_inbox() + previews  ──PUSH──▶     sync_items          ──▶   inbox + preview
    context.py (mail/agenda/                context_snapshot    ──▶   Vandaag + pulse
@@ -41,7 +41,7 @@ Drie eigenschappen die dit dragen en die we bij het productiseren niet mogen opg
 
 ## 2. Functies — apart en samen
 
-| | Alleen Agent OS | Alleen Iris Remote | Samen (het eigenlijke product) |
+| | Alleen Impact OS | Alleen Iris Remote | Samen (het eigenlijke product) |
 |---|---|---|---|
 | **Content** | Demand Engine → artikel-generator → kwaliteitsgate 80 → Wachtrij | leest het artikel op je telefoon | goedkeuren onderweg → live + sitemap + GSC + IndexNow, binnen 3 min |
 | **SEO** | GSC-sync, `gsc_history`, trend-delta's, stijgers/dalers | Cijfers-tab, per site | "deze pagina zakt weg" → knop → `seo_refresh` → nieuwe versie in de Wachtrij |
@@ -52,9 +52,9 @@ Drie eigenschappen die dit dragen en die we bij het productiseren niet mogen opg
 | **Kennis** | vault-map `Iris_Kennisbank/` → gedistilleerd naar principes → in de schrijf-prompts | notitie inspreken/typen | onderweg gedachte → `Onderweg/` in de vault → volgende run gebruikt hem |
 | **Overzicht** | Control Room op localhost | `pulse`: wat gaat goed / wat vraagt aandacht, zónder LLM | het werkt door als de gateway plat ligt |
 
-**Wat Agent OS zonder Remote mist:** je moet achter je pc zitten. De review-gates zijn dan een bottleneck in plaats van een veiligheidsklep — werk stapelt op in de Wachtrij en de motor loopt leeg.
+**Wat Impact OS zonder Remote mist:** je moet achter je pc zitten. De review-gates zijn dan een bottleneck in plaats van een veiligheidsklep — werk stapelt op in de Wachtrij en de motor loopt leeg.
 
-**Wat Remote zonder Agent OS is:** niets. Een lege schil. Er is geen cloud-uitvoering, bewust niet.
+**Wat Remote zonder Impact OS is:** niets. Een lege schil. Er is geen cloud-uitvoering, bewust niet.
 
 ---
 
@@ -77,12 +77,12 @@ Dat is geen kritiek op de bouw — single-tenant was de juiste keuze om hier te 
 
 Drie opties, eerlijk gewogen:
 
-**A. Appliance per klant.** Elke klant een eigen Agent OS-instantie (eigen container, eigen database, eigen vault, eigen secrets), plus eigen Neon en eigen Vercel-deploy. Isolatie is fysiek: een bug kán geen data van klant B raken. Nadeel: N deploys per UI-fix, N keer ops.
+**A. Appliance per klant.** Elke klant een eigen Impact OS-instantie (eigen container, eigen database, eigen vault, eigen secrets), plus eigen Neon en eigen Vercel-deploy. Isolatie is fysiek: een bug kán geen data van klant B raken. Nadeel: N deploys per UI-fix, N keer ops.
 
 **B. Echte multi-tenant SaaS.** `tenant_id` door alle ~50 tabellen, scheduler per tenant, secrets per tenant. Maanden werk, en één vergeten `WHERE tenant_id = ?` betekent dat je een artikel op de site van de verkeerde klant publiceert of mail verstuurt vanuit hun mailbox. Op een systeem met dít soort neveneffecten is dat geen acceptabel risico voor een team van één.
 
 **C. Aanbevolen: multi-tenant aan de rand, single-tenant in de kern.**
-- **Kern (Agent OS)** blijft single-tenant en draait per klant als eigen container met eigen volume. Nul refactor van 50 tabellen. De isolatiegrens is het procesbestand, niet een `WHERE`-clausule.
+- **Kern (Impact OS)** blijft single-tenant en draait per klant als eigen container met eigen volume. Nul refactor van 50 tabellen. De isolatiegrens is het procesbestand, niet een `WHERE`-clausule.
 - **Rand (Iris Remote)** wordt wél multi-tenant: één Vercel-deploy, één Neon-project, `tenant_id` op de 7 tabellen in `schema.sql` + Row-Level Security. Dat is een klein, af te bakenen stuk werk — en daar staan alleen werkdata en previews, geen secrets, met 14 dagen retentie.
 - **Control plane** (nieuw, klein): provisioning, updates, health, metering, facturatie.
 
@@ -94,7 +94,7 @@ Waarom dit de juiste knip is: een UI-verbetering wil je één keer deployen, een
                  └───────┬───────────────────┬───────────────────┬───────┘
                          │                   │                   │
    Klant A ──┐    ┌──────▼──────┐     ┌──────▼──────┐     ┌──────▼──────┐
-   Klant B ──┼──▶ │ agentos:A   │     │ agentos:B   │     │ agentos:C   │  ← eigen container,
+   Klant B ──┼──▶ │ impactos:A   │     │ impactos:B   │     │ impactos:C   │  ← eigen container,
    Klant C ──┘    │ db + vault  │     │ db + vault  │     │ db + vault  │    volume, secrets
                   └──────┬──────┘     └──────┬──────┘     └──────┬──────┘
                          └────────── uitgaand HTTPS ─────────────┘
@@ -139,7 +139,7 @@ Prijs volgt de LLM-COGS: `llm_usage` heeft al een `purpose`-label per aanroeper,
 
 **Ja — een eigen vault, nee — geen verplichte Obsidian.** Dat onderscheid is belangrijk.
 
-De vault is technisch een map met markdown. Agent OS gebruikt hem als kennis-substraat: `Iris_Kennisbank/` (wat de klant Iris wil leren) → gedistilleerd tot principes die in de schrijf-prompts landen; onderzoeksrapporten van de researcher; `Onderweg/` voor notities vanaf de telefoon; case studies. Zonder eigen vault deelt klant A zijn merkstem met klant B — onacceptabel.
+De vault is technisch een map met markdown. Impact OS gebruikt hem als kennis-substraat: `Iris_Kennisbank/` (wat de klant Iris wil leren) → gedistilleerd tot principes die in de schrijf-prompts landen; onderzoeksrapporten van de researcher; `Onderweg/` voor notities vanaf de telefoon; case studies. Zonder eigen vault deelt klant A zijn merkstem met klant B — onacceptabel.
 
 Concreet per klant:
 - **Eigen vault-map op zijn eigen container**, gekoppeld aan een **eigen privé Git-repo**. Die repo is meteen versiebeheer, back-up, herstel én audittrail ("wanneer is dit principe toegevoegd").
@@ -207,7 +207,7 @@ De blast radius hier is niet "data lekt". Het is **"er verschijnt een artikel op
 
 ## 8. Updaten
 
-Vandaag: `git pull` + `agentos_service.cmd`. Dat schaalt tot precies één installatie.
+Vandaag: `git pull` + `impactos_service.cmd`. Dat schaalt tot precies één installatie.
 
 **Wat ons redt:** de migraties zijn al idempotent — `_migrate` doet ALTER TABLE per kolom, `schema.sql` is overal `IF NOT EXISTS`. Dat is de moeilijkste eigenschap om achteraf te krijgen en hij is er al. Bewaken.
 

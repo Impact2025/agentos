@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lanceer 3 nieuwe langetermijndoelen voor IctusGo met Keyword Research als kernpijler.
 
-De 'Keyword Research'-tab in Agent OS haalt GSC keyword-gaps (voor IctusGo nu
+De 'Keyword Research'-tab in Impact OS haalt GSC keyword-gaps (voor IctusGo nu
 praktisch leeg: 2 queries, 0 gaps). Een Goal Mode-doel kan GSC niet vullen, maar
 het KAN wel echte keyword-onderzoekstaken uitvoeren (Tavily + kennisbank):
 zoekwoord-clusters, content-gaps en een keyword-map opleveren, plus de artikelen

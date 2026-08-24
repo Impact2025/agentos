@@ -18,7 +18,7 @@ de klassieke oorzaak van 'halve JSON' en wordt hier expliciet gelogd.
 """
 import json
 import logging
-from typing import AsyncGenerator, List, Dict
+from typing import AsyncGenerator, List, Dict, Optional
 
 import anthropic
 import httpx
@@ -26,7 +26,7 @@ import httpx
 from ...shared.config import (
     ANTHROPIC_API_KEY, CLAUDE_MODEL, OPENROUTER_API_KEY,
     CLAUDE_VIA_OPENROUTER, anthropic_configured,
-    OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_SMART_MODEL,
+    OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_SMART_MODEL, OPENMODEL_VISION_MODEL,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,15 +69,17 @@ def active_route() -> str:
 
 async def _get_via_openmodel(
     messages: List[Dict], system_prompt: str, max_tokens: int,
-    purpose: str = "",
+    purpose: str = "", model: str = "",
 ) -> str:
     """Claude-model via de OpenModel-gateway (Anthropic Messages-formaat).
 
     Retourneert de volledige tekst. Eén interne retry: de gateway geeft
     sporadisch een lege respons of een transient 5xx — één verse poging is
-    goedkoper dan de terugval naar een zwakker model."""
+    goedkoper dan de terugval naar een zwakker model. Bij `model` (bijv.
+    OPENMODEL_VISION_MODEL voor beeld) wordt dat model gebruikt i.p.v. de
+    smart-default."""
     payload = {
-        "model": OPENMODEL_SMART_MODEL,
+        "model": model or OPENMODEL_SMART_MODEL,
         "system": system_prompt,
         "messages": messages,
         "max_tokens": max_tokens,
@@ -248,7 +250,29 @@ async def get_response(
     system_prompt: str = "You are a helpful AI assistant.",
     max_tokens: int = 4096,
     purpose: str = "",
+    images: Optional[List[Dict]] = None,
 ) -> str:
+    """`images`: lijst van {"data": <base64>, "media_type": "image/png"} die als
+    image-blocks aan de laatste user-message worden gehangen. Zodra er images zijn
+    én de OpenModel-route actief is, wordt OPENMODEL_VISION_MODEL gekozen (het enige
+    model dat beelddata ÉCHT leest op /v1/messages)."""
+    vision_model = ""
+    if images and OPENMODEL_VISION_MODEL:
+        vision_model = OPENMODEL_VISION_MODEL
+        # bouw de laatste user-message om naar een content-array met image-blocks
+        if messages and messages[-1].get("role") == "user":
+            text = messages[-1].get("content", "")
+            if isinstance(text, str):
+                text = text
+            blocks = [
+                {"type": "image", "source": {
+                    "type": "base64", "media_type": im.get("media_type", "image/png"),
+                    "data": im["data"]}}
+                for im in images
+            ]
+            blocks.append({"type": "text", "text": text if isinstance(text, str) else str(text)})
+            messages = messages[:-1] + [{"role": "user", "content": blocks}]
+
     if anthropic_configured():
         try:
             client = get_client()
@@ -265,7 +289,7 @@ async def get_response(
     openmodel_error = ""
     if openmodel_claude_configured():
         try:
-            return await _get_via_openmodel(messages, system_prompt, max_tokens, purpose)
+            return await _get_via_openmodel(messages, system_prompt, max_tokens, purpose, model=vision_model)
         except Exception as e:
             openmodel_error = str(e)[:200]
             logger.warning(f"Claude via OpenModel faalde ({e}) — terugval op OpenRouter")

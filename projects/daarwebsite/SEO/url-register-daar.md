@@ -5,7 +5,7 @@ type: seo-reference
 site: https://daar.nl
 generated: 2026-07-07
 source: "codebase-routes + database-artikelen (Prisma Article, status PUBLISHED)"
-purpose: "Single source of truth voor interne links in Agent OS content-pipeline"
+purpose: "Single source of truth voor interne links in Impact OS content-pipeline"
 ---
 
 # Daar - Canonieke URL-register

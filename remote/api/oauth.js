@@ -1,6 +1,6 @@
 // Iris-onboarding stap 3 — per-klant Google/Microsoft OAuth. Dit is de
 // publiek bereikbare tegenhanger van wat vroeger `backend/domains/onboarding/
-// oauth_google.py`/`oauth_microsoft.py` zelf deden: de lokale AgentOS-instance
+// oauth_google.py`/`oauth_microsoft.py` zelf deden: de lokale ImpactOS-instance
 // hoeft geen open poort te hebben (zie CLAUDE.md 14, Bridge doet alleen
 // uitgaande sync) — Google/Microsoft redirecten hierheen, en het resultaat
 // reist verder als een Bridge-`decision` (action='oauth_token_relay'), niet

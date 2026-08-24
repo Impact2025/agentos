@@ -1,5 +1,5 @@
 """
-Social API router — post content naar Facebook, Instagram en X vanuit AgentOS.
+Social API router — post content naar Facebook, Instagram en X vanuit ImpactOS.
 Zelfde vorm als `backend/domains/linkedin/router.py` (die apart blijft staan).
 
   GET  /api/social/{platform}/status          → is dit platform geconfigureerd?

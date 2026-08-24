@@ -1,4 +1,4 @@
-"""Seed de liefdevooriedereen.nl helpdesk-mailbox in AgentOS.
+"""Seed de liefdevooriedereen.nl helpdesk-mailbox in ImpactOS.
 
 Afgeleid uit de Outlook .reg export:
   info@liefdevooriedereen.nl -> mail.liefdevooriedereen.nl
@@ -11,7 +11,7 @@ wachtwoord er staat; de netwerk-check bepaalt of poort 110 (kaal) of
 
 Gebruik:
   export LIE_PW='...'
-  cd D:/apps/agentos
+  cd D:/apps/impactos
   python3 seed_mailbox_liefdevooriedereen.py
 """
 import os

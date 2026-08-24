@@ -8,7 +8,7 @@
 
 ## 0. De opdracht, en waar hij afwijkt van het julidocument
 
-Het nieuwe uitgangspunt: **de ondernemer opent Iris Remote, en die app assisteert hem met mail, agenda en blogs.** De rest van Agent OS — doelen, kansen, radar, acquisitie — is een extra module die je erbij koopt.
+Het nieuwe uitgangspunt: **de ondernemer opent Iris Remote, en die app assisteert hem met mail, agenda en blogs.** De rest van Impact OS — doelen, kansen, radar, acquisitie — is een extra module die je erbij koopt.
 
 Dat is een andere indeling dan §5 van het julidocument. Daar zat *Content & SEO* vlak achter de verplichte kern, en zaten *Mail & helpdesk* en *Agenda* juist in het duurste pakket. De reden daarvoor staat in §7.6 van datzelfde document en is niet vervallen:
 
@@ -22,7 +22,7 @@ Dat is een andere indeling dan §5 van het julidocument. Daar zat *Content & SEO
 
 | | |
 |---|---|
-| Agent OS | ~57.000 regels Python, 29 domein-packages, 68 SQLite-tabellen, 75 testbestanden |
+| Impact OS | ~57.000 regels Python, 29 domein-packages, 68 SQLite-tabellen, 75 testbestanden |
 | Iris Remote | ~4.000 regels, Vercel + Neon (Frankfurt), 8 tabellen |
 | Draaiend voor | 12 sites, 1 gebruiker, 1 machine |
 | LLM-verbruik | **32,2 mln tokens / 30 dagen** over die 12 sites |

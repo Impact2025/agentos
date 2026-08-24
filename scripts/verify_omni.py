@@ -1,6 +1,6 @@
 """Verificatie van de SERP-Omni engine zonder de live server te raken.
 
-Start een TestClient tegen een wegwerp-DB (AGENTOS_DB_PATH override) op een
+Start een TestClient tegen een wegwerp-DB (IMPACTOS_DB_PATH override) op een
 eigen poort. We monkeypatchen `websearch.search` zodat de test niet afhankelijk
 is van Tavily/Brave/DDG-quota, en `article_writer._llm` zodat er geen echt LLM-
 verkeer nodig is. We verifiëren de volledige chain:
@@ -13,14 +13,14 @@ verkeer nodig is. We verifiëren de volledige chain:
 import os, sys, json, tempfile, sqlite3
 
 # Zet de repo-root op het pad zodat `backend` als package importeerbaar is
-# (backend-package-dir = D:/APPS/agentos/backend, dus parent moet op het pad).
-sys.path.insert(0, "D:/APPS/agentos")
+# (backend-package-dir = D:/APPS/impactos/backend, dus parent moet op het pad).
+sys.path.insert(0, "D:/APPS/impactos")
 
 # Wegwerp-DB zodat de live data ongemoeid blijft.
 _TMP = os.path.join(tempfile.gettempdir(), "agentos_omni_test.db")
 if os.path.exists(_TMP):
     os.remove(_TMP)
-os.environ["AGENTOS_DB_PATH"] = _TMP
+os.environ["IMPACTOS_DB_PATH"] = _TMP
 
 # Voorkom dat de echte .env de LLM-route dwingt; we patchen toch.
 import backend.shared.config as cfg  # noqa
@@ -64,9 +64,9 @@ appmod.init_db()  # zorg dat de test-DB de tabellen heeft vóór we rows invoege
 
 client = TestClient(appmod.app)
 
-# Login cookie (AGENTOS_PASSWORD staat in .env; testclient gebruikt de auth-guard).
+# Login cookie (IMPACTOS_PASSWORD staat in .env; testclient gebruikt de auth-guard).
 # Zonder wachtwoord staat de guard uit in dev — we proberen zonder login.
-PW = os.environ.get("AGENTOS_PASSWORD", "Test1234")
+PW = os.environ.get("IMPACTOS_PASSWORD", "Test1234")
 login = client.post("/api/auth/login", json={"password": PW})
 print("login:", login.status_code)
 if login.status_code == 200 and "set-cookie" in login.headers:

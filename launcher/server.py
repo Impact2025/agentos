@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────────────────────
-# Agent OS — Mission Control launcher
+# Impact OS — Mission Control launcher
 # Altijd-draaiende, lichtgewicht HTTP-server (alleen stdlib) op 127.0.0.1:8088.
 #
 # Probleem dat dit oplost:
-#   De "Agent OS" knop op Vincents dashboard opende direct localhost:1250, maar
-#   als de Agent OS-server niet draaide kreeg je ERR_CONNECTION_REFUSED.
+#   De "Impact OS" knop op Vincents dashboard opende direct localhost:1250, maar
+#   als de Impact OS-server niet draaide kreeg je ERR_CONNECTION_REFUSED.
 #   Deze launcher Draait altijd (Windows-taak bij opstart) en biedt EEN knop die
-#   eerst de server start (via D:\apps\agentos\launch.ps1) en daarna pas naar
+#   eerst de server start (via D:\apps\impactos\launch.ps1) en daarna pas naar
 #   1250 navigeert.
 #
 # Endpoints:
-#   GET  /                 -> dashboard met grote "Agent OS" knop
-#   GET  /api/status       -> {"agentos": "up"|"down"}
-#   POST /api/launch       -> start Agent OS als die down is; poll tot bereikbaar
+#   GET  /                 -> dashboard met grote "Impact OS" knop
+#   GET  /api/status       -> {"impactos": "up"|"down"}
+#   POST /api/launch       -> start Impact OS als die down is; poll tot bereikbaar
 #                             antwoord: {"status":"starting"|"up"|"already_up"|"error", ...}
 # ─────────────────────────────────────────────────────────────────────────────
 import http.server
@@ -24,10 +24,10 @@ import threading
 import urllib.request
 from functools import lru_cache
 
-ROOT = r"D:\apps\agentos"
+ROOT = r"D:\apps\impactos"
 LAUNCH_PS1 = os.path.join(ROOT, "launch.ps1")
-AGENTOS_URL = "http://localhost:1250/api/status"
-AGENTOS_HOME = "http://localhost:1250"
+IMPACTOS_URL = "http://localhost:1250/api/status"
+IMPACTOS_HOME = "http://localhost:1250"
 HOST = "127.0.0.1"
 PORT = 8088
 
@@ -35,27 +35,27 @@ _launch_lock = threading.Lock()
 _launching = False
 
 
-def agentos_up():
-    """True als de Agent OS backend antwoordt met 200."""
+def impactos_up():
+    """True als de Impact OS backend antwoordt met 200."""
     try:
-        req = urllib.request.Request(AGENTOS_URL, method="GET")
+        req = urllib.request.Request(IMPACTOS_URL, method="GET")
         with urllib.request.urlopen(req, timeout=2) as r:
             return r.status == 200
     except Exception:
         return False
 
 
-def start_agentos():
-    """Start Agent OS via de bestaande launch.ps1 (verborgen, achtergrond)."""
+def start_impactos():
+    """Start Impact OS via de bestaande launch.ps1 (verborgen, achtergrond)."""
     global _launching
     with _launch_lock:
         if _launching:
             return "starting"
-        if agentos_up():
+        if impactos_up():
             return "already_up"
         _launching = True
     try:
-        # launch.ps1 start Hermes gateway + Agent OS server + browser.
+        # launch.ps1 start Hermes gateway + Impact OS server + browser.
         subprocess.Popen(
             [
                 "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -68,7 +68,7 @@ def start_agentos():
         )
         # Wacht tot de server echt bereikbaar is (max ~40s).
         for _ in range(40):
-            if agentos_up():
+            if impactos_up():
                 return "up"
             import time
             time.sleep(1)
@@ -113,10 +113,10 @@ INDEX_HTML = """<!DOCTYPE html>
 <body>
   <div class="card">
     <h1>Mission Control</h1>
-    <p class="sub">Start Agent OS met één klik — Hermes + server worden automatisch opgestart</p>
-    <button class="btn" id="go" onclick="launchAgentOS()">
+    <p class="sub">Start Impact OS met één klik — Hermes + server worden automatisch opgestart</p>
+    <button class="btn" id="go" onclick="launchImpactOS()">
       <span class="dot" id="dot"></span>
-      <span id="label">Open Agent OS</span>
+      <span id="label">Open Impact OS</span>
     </button>
     <div class="status" id="status"></div>
   </div>
@@ -125,26 +125,26 @@ INDEX_HTML = """<!DOCTYPE html>
   function setStatus(t){ document.getElementById('status').textContent = t; }
   function refreshDot(){
     fetch('/api/status').then(r=>r.json()).then(d=>{
-      var up = d.agentos === 'up';
+      var up = d.impactos === 'up';
       document.getElementById('dot').className = 'dot' + (up?' up':'');
-      document.getElementById('label').textContent = up ? 'Open Agent OS' : 'Start Agent OS';
+      document.getElementById('label').textContent = up ? 'Open Impact OS' : 'Start Impact OS';
     }).catch(()=>{});
   }
-  function launchAgentOS(){
+  function launchImpactOS(){
     var btn = document.getElementById('go');
     btn.disabled = true;
     document.getElementById('dot').className = 'dot';
     document.getElementById('label').innerHTML = '<span class="spin"></span> Bezig met opstarten...';
-    setStatus('Agent OS en Hermes worden gestart — even geduld (ong. 10-30s)...');
+    setStatus('Impact OS en Hermes worden gestart — even geduld (ong. 10-30s)...');
     fetch('/api/launch', {method:'POST'}).then(r=>r.json()).then(d=>{
       if (d.status === 'up' || d.status === 'already_up'){
-        setStatus('Klaar. Agent OS wordt geopend...');
-        setTimeout(function(){ window.location.href = '""" + AGENTOS_HOME + """'; }, 600);
+        setStatus('Klaar. Impact OS wordt geopend...');
+        setTimeout(function(){ window.location.href = '""" + IMPACTOS_HOME + """'; }, 600);
       } else if (d.status === 'starting'){
         setStatus('Opstarten is al bezig...');
         pollUp();
       } else {
-        setStatus('Starten mislukt. Controleer D:\\\\apps\\\\agentos\\\\agentos.log');
+        setStatus('Starten mislukt. Controleer D:\\\\apps\\\\impactos\\\\impactos.log');
         btn.disabled = false;
         refreshDot();
       }
@@ -156,9 +156,9 @@ INDEX_HTML = """<!DOCTYPE html>
   function pollUp(){
     var btn = document.getElementById('go');
     fetch('/api/status').then(r=>r.json()).then(d=>{
-      if (d.agentos === 'up'){
-        setStatus('Klaar. Agent OS wordt geopend...');
-        setTimeout(function(){ window.location.href = '""" + AGENTOS_HOME + """'; }, 600);
+      if (d.impactos === 'up'){
+        setStatus('Klaar. Impact OS wordt geopend...');
+        setTimeout(function(){ window.location.href = '""" + IMPACTOS_HOME + """'; }, 600);
       } else {
         setTimeout(pollUp, 1500);
       }
@@ -186,13 +186,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/" or self.path.startswith("/?"):
             self._send(200, INDEX_HTML, "text/html; charset=utf-8")
         elif self.path == "/api/status":
-            self._send(200, json.dumps({"agentos": "up" if agentos_up() else "down"}))
+            self._send(200, json.dumps({"impactos": "up" if impactos_up() else "down"}))
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
     def do_POST(self):
         if self.path == "/api/launch":
-            result = start_agentos()
+            result = start_impactos()
             self._send(200, json.dumps({"status": result}))
         else:
             self._send(404, json.dumps({"error": "not found"}))

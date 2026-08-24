@@ -13,10 +13,13 @@ met status 'pending' klaargezet zodat de planning compleet is.
 
 Elke post krijgt de wereldklasse-template (MJ-beeld + logo) bij het posten.
 """
+import sys
+print("GEDEACTIVEERD: geen aparte 40+/50+ DatingAssistent-sites meer. Gebruik site_id 'datingassistent' (datingassistent.nl).")
+sys.exit(1)
 import sqlite3, json, os
 from datetime import datetime, timedelta
 
-DB = "data/agentos.db"
+DB = "data/impactos.db"
 SITES = {
     "DatingAssistent":      ("datingassistent", "30+", "DatingAssistent"),
     "DatingAssistent 40+":  ("dating40",        "40+", "DatingAssistent voor 40-plussers"),
@@ -31,9 +34,9 @@ BRAND = {
 
 COMEBACK_BODY = (
     "We zijn terug. Na een stilte van jaren lanceert DatingAssistent opnieuw — "
-    "met Iris, je persoonlijke AI-datingcoach die 24/7 met je meedenkt. "
+    "met Iris, een persoonlijke gids die 24/7 met je meedenkt. "
     "Geen eindeloos swipen, wél eerlijke gesprekken die ergens heen leiden. "
-    "Klaar om het patroon te doorbreken?"
+    "Wat is voor jou het belangrijkste als je nu weer openstaat voor een nieuwe ontmoeting? Laat het hieronder weten!"
 )
 OPENERS = {
     "DatingAssistent": "Daten is geen geluk. Het is een patroon — en dat patroon kun je veranderen.",
@@ -41,9 +44,9 @@ OPENERS = {
     "DatingAssistent 50+": "Alleen zijn is niet hetzelfde als eenzaam zijn. Tijd voor een nieuw hoofdstuk.",
 }
 QUIZ = {
-    "DatingAssistent": "https://datingassistent.nl/registreren",
-    "DatingAssistent 40+": "https://datingassistent.nl/dating-voor-40-plussers",
-    "DatingAssistent 50+": "https://datingassistent.nl/dating-voor-50-plussers",
+    "DatingAssistent": "https://datingassistent.nl/quiz",
+    "DatingAssistent 40+": "https://datingassistent.nl/40-plus",
+    "DatingAssistent 50+": "https://datingassistent.nl/50-plus",
 }
 
 def _add(c, pack_id, project, campaign, post_no, title, fb_copy, theme, angle, sched):
@@ -85,7 +88,7 @@ def main():
                "Daten is geen geluk. Het is een patroon. En dat patroon kun je veranderen.")
     # teaser di 18/8 op de 3 subs
     teaser = ("Morgen het echte verhaal. Waarom DatingAssistent stopte, en waarom we nu terug zijn "
-              "— met Iris, je AI-datingcoach. Zet 'm vast. 💡")
+              "— met Iris, je persoonlijke gids. Zet 'm vast. ☕")
     for proj, (sid, age, brand) in SITES.items():
         if _add(c, f"sp_da_{sid}_ft", proj, "da-week1", "FT", teaser, teaser,
                 "founder teaser", "cross-post teaser", "2026-08-18T10:00:00"):

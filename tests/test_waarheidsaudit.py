@@ -138,13 +138,13 @@ class TestVindtWatErIs:
     def test_afgewezen_maar_live_wordt_gevonden(self, web):
         """De scherpste toets van de set: database zegt 'rejected', web zegt live.
 
-        Zo stond 'Agent OS end-to-end publicatietest' op 2 aug 2026 op de site
+        Zo stond 'Impact OS end-to-end publicatietest' op 2 aug 2026 op de site
         van een klant — afgewezen in de wachtrij, nooit offline gehaald.
         """
         sid = _site()
         url = "https://audit.test/blog/agent-os-e2e"
         web[url] = ig.LEEFT
-        _job(sid, titel="Agent OS end-to-end publicatietest", status="rejected", url=url)
+        _job(sid, titel="Impact OS end-to-end publicatietest", status="rejected", url=url)
         b = _over(ig._check_afgewezen_maar_live(), url)
         assert len(b) == 1
         assert "rejected" in b[0].detail
@@ -419,7 +419,7 @@ class TestVindtWatErIs:
     def test_kanaal_dood_meldt_de_site_en_niet_elk_artikel(self, web):
         """Twaalf 404's van één site zijn één storing, geen twaalf.
 
-        3 aug 2026: elk artikel dat Agent OS naar ictusgo.nl publiceerde gaf een
+        3 aug 2026: elk artikel dat Impact OS naar ictusgo.nl publiceerde gaf een
         404, en het Actiecentrum toonde daar twaalf losse kaarten voor met de
         knop 'Opnieuw publiceren' — een remedie voor iets dat niet kapot was,
         want de publicatie-API antwoordde elke keer 201.
@@ -463,10 +463,56 @@ class TestVindtWatErIs:
                  url=f"https://audit.test/blog/stil-{n}")
         assert _over(ig._check_publicatiekanaal_dood(), f"site:{sid}") == []
 
+    def _job_met_body(self, site_id, *, blog_html, titel="Artikel", status="pending_review"):
+        jid = f"j-{uuid.uuid4().hex[:8]}"
+        with get_conn() as c:
+            c.execute(
+                "INSERT INTO content_jobs (id, site_id, title, keyword, status, slug, "
+                "blog_html, publish_result, created_at) VALUES "
+                "(?, ?, ?, '', ?, 'x', ?, '', datetime('now'))",
+                (jid, site_id, titel, status, blog_html))
+        _GEMAAKT["jobs"].append(jid)
+        return jid
+
+    def test_verzonnen_persoonlijke_autoriteit_op_ander_project_wordt_gevonden(self):
+        """19 aug 2026, Bijeen: 'in mijn jaren als directeur van Stichting de
+        Baan draaide ik meer dan veertig van die dagen...' — een verzonnen naam,
+        functie en trackrecord, veroorzaakt door de ongescopeerde merk-brief."""
+        sid = _site(naam="Bijeen")
+        html = ("<h1>Vrijwilligersdag organiseren</h1><p>In mijn jaren als "
+                "directeur van Stichting de Baan draaide ik meer dan veertig "
+                "van die dagen.</p>")
+        jid = self._job_met_body(sid, blog_html=html)
+        b = _over(ig._check_merkbrief_verkeerd_project(), jid)
+        assert len(b) == 1
+        assert "verzonnen" in b[0].detail
+
+    def test_weareimpact_mag_wel_in_eerste_persoon_met_functietitel(self):
+        """Op WeAreImpact IS 'als Vincent van Munster' de bedoelde stem."""
+        sid = _site(naam="WeAreImpact")
+        html = ("<h1>Titel</h1><p>Als directeur van WeAreImpact zie ik dit "
+                "elke dag.</p>")
+        jid = self._job_met_body(sid, blog_html=html)
+        assert _over(ig._check_merkbrief_verkeerd_project(), jid) == []
+
 
 # ── 2. Produceert hij geen ruis? ───────────────────────────────────────────
 
 class TestGeenRuis:
+
+    def test_normaal_derde_persoons_artikel_op_ander_project_is_geen_bevinding(self):
+        """Het gewone geval: geen enkele biografische claim, geen alarm."""
+        sid = _site(naam="Bijeen")
+        html = "<h1>Vrijwilligersdag organiseren</h1><p>Een goede vrijwilligersdag begint bij duidelijke rollen.</p>"
+        jid = f"j-{uuid.uuid4().hex[:8]}"
+        with get_conn() as c:
+            c.execute(
+                "INSERT INTO content_jobs (id, site_id, title, keyword, status, slug, "
+                "blog_html, publish_result, created_at) VALUES "
+                "(?, ?, 'Artikel', '', 'pending_review', 'x', ?, '', datetime('now'))",
+                (jid, sid, html))
+        _GEMAAKT["jobs"].append(jid)
+        assert _over(ig._check_merkbrief_verkeerd_project(), jid) == []
 
     def test_tweede_ronde_vindt_niets_nieuws(self):
         """Draaien mag niets veranderen aan de wereld.
@@ -725,9 +771,19 @@ class TestKwaliteitsscoreIsStopregel:
                 _GEMAAKT["jobs"].append(jid)
 
     def test_klontering_vlak_boven_de_gate_wordt_gevonden(self):
+        """De scores komen uit CONTENT_MIN_SCORE, niet uit een vast getal.
+
+        Stond hier 82 hardgecodeerd (gate+2 toen de gate 80 was), dan zwijgt
+        deze toets zodra iemand de gate verzet — en dat is precies gebeurd:
+        `.env` zet CONTENT_MIN_SCORE=85, waarmee 82 buiten het venster viel en
+        de test de klontering niet meer zag. Een toets die aan de oude waarde
+        van zijn eigen onderwerp hangt, faalt stil op de dag dat het onderwerp
+        verandert.
+        """
+        from backend.shared.config import CONTENT_MIN_SCORE
         sid = _site()
-        self._scored(sid, 82, 39)
-        self._scored(sid, 90, 5)
+        self._scored(sid, CONTENT_MIN_SCORE + 2, 39)
+        self._scored(sid, CONTENT_MIN_SCORE + 10, 5)
         bevindingen = ig._check_kwaliteitsscore_is_stopregel()
         assert _over(bevindingen, "score_is_stopregel"), \
             "klontering op gate+2 hoort gevonden te worden"
@@ -755,6 +811,159 @@ class TestKwaliteitsscoreIsStopregel:
         sid = _site()
         self._scored(sid, 82, 40, status="published")
         assert not _over(ig._check_kwaliteitsscore_is_stopregel(), "score_is_stopregel")
+
+
+# ── De pogingenteller vergeleken met de échte Gauntlet-historie ────────────
+
+class TestOrchestratorTellerTeruggezet:
+    """15 aug 2026: `scripts/bijeen_worldclass_engine.py` escaleerde rechtstreeks
+    naar `/api/gauntlet` — dus buiten de cross-run cap om — en schreef daarna
+    `orchestrator_attempts=1, status='stuck'` terug op het bronrecord. Precies de
+    twee velden waarop de rem besluit. Eén artikel is zo 17x herschreven, met
+    129 duplicaten in de Wachtrij en 6,2M tokens op één dag tot gevolg.
+
+    De duplicaten wérden gemeld; dat de teller zélf loog, zag niemand. Deze
+    toets vergelijkt daarom twee administraties: wat `content_jobs` beweert over
+    het aantal pogingen, tegen wat er in `gauntlet_runs` werkelijk staat.
+    """
+
+    # Per test een eigen titel: `gauntlet_runs` wordt niet opgeruimd tussen
+    # tests, dus zou een vaste titel de runs van de vorige test meetellen —
+    # precies de vervuiling die deze toets bij echte data moet weerstaan.
+    @pytest.fixture(autouse=True)
+    def _eigen_titel(self):
+        self.TITEL = ("Vrijwilligers roosterplanner: plan diensten zonder appjes "
+                      f"en spreadsheets {uuid.uuid4().hex[:8]}")
+
+    def _bron(self, site_id, *, titel=None, status="stuck", pogingen=1):
+        jid = f"j-{uuid.uuid4().hex[:8]}"
+        with get_conn() as c:
+            c.execute(
+                "INSERT INTO content_jobs (id, site_id, title, keyword, status, "
+                "seo_score, orchestrator_attempts, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                (jid, site_id, titel or self.TITEL, "kw", status, 82, pogingen))
+        _GEMAAKT["jobs"].append(jid)
+        return jid
+
+    def _runs(self, n, titel=None):
+        """n Gauntlet-runs die dit artikel als objective hadden."""
+        with get_conn() as c:
+            for i in range(n):
+                c.execute(
+                    "INSERT INTO gauntlet_runs (id, objective, benchmark, status, "
+                    "threshold, max_iterations, created_at, updated_at) "
+                    "VALUES (?, ?, ?, 'passed', 85, 3, datetime('now'), datetime('now'))",
+                    (f"gaunt-test-{uuid.uuid4().hex[:10]}",
+                     f"Herschrijf het artikel '{titel or self.TITEL}' tot "
+                     f"wereldklasse SEO-content (ronde {i}).", "bench"))
+
+    def test_teller_die_achterloopt_op_de_runs_wordt_gevonden(self):
+        sid = _site()
+        self._bron(sid, pogingen=1)
+        self._runs(17)
+        bevindingen = _over(ig._check_orchestrator_teller_teruggezet(),
+                            "orchestrator_teller:")
+        assert bevindingen, "17 runs tegen 1 getelde poging hoort gevonden te worden"
+        assert "17x" in bevindingen[0].detail
+        assert "terug" in bevindingen[0].detail
+
+    def test_teller_op_nul_meldt_een_pad_zonder_cap_en_niet_een_reset(self):
+        """Twee storingen met dezelfde meting. Nooit geteld = er is een pad dat de
+        cap niet kent; teruggezet = er is een schrijver die moet stoppen. Dezelfde
+        zin voor beide stuurt het zoeken de verkeerde kant op."""
+        sid = _site()
+        self._bron(sid, pogingen=0)
+        self._runs(9)
+        bevindingen = _over(ig._check_orchestrator_teller_teruggezet(),
+                            "orchestrator_teller:")
+        assert bevindingen
+        assert "nooit één poging geteld" in bevindingen[0].detail
+
+    def test_kloppende_teller_geeft_geen_bevinding(self):
+        """Het normale geval: de cap heeft geteld wat er gedraaid heeft."""
+        sid = _site()
+        self._bron(sid, pogingen=3)
+        self._runs(3)
+        assert not _over(ig._check_orchestrator_teller_teruggezet(),
+                         "orchestrator_teller:")
+
+    def test_een_enkele_ronde_is_geen_storing(self):
+        """Onder de drempel van 3 runs zegt het verschil niets: een ronde die nu
+        loopt heeft de teller al opgehoogd vóór de run bestaat, en andersom."""
+        sid = _site()
+        self._bron(sid, pogingen=0)
+        self._runs(2)
+        assert not _over(ig._check_orchestrator_teller_teruggezet(),
+                         "orchestrator_teller:")
+
+    def test_afgesloten_bronrecord_telt_niet_mee(self):
+        """`mark_superseded` is precies de remedie; een gesloten bron hoort de
+        kaart niet in leven te houden."""
+        sid = _site()
+        self._bron(sid, status="superseded", pogingen=1)
+        self._runs(17)
+        assert not _over(ig._check_orchestrator_teller_teruggezet(),
+                         "orchestrator_teller:")
+
+    def test_geneste_herschrijftitels_tellen_als_een_artikel(self):
+        """De Gauntlet staget zijn uitvoer als "Herschrijf het artikel 'X'", en
+        die kan zelf weer bron worden. Een kale substring-telling ziet dan drie
+        artikelen waar er één staat en meldt 3x, 22x én 25x voor hetzelfde stuk."""
+        sid = _site()
+        self._bron(sid, pogingen=1)
+        self._bron(sid, titel=f"Herschrijf het artikel '{self.TITEL}' "
+                              f"(project X) naar een wereldklasse versie", pogingen=1)
+        self._runs(17)
+        bevindingen = _over(ig._check_orchestrator_teller_teruggezet(),
+                            "orchestrator_teller:")
+        assert len(bevindingen) == 1, \
+            f"één artikel hoort één bevinding te geven, kreeg {len(bevindingen)}"
+
+
+class TestKernTitel:
+    """De afpel-functie waarop de groepering rust. Knipt hij te vroeg af, dan
+    belanden twee ongelijke artikelen in één groep — en bij het opruimen van
+    duplicaten is dat het verschil tussen een overbodige versie sluiten en een
+    uniek artikel weggooien.
+    """
+
+    def test_pelt_het_orchestrator_omhulsel_af(self):
+        assert ig._kern_titel(
+            "Herschrijf het artikel 'Vrijwilligers roosterplanner: plan diensten' "
+            "(project Bijeen) naar een wereldklasse versie die de grens haalt."
+        ) == "Vrijwilligers roosterplanner: plan diensten"
+
+    def test_pelt_het_script_omhulsel_af(self):
+        assert ig._kern_titel(
+            "Herschrijf het artikel 'Impactrapportage maken' tot wereldklasse "
+            "SEO-content (1200-1500 woorden). Zoekterm: impactrapportage."
+        ) == "Impactrapportage maken"
+
+    def test_knipt_niet_op_een_woord_binnen_de_titel(self):
+        """'Van plan tot nazorg' werd 'Van plan' zolang de match op 'tot' stopte —
+        waarmee dat artikel op één hoop belandde met elk ander stuk dat toevallig
+        met dezelfde twee woorden begon."""
+        assert ig._kern_titel(
+            "Herschrijf het artikel 'Van plan tot nazorg: een geslaagd evenement' "
+            "(project Bijeen) naar een wereldklasse versie."
+        ) == "Van plan tot nazorg: een geslaagd evenement"
+
+    def test_titel_met_apostrof_blijft_heel(self):
+        """Nederlandse titels bevatten apostrofs ("de 3 zwakst scorende pagina's");
+        een niet-gulzige match breekt precies daarop."""
+        assert ig._kern_titel(
+            "Herschrijf het artikel 'Optimaliseer de 3 zwakst scorende pagina's "
+            "van Bijeen' (project Bijeen) naar een wereldklasse versie."
+        ) == "Optimaliseer de 3 zwakst scorende pagina's van Bijeen"
+
+    def test_laat_een_gewone_titel_met_rust(self):
+        kaal = "Sociale cohesie versterken met een evenement: 6 aanpakken"
+        assert ig._kern_titel(kaal) == kaal
+
+    def test_laat_een_niet_herschrijf_opdracht_met_rust(self):
+        opdracht = "[SEO Copywriter] Schrijf 1 nieuw SEO-artikel voor Virginia."
+        assert ig._kern_titel(opdracht) == opdracht
 
 
 # ── Afgekapte meta-titel: wat er live gaat, niet wat in de body staat ───────
@@ -860,7 +1069,7 @@ class TestClusterKannibalisatie:
 
     De wereld-versie van `zoekwoord_kannibalisatie`. Die toets leest
     `content_jobs.keyword` — de administratie van het systeem over zijn eigen
-    werk — en was daardoor blind voor alles wat buiten Agent OS om is
+    werk — en was daardoor blind voor alles wat buiten Impact OS om is
     gepubliceerd. Bij Bewaard voor Jou stonden 102 pagina's live, vertoonden er
     zeven op 'levensverhaal vastleggen', en kende `content_jobs` er twee.
     """
@@ -1087,3 +1296,120 @@ class TestBevindingBlijftLiggen:
         bev = _over(ig._check_bevinding_blijft_liggen(), f"blijft-liggen:{naam}")
         assert len(bev) == 1
         assert "5 blokkerende bevinding" in bev[0].detail
+
+
+# ── De herschrijf-cap moet de generatiegrens overleven ─────────────────────
+
+class TestHerschrijftellerGereset:
+    """15 aug 2026: de enige rem op de herschrijflus telde op een rij die het
+    mechanisme zelf verving, dus begon elke generatie op nul.
+
+    Gemeten stonden alle 244 WeAreImpact-jobs op `orchestrator_attempts = 0`
+    terwijl één artikel zestien herschrijvingen had. Er faalde nooit iets: de
+    code die de teller ophoogt was correct en de code die het bronrecord
+    afsluit ook. De fout zat uitsluitend in de ruimte ertussen.
+    """
+
+    def _keten(self, site_id, bron_n, opv_n):
+        """Bron met `bron_n` pogingen, superseded door een opvolger met `opv_n`."""
+        bron, opv = _job(site_id, status="superseded"), _job(site_id, status="pending_review")
+        with get_conn() as c:
+            c.execute("UPDATE content_jobs SET orchestrator_attempts = ?, "
+                      "superseded_by = ? WHERE id = ?", (bron_n, opv, bron))
+            c.execute("UPDATE content_jobs SET orchestrator_attempts = ? WHERE id = ?",
+                      (opv_n, opv))
+        return bron, opv
+
+    def test_teller_die_terugloopt_wordt_gevonden(self):
+        sid = _site()
+        _, opv = self._keten(sid, bron_n=2, opv_n=0)
+        bev = _over(ig._check_herschrijfteller_gereset(), f"job:{opv}")
+        assert bev, "een opvolger die op nul begint hoort gevonden te worden"
+        assert "cross-run cap" in bev[0].detail
+
+    def test_geerfde_teller_geeft_geen_bevinding(self):
+        """Wat `mark_superseded` nu doet: de opvolger erft de telling."""
+        sid = _site()
+        _, opv = self._keten(sid, bron_n=2, opv_n=2)
+        assert not _over(ig._check_herschrijfteller_gereset(), f"job:{opv}")
+
+    def test_hoger_tellende_opvolger_is_geen_bevinding(self):
+        """De opvolger mag vóórlopen — hij is zelf al een ronde verder."""
+        sid = _site()
+        _, opv = self._keten(sid, bron_n=1, opv_n=2)
+        assert not _over(ig._check_herschrijfteller_gereset(), f"job:{opv}")
+
+    def test_mark_superseded_geeft_de_telling_door(self):
+        """De code-fix zelf, niet alleen de toets erop."""
+        from backend.domains.publish import content_pipeline
+
+        sid = _site()
+        bron, opv = _job(sid, status="rejected"), _job(sid, status="pending_review")
+        with get_conn() as c:
+            c.execute("UPDATE content_jobs SET orchestrator_attempts = 2 WHERE id = ?", (bron,))
+
+        content_pipeline.mark_superseded(bron, opv)
+
+        assert content_pipeline.get_job(opv)["orchestrator_attempts"] == 2
+        assert content_pipeline.get_job(bron)["status"] == "superseded"
+        assert not _over(ig._check_herschrijfteller_gereset(), f"job:{opv}")
+
+
+# ── Content op de verkeerde site ───────────────────────────────────────────
+
+class TestContentHoortBijAndereSite:
+    """15 aug 2026: 25 stukken over Bijeen, Pootgelukkig, Liefde voor Iedereen
+    en TeambuildingMetImpact stonden in de Wachtrij van WeAreImpact, doordat
+    `publish_to_weareimpact` bij een onherleidbaar project stil terugviel op de
+    eerste site die er ooit was. Twee ervan gingen écht live.
+    """
+
+    def _site_met_profiel(self, naam, profiel, koppen=()):
+        sid = _site(naam)
+        with get_conn() as c:
+            c.execute("UPDATE sites SET profile = ? WHERE id = ?", (profiel, sid))
+        for k in koppen:
+            _job(sid, titel=k, status="published")
+        return sid
+
+    def _in_review(self, site_id, titel):
+        jid = _job(site_id, titel=titel, status="pending_review")
+        return jid
+
+    def test_stuk_van_een_ander_project_wordt_gevonden(self):
+        wai = self._site_met_profiel(
+            "AuditImpact", "AI-consultant voor gemeenten en welzijnsorganisaties",
+            ["Kunstmatige intelligentie in het sociaal domein"])
+        self._site_met_profiel(
+            "AuditHonden", "Alles over honden adopteren, puppy opvoeden en dierenwelzijn",
+            ["Puppy opvoeden: de eerste weken", "Hond adopteren uit het asiel"])
+
+        jid = self._in_review(wai, "Advies hond adopteren: puppy opvoeden stap voor stap")
+        bev = _over(ig._check_content_hoort_bij_andere_site(), f"job:{jid}")
+        assert bev, "een hondenartikel in de AI-Wachtrij hoort gevonden te worden"
+        assert "AuditHonden" in bev[0].detail
+
+    def test_eigen_onderwerp_blijft_met_rust(self):
+        """Een nieuw onderwerp op de eigen site moet gewoon mogen."""
+        wai = self._site_met_profiel(
+            "AuditImpact2", "AI-consultant voor gemeenten en welzijnsorganisaties",
+            ["Kunstmatige intelligentie in het sociaal domein"])
+        self._site_met_profiel("AuditHonden2", "Honden adopteren en puppy opvoeden")
+
+        jid = self._in_review(wai, "Kunstmatige intelligentie bij gemeenten: waar begin je")
+        assert not _over(ig._check_content_hoort_bij_andere_site(), f"job:{jid}")
+
+    def test_nipt_verschil_slaat_niet_aan(self):
+        """Alleen een duidelijke winnaar telt — anders wordt elk raakvlak een fout."""
+        a = self._site_met_profiel("AuditAlfa", "vrijwilligers werven welzijn gemeente",
+                                   ["Vrijwilligers werven in je gemeente"])
+        self._site_met_profiel("AuditBeta", "vrijwilligers behouden welzijn organisatie",
+                               ["Vrijwilligers behouden in je organisatie"])
+        jid = self._in_review(a, "Vrijwilligers werven en behouden bij welzijn")
+        assert not _over(ig._check_content_hoort_bij_andere_site(), f"job:{jid}")
+
+    def test_te_korte_titel_levert_geen_uitspraak(self):
+        a = self._site_met_profiel("AuditGamma", "vrijwilligers werven welzijn")
+        self._site_met_profiel("AuditDelta", "honden adopteren puppy opvoeden asiel")
+        jid = self._in_review(a, "Puppy asiel")
+        assert not _over(ig._check_content_hoort_bij_andere_site(), f"job:{jid}")

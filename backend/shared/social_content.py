@@ -22,13 +22,16 @@ import json
 import logging
 import re
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, replace
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import httpx
 
-from .config import OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL
+from .config import (
+    OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL, SCRIPT_WRITER_MODEL,
+)
 from .database import get_conn
 from . import social_style
 
@@ -60,7 +63,8 @@ class ImageBrief:
     layout: str = "Centreer headline boven, subtext onder, 1 accent-element (amber) rechtsonder."
     midjourney_prompt: str = ""
     image_url: str = ""               # gegenereerde, on-brand afbeelding (public of local)
-    image_path: str = ""              # lokaal pad naar de opgeslagen asset
+    image_path: str = ""              # lokaal pad naar de opgeslagen asset (mét merk-overlay)
+    image_raw_path: str = ""          # dezelfde crop ZONDER overlay-tekst — video-achtergrond
     image_source: str = ""            # 'pexels' | 'fal' | '' (geen beeld beschikbaar)
     canva_note: str = (
         "Open Canva > Templates > zoek een passende 'quote' of 'social post'-template, "
@@ -137,17 +141,18 @@ def _sync_openmodel(system: str, user: str, max_tokens: int = 900) -> str:
     budget = max(max_tokens, _MIN_REASONING_TOKENS)
     last = ""
     while True:
-        last = _openmodel_once(system, user, budget)
+        last = _openmodel_once(system, user, budget, route="social_content")
         if last.strip() or budget >= _MAX_REASONING_TOKENS:
             return last
         logger.info("OpenModel gaf alleen een thinking-blok bij max_tokens=%d, verdubbel budget", budget)
         budget = min(budget * 2, _MAX_REASONING_TOKENS)
 
 
-def _openmodel_once(system: str, user: str, max_tokens: int) -> str:
+def _openmodel_once(system: str, user: str, max_tokens: int, model: str = "",
+                    route: str = "social_content") -> str:
     url = (OPENMODEL_BASE_URL or "https://api.openmodel.ai").rstrip("/") + "/v1/messages"
     payload = {
-        "model": OPENMODEL_MODEL or "deepseek-v4-flash",
+        "model": model or OPENMODEL_MODEL or "deepseek-v4-flash",
         "max_tokens": max_tokens,
         "system": system,
         "messages": [{"role": "user", "content": user}],
@@ -164,11 +169,50 @@ def _openmodel_once(system: str, user: str, max_tokens: int) -> str:
         )
         resp.raise_for_status()
         data = resp.json()
+    usage = data.get("usage") or {}
+    try:
+        from .outcomes import log_llm_usage
+        log_llm_usage(
+            backend="openmodel", model=payload["model"], route=route,
+            prompt_tokens=usage.get("input_tokens", 0),
+            completion_tokens=usage.get("output_tokens", 0),
+            total_tokens=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+        )
+    except Exception:
+        pass
     if "content" in data:
         return "".join(p.get("text", "") for p in data["content"] if p.get("type") == "text")
     if "choices" in data:
         return data["choices"][0]["message"]["content"]
     return data.get("text", "")
+
+
+def _sync_script_writer(system: str, user: str, max_tokens: int = 900) -> str:
+    """Schrijf een video-/TikTok-script op écht Claude i.p.v. DeepSeek.
+
+    Bewuste, smalle uitzondering (Vincent, 21 aug 2026): Claude is duur, dus
+    ALLEEN voor deze scriptregels — nooit voor platform-copy of beeld-briefs,
+    die blijven op `_sync_openmodel` (DeepSeek). Budget-guard vóór de call
+    (`require_llm_budget`), en elke fout valt terug op DeepSeek in plaats van
+    de caller te laten crashen — een duur script is beter dan geen script,
+    maar geen script is nooit het antwoord."""
+    try:
+        from .outcomes import require_llm_budget
+        require_llm_budget(route="video_script")
+        budget = max(max_tokens, _MIN_REASONING_TOKENS)
+        out = ""
+        while True:
+            out = _openmodel_once(system, user, budget, model=SCRIPT_WRITER_MODEL,
+                                  route="video_script")
+            if out.strip() or budget >= _MAX_REASONING_TOKENS:
+                break
+            budget = min(budget * 2, _MAX_REASONING_TOKENS)
+        if out.strip():
+            return out
+        logger.warning("Script-writer (Claude) gaf een lege respons, val terug op DeepSeek")
+    except Exception as e:
+        logger.warning("Script-writer (Claude) mislukt (%s), val terug op DeepSeek", str(e)[:200])
+    return _sync_openmodel(system, user, max_tokens)
 
 
 def _brand_voice(project: str, brand_context: str) -> str:
@@ -289,20 +333,53 @@ def _truncate_words(text: str, limit: int) -> str:
 
 
 def _parse_image_brief(text: str, theme: str, project: str = "") -> ImageBrief:
-    """Parse een beeld-brief uit LLM-output; valt terug op een sensibele default."""
+    """Parse een beeld-brief uit LLM-output; valt terug op een sensibele default.
+
+    Behandelt zowel 'Header: waarde' (op één regel) als de net zo gangbare
+    markdown-vorm '**Header:**' gevolgd door de waarde op de vólgende regel(s)
+    (deepseek/Claude doen dit beide vaak bij een lijst met meerdere velden).
+    Vóór deze fix las de parser alleen tekst ná de dubbele punt op DEZELFDE
+    regel, dus bleef 'Headline:' met een lege rest achter de dubbele punt
+    zonder waarde — en viel de kop stil terug op de afgekapte werktitel
+    (gemeten 22 aug 2026, DatingAssistent: 3 van de 4 packs kregen zo de kale
+    thema-tekst als kop i.p.v. de wél door het model geschreven zin)."""
     b = ImageBrief()
     b.headline = _truncate_words(theme or "Jouw boodschap", 60)
+    _KEYS = {"headline": "headline", "kop": "headline",
+             "subtext": "subtext", "onderschrift": "subtext",
+             "layout": "layout", "opmaak": "layout",
+             "mj": "midjourney"}
+    fields: Dict[str, List[str]] = {}
+    current: Optional[str] = None
     for line in text.splitlines():
         hdr = _norm_header(line)
-        if hdr in ("headline", "kop"):
-            val = _truncate_words(line.split(":", 1)[-1].strip().strip("*").strip(), 80)
-            b.headline = val or b.headline
-        elif hdr in ("subtext", "onderschrift"):
-            b.subtext = _truncate_words(line.split(":", 1)[-1].strip().strip("*").strip(), 120)
-        elif "midjourney" in hdr or hdr in ("mj",):
-            b.midjourney_prompt = line.split(":", 1)[-1].strip().strip("*").strip()
-        elif hdr in ("layout", "opmaak"):
-            b.layout = _truncate_words(line.split(":", 1)[-1].strip().strip("*").strip(), 160)
+        key = _KEYS.get(hdr) or ("midjourney" if "midjourney" in hdr else None)
+        if key:
+            current = key
+            rest = line.split(":", 1)[-1].strip().strip("*").strip() if ":" in line else ""
+            fields.setdefault(current, [])
+            if rest:
+                fields[current].append(rest)
+        elif current and line.strip():
+            fields[current].append(line.strip().strip("*").strip())
+        elif not line.strip():
+            current = None  # lege regel sluit het vervolg van het huidige veld af
+
+    def _joined(key: str) -> str:
+        return " ".join(fields.get(key, [])).strip()
+
+    val = _joined("headline")
+    if val:
+        b.headline = _truncate_words(val, 80)
+    val = _joined("subtext")
+    if val:
+        b.subtext = _truncate_words(val, 120)
+    val = _joined("midjourney")
+    if val:
+        b.midjourney_prompt = val
+    val = _joined("layout")
+    if val:
+        b.layout = _truncate_words(val, 160)
     style = social_style.load_style(project)
     if not b.midjourney_prompt:
         # Het vaste stijlblok van het project achter het onderwerp — zo blijft de
@@ -496,13 +573,38 @@ def generate_content_pack(
 
             # 2) Beeld-brief + ECHTE on-brand afbeelding
             if with_image:
-                sys_img = (
-                    f"{voice}\n\nMaak een Canva-ready beeld-brief voor een social post over het thema. "
-                    f"Geef velden: 'Headline:', 'Subtext:', 'Layout:', 'Midjourney:'. "
-                    + (f"Beeldstijl (zet dit stijlblok achter de Midjourney-prompt zodat alle "
-                       f"beelden bij elkaar passen): {style.stijlblok}"
-                       if style.bron == "style.json" else "Kleur: amber accent (#e5a500).")
-                )
+                if style.overlay.modus == "stelling":
+                    # 'Thema' is hier een interne werktitel (bv. '"liefde" — wat je
+                    # écht wil weten', zie social_auto.py:_pick_grounded_idea) die
+                    # zelf al op een kop lijkt — zonder expliciet verbod schrijft het
+                    # model 'm klakkeloos over als Headline, en dat kwam letterlijk
+                    # meerdere keren identiek in de Wachtrij terecht (19+21 aug 2026).
+                    # De kop op een Stelling-kaart is de hele post: geen samenvatting
+                    # van het thema, maar een concrete, prikkelbare uitspraak waar een
+                    # lezer het spontaan mee eens of oneens kan zijn.
+                    sys_img = (
+                        f"{voice}\n\nSchrijf de kop voor een 'Stelling'-kaart (géén foto, "
+                        f"alleen tekst) over dit thema. Geef velden: 'Headline:', 'Subtext:'. "
+                        f"Headline = één scherpe, concrete stelling in de je/jij-vorm of "
+                        f"neutrale bewering (max 90 tekens, geen vraagteken, geen aanhalingstekens "
+                        f"eromheen) — NOOIT de letterlijke werktitel of het zoekwoord overnemen, "
+                        f"altijd een eigen, specifieke uitspraak die een mening uitlokt. "
+                        f"Subtext = een korte uitnodiging om te reageren, bv. 'Eens of oneens? "
+                        f"Laat je reactie achter.' (mag variëren, blijft kort)."
+                    )
+                else:
+                    sys_img = (
+                        f"{voice}\n\nMaak een Canva-ready beeld-brief voor een social post over het thema. "
+                        f"Geef velden: 'Headline:', 'Subtext:', 'Layout:', 'Midjourney:'. "
+                        f"Headline = max 80 tekens, één scherpe zin die zelf de boodschap ís — "
+                        f"nooit een samenvatting van het thema, altijd een eigen, concrete uitspraak. "
+                        f"Subtext = MAX ÉÉN korte, complete zin (max 90 tekens) die op het beeld onder "
+                        f"de headline komt te staan — géén alinea, géén meerdere zinnen: dat wordt op "
+                        f"het beeld hard afgekapt en leest dan als een afgebroken gedachte. "
+                        + (f"Beeldstijl (zet dit stijlblok achter de Midjourney-prompt zodat alle "
+                           f"beelden bij elkaar passen): {style.stijlblok}"
+                           if style.bron == "style.json" else "Kleur: amber accent (#e5a500).")
+                    )
                 raw_img = _sync_openmodel(sys_img, f"Thema: {theme}", max_tokens=400)
                 image_brief = _parse_image_brief(raw_img, theme, project)
                 # Echte, on-brand afbeelding genereren (Pexels eerst, FAL fallback)
@@ -518,6 +620,7 @@ def generate_content_pack(
                     if img_res.get("success"):
                         image_brief.image_url = img_res["url"]
                         image_brief.image_path = img_res.get("path", "")
+                        image_brief.image_raw_path = img_res.get("raw_path", "")
                         image_brief.image_source = img_res.get("source", "")
                         logger.info("Social-afbeelding gegenereerd (%s): %s",
                                     img_res.get("source"), img_res.get("url"))
@@ -553,8 +656,8 @@ def generate_content_pack(
                     f"Geef duidelijke secties: 'Hook:', 'Script:', 'Shotlist:' (lijst met streepjes), "
                     f"'Voiceover:', 'Captions:', 'Hashtags:'. Max 30 sec, casual toon."
                 )
-                raw_tt = _sync_openmodel(sys_tt, f"Thema: {theme}\n{angle and ('Invalshoek: ' + angle)}",
-                                         max_tokens=700)
+                raw_tt = _sync_script_writer(sys_tt, f"Thema: {theme}\n{angle and ('Invalshoek: ' + angle)}",
+                                             max_tokens=700)
                 tiktok_pack = _parse_tiktok_pack(raw_tt)
         except Exception as e:
             logger.warning("Social content LLM mislukt, val terug op concept: %s", e)
@@ -700,8 +803,15 @@ def list_packs(project: Optional[str] = None, status: Optional[str] = None) -> L
         q = "SELECT * FROM social_posts"
         clauses, params = [], []
         if project:
+            # De aanroeper (frontend-URL, bridge-commando) levert niet altijd
+            # exact de spelling uit `sites.name` aan ('Datingassistent' i.p.v.
+            # 'DatingAssistent') — dezelfde storing die shared/projects.py al
+            # voor goals/radar oploste. Zonder dit toont de Social Creatie-tab
+            # "nog geen content packs" terwijl ze er wél liggen, alleen onder
+            # de sites-spelling (22 aug 2026).
+            from .projects import canonical_project
             clauses.append("project=?")
-            params.append(project)
+            params.append(canonical_project(project))
         if status:
             clauses.append("status=?")
             params.append(status)
@@ -730,7 +840,7 @@ def approve_pack(pack_id: str) -> bool:
 def mark_posted_manually(pack_id: str, platforms: Optional[List[str]] = None) -> Dict:
     """Leg vast dat een mens dit pack zélf heeft geplaatst.
 
-    Voor kanalen die Agent OS niet kan bedienen — LinkedIn vanaf een persoonlijk
+    Voor kanalen die Impact OS niet kan bedienen — LinkedIn vanaf een persoonlijk
     profiel kan per definitie niet geautomatiseerd, en een project zonder eigen
     Facebook/Instagram-token mag nooit op de pagina van een ánder project posten
     (zie social_auto). Zonder deze weg blijft zo'n pack eeuwig `pending_review`
@@ -779,12 +889,77 @@ def reject_pack(pack_id: str) -> bool:
         return cur.rowcount > 0
 
 
-def set_pack_image(pack_id: str, *, image_url: str, image_path: str, image_source: str) -> bool:
+_PHOTO_EXT = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def list_project_photos(project: str) -> List[Dict]:
+    """Foto's die Vincent zelf in projects/<project>/photos/ heeft gezet
+    (bijv. handmatig gegenereerde Midjourney-renders). Dit is dezelfde map
+    als de video-B-roll-bibliotheek (`video/template.json:footage.fallback`),
+    hergebruikt voor losse posts — geen tweede map, één bibliotheek per project.
+    Squash-bewust via `social_style._project_dirs`, anders vindt 'DatingAssistent'
+    een map genaamd 'datingassistent' niet."""
+    out: List[Dict] = []
+    seen = set()
+    for base in social_style._project_dirs(project):
+        photos_dir = base / "photos"
+        if not photos_dir.is_dir():
+            continue
+        for f in sorted(photos_dir.iterdir()):
+            if f.suffix.lower() in _PHOTO_EXT and f.name not in seen:
+                seen.add(f.name)
+                out.append({"filename": f.name, "size": f.stat().st_size})
+    return out
+
+
+def project_photo_path(project: str, filename: str) -> Optional[str]:
+    """Absoluut pad naar één foto uit de projectbibliotheek, of None als hij
+    er niet is (of iemand een pad-traversal probeert via de filename)."""
+    safe_name = Path(filename).name
+    if safe_name != filename:
+        return None
+    for base in social_style._project_dirs(project):
+        cand = base / "photos" / safe_name
+        if cand.is_file():
+            return str(cand)
+    return None
+
+
+def assign_library_photo(pack_id: str, project: str, filename: str) -> Dict:
+    """Koppel een bestaande foto uit de projectbibliotheek aan een pack —
+    zelfde huisstijl-crop+overlay als een verse upload (`brand_uploaded_image`),
+    alleen de bron is disk in plaats van een file-upload."""
+    path = project_photo_path(project, filename)
+    if not path:
+        return {"success": False, "error": "Foto niet gevonden in de projectbibliotheek"}
+    from . import social_image as img_svc
+    p = get_pack(pack_id)
+    if not p:
+        return {"success": False, "error": "Pack niet gevonden"}
+    raw = Path(path).read_bytes()
+    brief = p.image_brief or {}
+    res = img_svc.brand_uploaded_image(
+        raw, project,
+        headline=brief.get("headline", "") or p.theme,
+        subtext=brief.get("subtext", ""),
+    )
+    if not res.get("success"):
+        return res
+    set_pack_image(pack_id, image_url=res["url"], image_path=res["path"],
+                    image_source=f"library:{filename}", image_raw_path=res.get("raw_path", ""))
+    return {"success": True, **res}
+
+
+def set_pack_image(pack_id: str, *, image_url: str, image_path: str, image_source: str,
+                   image_raw_path: str = "") -> bool:
     """Vervang het beeld van een pack (bijv. een geüploade Midjourney-render).
 
     Update alleen de beeld-velden binnen `image_brief_json` — headline/subtext/
     layout/midjourney_prompt blijven staan, want die zijn de instructie voor het
     beeld en horen niet te verdwijnen zodra het beeld zelf handmatig geleverd is.
+    `image_raw_path` (de ongebrande crop) voedt de videorender — zonder deze
+    parameter blijft een oudere/lege waarde staan i.p.v. per ongeluk gewist te
+    worden.
     """
     p = get_pack(pack_id)
     if not p:
@@ -792,6 +967,8 @@ def set_pack_image(pack_id: str, *, image_url: str, image_path: str, image_sourc
     brief = dict(p.image_brief or {})
     brief["image_url"] = image_url
     brief["image_path"] = image_path
+    if image_raw_path:
+        brief["image_raw_path"] = image_raw_path
     brief["image_source"] = image_source
     with get_conn() as conn:
         cur = conn.execute(
@@ -884,6 +1061,21 @@ def render_pack_video(pack_id: str) -> Dict:
     out = REPO_ROOT / rel
     try:
         tpl = load_template(p.project)
+        # Het pack heeft al een on-brand foto (auto-gezocht of Vincents eigen
+        # Midjourney-upload) — gebruik precies díé als video-achtergrond in
+        # plaats van tpl.footage's eigen, losstaande Pexels-zoekopdracht (21 aug
+        # 2026: beeld en video toonden tot dan toe twee onafhankelijk gekozen
+        # foto's van hetzelfde onderwerp). De ongebrande crop (`image_raw_path`)
+        # heeft de voorkeur — die draagt geen tekst, want de video brandt zijn
+        # eigen ondertitels erover; oudere packs zonder dat veld vallen terug op
+        # de gebrande versie (`image_path`) zodat ze niet stilzwijgend leeg
+        # uitkomen. `render_short` geeft "eigen beeld" altijd voorrang op Pexels
+        # zodra `footage.images` gevuld is.
+        brief = p.image_brief or {}
+        own_photo = brief.get("image_raw_path") or brief.get("image_path") or ""
+        if own_photo and Path(own_photo).is_file():
+            tpl = replace(tpl, footage=replace(tpl.footage, images=[Path(own_photo)],
+                                               local_videos=[]))
         res = vr.render_short(p.project, scenes, out, template=tpl)
     except Exception as e:  # noqa: BLE001
         logger.warning("render_pack_video mislukt: %s", e)
@@ -998,9 +1190,21 @@ async def publish_pack(pack_id: str, platform: str) -> Dict:
             # idea_url/idea_query (gezet door social_auto._pick_grounded_idea)
             # voeden dezelfde FB→SEO-meetlus als de Facebook Deluxe-agent — zonder
             # dit was een auto-post onzichtbaar voor fb_seo_impact.py.
+            # cta_url: alleen als noodgreep als er géén idea_url is (evergreen/
+            # CTA-post zonder datagedreven onderwerp) — anders bleef zo'n post
+            # zonder énige link in de eerste reactie staan (21 aug 2026).
+            cta_url = None
+            if not p.idea_url:
+                try:
+                    from ..domains.seo.sites import find_site_by_project
+                    site = find_site_by_project(p.project)
+                    cta_url = (site or {}).get("base_url") or None
+                except Exception:
+                    cta_url = None
             result = await svc.post_update(text, p.idea_url or None, p.project,
                                            image_path=img_path or None,
-                                           query=p.idea_query or None)
+                                           query=p.idea_query or None,
+                                           cta_url=cta_url)
         elif platform == "instagram":
             # IG vereist een publieke image_url. Als de pack een gegenereerde
             # asset heeft (image_brief.image_url) én die publiek bereikbaar is,
@@ -1015,7 +1219,7 @@ async def publish_pack(pack_id: str, platform: str) -> Dict:
                           "manual": True,
                           "detail": "Instagram vereist een publieke afbeelding. " +
                                     (f"Asset lokaal: {ib.get('image_path','')}. " if ib.get("image_path") else "") +
-                                    "Zet AGENTOS_PUBLIC_HOST (of NETLIFY_TOKEN) zodat de asset " +
+                                    "Zet IMPACTOS_PUBLIC_HOST (of NETLIFY_TOKEN) zodat de asset " +
                                     "publiek wordt, of post handmatig met de gegenereerde file."}
         elif platform == "twitter":
             from . import twitter as svc

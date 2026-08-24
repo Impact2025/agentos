@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Preventieve import-guard voor de Agent OS backend.
+"""Preventieve import-guard voor de Impact OS backend.
 
 Probleem (18-08-2026): de scheduler-job `_run_facebook_content_ideas_job`
 deed `from ...shared.outcomes import log_outcome` — maar `backend/` is al het

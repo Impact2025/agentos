@@ -5,7 +5,7 @@ signalen. Kan veilig meerdere keren gedraaid worden."""
 import asyncio
 import sys
 
-sys.path.insert(0, "D:/apps/agentos")
+sys.path.insert(0, "D:/apps/impactos")
 
 from backend.domains.radar.service import RadarService
 

@@ -2,7 +2,7 @@
 Facebook-content uit echte data — geen willekeurige posts.
 
 Deze module voedt de Facebook-content voor een project met de databronnen die
-AgentOS al analyseert, in plaats van een thema uit de vault te gokken:
+ImpactOS al analyseert, in plaats van een thema uit de vault te gokken:
 
   1. GSC-topqueries      — zoekwoorden die al verkeer trekken op de site → schrijf
                           een FB-post die diezelfde vraag beantwoordt (hergebruik
@@ -24,7 +24,7 @@ en op verzoek een geschreven post-tekst via de Hermes/DeepSeek-backend.
 
 Als GSC niet is geconfigureerd voor de site, valt de bron weg (geen fake-data):
 de module rapporteert expliciet welke bronnen ontbraken. Net als de rest van
-AgentOS: stilte is de duurste leugen, dus "geen GSC" is een statusregel, geen
+ImpactOS: stilte is de duurste leugen, dus "geen GSC" is een statusregel, geen
 lege post.
 """
 import asyncio

@@ -30,7 +30,7 @@ def lookup_by_name(company_name: str, city: str = "") -> Optional[Dict]:
             r = client.get(
                 _API_URL,
                 params=params,
-                headers={"User-Agent": "AgentOS/1.0 lead-research"},
+                headers={"User-Agent": "ImpactOS/1.0 lead-research"},
             )
             if r.status_code != 200:
                 return None

@@ -1,7 +1,7 @@
 Hier is het concept in de gedeelde workspace opgesteld volgens de writer_agent workflow.
 
 Beschikbaar in:
-C:\Users\v_mun\Documents\agentos-workspace\input-concept-uitvaartongelicht.md
+C:\Users\v_mun\Documents\impactos-workspace\input-concept-uitvaartongelicht.md
 
 Inhoud: 5-fase outreachstrategie (P-C-E-A-R) voor uitvaartongelicht, opgekuist en bruikbaar als uitgangsbrief voor de writer_agent.
 

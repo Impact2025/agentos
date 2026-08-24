@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AgentOS auto-heal: voorkomt dat een goal blijvend vastloopt op
+ImpactOS auto-heal: voorkomt dat een goal blijvend vastloopt op
 "Plan niet gevonden - voer eerst create_and_plan uit."
 
 Wanneer create_and_plan (LLM-decompositie via de :8899 proxy) faalt of de
@@ -17,7 +17,7 @@ confirm staat de goal op 'ready' en verdwijnt hij uit "wacht op jou".
 Idempotent: draait veilig elke 30 min; als er niets te doen is, doet hij
 niets (geen output -> geen notificatie bij no_agent=True).
 
-Auth: AgentOS sessie-cookie via /api/auth/login met AGENTOS_PASSWORD.
+Auth: ImpactOS sessie-cookie via /api/auth/login met IMPACTOS_PASSWORD.
 """
 import json
 import os
@@ -25,13 +25,13 @@ import sqlite3
 import urllib.request
 import urllib.error
 
-# BASE wijst naar de AgentOS-repo. Default: naast dit script, maar de cron
-# draait vanuit ~/.hermes/scripts, dus override via AGENTOS_BASE of harde default.
-BASE = os.environ.get("AGENTOS_BASE") or r"D:\apps\agentos"
-DB = os.path.join(BASE, "data", "agentos.db")
+# BASE wijst naar de ImpactOS-repo. Default: naast dit script, maar de cron
+# draait vanuit ~/.hermes/scripts, dus override via IMPACTOS_BASE of harde default.
+BASE = os.environ.get("IMPACTOS_BASE") or r"D:\apps\impactos"
+DB = os.path.join(BASE, "data", "impactos.db")
 GOALS_WS = os.path.join(BASE, "projects", "_goals")
 API = "http://localhost:1250"
-PASSWORD = os.environ.get("AGENTOS_PASSWORD", "Test1234")
+PASSWORD = os.environ.get("IMPACTOS_PASSWORD", "Test1234")
 
 # Generieke fallback-planstructuur die confirm_plan verwacht:
 # {"phases":[{"title","description","tasks":[{"title","description","skill"}]}],"plan_summary":...}

@@ -3,7 +3,7 @@ Outlook / Microsoft Graph — wereldklasse e-mailbeheer.
 
 Auth: MSAL Device Code Flow (geen client secret, werkt op localhost).
 Setup in Azure portal:
-  1. App registrations → New registration → naam "Agent OS"
+  1. App registrations → New registration → naam "Impact OS"
   2. Supported account types: "Accounts in any organizational directory and personal Microsoft accounts"
   3. Redirect URI: Public client/native → https://login.microsoftonline.com/common/oauth2/nativeclient
   4. API permissions (Delegated): Mail.Read, Mail.ReadWrite, Mail.Send, User.Read,
@@ -434,7 +434,7 @@ async def _sync_sent_items(token: str, limit: int = 100) -> int:
     """Beantwoord = waargenomen in Verzonden items, niet geclaimd door onszelf.
 
     `is_replied` werd op precies één plek gezet: `send_reply`, oftewel als
-    Vincent vanuit Agent OS antwoordde. Alles wat hij gewoon in Outlook
+    Vincent vanuit Impact OS antwoordde. Alles wat hij gewoon in Outlook
     beantwoordde telde nooit mee, dus kon de achterstand alleen groeien en stond
     er "0% beantwoord (7d)" op de telefoon — een cijfer dat per constructie
     nooit iets anders kón worden. Een mail geldt als beantwoord zodra er in
@@ -932,7 +932,9 @@ async def triage_single(email_id: str) -> AsyncGenerator[dict, None]:
     messages = [{"role": "user", "content": f"Triageer deze e-mail:\n\n{content}"}]
 
     full_text = ""
-    async for event in agent_service.run_agent(messages, _TRIAGE_SYSTEM, use_tools=False):
+    async for event in agent_service.run_agent(
+        messages, _TRIAGE_SYSTEM, use_tools=False, purpose="mail-triage",
+    ):
         if event["type"] == "text":
             full_text += event["text"]
         yield event
@@ -1094,7 +1096,9 @@ async def draft_reply(email_id: str, instructions: str = "") -> AsyncGenerator[d
         return
 
     messages = _draft_messages(email, instructions)
-    async for event in agent_service.run_agent(messages, _DRAFT_SYSTEM, use_tools=False):
+    async for event in agent_service.run_agent(
+        messages, _DRAFT_SYSTEM, use_tools=False, purpose="mail-draft",
+    ):
         yield event
 
 

@@ -1,4 +1,4 @@
-// ── Agent OS — Iris Welkomstour ──────────────────────────────────────
+// ── Impact OS — Iris Welkomstour ──────────────────────────────────────
 // Staat los in de gedeelde globale scope (klassieke script-laadvolgorde,
 // zie index.html — tour.js laadt als laatste).
 //
@@ -22,8 +22,8 @@
 (function () {
   'use strict';
 
-  var STORAGE_ENABLED = 'agentos.tour.enabled';
-  var STORAGE_DONE = 'agentos.tour.done';
+  var STORAGE_ENABLED = 'impactos.tour.enabled';
+  var STORAGE_DONE = 'impactos.tour.done';
 
   var state = { active: false, i: 0, steps: [], target: null, demoProject: null };
 
@@ -75,7 +75,7 @@
   function defaultSteps() {
     return [
       {
-        title: 'Welkom bij Agent OS',
+        title: 'Welkom bij Impact OS',
         center: true,
         tool: 'Ik ben Iris, je AI-manager.',
         effect: 'Ik neem je in een korte rondleiding mee door het dashboard en de belangrijkste tools. Je kunt op elk moment stoppen of later opnieuw starten via Instellingen.',

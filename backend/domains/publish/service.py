@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import html as _html
 import io
+import json
 import logging
 import re
 import uuid
@@ -65,10 +66,25 @@ def slugify(text: str) -> str:
 
 # ── Persistence ──────────────────────────────────────────────────────────────
 
+def _normalize_publish_date(d: Optional[str]) -> Optional[str]:
+    """Een 'YYYY-MM-DD' uit de UI naar een ISO-datetime op UTC-noon.
+
+    Zo blijft de datum leesbaar voor Google (datePublished) én komt hij als
+    `created_at` in de DB. Een al-ISO-string laten we ongemoeid."""
+    if not d:
+        return None
+    d = (d or "").strip()
+    if len(d) == 10 and re.match(r"^\d{4}-\d{2}-\d{2}$", d):
+        return d + "T09:00:00+00:00"
+    return d
+
+
 def _upsert_page(site_id: str, slug: str, title: str, html_body: str,
                   image_bytes: Optional[bytes] = None,
-                  infographic_bytes: Optional[bytes] = None) -> Dict:
+                  infographic_bytes: Optional[bytes] = None,
+                  publish_date: Optional[str] = None) -> Dict:
     now = _now()
+    created_at_val = _normalize_publish_date(publish_date) or now
     image_b64 = base64.b64encode(image_bytes).decode("ascii") if image_bytes else None
     infographic_b64 = base64.b64encode(infographic_bytes).decode("ascii") if infographic_bytes else None
     with get_conn() as conn:
@@ -92,7 +108,7 @@ def _upsert_page(site_id: str, slug: str, title: str, html_body: str,
             conn.execute(
                 "INSERT INTO published_pages (id, site_id, slug, title, html, image_b64, infographic_b64, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (pid, site_id, slug, title, html_body, image_b64 or "", infographic_b64 or "", now, now),
+                (pid, site_id, slug, title, html_body, image_b64 or "", infographic_bytes or "", created_at_val, now),
             )
     return {"id": pid, "slug": slug, "title": title}
 
@@ -110,11 +126,60 @@ def list_pages(site_id: str) -> List[Dict]:
 def _all_pages_full(site_id: str) -> List[Dict]:
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT slug, title, html, image_b64, infographic_b64, updated_at FROM published_pages "
-            "WHERE site_id = ? ORDER BY updated_at DESC",
+            "SELECT slug, title, html, image_b64, infographic_b64, updated_at, created_at "
+            "FROM published_pages "
+            "WHERE site_id = ? ORDER BY created_at DESC",
             (site_id,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def _inject_dates_into_json_ld(html_body: str, date_published: str, date_modified: str) -> str:
+    """Zet datePublished / dateModified op de (eventueel teruggedateerde)
+    publicatiedatum in de Article-JSON-LD.
+
+    Google leest deze twee velden als de échte publicatie- en bijwerkdatum.
+    Bij een inhaalslag (artikel vandaag geschreven maar gepubliceerd op een
+    datum in het verleden) horen beide op die gekozen datum te staan — eerlijk
+    én consistent met created_at/updated_at in de DB en de index/sitemap.
+
+    Werkt op het bestaande JSON-LD-blok: staat datePublished er nog niet in,
+    dan voegen we hem toe onder de Article-entiteit. Bestond hij al (bijv. uit
+    een eerdere handmatige edit), dan overschrijven we hem. Nooit een crash:
+    als er geen JSON-LD is, geven we de body ongemoeid terug."""
+    blocks = re.findall(
+        r'<script type="application/ld\+json">(.*?)</script>',
+        html_body, re.IGNORECASE | re.DOTALL,
+    )
+    if not blocks:
+        return html_body
+    for block in blocks:
+        try:
+            data = json.loads(block)
+        except Exception:
+            continue
+        articles = []
+        if isinstance(data, dict) and data.get("@graph"):
+            articles = [n for n in data["@graph"] if n.get("@type") == "Article"]
+        elif isinstance(data, dict) and data.get("@type") == "Article":
+            articles = [data]
+        if not articles:
+            continue
+        changed = False
+        for art in articles:
+            if art.get("datePublished") != date_published:
+                art["datePublished"] = date_published
+                changed = True
+            if art.get("dateModified") != date_modified:
+                art["dateModified"] = date_modified
+                changed = True
+        if not changed:
+            continue
+        new_block = json.dumps(data, ensure_ascii=False, indent=2)
+        html_body = html_body.replace(
+            block, new_block, 1,
+        )
+    return html_body
 
 
 def _set_page_url(site_id: str, slug: str, url: str) -> None:
@@ -222,6 +287,15 @@ def build_site_files(site_id: str, site_name: str, base_url: str = "",
             r'<script type="application/ld\+json">.*?</script>',
             raw_html, re.IGNORECASE | re.DOTALL,
         )
+        # Inhaalslag: als de pagina op een teruggedateerde publicatiedatum
+        # staat, zetten we datePublished/dateModified in de Article-JSON-LD
+        # op die datum. We werken op de originele blokken vóór de strip, zodat
+        # zowel de <head>-kopie als de body-strip de bijgewerkte datums dragen.
+        created = (p.get("created_at") or "")[:10]
+        if created:
+            json_ld_blocks = [
+                _inject_dates_into_json_ld(b, created, created) for b in json_ld_blocks
+            ]
         body_html = re.sub(
             r'<script type="application/ld\+json">.*?</script>',
             "", raw_html, flags=re.IGNORECASE | re.DOTALL,
@@ -290,6 +364,7 @@ async def _deploy_zip(site_api_id: str, token: str, zip_bytes: bytes) -> Dict:
 async def publish_article(
     site_id: str, title: str, html_body: str, slug: Optional[str] = None,
     image_bytes: Optional[bytes] = None, infographic_bytes: Optional[bytes] = None,
+    publish_date: Optional[str] = None,
 ) -> Dict:
     """Sla het artikel op, herbouw de site en deploy naar Netlify. Retourneert live-URL."""
     site = sites_service.get_site(site_id)  # volledige rij incl. token
@@ -320,7 +395,8 @@ async def publish_article(
     if infographic_bytes:
         html_body = embed_infographic_html(html_body, slug, title.strip())
     _upsert_page(site_id, slug, title.strip(), html_body,
-                 image_bytes=image_bytes, infographic_bytes=infographic_bytes)
+                 image_bytes=image_bytes, infographic_bytes=infographic_bytes,
+                 publish_date=publish_date)
 
     # Backlink-ARM: bestaande pagina's in hetzelfde cluster krijgen een link
     # naar dit nieuwe artikel (topical authority). Loopt na de upsert, vóór

@@ -38,6 +38,7 @@ class SiteUpdate(BaseModel):
     profile: Optional[str] = None
     ctas: Optional[str] = None                # JSON-lijst als string
     content_batch_size: Optional[int] = None
+    content_schedule: Optional[str] = None     # JSON-lijst [{"day":"tue","hour":8,"minute":0},...]
 
 
 @router.get("")

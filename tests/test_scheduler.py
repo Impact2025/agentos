@@ -91,8 +91,10 @@ def test_boot_na_iris_haalt_gsc_en_briefing_in_op_volgorde():
     # bevindingen in het oordeel van vandaag meewegen. (Er kunnen jobs van
     # eerdere dagen vóór staan — zie de sectie over `gap_cost` hieronder — dus
     # we toetsen de kéten, niet de hele lijst.)
-    vandaag = [spec.id for fire, spec in pending if fire.date() == BOOT.date()]
-    assert vandaag == ["gsc_sync", "waarheidsaudit", "iris_briefing"]
+    keten = ("gsc_sync", "waarheidsaudit", "iris_briefing")
+    vandaag = [spec.id for fire, spec in pending
+               if fire.date() == BOOT.date() and spec.id in keten]
+    assert vandaag == list(keten)
     momenten = [fire for fire, _ in pending]
     assert momenten == sorted(momenten)
 
@@ -249,6 +251,7 @@ def test_jobs_met_blijvend_neveneffect_halen_nooit_in():
     # Maandelijkse doel-jobs maken goals aan; die mag je niet met terugwerkende
     # kracht afvuren. Interval-jobs komen uit zichzelf snel genoeg langs.
     nooit = {"ictusgo_monthly_content_goal", "weareimpact_monthly_content_goal",
+             "bewaardvoorjou_monthly_content_goal",
              "radar_sky_scan", "content_improver", "goal_autoheal"}
     assert {s.id for s in S._SPECS if s.catch_up} & nooit == set()
 

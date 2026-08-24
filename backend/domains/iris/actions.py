@@ -29,6 +29,7 @@ from typing import Any, Optional
 
 from ...shared.database import get_conn
 from ...shared.outcomes import log_outcome
+from . import pillar_guard
 
 logger = logging.getLogger(__name__)
 
@@ -84,11 +85,13 @@ def _resolve_site(ref: str) -> Optional[dict]:
 
 # Boven deze stapel is schrijven geen productie meer maar verstopping. Bewust
 # per site: één project met een volle Wachtrij mag de contentmotor van een
-# ander project niet stilzetten.
-_QUEUE_JAM = 10
+# ander project niet stilzetten. Publiek (geen underscore) omdat
+# agentctl/suggest.py:_execute_content dezelfde grens hoort te gebruiken — zie
+# de toelichting daar.
+QUEUE_JAM = 10
 
 
-def _pending_review_count(site_id: str) -> int:
+def pending_review_count(site_id: str) -> int:
     with get_conn() as conn:
         return conn.execute(
             "SELECT COUNT(*) FROM content_jobs WHERE site_id = ? AND status = 'pending_review'",
@@ -103,7 +106,10 @@ async def content_run(site_ref: str, count: Any, reason: str) -> Optional[str]:
         logger.warning("[iris] content_run: site '%s' niet gevonden", site_ref)
         return None
     n = _clamp(count, 1, _autonomy_max(site["name"], "content_run_max", _CONTENT_RUN_MAX), 1)
-    if _already_done_today(site["name"], "Contentmotor gestart"):
+    # pillar_guard kijkt ook naar Agent Control (agentctl_deploys) — zonder die
+    # cross-check kan '_execute_content' vlak na deze run alsnog een tweede,
+    # volledige Gauntlet-run voor dezelfde site starten (zie pillar_guard.py).
+    if pillar_guard.pillar_handled_today(site["name"], "content"):
         logger.info("[iris] content_run voor %s vandaag al gedraaid — overgeslagen", site["name"])
         # Benigne skip, geen fout: een kale None zou de fix-knop onterecht op
         # 'Mislukt' (HTTP 400) zetten (zie seo_refresh). Meld het als uitkomst.
@@ -114,8 +120,8 @@ async def content_run(site_ref: str, count: Any, reason: str) -> Optional[str]:
     # de review-berg waar de opbrengst vandaan moet komen alleen hoger. Een
     # actie die niets kan opleveren hoort niet te draaien — ook niet als de
     # cijfers "te weinig content" zeggen.
-    wachtrij = _pending_review_count(site["id"])
-    if wachtrij >= _QUEUE_JAM:
+    wachtrij = pending_review_count(site["id"])
+    if wachtrij >= QUEUE_JAM:
         logger.info("[iris] content_run voor %s overgeslagen — %d concepten in de Wachtrij",
                     site["name"], wachtrij)
         return (f"Contentmotor voor {site['name']} NIET gestart: er wachten al {wachtrij} "
@@ -140,7 +146,7 @@ async def content_run(site_ref: str, count: Any, reason: str) -> Optional[str]:
         log_outcome(
             site["name"], ACTION,
             f"Contentmotor gestart door Iris maar gefaald: {str(e)[:200]}",
-            next_step="Bekijk logs/agentos.log en draai de batch handmatig (Wachtrij → run-now).",
+            next_step="Bekijk logs/impactos.log en draai de batch handmatig (Wachtrij → run-now).",
             status="error",
         )
         return None
@@ -280,7 +286,7 @@ async def seo_refresh(site_ref: str, count: Any, reason: str) -> Optional[str]:
     if not site:
         logger.warning("[iris] seo_refresh: site '%s' niet gevonden", site_ref)
         return None
-    if _already_done_today(site["name"], "SEO-refresh gestart"):
+    if pillar_guard.pillar_handled_today(site["name"], "seo"):
         logger.info("[iris] seo_refresh voor %s vandaag al gedraaid — overgeslagen", site["name"])
         # Benigne skip, geen fout (zie de SPA-shell-tak verderop).
         return (f"SEO-refresh voor {site['name']} draaide vandaag al — geen tweede "

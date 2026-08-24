@@ -44,7 +44,38 @@ from ...shared.config import FACEBOOK_PAGE_ID, FACEBOOK_PAGE_TOKEN
 # Eén tokenresolutie voor heel Facebook — shared/facebook.py is canoniek,
 # zodat de simpele post-only flow en deze deluxe-agent nooit uit elkaar
 # kunnen lopen over welk token bij welke site hoort.
-from ...shared.facebook import _get_site_data, is_configured, GRAPH_API  # noqa: F401
+from ...shared.facebook import _get_site_data, is_configured, GRAPH_API, check_age_targeting  # noqa: F401
+
+# ── Page-token resolutie (wereldklasse-fix 18 aug 2026) ───────────────────────
+# Graph API eist voor elke post (ook published=True) een PAGE-access-token, niet
+# het user-token. Een user-token geeft op sommige pages een #200 "posting to a
+# group" / "post as the page itself" fout. We halen het page-specifieke token op
+# uit /me/accounts en cachen het per (page_id) voor de levensduur van het proces.
+_PAGE_TOKEN_CACHE: Dict[str, str] = {}
+
+
+async def _resolve_page_token(page_id: str, user_token: str) -> Optional[str]:
+    """Geef het page-access-token voor `page_id` via /me/accounts (gecachet)."""
+    if page_id in _PAGE_TOKEN_CACHE:
+        return _PAGE_TOKEN_CACHE[page_id]
+    if not user_token:
+        return None
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{GRAPH_API}/me/accounts",
+                params={"fields": "id,access_token", "access_token": user_token, "limit": 200},
+                timeout=20,
+            )
+        if r.status_code != 200:
+            return None
+        for p in r.json().get("data", []):
+            if p.get("id") == page_id and p.get("access_token"):
+                _PAGE_TOKEN_CACHE[page_id] = p["access_token"]
+                return p["access_token"]
+    except Exception:
+        return None
+    return None
 
 logger = logging.getLogger(__name__)
 
@@ -108,11 +139,41 @@ async def _g(
     return {"ok": False, "status": resp.status_code, "json": body, "error": err}
 
 
-def _token_for(site_name: Optional[str]) -> tuple:
+def _token_for(site_name: Optional[str] = None) -> tuple:
     page_id, token = _get_site_data(site_name)
     if not page_id or not token:
         raise ValueError(f"Geen Facebook page-id/token voor {site_name or 'globale config'}")
+    # Wereldklasse-fix 18 aug 2026: Graph API eist een PAGE-access-token voor posts.
+    # Het user-token (token hierboven) werkt bij lezen, maar geeft #200 bij posten.
+    # Resolveer het page-specifieke token uit /me/accounts (cache per page_id).
+    page_tok = _resolve_page_token_sync(page_id, token)
+    if page_tok:
+        return page_id, page_tok
     return page_id, token
+
+
+def _resolve_page_token_sync(page_id: str, user_token: str) -> Optional[str]:
+    """Sync variant van _resolve_page_token voor gebruik in _token_for."""
+    if page_id in _PAGE_TOKEN_CACHE:
+        return _PAGE_TOKEN_CACHE[page_id]
+    if not user_token:
+        return None
+    try:
+        with httpx.Client() as client:
+            r = client.get(
+                f"{GRAPH_API}/me/accounts",
+                params={"fields": "id,access_token", "access_token": user_token, "limit": 200},
+                timeout=20,
+            )
+        if r.status_code != 200:
+            return None
+        for p in r.json().get("data", []):
+            if p.get("id") == page_id and p.get("access_token"):
+                _PAGE_TOKEN_CACHE[page_id] = p["access_token"]
+                return p["access_token"]
+    except Exception:
+        return None
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -209,6 +270,10 @@ async def create_post(
     zoekwoord + artikel op de site, zodat fb_seo_impact.py de GSC-positie van de
     gelinkte pagina vóór/après de post kan meten. Worden alleen gelogd bij succes.
     """
+    guard_err = check_age_targeting(site_name, text)
+    if guard_err:
+        logger.error("❌ FB post (Deluxe) geweigerd (%s): %s", site_name, guard_err)
+        return {"success": False, "error": guard_err}
     page_id, token = _token_for(site_name)
     async with httpx.AsyncClient() as client:
         if image_path:

@@ -143,7 +143,7 @@ def trend_sync(body: TrendSyncRequest):
 @router.get("/indexing-status")
 async def indexing_status():
     """Per site: staat het IndexNow-keybestand live op de site-root? Vooral
-    relevant voor extern gehoste sites, waar Agent OS het niet zelf deployt."""
+    relevant voor extern gehoste sites, waar Impact OS het niet zelf deployt."""
     from ..publish import indexing as indexing_service
     out = []
     for s in sites_service.list_sites():

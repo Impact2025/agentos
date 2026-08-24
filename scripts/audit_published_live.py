@@ -54,7 +54,7 @@ async def _bereikbaar(url: str) -> tuple[bool, str]:
 
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-            await client.get(url, headers={"User-Agent": "AgentOS-publish-check"})
+            await client.get(url, headers={"User-Agent": "ImpactOS-publish-check"})
         return True, ""
     except Exception as e:
         return False, describe_exception(e)

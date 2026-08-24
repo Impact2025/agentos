@@ -1,7 +1,7 @@
 """
 Dashboard Observer — proactieve zelfsturende goals.
 
-Dit is de ontbrekende laag in Agent OS: een agent (de "observer") die het
+Dit is de ontbrekende laag in Impact OS: een agent (de "observer") die het
 dashboard / de Control Room *uitleest*, zelf de conclusie trekt
 "project X heeft geen lopend doel terwijl er wel werk ligt", en dan
 *eigenhandig* een doel aanmaakt — achter de menselijke publiceer-gate.

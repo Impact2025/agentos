@@ -18,7 +18,7 @@ PACKS = [
 ]
 
 async def main():
-    c = sqlite3.connect("data/agentos.db")
+    c = sqlite3.connect("data/impactos.db")
     async with httpx.AsyncClient() as client:
         for pack_id, age, brand in PACKS:
             p = sc.get_pack(pack_id)

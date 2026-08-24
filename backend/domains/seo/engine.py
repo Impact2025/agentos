@@ -185,7 +185,7 @@ def _claude_complete(system: str, prompt: str, max_tokens: int = 2000) -> str:
                 headers={
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "HTTP-Referer": "http://localhost:1250",
-                    "X-Title": "Agent OS Demand Engine",
+                    "X-Title": "Impact OS Demand Engine",
                 },
                 json={
                     "model": CLAUDE_VIA_OPENROUTER,
@@ -429,7 +429,15 @@ def seed_baseline_opportunities(site: Dict, count: int = 8) -> List[Dict]:
     name = (site.get("name") or "").strip()
     if not name:
         return []
-    subject = name.split()[0].lower()  # eerste woord als onderwerp (bijv. "bewaardvoorjou")
+    # De volledige naam, niet het eerste woord: voor een site met een
+    # meerwoordige naam ("Bewaard voor Jou") gaf `name.split()[0]` het
+    # onderwerp "bewaard" — een los Nederlands werkwoord, geen niche — en
+    # produceerde daarmee kansen als "wat is bewaard precies" en "waar vind
+    # je bewaard in Nederland" (13 aug 2026). Diezelfde templates lezen wél
+    # als bruikbare gebrandeerde vraag-intenties zodra het onderwerp de hele
+    # merknaam is: "wat is Bewaard voor Jou precies", "ervaringen met Bewaard
+    # voor Jou van echte gebruikers".
+    subject = name
 
     with get_conn() as conn:
         existing = {

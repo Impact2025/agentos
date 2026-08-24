@@ -26,9 +26,29 @@ def _now() -> str:
 # herstart NIET overleven. Als de DB bij opstart nog 'running' zegt maar er is
 # geen levende taak, markeren we ze als 'stopped' (geen dataverlies, alleen
 # eerlijke status). Goals hebben hun eigen autoheal; die laten we met rust.
-def recover_orphans() -> Dict[str, int]:
-    """Bij opstart: 'running' runs/loops zonder levende taak -> 'stopped'."""
-    recovered = {"gauntlet": 0, "loops": 0}
+# Taken die langer dan deze grens op 'running' staan, zijn vrijwel zeker
+# wees geworden: de conveyor draait ze niet meer (crash/herstart, of de taak
+# bleef hangen in een except die nooit terugschreef). Na deze leeftijd is
+# terugzetten naar 'todo' veilig — de conveyor pakt ze niet meer als 'running',
+# en een echte herstart zou ze toch opnieuw oppakken.
+STALE_RUNNING_HOURS = 6
+
+
+def recover_orphans(
+    stale_running_hours: int = STALE_RUNNING_HOURS,
+) -> Dict[str, int]:
+    """Bij opstart: 'running' runs/loops/tasks zonder levende taak -> 'stopped'/'todo'.
+
+    De gauntlet/loops-branches bestonden al; de TASKS-branch ontbrak — daardoor
+    bleven 'running' conveyor-taken eeuwig hangen (26 stuks, oudste van
+    2026-07-20). De conveyor pakt namelijk alléén 'ready'-taken op, dus een taak
+    die op 'running' vastzit wordt nooit meer aangeraakt en blokkeert zijn hele
+    keten (de opvolger wordt nooit gepromoveerd). Terug naar 'todo' (niet
+    'ready') zodat revive_stalled_chains() de foutklasse/classificatie eerst
+    beoordeelt — net zoals een gecrashte taak. Zonder deze branch was er géén
+    weg terug uit 'running' behalve de handmatige /api/tasks/cleanup-stale.
+    """
+    recovered = {"gauntlet": 0, "loops": 0, "tasks": 0}
     with get_conn() as conn:
         # Gauntlet-runs: 'running' maar zonder echte eindtijd (= leeg of NULL)
         # zijn wezen door de mand gevallen bij een herstart.
@@ -46,10 +66,26 @@ def recover_orphans() -> Dict[str, int]:
             (_now(),),
         )
         recovered["loops"] = cur.rowcount
-    if recovered["gauntlet"] or recovered["loops"]:
+        # Conveyor-taken: 'running' langer dan de stale-grens = wees. Terug naar
+        # 'todo' mét leesbare note; revive_stalled_chains() beslist daarna of 't
+        # een echte retry (quota/transient) of een mens-alleen fout is.
+        cur = conn.execute(
+            "UPDATE tasks SET status='todo', error=?, updated_at=? "
+            "WHERE status='running' "
+            "AND (started_at IS NULL OR started_at < datetime('now', ?))",
+            (
+                f"Stale 'running' gereset bij herstart (>{stale_running_hours}h) — "
+                "conveyor kwijt; revive pikt 'm weer op of zet 'm voor een mens klaar.",
+                _now(),
+                f"-{stale_running_hours} hours",
+            ),
+        )
+        recovered["tasks"] = cur.rowcount
+    if recovered["gauntlet"] or recovered["loops"] or recovered["tasks"]:
         logger.warning(
-            "AgentCtl orphan-recovery: %d gauntlet-run(s), %d loop(s) als stopped gemarkeerd",
-            recovered["gauntlet"], recovered["loops"],
+            "AgentCtl orphan-recovery: %d gauntlet-run(s), %d loop(s), %d taak/taak(en) "
+            "als stopped/todo gemarkeerd",
+            recovered["gauntlet"], recovered["loops"], recovered["tasks"],
         )
     return recovered
 

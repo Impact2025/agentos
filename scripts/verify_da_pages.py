@@ -26,7 +26,7 @@ async def main():
             print(f"  !! exception: {e}"); reach[site]=False
 
     print("\n=== 2. Klaarstaande DA-packs (campagne da-doelgroepen-2026) ===")
-    c = sqlite3.connect("data/agentos.db"); c.row_factory = sqlite3.Row
+    c = sqlite3.connect("data/impactos.db"); c.row_factory = sqlite3.Row
     for r in c.execute(
         "SELECT id, project, campaign_post, status, scheduled_for FROM social_posts "
         "WHERE campaign='da-doelgroepen-2026' ORDER BY project, campaign_post"):

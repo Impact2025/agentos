@@ -4,8 +4,8 @@ aeo-attack endpoint + conveyor quality) zonder de live server te raken.
 """
 import os, tempfile, uuid, json
 
-_tmp = os.path.join(tempfile.gettempdir(), f"agentos-smoke-{uuid.uuid4().hex[:8]}.db")
-os.environ["AGENTOS_DB_PATH"] = _tmp
+_tmp = os.path.join(tempfile.gettempdir(), f"impactos-smoke-{uuid.uuid4().hex[:8]}.db")
+os.environ["IMPACTOS_DB_PATH"] = _tmp
 os.environ["AEO_AUTO_ATTACK"] = "1"
 os.environ["AEO_AUTO_MIN_SCORE"] = "75"
 os.environ["AEO_AUTO_MAX_PER_SCAN"] = "3"

@@ -65,9 +65,26 @@ def _content_pillar(conn, site_id: str, batch_size: int) -> Dict[str, Any]:
     }
 
 
+def _weak_page_count(conn, site_id: str) -> int:
+    """Aantal pagina's op een onvindbare positie (gem. positie > 20) in de
+    nieuwste GSC-pagina-snapshot. Voorkomt dat een paar toppers een zee van
+    slecht geplaatste pagina's verbloemt in de SEO-pijler."""
+    day = conn.execute(
+        "SELECT MAX(date) FROM gsc_history WHERE site_id = ? AND scope = 'page'",
+        (site_id,),
+    ).fetchone()[0]
+    if not day:
+        return 0
+    return conn.execute(
+        "SELECT COUNT(*) FROM gsc_history "
+        "WHERE site_id = ? AND scope = 'page' AND date = ? AND position > 20",
+        (site_id, day),
+    ).fetchone()[0]
+
+
 def _seo_pillar(conn, site_id: str, gsc_configured: bool) -> Dict[str, Any]:
     # Meetbron: de nieuwste per-pagina GSC-snapshot uit gsc_history. Sites die
-    # buiten Agent OS om gehost worden krijgen nooit rijen in published_pages
+    # buiten Impact OS om gehost worden krijgen nooit rijen in published_pages
     # (dat vullen alleen Netlify-publicaties), dus wie dáárop meet ziet overal
     # "0 pagina's" terwijl GSC gewoon clicks rapporteert — en dan is 35 van de
     # 100 punten dood gewicht. published_pages blijft de terugval voor sites
@@ -96,9 +113,12 @@ def _seo_pillar(conn, site_id: str, gsc_configured: bool) -> Dict[str, Any]:
     avg_position = round(row["avg_position"], 1) if row["avg_position"] else None
 
     if not gsc_configured:
-        # Zonder meetdata kan SEO nooit 'wereldklasse' heten — max 10/35.
-        score = _clamp(min(pages, 10), 0, 10)
-        note = "geen GSC-koppeling — vindbaarheid is niet meetbaar"
+        # Zonder meetdata kan SEO nooit 'wereldklasse' heten. We geven géén
+        # nep-score: de pijler is 0 en de melding maakt expliciet dat dit een
+        # hiaat is, geen prestatie. (Vóór 12 aug 2026 kreeg zo'n site
+        # stilzwijgend max 10/35 — waardoor 'niet gemeten' eruitzag als
+        # 'redelijk vindbaar'.)
+        score, note = 0.0, "geen GSC-koppeling — vindbaarheid is niet meetbaar"
     elif pages == 0:
         score, note = 0.0, "nog geen gepubliceerde pagina's"
     else:
@@ -106,9 +126,18 @@ def _seo_pillar(conn, site_id: str, gsc_configured: bool) -> Dict[str, Any]:
         score = pages_with_clicks / pages * 15
         # 10 punten: absolute clicks (100+/30d = vol).
         score += _clamp(clicks / 100 * 10, 0, 10)
-        # 10 punten: gemiddelde positie (pos 1 = 10, pos 30+ = 0).
+        # 10 punten: gemiddelde positie, maar mét een 'zwakke-pagina'-correctie.
+        # Een handvol toppagina's mag niet een zee van pagina's op pos >20
+        # verbloemen: als een groot deel van de pagina's slecht staat, trekt
+        # dat de positie-subscore eerlijk omlaag (zodat TeambuildingMetImpact
+        # niet '6.6 groen' scoort terwijl 10/16 pagina's op pos >20 staan).
+        weak = _weak_page_count(conn, site_id)
         if avg_position:
-            score += _clamp((30 - avg_position) / 29 * 10, 0, 10)
+            pos_score = _clamp((30 - avg_position) / 29 * 10, 0, 10)
+            if pages:
+                weak_share = weak / pages
+                pos_score *= (1 - 0.5 * weak_share)  # max -50% bij 100% zwak
+            score += pos_score
         note = ""
         score = _clamp(score, 0, 35)
 
@@ -141,7 +170,19 @@ def _seo_pillar(conn, site_id: str, gsc_configured: bool) -> Dict[str, Any]:
 
 
 def _execution_pillar(conn, project_names: List[str]) -> Dict[str, Any]:
+    """Doelen-pijler: hoeveel werk komt daadwerkelijk rond.
+
+    Belangrijke correctie (2026-08-12): de goals-tabel kent geen 'failed'-
+    status — alleen completed / partial / paused. De oude code deed
+    `finished = completed + failed`, maar `failed` is altijd 0, dus
+    `finished == completed` en `completed/finished == 100%` zodra er ook maar
+    één doel 'completed' is. Gevolg: de pijler was binair (20 of 5) en
+    'werk loopt maar komt niet af' (partial) was onzichtbaar. Nu wegen we op
+    alle actieve statussen en straffen we stilstand (>30d niets geüpdatet).
+    """
+    from datetime import datetime as _dt
     ph = ",".join("?" for _ in project_names) or "''"
+    # Actuele venster (laatste 30d) — voor de 'recent afgerond'-signaal.
     rows = conn.execute(
         f"SELECT status, COUNT(*) AS n FROM goals "
         f"WHERE lower(project) IN ({ph}) AND updated_at > datetime('now', '-30 days') "
@@ -152,18 +193,48 @@ def _execution_pillar(conn, project_names: List[str]) -> Dict[str, Any]:
     completed = by_status.get("completed", 0)
     failed = by_status.get("failed", 0)
     running = by_status.get("running", 0)
-    finished = completed + failed
-    if finished == 0:
-        # Geen afgeronde doelen: half krediet als er tenminste iets loopt.
-        score = 10.0 if running else 5.0
+    partial = by_status.get("partial", 0)
+
+    # Volledige teller over alle tijden — een doel dat jaren geleden klaar is
+    # mag niet eeuwig een 20 opleveren als er nu niets meer gebeurt.
+    all_rows = conn.execute(
+        f"SELECT status, COUNT(*) AS n, MAX(updated_at) AS last_up "
+        f"FROM goals WHERE lower(project) IN ({ph}) GROUP BY status",
+        [p.lower() for p in project_names],
+    ).fetchall()
+    all_by = {r["status"]: r["n"] for r in all_rows}
+    last_up = max([r["last_up"] for r in all_rows if r["last_up"]] or [None])
+
+    active_total = (all_by.get("completed", 0) + all_by.get("partial", 0)
+                    + all_by.get("paused", 0) + all_by.get("running", 0))
+    if active_total == 0:
+        # Écht geen doelen: geen halve punten, dit is een leeg project.
+        score = 0.0
     else:
-        score = _clamp(completed / finished * 20, 0, 20)
+        # Afgerond ten opzichte van alles wat ooit actief was (incl. partial:
+        # werk dat begonnen is telt mee, maar voltooiing telt zwaarder).
+        base = (all_by.get("completed", 0) / active_total) * 20
+        # Stilstand-straf: het meest recente doel >30d geleden geüpdatet =
+        # de motor draait niet. Lineair weg vanaf 30 dagen tot 0 op 60 dagen.
+        if last_up:
+            try:
+                lu = _dt.strptime(last_up[:19], "%Y-%m-%d %H:%M:%S")
+                age = (_dt.now() - lu).days
+                if age > 30:
+                    penalty = _clamp((age - 30) / 30, 0, 1)  # 0 op 30d → 1 op 60d
+                    base *= (1 - penalty)
+            except Exception:
+                pass
+        score = _clamp(base, 0, 20)
     return {
         "score": round(score, 1),
         "completed_30d": completed,
         "failed_30d": failed,
+        "partial_30d": partial,
         "running": running,
         "by_status": by_status,
+        "active_total": active_total,
+        "last_updated": last_up,
     }
 
 
@@ -237,6 +308,51 @@ def _error_resolved(conn, row: Dict[str, Any]) -> bool:
         # stilstand-kaart die het wél goed vertelt.
         return bool(rij["last_ok_at"]) or not rij["last_run_at"]
 
+    # 'gauntlet_zonder_project' — de auto-queue-route kon een run niet aan een
+    # site koppelen (oude runs vóór 19 aug 2026 droegen de projectnaam niet in
+    # de vereiste "project 'X'"-vorm in de benchmark). Maar dezelfde run werd
+    # wél via de Orchestrator-route gepubliceerd naar een bestaande content_job
+    # (die haalt het project uit de objective). De kaart is dus een
+    # false-positive zodra de genoemde run een published_job_id heeft dat naar
+    # een bestaande content_jobs-rij wijst — het werk is niet weg, het stond
+    # alleen in een andere queue. Anders blijft de kaart eeuwig staan terwijl
+    # de content gewoon in de Wachtrij ligt.
+    if action == "gauntlet_zonder_project":
+        m_run = _re.search(r"Gauntlet-run\s+([^\s]+)\s+haalde", detail)
+        if m_run:
+            run_id = m_run.group(1)
+            r = conn.execute(
+                "SELECT published_job_id FROM gauntlet_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+            if r and r["published_job_id"]:
+                job = conn.execute(
+                    "SELECT 1 FROM content_jobs WHERE id = ?",
+                    (r["published_job_id"],),
+                ).fetchone()
+                if job:
+                    return True
+        return False
+
+    # 'remote_decision_failed' door een geweigerde dubbele calendar_add — de
+    # bridge-guard blokkeerde terecht een tweede voorstel voor hetzelfde moment
+    # (het origineel wachtte nog op goedkeuring). De kaart is opgelost zodra
+    # het geciteerde proposal niet meer in 'pending_review' staat: Vincent heeft
+    # het inmiddels geboekt of afgewezen, dus de "dubbele boeking" kan niet meer
+    # gebeuren. Anders blijft een achterhaalde melding over een al genomen
+    # beslissing op het scherm staan.
+    if action == "remote_decision_failed" and "bestaat al" in detail:
+        m_prop = _re.search(r"#(\d+)\s+'([^']+)'", detail)
+        if m_prop:
+            prop_id = m_prop.group(1)
+            p = conn.execute(
+                "SELECT status FROM calendar_proposals WHERE id = ?",
+                (prop_id,),
+            ).fetchone()
+            if p and p["status"] != "pending_review":
+                return True
+        return False
+
     m = _re.search(r"'([^']{8,})'", detail)
     if not m:
         return False
@@ -304,6 +420,37 @@ def _trend_block(site_id: str) -> Optional[Dict[str, Any]]:
     }
 
 
+def _geo_pillar(site_id: str) -> Dict[str, Any]:
+    """Generative Engine Optimization-pijler voor Iris' briefing.
+
+    Leest de laatste GEO-scan (gedraaid via /api/geo/scan/{site_id}). Geeft een
+    compact blok terug met score + de 5 sub-pijlers, plus een 0-gauge als er nog
+    niet gescand is (zodat Iris weet dat het een hiaat is, geen prestatie).
+    """
+    try:
+        from ..geo import service as geo_service
+        scan = geo_service.get_latest_scan(site_id)
+    except Exception:
+        return {"score": None, "scanned": False, "pillars": {}, "recommendations": []}
+    if not scan:
+        return {"score": None, "scanned": False, "pillars": {}, "recommendations": []}
+    try:
+        pillars = json.loads(scan.get("pillars") or "{}")
+    except Exception:
+        pillars = {}
+    try:
+        recs = json.loads(scan.get("recommendations") or "[]")
+    except Exception:
+        recs = []
+    return {
+        "score": scan.get("score"),
+        "scanned": True,
+        "scanned_at": scan.get("scanned_at"),
+        "pillars": pillars,
+        "recommendations": recs,
+    }
+
+
 def project_scores() -> List[Dict[str, Any]]:
     """Rapportcijfer per project (site), opgebouwd uit de vier pijlers."""
     out: List[Dict[str, Any]] = []
@@ -315,6 +462,11 @@ def project_scores() -> List[Dict[str, Any]]:
             execution = _execution_pillar(conn, names)
             hygiene = _hygiene_pillar(conn, names, content["needs_work"])
             total = round(content["score"] + seo["score"] + execution["score"] + hygiene["score"], 1)
+            # GEO-pijler (Generative Engine Optimization) — niet meegeteld in de
+            # bestaande 0-100 totaalscore (die blijft content/seo/uitvoering/
+            # hygiene), maar WEL beschikbaar als 5e inzicht voor Iris' briefing
+            # en de GEO-tab. Voorkomt regressie in bestaande rapportcijfers.
+            geo = _geo_pillar(site["id"])
             out.append({
                 "project": site["name"],
                 "site_id": site["id"],
@@ -326,6 +478,7 @@ def project_scores() -> List[Dict[str, Any]]:
                     "seo": seo,
                     "uitvoering": execution,
                     "hygiene": hygiene,
+                    "geo": geo,
                 },
             })
     # Trend-delta's per site apart ophalen (eigen read-connecties, buiten de
@@ -633,6 +786,31 @@ def bottlenecks(snap: Dict[str, Any]) -> List[Dict[str, Any]]:
         })
         prio += 1
 
+    # 4b. Vastgelopen doelen: alle taken zijn al terminaal (mislukt of deels
+    # voltooid), maar niemand heeft op "Oplossen" geklikt. Dit blijft bewust
+    # mensenwerk — een AI-retry kost LLM-budget en herstart taken die eerder al
+    # faalden, dus geen `suggestion` (geen zelfstandige knop, zoals bij
+    # `scheduler` hierboven). Zonder deze regel zag Iris alleen een laag
+    # uitvoeringscijfer en kon ze "geen doelen" niet onderscheiden van "doelen
+    # die vastzitten en wachten op de Oplossen-knop in het Actiecentrum".
+    def _n(p):
+        u = p["pillars"].get("uitvoering") or {}
+        return u.get("failed_30d", 0) + u.get("partial_30d", 0)
+    stalled = [p for p in projects if _n(p) > 0]
+    if stalled:
+        stalled.sort(key=_n, reverse=True)
+        totaal = sum(_n(p) for p in stalled)
+        namen = ", ".join(f"{p['project']} ({_n(p)})" for p in stalled[:3])
+        out.append({
+            "prio": prio, "issue": "doelen_vastgelopen",
+            "actie": f"Los {totaal} vastgelopen doel(en) op — {namen}",
+            "waarom": ("mislukt of deels voltooid in de laatste 30 dagen; dit werk "
+                       "komt niet vanzelf verder. De Oplossen-knop in het "
+                       "Actiecentrum herstart ze met AI — dat kost LLM-budget, dus "
+                       "geen automatische actie van mij"),
+        })
+        prio += 1
+
     # 5. Zwakste échte project: pas als de systemische knelpunten benoemd zijn.
     if projects:
         weakest = projects[0]
@@ -653,6 +831,37 @@ def bottlenecks(snap: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "priority": prio, "payload": {"aantal": 1},
             }
         out.append(item)
+
+    # 5b. GEO-bottleneck: projecten met een lage AI-zichtbaarheid (GEO-score)
+    # krijgen de GEO Specialist-agent voorgesteld. Dit is de 5e inzicht-pijler
+    # naast content/seo/uitvoering/hygiene — de agent die de 5 GEO-hefbomen
+    # (Bing, structured data, direct answer, entity/negations, UGC) oppakt.
+    geo_weak = [p for p in projects
+                if (p["pillars"].get("geo") or {}).get("scanned")
+                and (p["pillars"]["geo"].get("score") or 100) < 85]
+    if geo_weak:
+        g = geo_weak[0]
+        gscore = g["pillars"]["geo"].get("score")
+        recs = (g["pillars"]["geo"].get("recommendations") or [])[:1]
+        out.append({
+            "prio": prio, "issue": "geo_zwak",
+            "actie": f"Verhoog AI-zichtbaarheid van {g['project']} (GEO {gscore}/100)",
+            "waarom": "ChatGPT/Perplexity citeren dit merk niet als bron — de "
+                      "belangrijkste nieuwe verkeersbron wordt gemist. "
+                      + (recs[0] if recs else ""),
+            "suggestion": {
+                "type": "geo_fix", "scope": g["project"],
+                "target": g["site_id"],
+                "title": f"Zet GEO Specialist op {g['project']}",
+                "detail": f"GEO-score {gscore}/100. De GEO Specialist past de 5 "
+                          "GEO-hefbomen toe (Bing-ranking, structured data, "
+                          "direct-answer, entity/negations, UGC) zodat AI dit merk "
+                          "citeert. Resultaat landt ter review — niets live zonder "
+                          "jouw goedkeuring.",
+                "priority": prio, "payload": {"site_id": g["site_id"], "agent_id": 15},
+            },
+        })
+        prio += 1
 
     return out
 

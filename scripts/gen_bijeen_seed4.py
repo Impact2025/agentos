@@ -1,7 +1,7 @@
 """Genereer seed-blogs-4.ts met de 2 resterende wereldklasse Bijeen-drafts (score 86-90)
-uit de AgentOS pending_review-jobs. Idempotent, zelfde structuur als seed-blogs-3.ts."""
+uit de ImpactOS pending_review-jobs. Idempotent, zelfde structuur als seed-blogs-3.ts."""
 import sqlite3, os, re, sys
-sys.path.insert(0, r"D:\APPS\agentos")
+sys.path.insert(0, r"D:\APPS\impactos")
 
 VAULT = r"D:\APPS\Hermes Brein\Hermes Breind\10_Projects\Bijeen\content"
 OUT = r"D:\apps\bijeen\welzijnsevent-starter\welzijnsevent\src\db\seed-blogs-4.ts"
@@ -10,7 +10,7 @@ def slugify(s):
     s = re.sub(r"[^a-z0-9\s-]", "", s.lower().strip())
     return re.sub(r"\s+", "-", s)[:70]
 
-conn = sqlite3.connect(r"D:\APPS\agentos\data\agentos.db")
+conn = sqlite3.connect(r"D:\APPS\impactos\data\impactos.db")
 conn.row_factory = sqlite3.Row
 rows = conn.execute("""
     SELECT cj.title, cj.seo_score, cj.slug, cj.blog_html, cj.keyword

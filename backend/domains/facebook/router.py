@@ -1,5 +1,5 @@
 """
-Facebook Agent "Deluxe" API — volledig pagina-beheer en analyse vanuit AgentOS.
+Facebook Agent "Deluxe" API — volledig pagina-beheer en analyse vanuit ImpactOS.
 
   GET  /api/facebook/{site}/connection     → verbinding + scope-test
   GET  /api/facebook/pages                 → alle pagina's van het globale token (debug, site-onafhankelijk)

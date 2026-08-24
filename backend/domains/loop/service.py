@@ -144,7 +144,10 @@ def _update_loop(loop_id: str, **fields: Any) -> None:
 
 # ── Agent-aanroepen ──────────────────────────────────────────────────────────
 
-async def _run_text_agent(system_prompt: str, user_message: str, model_override: Optional[str]) -> str:
+async def _run_text_agent(
+    system_prompt: str, user_message: str, model_override: Optional[str],
+    purpose: str = "loop",
+) -> str:
     """Draai een agent zonder tools en verzamel de tekst (content-taak)."""
     chunks: List[str] = []
     async for event in agent_service.run_agent(
@@ -153,6 +156,7 @@ async def _run_text_agent(system_prompt: str, user_message: str, model_override:
         agent="hermes",
         model_override=model_override,
         use_tools=False,
+        purpose=purpose,
     ):
         if event.get("type") == "error":
             raise RuntimeError(event.get("message") or "Onbekende agent-fout")
@@ -173,7 +177,8 @@ async def _run_maker(
             "\n\n# Feedback van de beoordelaar (verwerk dit punt voor punt)\n" + feedback +
             "\n\nLever nu een merkbaar betere, volledige nieuwe versie."
         )
-    draft = await _run_text_agent(system_prompt, user_message, model_override)
+    purpose = f"loop:{profile['name']}" if profile and profile.get("name") else "loop-write"
+    draft = await _run_text_agent(system_prompt, user_message, model_override, purpose=purpose)
     return draft or "_(De maker leverde geen tekst op.)_"
 
 
@@ -193,7 +198,8 @@ async def _run_reviewer(
         f"# Te beoordelen concept\n{draft}\n\n"
         f"Beoordeel dit concept. Drempel om te slagen: {threshold}/100."
     )
-    raw = await _run_text_agent(system_prompt, user_message, model_override)
+    purpose = f"loop:{profile['name']}" if profile and profile.get("name") else "loop-review"
+    raw = await _run_text_agent(system_prompt, user_message, model_override, purpose=purpose)
     return _parse_review(raw, threshold)
 
 

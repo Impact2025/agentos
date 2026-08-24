@@ -38,6 +38,7 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 from ...shared.database import get_conn
+from ...shared.projects import squash_project
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +215,24 @@ def structural_decliners() -> List[Dict[str, Any]]:
     return _dalers(portfolio())
 
 
+def quick_wins_for(project: str, limit: int = 3) -> List[Dict[str, Any]]:
+    """De top-N quick wins van dit project uit het laatste weekrapport.
+
+    Zelfde bron als het weekrapport (positie 4-15, ≥20 impressies) — geen
+    aparte berekening, want twee antwoorden op "wat is een quick win" is
+    hoe die twee uit elkaar lopen (zie CLAUDE.md 7a-bis). Matcht op de
+    squash-vorm van de projectnaam, want `weekly_insights.project` komt
+    ongewassen uit de sitenaam en kent dezelfde spatie/hoofdletter-varianten
+    als `goals.project`.
+    """
+    doel = squash_project(project)
+    for r in portfolio():
+        if squash_project(r.get("project") or "") == doel:
+            qw = r.get("quick_wins") or []
+            return qw[:limit]
+    return []
+
+
 def stale_quick_wins(min_weken: int = 3) -> List[Dict[str, Any]]:
     """Quick wins die al `min_weken` weken op rij in het rapport staan.
 
@@ -317,4 +336,16 @@ def prompt_block() -> str:
                                   for b in blijvers[:5])
                       + ". Een advies dat zich herhaalt zonder dat er iets verandert, "
                         "is geen advies meer — pak het op of leg uit waarom niet.")
-    return "\n".join(regels)
+    blok = "\n".join(regels)
+
+    # Facebook-beeld (Agent "Deluxe") erachter plakken als er pagina's zijn.
+    try:
+        import asyncio as _asyncio
+        from .facebook_report import fb_prompt_block
+        fb_blok = _asyncio.run(fb_prompt_block())
+        if fb_blok:
+            blok = blok + "\n\n" + fb_blok
+    except Exception as e:  # nooit de SEO-rapportage breken om Facebook
+        logger.warning("[insights] fb_prompt_block overslaan: %s", e)
+
+    return blok

@@ -150,10 +150,10 @@ def control_room_status() -> Dict[str, Any]:
     try:
         vault_path = Path(OBSIDIAN_VAULT_PATH) if OBSIDIAN_VAULT_PATH else None
         if vault_path and vault_path.exists():
-            # Tel notities per AgentOS-folder
-            sessions = list(vault_path.rglob("AgentOS/Sessions/*.md"))
-            tasks = list(vault_path.rglob("AgentOS/Tasks/**/*.md"))
-            goals = list(vault_path.rglob("AgentOS/Goals/*.md"))
+            # Tel notities per ImpactOS-folder
+            sessions = list(vault_path.rglob("ImpactOS/Sessions/*.md"))
+            tasks = list(vault_path.rglob("ImpactOS/Tasks/**/*.md"))
+            goals = list(vault_path.rglob("ImpactOS/Goals/*.md"))
             vault_info = {
                 "configured": True,
                 "path": str(vault_path),
@@ -415,7 +415,7 @@ def system_health(project: Optional[str] = None) -> Dict[str, Any]:
 
 # ── STRATEGIST — AI Prioriteiten ────────────────────────────────────
 
-_STRATEGIST_SYSTEM = """Je bent de Strategist Agent — de AI-manager van Agent OS.
+_STRATEGIST_SYSTEM = """Je bent de Strategist Agent — de AI-manager van Impact OS.
 Je taak: analyseer de huidige status van alle projecten, doelen, kansen en systemen,
 en stel concrete, geprioriteerde acties voor.
 
@@ -429,7 +429,7 @@ Je antwoordt in het Nederlands met een helder, gestructureerd overzicht.
 Geen algemeenheden — wees specifiek en concreet met aantallen, namen en acties."""
 
 
-_STRATEGIST_PROMPT_TEMPLATE = """Analyseer de volgende status van Agent OS en stel prioriteiten op.
+_STRATEGIST_PROMPT_TEMPLATE = """Analyseer de volgende status van Impact OS en stel prioriteiten op.
 
 ## Doelen (goals)
 {goals_summary}
@@ -523,6 +523,7 @@ async def strategist_analyse() -> Dict[str, Any]:
             agent="hermes",
             use_tools=False,
             max_tokens=2000,
+            purpose="strategist-analyse",
         ):
             if chunk.get("type") == "text":
                 full += chunk["text"]
@@ -540,7 +541,7 @@ async def strategist_analyse() -> Dict[str, Any]:
 
 # ── EXECUTE — Prioriteiten omzetten naar concrete acties ────────────
 
-_EXECUTE_SYSTEM = """Je bent de Operationeel Manager van Agent OS.
+_EXECUTE_SYSTEM = """Je bent de Operationeel Manager van Impact OS.
 Je krijgt een strategische analyse met prioriteiten en vertaalt deze naar
 concrete, uitvoerbare acties.
 
@@ -598,6 +599,7 @@ async def strategist_execute(analysis: str) -> Dict[str, Any]:
             agent="hermes",
             use_tools=False,
             max_tokens=1500,
+            purpose="strategist-execute",
         ):
             if chunk.get("type") == "text":
                 raw += chunk["text"]
@@ -699,7 +701,24 @@ async def strategist_execute(analysis: str) -> Dict[str, Any]:
                         next_step="" if auto_started else "Bevestig of verwijder het doel in het Actiecentrum",
                     )
             except Exception as e:
-                logger.warning(f"Kon goal niet aanmaken voor '{action_text[:40]}': {e}")
+                from ...shared.prompt_safety import PromptInjectionDetected
+                if isinstance(e, PromptInjectionDetected):
+                    # Een geweigerde autonome instructie is geen gewone fout
+                    # die je wegwaarschuwt in het log — dit is precies het
+                    # scenario waar de scan voor gebouwd is (de strategist
+                    # start doelen met STRATEGIST_AUTOSTART=1 zonder
+                    # menselijke review-gate). Zichtbaar maken, niet stil
+                    # inslikken.
+                    from ...shared.outcomes import log_outcome
+                    log_outcome(
+                        project, "strategist_goal_geweigerd",
+                        f"Doel voor '{action_text[:80]}' geweigerd: {e}",
+                        status="error",
+                        next_step="Controleer de bron van deze strategist-actie — mogelijk "
+                                  "prompt-injectie in de geanalyseerde data.",
+                    )
+                else:
+                    logger.warning(f"Kon goal niet aanmaken voor '{action_text[:40]}': {e}")
 
     return {
         "actions": actions[:5],

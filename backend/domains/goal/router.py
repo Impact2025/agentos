@@ -24,13 +24,9 @@ class GoalAction(BaseModel):
 @router.post("/plan", status_code=201)
 async def plan_goal(body: GoalCreateRequest):
     """Stap 1: Maak een goal en laat Hermes een plan genereren (decompositie)."""
-    # Prompt-injectie-scan: een goal-objective kan uit een externe bron komen
-    # (observer, kalender, mail). Blokkeer instructies die het model dwingen
-    # zijn systeem-prompt te negeren. Zie backend/shared/prompt_safety.py.
-    from ...shared.prompt_safety import scan_structured
-    scan = scan_structured(title=body.title, objective=body.objective)
-    if scan.blocked:
-        raise HTTPException(status_code=400, detail=scan.reason())
+    # De prompt-injectie-scan zit in goal_service.create_and_plan() zelf (niet
+    # hier) zodat ook de niet-HTTP-aanroepers (Iris, strategist) hem passeren.
+    # Zie backend/shared/prompt_safety.py.
     try:
         result = await goal_service.create_and_plan(
             title=body.title,

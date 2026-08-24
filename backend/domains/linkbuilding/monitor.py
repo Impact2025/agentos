@@ -26,7 +26,7 @@ from .service import norm_domain
 logger = logging.getLogger(__name__)
 
 _HEADERS = {
-    "User-Agent": "AgentOS-LinkMonitor/1.0 (+https://weareimpact.nl)",
+    "User-Agent": "ImpactOS-LinkMonitor/1.0 (+https://weareimpact.nl)",
     "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
 }
 # Na zoveel vergeefse checks op een pending placement stoppen we met crawlen —
@@ -200,6 +200,6 @@ def run_link_monitor() -> None:
         log_outcome(
             "Linkbuilding", "link_monitor",
             f"Link-monitor gefaald: {e}",
-            next_step="Bekijk logs/agentos.log en draai handmatig: POST /api/linkbuilding/monitor-run.",
+            next_step="Bekijk logs/impactos.log en draai handmatig: POST /api/linkbuilding/monitor-run.",
             status="error",
         )

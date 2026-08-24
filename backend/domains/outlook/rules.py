@@ -435,3 +435,43 @@ def seed_system_rules(conn=None) -> int:
         return _schrijf(conn)
     with get_conn() as c:
         return _schrijf(c)
+
+
+# Impact OS' eigen geautomatiseerde afzenders — mail die het systeem zichzelf
+# stuurt (Iris' dagbriefing → v.munster@weareimpact.nl). Bewust een APARTE
+# lijst van VENDOR_NOISE_*: `weareimpact.nl` staat sinds 11 aug 2026 met
+# reden NIET in de seed (dat zou ook een collega's mail wegfilteren), maar
+# dat maakt `is_inbox_noise`/`classify()` blind voor déze afzender specifiek —
+# `iris@weareimpact.nl` is geen collega, en `_is_trusted("weareimpact.nl")`
+# in classify.py laat hem er altijd doorheen vóórdat een vendor-regel ooit
+# wordt getoetst. Gemeten 12 aug 2026: 13 identieke dagbriefingmails stonden
+# in "Reageren" alsof ze op een antwoord van Vincent wachtten. Scope=adres
+# (niet domein/deel) zodat dit nooit breder trekt dan de exacte afzender.
+_EIGEN_SYSTEEM_AFZENDERS = ("iris@weareimpact.nl",)
+
+
+def seed_self_sender_rules(conn=None) -> int:
+    """Zet Impact OS' eigen systeemafzenders om in een (adres-scoped) regel.
+
+    Idempotent, zelfde ontwerp als `seed_system_rules`; los daarvan omdat de
+    reden een andere is (eigen systeem, niet "geen potentiële klant") en de
+    scope strenger moet zijn (exact adres, nooit het hele domein).
+    """
+    def _schrijf(c) -> int:
+        n = 0
+        for adres in _EIGEN_SYSTEEM_AFZENDERS:
+            cur = c.execute(
+                "INSERT OR IGNORE INTO mail_sender_rules "
+                "(pattern, scope, action, reason, source, active, created_at) "
+                "VALUES (?,?,?,?,'systeem',1,?)",
+                (adres, SCOPE_ADRES, ACTIE_GEEN_KLANT,
+                 "eigen automatisch systeembericht (Impact OS) — informatief, vraagt geen antwoord",
+                 _now()),
+            )
+            n += cur.rowcount or 0
+        return n
+
+    if conn is not None:
+        return _schrijf(conn)
+    with get_conn() as c:
+        return _schrijf(c)

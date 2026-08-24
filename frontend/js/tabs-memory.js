@@ -1,4 +1,4 @@
-// ── Agent OS — tabs: Geheugen + Memory Galaxy (3D-sterrenkaart)
+// ── Impact OS — tabs: Geheugen + Memory Galaxy (3D-sterrenkaart)
 // Onderdeel van de SPA: klassieke scripts, gedeelde globale scope.
 // Laadvolgorde staat in index.html — core.js eerst.
 
@@ -9,11 +9,11 @@ async function renderGeheugenTab(el) {
   var sub = window._memSubtab || 'galaxy';
   var btn = function(id, label) {
     var active = sub === id;
-    return '<button onclick="switchMemSubtab(\'' + id + '\')" style="padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;border:1px solid ' + (active ? '#6366f1' : '#e2e8f0') + ';background:' + (active ? '#eef2ff' : '#fff') + ';color:' + (active ? '#4338ca' : '#64748b') + ';cursor:pointer">' + label + '</button>';
+    return '<button onclick="switchMemSubtab(\'' + id + '\')" class="btn btn-sm ' + (active ? 'btn-primary' : 'btn-ghost') + '">' + label + '</button>';
   };
   el.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">' +
     '<h3 style="font-size:15px;font-weight:700">Geheugen</h3>' +
-    '<div style="display:flex;gap:6px">' + btn('galaxy', '\u{2726} Galaxy') + btn('overzicht', 'Overzicht') + '</div></div>' +
+    '<div style="display:flex;gap:6px">' + btn('galaxy', 'Galaxy') + btn('overzicht', 'Overzicht') + '</div></div>' +
     '<div id="mem-sub-content"></div>';
   var subEl = document.getElementById('mem-sub-content');
   if (sub === 'galaxy') await renderMemoryGalaxy(subEl);
@@ -37,7 +37,7 @@ async function renderGeheugenOverzicht(el) {
   if (!data.configured && !data.omi_configured) {
     html += '<div class="empty-state" style="margin-bottom:16px">' +
       '<p style="margin-bottom:8px">De Infinite Context Engine is niet aangesloten.</p>' +
-      '<p style="font-size:12px;color:#64748b">Stel OBSIDIAN_VAULT_PATH of OMI_API_KEY in .env in om de Oneindige Loop te starten.</p></div>';
+      '<p style="font-size:12px;color:var(--text-muted)">Stel OBSIDIAN_VAULT_PATH of OMI_API_KEY in .env in om de Oneindige Loop te starten.</p></div>';
     el.innerHTML = html;
     return;
   }
@@ -53,15 +53,15 @@ async function renderGeheugenOverzicht(el) {
   // ── The Loop uitleg ──
   html += '<div class="section-card" style="margin-bottom:16px">' +
     '<h4 style="font-size:13px;font-weight:600;margin-bottom:8px">De Oneindige Loop (The Loop)</h4>' +
-    '<div style="font-size:12px;line-height:1.7;color:#475569">' +
-    '<div style="display:flex;gap:12px;align-items:center;justify-content:center;margin:8px 0;padding:12px;background:#f8fafc;border-radius:8px;font-size:11px">' +
-    '<span style="background:#dbeafe;padding:6px 12px;border-radius:6px;font-weight:600">\u{1F4D6} READ</span>' +
-    '<span style="color:#94a3b8">\u{27A1}</span>' +
-    '<span style="background:#dcfce7;padding:6px 12px;border-radius:6px;font-weight:600">\u{2699} ACT</span>' +
-    '<span style="color:#94a3b8">\u{27A1}</span>' +
-    '<span style="background:#fef3c7;padding:6px 12px;border-radius:6px;font-weight:600">\u{1F4DD} WRITE</span>' +
-    '<span style="color:#94a3b8">\u{27A1}</span>' +
-    '<span style="background:#f1f5f9;padding:6px 12px;border-radius:6px;font-style:italic;color:#64748b">elke dag slimmer</span>' +
+    '<div style="font-size:12px;line-height:1.7;color:var(--text-dim)">' +
+    '<div style="display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;margin:8px 0;padding:12px;background:var(--neutral-bg);border-radius:8px;font-size:11px">' +
+    '<span class="pill pill-info">READ</span>' +
+    '<span style="color:var(--text-muted)">\u{2192}</span>' +
+    '<span class="pill pill-ok">ACT</span>' +
+    '<span style="color:var(--text-muted)">\u{2192}</span>' +
+    '<span class="pill pill-warn">WRITE</span>' +
+    '<span style="color:var(--text-muted)">\u{2192}</span>' +
+    '<span class="pill pill-neutral" style="font-style:italic">elke dag slimmer</span>' +
     '</div>' +
     '<ul style="padding-left:16px;margin:0">' +
     '<li><strong>READ</strong> \u{2192} Laadt context uit Obsidian + OMI v\u00f3\u00f3r elke agent-run</li>' +
@@ -69,9 +69,9 @@ async function renderGeheugenOverzicht(el) {
     '<li><strong>WRITE</strong> \u{2192} Resultaten terug naar Obsidian (dagboek, taken, doelen) + OMI</li>' +
     '</ul></div></div>';
 
-  // ── AgentOS folder statistieken ──
+  // ── ImpactOS folder statistieken ──
   if (data.folders && data.folders.length) {
-    html += '<div class="section-card" style="margin-bottom:16px"><h4 style="font-size:13px;font-weight:600;margin-bottom:8px">AgentOS in Obsidian</h4>' +
+    html += '<div class="section-card" style="margin-bottom:16px"><h4 style="font-size:13px;font-weight:600;margin-bottom:8px">ImpactOS in Obsidian</h4>' +
       '<div class="kpi-grid">';
     data.folders.forEach(function(f) {
       html += kpiBox(f.folder.split('/').pop(), f.count, '', f.count > 0 ? f.recent_files.map(function(x){return x.name;}).join(', ').substring(0,40) + (f.count>5 ? '...' : '') : 'leeg');
@@ -82,7 +82,7 @@ async function renderGeheugenOverzicht(el) {
   // ── Dagboek vandaag ──
   if (data.daily_log_preview) {
     html += '<div class="section-card" style="margin-bottom:16px"><h4 style="font-size:13px;font-weight:600;margin-bottom:8px">Dagboek vandaag</h4>' +
-      '<pre style="font-size:11px;line-height:1.5;color:#475569;white-space:pre-wrap;max-height:400px;overflow-y:auto;padding:8px;background:#f8fafc;border-radius:6px">' +
+      '<pre style="font-size:11px;line-height:1.5;color:var(--text-dim);white-space:pre-wrap;max-height:400px;overflow-y:auto;padding:8px;background:var(--neutral-bg);border-radius:6px">' +
       escHtml(data.daily_log_preview) +
       '</pre></div>';
   }
@@ -90,10 +90,10 @@ async function renderGeheugenOverzicht(el) {
   // ── OMI status ──
   if (data.omi_configured) {
     html += '<div class="section-card"><h4 style="font-size:13px;font-weight:600;margin-bottom:8px">OMI (Open Memory Interface)</h4>' +
-      '<p style="font-size:12px;color:#64748b">OMI is actief. Memories en conversaties worden automatisch meegestuurd context voor alle agent-runs. Resultaten worden teruggeschreven als OMI-memories.</p></div>';
+      '<p style="font-size:12px;color:var(--text-dim)">OMI is actief. Memories en conversaties worden automatisch meegestuurd context voor alle agent-runs. Resultaten worden teruggeschreven als OMI-memories.</p></div>';
   } else {
     html += '<div class="section-card"><h4 style="font-size:13px;font-weight:600;margin-bottom:8px">OMI (Open Memory Interface)</h4>' +
-      '<p style="font-size:12px;color:#94a3b8">OMI is niet geconfigureerd. Stel OMI_API_KEY in .env in om real-time gesprekscontext uit OMI te gebruiken.</p></div>';
+      '<p style="font-size:12px;color:var(--text-muted)">OMI is niet geconfigureerd. Stel OMI_API_KEY in .env in om real-time gesprekscontext uit OMI te gebruiken.</p></div>';
   }
 
   el.innerHTML = html;
@@ -123,8 +123,8 @@ async function renderOptimalisatieTab(el) {
 
   var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">' +
     '<div><h3 style="font-size:15px;font-weight:700">SEO Optimizer</h3>' +
-    '<p style="font-size:11px;color:#64748b;margin-top:2px">Verzilvert rankings die je al hebt: interne links, CTR en content-refresh. Scant automatisch elke maandag 07:45.</p></div>' +
-    '<button id="opt-scan-btn" onclick="runOptimizerScan(this)" style="padding:8px 18px;background:#4f46e5;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Scan nu</button></div>';
+    '<p style="font-size:11px;color:var(--text-muted);margin-top:2px">Verzilvert rankings die je al hebt: interne links, CTR en content-refresh. Scant automatisch elke maandag 07:45.</p></div>' +
+    '<button id="opt-scan-btn" onclick="runOptimizerScan(this)" class="btn btn-primary">Scan nu</button></div>';
 
   html += '<div class="kpi-grid" style="margin-bottom:16px">' +
     kpiBox('Interne linkkansen', byType.internal_link.length, '', 'ontbrekende links') +
@@ -133,32 +133,32 @@ async function renderOptimalisatieTab(el) {
     '</div>';
 
   if (!sugs.length) {
-    html += '<div class="empty-state"><p style="font-size:14px;font-weight:600;color:#475569;margin-bottom:6px">Nog geen openstaande kansen</p>' +
-      '<p style="color:#94a3b8;font-size:12px">Klik op “Scan nu” om de site en Search Console-data te analyseren.</p></div>';
+    html += '<div class="empty-state"><p style="font-size:14px;font-weight:600;color:var(--text-dim);margin-bottom:6px">Nog geen openstaande kansen</p>' +
+      '<p style="color:var(--text-muted);font-size:12px">Klik op “Scan nu” om de site en Search Console-data te analyseren.</p></div>';
     el.innerHTML = html;
     return;
   }
 
   var actBtns = function(s) {
-    return '<button onclick="optSuggestionAction(\'' + s.id + '\',\'done\',this)" title="Gedaan" style="padding:4px 10px;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:6px;font-size:11px;cursor:pointer">✓ Gedaan</button>' +
-      '<button onclick="optSuggestionAction(\'' + s.id + '\',\'dismissed\',this)" title="Verwerpen" style="padding:4px 10px;background:#fff;color:#94a3b8;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;cursor:pointer">✕</button>';
+    return '<button onclick="optSuggestionAction(\'' + s.id + '\',\'done\',this)" title="Gedaan" class="btn btn-sm" style="background:var(--ok-bg);color:var(--ok-fg);border-color:var(--ok-border)">Gedaan</button>' +
+      '<button onclick="optSuggestionAction(\'' + s.id + '\',\'dismissed\',this)" title="Verwerpen" class="btn btn-sm btn-ghost">Verwerp</button>';
   };
 
   // ── CTR-kansen (grootste directe winst) ──
   if (byType.ctr.length) {
-    html += '<div class="section-card" style="margin-bottom:16px"><h3 style="margin-bottom:4px">\u{1F3AF} CTR-kansen — je ranking is er al, verzilver hem</h3>' +
-      '<p style="font-size:11px;color:#94a3b8;margin-bottom:10px">Pagina’s die veel minder klikken krijgen dan normaal voor hun positie. Betere title/meta = directe traffic zonder linkbuilding.</p>';
+    html += '<div class="section-card" style="margin-bottom:16px"><h3 style="margin-bottom:4px">CTR-kansen — je ranking is er al, verzilver hem</h3>' +
+      '<p style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Pagina’s die veel minder klikken krijgen dan normaal voor hun positie. Betere title/meta = directe traffic zonder linkbuilding.</p>';
     byType.ctr.forEach(function(s) {
       var d = s.data;
-      html += '<div id="opt-' + s.id + '" style="padding:10px;border:1px solid #f1f5f9;border-radius:8px;margin-bottom:8px">' +
+      html += '<div id="opt-' + s.id + '" style="padding:10px;border:1px solid var(--card-border);border-radius:var(--radius-md);margin-bottom:8px">' +
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-        '<a href="' + escHtml(s.page) + '" target="_blank" style="font-size:12px;font-weight:600;color:#1e293b;text-decoration:none;flex:1;min-width:200px">' + escHtml(optShortUrl(s.page)) + '</a>' +
-        '<span style="font-size:11px;color:#d97706;font-weight:600">CTR ' + d.ctr + '% → benchmark ' + d.expected_ctr + '%</span>' +
-        '<span style="font-size:11px;color:#64748b">pos ' + d.position + ' · ' + d.impressions + ' imp · ~' + d.missed_clicks_per_period + ' gemiste klikken</span>' +
-        '<button onclick="optGenerateVariants(\'' + s.id + '\',this)" style="padding:4px 12px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">✍ Title/meta-varianten</button>' +
+        '<a href="' + escHtml(s.page) + '" target="_blank" style="font-size:12px;font-weight:600;color:var(--text);text-decoration:none;flex:1;min-width:200px">' + escHtml(optShortUrl(s.page)) + '</a>' +
+        '<span class="pill pill-warn">CTR ' + d.ctr + '% → benchmark ' + d.expected_ctr + '%</span>' +
+        '<span style="font-size:11px;color:var(--text-muted)">pos ' + d.position + ' · ' + d.impressions + ' imp · ~' + d.missed_clicks_per_period + ' gemiste klikken</span>' +
+        '<button onclick="optGenerateVariants(\'' + s.id + '\',this)" class="btn btn-sm btn-primary">Title/meta-varianten</button>' +
         actBtns(s) + '</div>' +
-        (s.query ? '<div style="font-size:11px;color:#94a3b8;margin-top:4px">zoekwoord: ' + escHtml(s.query) + '</div>' : '') +
-        '<div id="opt-variants-' + s.id + '">' + (d.variants ? renderOptVariants(d) : '') + '</div>' +
+        (s.query ? '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">zoekwoord: ' + escHtml(s.query) + '</div>' : '') +
+        '<div id="opt-variants-' + s.id + '">' + (d.variants ? renderOptVariants(d, s.id) : '') + '</div>' +
         '</div>';
     });
     html += '</div>';
@@ -166,16 +166,16 @@ async function renderOptimalisatieTab(el) {
 
   // ── Interne links ──
   if (byType.internal_link.length) {
-    html += '<div class="section-card" style="margin-bottom:16px"><h3 style="margin-bottom:4px">\u{1F517} Ontbrekende interne links</h3>' +
-      '<p style="font-size:11px;color:#94a3b8;margin-bottom:10px">De ankertekst staat al letterlijk op de bronpagina — alleen de link ontbreekt nog. Plaats de link in je CMS en markeer als gedaan.</p>';
+    html += '<div class="section-card" style="margin-bottom:16px"><h3 style="margin-bottom:4px">Ontbrekende interne links</h3>' +
+      '<p style="font-size:11px;color:var(--text-muted);margin-bottom:10px">De ankertekst staat al letterlijk op de bronpagina — alleen de link ontbreekt nog. Plaats de link in je CMS en markeer als gedaan.</p>';
     byType.internal_link.forEach(function(s) {
       var d = s.data;
-      html += '<div id="opt-' + s.id + '" style="padding:10px;border:1px solid #f1f5f9;border-radius:8px;margin-bottom:8px">' +
+      html += '<div id="opt-' + s.id + '" style="padding:10px;border:1px solid var(--card-border);border-radius:var(--radius-md);margin-bottom:8px">' +
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-        '<span style="font-size:12px;color:#1e293b;flex:1;min-width:220px"><a href="' + escHtml(d.from) + '" target="_blank" style="color:#4f46e5;text-decoration:none">' + escHtml(optShortUrl(d.from)) + '</a>' +
-        ' <span style="color:#94a3b8">→</span> <a href="' + escHtml(d.to) + '" target="_blank" style="color:#16a34a;text-decoration:none">' + escHtml(optShortUrl(d.to)) + '</a></span>' +
-        '<span style="font-size:11px;color:#64748b">' + (d.target_impressions || 0) + ' imp/28d</span>' + actBtns(s) + '</div>' +
-        '<div style="font-size:11px;color:#475569;margin-top:6px;background:#f8fafc;padding:6px 8px;border-radius:6px">…' + escHtml((d.context || '').replace(d.anchor, '')).slice(0, 60) + '<strong style="background:#fef3c7;padding:0 3px;border-radius:3px">' + escHtml(d.anchor) + '</strong>…</div>' +
+        '<span style="font-size:12px;color:var(--text);flex:1;min-width:220px"><a href="' + escHtml(d.from) + '" target="_blank" style="color:var(--accent);text-decoration:none">' + escHtml(optShortUrl(d.from)) + '</a>' +
+        ' <span style="color:var(--text-muted)">→</span> <a href="' + escHtml(d.to) + '" target="_blank" style="color:var(--green);text-decoration:none">' + escHtml(optShortUrl(d.to)) + '</a></span>' +
+        '<span style="font-size:11px;color:var(--text-muted)">' + (d.target_impressions || 0) + ' imp/28d</span>' + actBtns(s) + '</div>' +
+        '<div style="font-size:11px;color:var(--text-dim);margin-top:6px;background:var(--neutral-bg);padding:6px 8px;border-radius:6px">…' + escHtml((d.context || '').replace(d.anchor, '')).slice(0, 60) + '<strong style="background:var(--warn-bg);padding:0 3px;border-radius:3px">' + escHtml(d.anchor) + '</strong>…</div>' +
         '</div>';
     });
     html += '</div>';
@@ -183,37 +183,86 @@ async function renderOptimalisatieTab(el) {
 
   // ── Refresh-kandidaten ──
   if (byType.refresh.length) {
-    html += '<div class="section-card" style="margin-bottom:16px"><h3 style="margin-bottom:4px">♻️ Content-refresh — wegzakkende pagina’s</h3>' +
-      '<p style="font-size:11px;color:#94a3b8;margin-bottom:10px">De agent haalt de pagina + huidige top-resultaten op, verrijkt het artikel en zet het in de Wachtrij ter review.</p>';
+    html += '<div class="section-card" style="margin-bottom:16px"><h3 style="margin-bottom:4px">Content-refresh — wegzakkende pagina’s</h3>' +
+      '<p style="font-size:11px;color:var(--text-muted);margin-bottom:10px">De agent haalt de pagina + huidige top-resultaten op, verrijkt het artikel en zet het in de Wachtrij ter review.</p>';
     byType.refresh.forEach(function(s) {
       var d = s.data;
-      html += '<div id="opt-' + s.id + '" style="padding:10px;border:1px solid #f1f5f9;border-radius:8px;margin-bottom:8px">' +
+      html += '<div id="opt-' + s.id + '" style="padding:10px;border:1px solid var(--card-border);border-radius:var(--radius-md);margin-bottom:8px">' +
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-        '<a href="' + escHtml(s.page) + '" target="_blank" style="font-size:12px;font-weight:600;color:#1e293b;text-decoration:none;flex:1;min-width:200px">' + escHtml(optShortUrl(s.page)) + '</a>' +
-        '<span style="font-size:11px;color:#ef4444;font-weight:600">' + escHtml(s.title) + '</span>' +
-        '<button onclick="optRefresh(\'' + s.id + '\',this)" style="padding:4px 12px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">♻ Ververs → Wachtrij</button>' +
+        '<a href="' + escHtml(s.page) + '" target="_blank" style="font-size:12px;font-weight:600;color:var(--text);text-decoration:none;flex:1;min-width:200px">' + escHtml(optShortUrl(s.page)) + '</a>' +
+        '<span class="pill pill-danger">' + escHtml(s.title) + '</span>' +
+        '<button onclick="optRefresh(\'' + s.id + '\',this)" class="btn btn-sm" style="background:var(--ok-bg);color:var(--ok-fg);border-color:var(--ok-border)">Ververs → Wachtrij</button>' +
         actBtns(s) + '</div>' +
-        (s.query ? '<div style="font-size:11px;color:#94a3b8;margin-top:4px">zoekwoord: ' + escHtml(s.query) + '</div>' : '') +
+        (s.query ? '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">zoekwoord: ' + escHtml(s.query) + '</div>' : '') +
         '</div>';
     });
     html += '</div>';
   }
 
+  // ── Maandelijkse SEO Loop (was tot 22 aug 2026 een eigen tab) ──
+  // Zelfde onderliggende vraag als hierboven — welke bestaande pagina
+  // verdient aandacht — maar op maandritme met een objectieve KPI-verify in
+  // plaats van losse suggesties. Eigen sectie i.p.v. een los scherm, zodat
+  // je nog maar één plek hebt voor "bestaande pagina's verbeteren".
+  html += '<div class="section-card" style="margin-top:8px"><div id="seoloop-embed"></div></div>';
+
   el.innerHTML = html;
+  renderSeoLoopSection(document.getElementById('seoloop-embed'));
 }
 
-function renderOptVariants(d) {
+function renderOptVariants(d, sid) {
   if (!d.variants || !d.variants.length) return '';
-  var html = '<div style="margin-top:8px;border-top:1px dashed #e2e8f0;padding-top:8px">' +
-    (d.current_title ? '<div style="font-size:11px;color:#94a3b8;margin-bottom:6px">Nu: <em>' + escHtml(d.current_title) + '</em></div>' : '');
+  var html = '<div style="margin-top:8px;border-top:1px dashed var(--card-border);padding-top:8px">' +
+    (d.current_title ? '<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">Nu: <em>' + escHtml(d.current_title) + '</em></div>' : '');
   d.variants.forEach(function(v, i) {
-    html += '<div style="padding:6px 8px;background:#f8fafc;border-radius:6px;margin-bottom:5px">' +
-      '<div style="font-size:12px;font-weight:600;color:#1e293b">' + (i + 1) + '. ' + escHtml(v.title || '') + '</div>' +
-      '<div style="font-size:11px;color:#475569;margin-top:2px">' + escHtml(v.meta || '') + '</div>' +
-      (v.waarom ? '<div style="font-size:10px;color:#94a3b8;margin-top:2px;font-style:italic">' + escHtml(v.waarom) + '</div>' : '') +
+    html += '<div id="opt-variant-' + sid + '-' + i + '" style="padding:6px 8px;background:var(--neutral-bg);border-radius:6px;margin-bottom:5px;display:flex;align-items:flex-start;gap:8px">' +
+      '<div style="flex:1;min-width:0">' +
+      '<div style="font-size:12px;font-weight:600;color:var(--text)">' + (i + 1) + '. ' + escHtml(v.title || '') + '</div>' +
+      '<div style="font-size:11px;color:var(--text-dim);margin-top:2px">' + escHtml(v.meta || '') + '</div>' +
+      (v.waarom ? '<div style="font-size:10px;color:var(--text-muted);margin-top:2px;font-style:italic">' + escHtml(v.waarom) + '</div>' : '') +
+      '</div>' +
+      (sid ? '<button onclick="optApplyVariant(\'' + sid + '\',' + i + ',this)" class="btn btn-sm btn-primary" style="white-space:nowrap">Zet live</button>' : '') +
       '</div>';
   });
   return html + '</div>';
+}
+
+// Zet een gekozen title/meta-variant daadwerkelijk op de live pagina — het
+// stapje na "Title/meta-varianten" dat eerder ontbrak (Vincent moest het zelf
+// in het CMS overtypen). Loopt server-side via dezelfde publicatieroute en
+// wordt daar ook geverifieerd op de live pagina.
+async function optApplyVariant(sid, idx, btn) {
+  var row = document.getElementById('opt-variant-' + sid + '-' + idx);
+  var siblingBtns = row ? row.parentElement.querySelectorAll('button') : [btn];
+  siblingBtns.forEach(function(b) { b.disabled = true; });
+  var orig = btn.textContent;
+  btn.textContent = 'Live zetten...';
+  try {
+    var resp = await fetch('/api/seo-optimizer/suggestions/' + sid + '/apply-variant?variant_index=' + idx, { method: 'POST' });
+    var res = await resp.json();
+    if (!resp.ok) {
+      // Toon de échte fout (reden + detail), niet een afgekapte 'Fout: ...'
+      var msg = res.reden || res.detail || res.message || 'mislukt';
+      if (res.detail) msg = res.reden + ' — ' + res.detail;
+      throw new Error(msg);
+    }
+    btn.textContent = 'Live ✓';
+    btn.style.background = 'var(--green)';
+    var card = document.getElementById('opt-' + sid);
+    if (card) { card.style.opacity = '0.5'; }
+  } catch (e) {
+    // Volledige foutmelding, niet afgekapt op 40 tekens.
+    btn.textContent = 'Fout';
+    btn.title = (e.message || '').slice(0, 300);
+    siblingBtns.forEach(function(b) { b.disabled = false; });
+    if (btn.parentElement) {
+      var note = document.createElement('div');
+      note.style.cssText = 'font-size:10px;color:var(--danger-fg);margin-top:4px';
+      note.textContent = (e.message || '').slice(0, 200);
+      btn.parentElement.appendChild(note);
+    }
+    setTimeout(function() { btn.textContent = orig; }, 6000);
+  }
 }
 
 async function runOptimizerScan(btn) {
@@ -223,7 +272,7 @@ async function runOptimizerScan(btn) {
     var res = await resp.json();
     if (!resp.ok) throw new Error(res.detail || 'Scan mislukt');
     var c = res.counts || {};
-    btn.textContent = '✓ ' + ((c.internal_link || 0) + (c.ctr || 0) + (c.refresh || 0)) + ' nieuwe kansen';
+    btn.textContent = ((c.internal_link || 0) + (c.ctr || 0) + (c.refresh || 0)) + ' nieuwe kansen';
     setTimeout(function() { var el = document.getElementById('tab-content'); if (el && currentTab === 'Optimalisatie') renderOptimalisatieTab(el); }, 900);
   } catch (e) {
     btn.textContent = 'Fout: ' + e.message.slice(0, 40);
@@ -250,8 +299,8 @@ async function optGenerateVariants(sid, btn) {
     var res = await resp.json();
     if (!resp.ok) throw new Error(res.detail || 'mislukt');
     var box = document.getElementById('opt-variants-' + sid);
-    if (box) box.innerHTML = renderOptVariants({ variants: res.variants });
-    btn.textContent = '✓ 3 varianten';
+    if (box) box.innerHTML = renderOptVariants({ variants: res.variants }, sid);
+    btn.textContent = '3 varianten';
   } catch (e) {
     btn.textContent = 'Fout';
     setTimeout(function() { btn.disabled = false; btn.textContent = orig; }, 3000);
@@ -264,9 +313,9 @@ async function optRefresh(sid, btn) {
     var resp = await fetch('/api/seo-optimizer/suggestions/' + sid + '/refresh', { method: 'POST' });
     var res = await resp.json();
     if (!resp.ok) throw new Error(res.detail || 'mislukt');
-    btn.textContent = '✓ In Wachtrij';
+    btn.textContent = 'In Wachtrij';
     btn.onclick = function() { switchView('Wachtrij'); };
-    btn.style.background = '#16a34a';
+    btn.style.background = 'var(--green)';
   } catch (e) {
     btn.textContent = 'Fout: ' + (e.message || '').slice(0, 30);
     setTimeout(function() { btn.disabled = false; btn.textContent = orig; }, 4000);
@@ -298,7 +347,7 @@ async function renderMemoryGalaxy(el) {
 
   if (!data.nodes || !data.nodes.length) {
     el.innerHTML = '<div class="empty-state"><p style="margin-bottom:8px">Geen notities gevonden.</p>' +
-      '<p style="font-size:12px;color:#64748b">Stel OBSIDIAN_VAULT_PATH in .env in om je vault als sterrenkaart te zien.</p></div>';
+      '<p style="font-size:12px;color:var(--text-muted)">Stel OBSIDIAN_VAULT_PATH in .env in om je vault als sterrenkaart te zien.</p></div>';
     return;
   }
 
@@ -320,10 +369,10 @@ async function renderMemoryGalaxy(el) {
       '<canvas id="galaxy-canvas" style="position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab"></canvas>' +
       // Titelblok
       '<div style="position:absolute;top:16px;left:18px;pointer-events:none;user-select:none">' +
-        '<div style="font-size:11px;font-weight:700;letter-spacing:2px;color:#cbd5e1">\u{2726} MEMORY GALAXY</div>' +
+        '<div style="font-size:11px;font-weight:700;letter-spacing:2px;color:#cbd5e1">MEMORY GALAXY</div>' +
         '<div style="font-size:11px;color:#64748b;margin-top:3px">' + data.note_count + ' sterren \u{B7} ' + data.link_count + ' links</div>' +
         '<div style="font-size:10px;color:#475569;margin-top:2px">sleep om te draaien \u{B7} scroll om te zoomen \u{B7} klik een ster \u{B7} dubbelklik pauzeert de vlucht</div>' +
-        '<div style="font-size:10px;color:#475569">\u{2726} feller &amp; witter = recenter bijgewerkt</div>' +
+        '<div style="font-size:10px;color:#475569">feller &amp; witter = recenter bijgewerkt</div>' +
       '</div>' +
       // Zoekveld
       '<div style="position:absolute;top:14px;right:16px;width:260px">' +
@@ -342,8 +391,8 @@ async function renderMemoryGalaxy(el) {
       '</div>' +
       // Besturing
       '<div style="position:absolute;right:16px;bottom:14px;display:flex;gap:6px">' +
-        '<button id="galaxy-flight-btn" onclick="galaxyToggleFlight()" title="Vlucht pauzeren/hervatten" style="padding:6px 12px;border-radius:8px;border:1px solid #1e293b;background:rgba(15,23,42,.85);color:#94a3b8;font-size:11px;cursor:pointer">\u{23F8} Pauze</button>' +
-        '<button onclick="galaxyResetView()" title="Beeld terugzetten" style="padding:6px 12px;border-radius:8px;border:1px solid #1e293b;background:rgba(15,23,42,.85);color:#94a3b8;font-size:11px;cursor:pointer">\u{27F2} Reset</button>' +
+        '<button id="galaxy-flight-btn" onclick="galaxyToggleFlight()" title="Vlucht pauzeren/hervatten" style="padding:6px 12px;border-radius:8px;border:1px solid #1e293b;background:rgba(15,23,42,.85);color:#94a3b8;font-size:11px;cursor:pointer">Pauze</button>' +
+        '<button onclick="galaxyResetView()" title="Beeld terugzetten" style="padding:6px 12px;border-radius:8px;border:1px solid #1e293b;background:rgba(15,23,42,.85);color:#94a3b8;font-size:11px;cursor:pointer">Reset</button>' +
       '</div>' +
       // Tooltip + detailpaneel
       '<div id="galaxy-tooltip" style="display:none;position:absolute;pointer-events:none;background:rgba(15,23,42,.95);border:1px solid #334155;border-radius:6px;padding:5px 10px;font-size:11px;color:#e2e8f0;z-index:5;max-width:260px"></div>' +
@@ -619,7 +668,7 @@ function galaxyBindEvents(g) {
     g.searchHits = hits;
     var html = list.slice(0, 12).map(function(i) {
       var n = g.nodes[i];
-      return '<div onclick="galaxySelect(' + i + ')" style="padding:7px 10px;font-size:11px;color:#e2e8f0;cursor:pointer;border-bottom:1px solid #1e293b">\u{2726} ' + escHtml(n.name) +
+      return '<div onclick="galaxySelect(' + i + ')" style="padding:7px 10px;font-size:11px;color:#e2e8f0;cursor:pointer;border-bottom:1px solid #1e293b">' + escHtml(n.name) +
         ' <span style="color:#64748b">\u{B7} ' + escHtml(n.group) + '</span></div>';
     }).join('');
     resBox.innerHTML = html || '<div style="padding:8px 10px;font-size:11px;color:#64748b">Geen naam-matches \u{2014} inhoud doorzoeken...</div>';
@@ -686,7 +735,7 @@ function galaxySelect(idx) {
     body.innerHTML = html;
   }).catch(function() {
     var body = document.getElementById('galaxy-note-body');
-    if (body) body.innerHTML = '<span style="color:#ef4444">Kon notitie niet laden</span>';
+    if (body) body.innerHTML = '<span style="color:var(--red)">Kon notitie niet laden</span>';
   });
 }
 
@@ -694,7 +743,7 @@ function galaxyToggleFlight() {
   var g = _galaxy; if (!g) return;
   g.autoRotate = !g.autoRotate;
   var btn = document.getElementById('galaxy-flight-btn');
-  if (btn) btn.innerHTML = g.autoRotate ? '\u{23F8} Pauze' : '\u{25B6} Vlucht';
+  if (btn) btn.innerHTML = g.autoRotate ? 'Pauze' : 'Vlucht';
 }
 function galaxyResetView() {
   var g = _galaxy; if (!g) return;

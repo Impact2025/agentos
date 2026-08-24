@@ -1,7 +1,7 @@
 """
-Gauntlet Loop — AgentOS-implementatie van het "Gauntlet Loop"-patroon.
+Gauntlet Loop — ImpactOS-implementatie van het "Gauntlet Loop"-patroon.
 
-Dit is de orchestrator die AgentOS' bestaande Loop Engineering (maker/beoordelaar)
+Dit is de orchestrator die ImpactOS' bestaande Loop Engineering (maker/beoordelaar)
 en Delegate-laag (parallelle subagents) KOMBINEERT tot de 3-pijler-Gauntlet uit de
 video van Matt Schumer / Julian Goldie:
 
@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -50,6 +51,7 @@ from ...shared import agent_runner as agent_service
 from ...domains.delegate import event_bus
 from ...domains.pipeline.service import get_agent_profile
 from ...domains.publish.content_pipeline import create_job as _create_content_job  # noqa: E402
+from ...domains.publish.article_writer import FEITEN_GRONDWET, _sanitize_html_body
 from . import brand_brief
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,41 @@ class BillingError(RuntimeError):
     gemarkeerd i.p.v. 5 deeltaken op 'error' te laten eindigen — zodat de
     gebruiker direct ziet: laad je OpenModel-saldo op, niet 'systeem bug'.
     """
+
+
+# Contract dat elke benchmark-string moet volgen wil _auto_queue_run een run
+# automatisch naar de juiste site kunnen publiceren: de frase "project 'X'"
+# (of "project \"X\"") moet er letterlijk in staan. Elke caller die zelf een
+# benchmark opstelt (orchestrator._PROJECT_BENCHMARKS, agentctl.deploy_agent,
+# suggest.py) moet deze exacte vorm gebruiken — zie
+# tests/test_orchestrator_dedup.py:test_alle_hardcoded_benchmarks_noemen_hun_project,
+# die elke hardcoded benchmark tegen deze regex toetst zodat een nieuwe of
+# gewijzigde stijlgids zonder de frase een falende test geeft in plaats van
+# een stil weggegooide Gauntlet-run (19 aug 2026: alle vier de hardcoded
+# project-benchmarks misten de frase, dus landde elke geslaagde herschrijving
+# van WeAreImpact/Bijeen/Pootgelukkig/BewaardVoorJou in een foutkaart i.p.v.
+# de Wachtrij).
+_PROJECT_IN_BENCHMARK_RE = re.compile(r"project\s+['\"]([^'\"]+)['\"]", re.IGNORECASE)
+
+
+def _project_from_benchmark(benchmark: str) -> Optional[str]:
+    """Zelfde extractie als bij publiceren, maar dan vóóraf — nodig om de
+    juiste merk-brief te kiezen (zie brand_brief.get_brand_brief). `None` als
+    de benchmark geen project noemt; de brief valt dan terug op generiek."""
+    m = _PROJECT_IN_BENCHMARK_RE.search(benchmark or "")
+    return m.group(1).strip() if m else None
+
+
+class OnbekendProject(ValueError):
+    """Een geslaagde run hoort bij géén herleidbare site.
+
+    Vóór 15 aug 2026 viel dit stil terug op WeAreImpact (de eerste site die er
+    was). Raden is hier de duurste optie: het project wordt verderop uit het
+    site_id afgeleid, dus een verkeerde gok kiest ook de verkeerde huisstijl
+    voor de vólgende ronde en bevestigt zichzelf. Wie niet weet voor wie hij
+    schrijft, stopt.
+    """
+
 
 # Sterke referenties naar lopende achtergrond-tasks (anders ruimt GC de task op).
 _BG_TASKS: "set[asyncio.Task]" = set()
@@ -95,8 +132,11 @@ MAKER_DEFAULT = (
     "Je bent een gespecialiseerde builder in een Gauntlet Loop. Je levert een direct "
     "bruikbaar, self-contained eindproduct in Markdown — geen meta-uitleg, geen vragen "
     "terug. Krijg je feedback van een blinde criticus, verwerk die dan punt voor punt en "
-    "lever een merkbaar betere versie."
-)
+    "lever een merkbaar betere versie.\n\n"
+    "NOOIT je eigen rolnaam of specialisme in de output zetten — geen kop als "
+    "'SEO-schrijver', 'Tool-vergelijker' of vergelijkbaar. Die rol is voor jou, niet voor "
+    "de lezer; de output begint direct met de inhoud (H1 en verder)."
+) + FEITEN_GRONDWET
 
 CRITIC_DEFAULT = (
     "Je bent een BLINDE, onvermoeibare criticus in een Gauntlet Loop. Je ziet ALLEEN het "
@@ -209,13 +249,18 @@ def _update_subtask(st_id: str, **fields: Any) -> None:
 
 async def _run_text_agent(
     system_prompt: str, user_message: str, model_override: Optional[str],
-    max_tokens: int = 4096, call_timeout: float = 90.0,
+    max_tokens: int = 4096, call_timeout: float = 90.0, purpose: str = "gauntlet",
 ) -> str:
     """Draai een agent zonder tools en verzamel tekst (content-taak).
 
     `call_timeout` voorkomt dat één trage OpenModel-call de hele Gauntlet-run
     blokkeert: bij timeout wordt RuntimeError opgegooid (en door de caller
     geretry'd of als 'error' gemarkeerd i.p.v. de run te laten hangen).
+
+    `purpose` labelt het verbruik in `llm_usage` per Gauntlet-fase
+    (decompose/write/review) i.p.v. onder de kale "agent-openmodel"-naam —
+    zonder dit was de duurste engine in het systeem onzichtbaar in het
+    kostenoverzicht per agent-rol.
     """
     chunks: List[str] = []
     try:
@@ -227,6 +272,7 @@ async def _run_text_agent(
                 model_override=model_override,
                 use_tools=False,  # content-taken: zwakke modellen lekken anders tool-syntax
                 max_tokens=max_tokens,
+                purpose=purpose,
             ):
                 if event.get("type") == "error":
                     msg = event.get("message") or "Onbekende agent-fout"
@@ -243,6 +289,7 @@ async def _run_text_agent(
 async def _run_text_agent_retry(
     system_prompt: str, user_message: str, model_override: Optional[str],
     max_tokens: int = 4096, max_attempts: int = 3, call_timeout: float = 90.0,
+    purpose: str = "gauntlet",
 ) -> str:
     """_run_text_agent met retry bij tijdelijke backend-haps (gateway :8899 flaky).
 
@@ -256,6 +303,7 @@ async def _run_text_agent_retry(
         try:
             return await _run_text_agent(
                 system_prompt, user_message, model_override, max_tokens, call_timeout,
+                purpose=purpose,
             )
         except BillingError:
             raise  # saldo-op: nooit retry'en, direct naar de run-loop
@@ -278,7 +326,10 @@ async def _decompose(objective: str, model_override: Optional[str]) -> List[Dict
     over die de gebruiker alsnog kan laten lopen (en die zelf de fout netjes meldt).
     """
     try:
-        raw = await _run_text_agent(_DECOMPOSE_PROMPT, f"# Opdracht\n{objective}", model_override)
+        raw = await _run_text_agent(
+            _DECOMPOSE_PROMPT, f"# Opdracht\n{objective}", model_override,
+            purpose="gauntlet-decompose",
+        )
         obj = json.loads(_extract_json(raw))
         subs = obj.get("subtasks") or []
         cleaned = [
@@ -317,6 +368,7 @@ async def _run_builder(
     for attempt in range(1):
         draft = await _run_text_agent_retry(
             system_prompt, user_message, model_override, max_tokens=8192, call_timeout=90.0,
+            purpose="gauntlet-write",
         )
         if draft and draft.strip() and "_(De builder leverde geen tekst op.)_" not in draft:
             return draft
@@ -400,7 +452,8 @@ async def _run_critic(
     for _ in range(retries + 1):
         try:
             last_raw = await _run_text_agent_retry(
-                system_prompt, user_message, model_override, max_tokens=4096, call_timeout=90.0
+                system_prompt, user_message, model_override, max_tokens=4096, call_timeout=90.0,
+                purpose="gauntlet-review",
             )
         except BillingError:
             raise  # saldo-op: niet retry'en, meteen naar de run-loop
@@ -522,8 +575,10 @@ async def _run_gauntlet(
     model_override = model_override or _default_model()
     # Gedeelde merk-brief uit de vault (Vincent's Schrijf-DNA) — één keer per run
     # opgehaald en naar elke builder gestuurd zodat alle deeltaken in dezelfde
-    # stem schrijven.
-    brand_brief_txt = brand_brief.get_brand_brief()
+    # stem schrijven. Gescoped op project (19 aug 2026, zie brand_brief.py):
+    # alleen WeAreImpact krijgt Vincent's persoonlijke identiteit, elk ander
+    # project krijgt de generieke, identiteitsloze brief.
+    brand_brief_txt = brand_brief.get_brand_brief(_project_from_benchmark(benchmark))
 
     event_bus.publish({
         "type": "gauntlet_start", "run_id": run_id, "objective": objective,
@@ -622,7 +677,23 @@ def spawn_gauntlet(
     session_id: Optional[str] = None,
     model_override: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Start een Gauntlet Loop en KEER DIRECT TERUG (non-blocking)."""
+    """Start een Gauntlet Loop en KEER DIRECT TERUG (non-blocking).
+
+    Budgetrem (15 aug 2026): dit is de énige deur naar de Gauntlet — de
+    Orchestrator, Agent Control, de bridge-commando's en de router komen hier
+    allemaal langs — en er zat geen enkele budget-guard op. Een Gauntlet-run is
+    verreweg de duurste LLM-beweging in het systeem (3 deeltaken × tot 3
+    criticus-rondes), dus draaide de zwaarste consument als enige zonder rem.
+    Gemeten op 15 aug: `DAILY_TOKEN_BUDGET` van 10M werd om 18:07 gepasseerd en
+    er kwamen 603 waarschuwingen in het log terwijl de runs gewoon doorgingen —
+    `log_llm_usage` logt het verbruik, maar alleen `require_llm_budget` remt.
+    Een budget dat 603 keer 'over de grens' zegt en doorgaat is geen budget.
+
+    Bewust vóór `_create_run`: een geweigerde run mag geen lege rij in
+    `gauntlet_runs` achterlaten die er later uitziet als een vastloper.
+    """
+    from ...shared.outcomes import require_llm_budget
+    require_llm_budget("gauntlet")
     if not objective or not objective.strip():
         raise ValueError("Een opdracht (objective) is verplicht voor een Gauntlet.")
     if not benchmark or not benchmark.strip():
@@ -731,11 +802,16 @@ def _assemble_draft(run: Dict[str, Any]) -> str:
     for s in run.get("subtasks", []):
         out = (s.get("best_output") or "").strip()
         if out and out != "_(De builder leverde geen tekst op.)_":
-            parts.append(f"## {s.get('role', 'Deeltaak')}\n\n{out}")
+            # De rolnaam is metadata, geen artikelinhoud: voeg hem NIET toe als
+            # zichtbare kop. Vóór deze fix lekte elke subtaak-rol (bv.
+            # "## Content Redactie-schrijver") als letterlijke H2 het artikel in
+            # — zichtbaar voor de lezer op de live site. De echte artikelkop zit
+            # als H1 in `out` zelf; de rol blijft uitsluitend in gauntlet_subtasks.
+            parts.append(out)
     return "\n\n".join(parts) if parts else (run.get("objective") or "")
 
 
-def publish_to_weareimpact(run_id: str, site_id: Optional[str] = None,
+def publish_run_to_wachtrij(run_id: str, site_id: Optional[str] = None,
                           site_name: Optional[str] = None, title: Optional[str] = None,
                           keyword: Optional[str] = None, slug: Optional[str] = None) -> Dict[str, Any]:
     """Publish-gate: zet een PASSED Gauntlet-run om in een content_job (pending_review).
@@ -744,10 +820,20 @@ def publish_to_weareimpact(run_id: str, site_id: Optional[str] = None,
     - status 'failed' / 'stopped' / 'stopped_by_user' → geweigerd.
     - status 'partial' of 'passed' → toegestaan, maar alleen deeltaken boven de
       drempel worden meegenomen; een deeltaak onder drempel blijft uit de job.
+
+    Idempotent per run_id (14 aug 2026): zonder deze guard riep een race tussen
+    twee gelijktijdige aanroepen (Agent Control's 'Voer allemaal uit' + een
+    handmatige klik, of twee overlappende Orchestrator-triggers die dezelfde
+    lopende run terugkregen) deze functie meerdere keren aan voor precies
+    dezelfde run — gemeten: 3 content_jobs uit één run_id, waarvan één met een
+    verkeerd geresolved site_id. Een run die al gepubliceerd is, levert nu
+    gewoon zijn bestaande job terug in plaats van een nieuwe te maken.
     """
     run = get_run(run_id)
     if not run:
         raise ValueError("Gauntlet run niet gevonden.")
+    if run.get("published_job_id"):
+        return {"job_id": run["published_job_id"], "already_published": True}
     status = run.get("status")
     threshold = run.get("threshold") or DEFAULT_THRESHOLD
     allowed = status in ("passed", "partial")
@@ -770,17 +856,34 @@ def publish_to_weareimpact(run_id: str, site_id: Optional[str] = None,
 
     draft = _assemble_draft({**run, "subtasks": passed_subs})
 
-    # Site-resolutie: expliciete site_id wint; anders site_name → site_id;
-    # anders terugval op WeAreImpact (legacy). Zo stuurt de Orchestrator het
-    # juiste project mee zonder dat hij site_id's hoeft te kennen.
+    # Site-resolutie: expliciete site_id wint, anders site_name → site_id.
+    # Lukt geen van beide, dan faalt dit hard (15 aug 2026).
+    #
+    # Hier stond een terugval op WeAreImpact — een restant uit de tijd dat er
+    # één site was. Elke run zonder herleidbaar project landde daardoor stil
+    # bij de grootste site: gemeten stonden er 25 stukken over Bijeen,
+    # Pootgelukkig, LiefdeVoorIedereen en TeambuildingMetImpact in de Wachtrij
+    # van WeAreImpact, en twee ervan zijn écht live gegaan op weareimpact.nl.
+    #
+    # Erger dan de misplaatsing was dat hij zichzelf versterkte: het project
+    # wordt verderop uit het site_id afgeleid (orchestrator._project_for_job),
+    # dus koos de volgende herschrijfronde de huisstijl van de vérkeerde site,
+    # en landde het resultaat opnieuw op diezelfde verkeerde plek.
+    #
+    # Een onherleidbaar project is een fout en geen detail: wie niet weet voor
+    # wélke site hij schrijft, hoort te stoppen, niet te raden. Dat is dezelfde
+    # regel als overal elders in dit systeem — liever luid dan stil.
     resolved_site_id = site_id
     if not resolved_site_id and site_name:
         resolved_site_id = _resolve_site_id_by_name(site_name)
     if not resolved_site_id:
-        resolved_site_id = _resolve_weareimpact_site_id()
+        raise OnbekendProject(
+            f"Run {run_id} heeft geen herleidbaar project "
+            f"(site_id={site_id!r}, site_name={site_name!r}) — publiceren geblokkeerd. "
+            "Geef een site_id mee, of een site_name die exact met een bestaande "
+            "site overeenkomt."
+        )
 
-    job_title = (title or run.get("objective") or "Gauntlet-run")[:120]
-    job_slug = slug or _slugify(job_title)
     job_keyword = keyword or ""
 
     # ── Content-type detectie ──────────────────────────────────────────────
@@ -803,7 +906,59 @@ def publish_to_weareimpact(run_id: str, site_id: Optional[str] = None,
         blog_html = ""
     else:
         social_copy = {}
-        blog_html = _md_to_html(draft)
+        # Deterministisch vangnet (19 aug 2026): MAKER_DEFAULT verbiedt de builder
+        # nu expliciet zijn eigen rolnaam als kop te schrijven, maar een prompt-
+        # instructie is geen garantie — gemeten deed het model dat toch
+        # ("## SEO-schrijver en contentstrateeg", "## Tool-vergelijker"), los van
+        # de oude `_assemble_draft`-wrapping die een ánder lek al repareerde.
+        # Dezelfde sanitizer die content_pipeline gebruikt (persona-labels,
+        # schrijfnotities, dubbele H1's) draait daarom ook hier, ná de
+        # markdown→HTML-omzetting (de regex matcht op <h2>/<h3>, niet op "##").
+        blog_html = _sanitize_html_body(_md_to_html(draft))
+
+    # ── Titel: het resultaat, niet de opdracht ─────────────────────────────
+    # Een expliciete `title` van de aanroeper wint (de Orchestrator kent het
+    # bronartikel). Anders komt de kop uit het geschreven stuk zelf. De
+    # objective is pas het állerlaatste redmiddel, en dan ontdaan van zijn
+    # opdracht-omhulling — zie _titel_uit_draft voor het incident.
+    #
+    # Voor een blog is een opdracht-titel bovendien fataal: `job_slug` is
+    # ervan afgeleid, dus hij landt in de URL. Blijft er geen bruikbare kop
+    # over, dan gaat de job als `hook` naar binnen (geen Publiceer-knop, geen
+    # pagina) in plaats van als blog met een opdracht in het adres.
+    job_title = (title or "").strip()
+    # Ook een MEEGEGEVEN titel kan een werkbon zijn. De Orchestrator neemt de
+    # titel van het bronrecord over, en dat bronrecord is vaak zélf een eerder
+    # Gauntlet-product — dus plant een opdracht-titel zich generatie op
+    # generatie voort ("Herschrijf het artikel 'Herschrijf het artikel …'").
+    # Gemeten 15 aug 2026 om 17:30, ná de storm: twee verse jobs met precies
+    # die vorm. Vandaar dat de toets vóór het overnemen komt en niet erna.
+    if job_title and content_type == "blog":
+        from ..publish.content_pipeline import is_internal_document
+        if is_internal_document(job_title):
+            uit_stuk = _titel_uit_draft(draft) or _titel_zonder_opdracht(job_title)
+            if uit_stuk:
+                logger.info("Gauntlet %s: meegegeven titel was een opdracht — "
+                            "kop uit het stuk gebruikt (%r).", run_id, uit_stuk[:60])
+                job_title = uit_stuk
+            else:
+                job_title = ""
+            # De aanroeper leidde zijn slug van diezelfde opdracht af; die mag
+            # de opgeschoonde titel niet overleven, anders staat de werkbon
+            # alsnog in de URL.
+            slug = None
+    if not job_title and content_type == "blog":
+        job_title = _titel_uit_draft(draft) or _titel_zonder_opdracht(run.get("objective") or "")
+        if not job_title:
+            logger.warning(
+                "Gauntlet %s: geen artikelkop in het stuk en de objective bevat er geen — "
+                "als 'hook' geparkeerd i.p.v. als blog met een opdracht-URL.", run_id,
+            )
+            content_type = "hook"
+    if not job_title:
+        job_title = (run.get("objective") or "Gauntlet-run")[:120]
+    job_title = job_title[:120]
+    job_slug = slug or _slugify(job_title)
     # Maak een content_job aan in de publish-pijplijn (status pending_review =
     # wacht op menselijke goedkeuring, NOOIT automatisch live).
     job_id = _create_content_job(
@@ -820,7 +975,11 @@ def publish_to_weareimpact(run_id: str, site_id: Optional[str] = None,
         status="pending_review",
         qc_report={"source": "gauntlet", "run_id": run_id, "threshold": threshold,
                    "content_type": content_type},
-        dedupe=False,
+        # dedupe=True (was False): de Gauntlet-loop was de enige route die de
+        # deduplicatie uit topics/slug/keyword uitzette, waardoor herschrijf-
+        # runs zichzelf tientallen keer in de wachtrij dumpten (45x superseded
+        # bij Bijeen). Aan = update bestaande i.p.v. nieuwe rij.
+        dedupe=True,
         content_type=content_type,
     )
     _update_run(run_id, published_job_id=job_id)
@@ -837,34 +996,62 @@ def _auto_queue_run(run_id: str, threshold: int) -> Optional[str]:
 
     Wordt aangeroepen bij run-afronding (overall >= threshold). Maakt een
     content_job met status 'pending_review' — wacht op menselijke goedkeuring,
-    NOOIT automatisch live. Site-resolutie: project-naam uit de run objective
-    (formaat '[Agent] taak voor <project>') → anders WeAreImpact-legacy.
+    NOOIT automatisch live. Site-resolutie: project-naam uit de run-benchmark
+    (formaat "... voor project 'X'").
+
+    Levert dat niets op, dan is er niets om naar te publiceren en stopt het hier
+    mét een uitkomst-kaart (15 aug 2026). Vóórdien landde zo'n run stil bij
+    WeAreImpact; dit is de plek waar dat het vaakst gebeurde, want de benchmark
+    van een handmatige of Orchestrator-run bevat die frase helemaal niet. Het
+    werk is niet weg — de run blijft staan en is met een expliciet project
+    alsnog te publiceren via POST /api/gauntlet/{id}/publish.
     """
     run = get_run(run_id)
     if not run:
         return None
-    objective = (run.get("objective") or "")
     # Project-naam zit in de agent-deploy benchmark ("... voor project 'X'")
-    import re
-    m = re.search(r"project\s+['\"]([^'\"]+)['\"]", (run.get("benchmark") or ""), re.IGNORECASE)
+    m = _PROJECT_IN_BENCHMARK_RE.search(run.get("benchmark") or "")
     project = m.group(1).strip() if m else None
     site_id = _resolve_site_id_by_name(project) if project else None
-    out = publish_to_weareimpact(run_id, site_id=site_id, site_name=project)
+    try:
+        out = publish_run_to_wachtrij(run_id, site_id=site_id, site_name=project)
+    except OnbekendProject as exc:
+        # De run is al elders gepubliceerd (bijv. via de Orchestrator-route, die
+        # het project uit de objective haalt i.p.v. de benchmark). Dan is de
+        # auto-queue-route niet "mislukt" maar overbodig — géén error-kaart,
+        # anders staat er een false-positive terwijl de content wél in de
+        # Wachtrij ligt. Controleer op de bestaande published_job_id.
+        run_now = get_run(run_id)
+        if run_now and run_now.get("published_job_id"):
+            from ...shared.outcomes import log_outcome
+            logger.info(
+                "Auto-queue overgeslagen voor run %s (project niet in benchmark), "
+                "maar run is al gepubliceerd als job %s — geen kaart.",
+                run_id, run_now["published_job_id"],
+            )
+            log_outcome(
+                project or "onbekend", "gauntlet_reeds_gepubliceerd",
+                f"Gauntlet-run {run_id} haalde de benchmark en is al gepubliceerd naar "
+                f"content_job {run_now['published_job_id']} (via een andere route). "
+                f"Auto-queue kon hem niet herkoppelen aan een site, maar het werk "
+                f"staat al in de Wachtrij.",
+                next_step="Geen actie nodig — de content wacht op review in de Wachtrij.",
+                status="ok",
+            )
+            return run_now["published_job_id"]
+        from ...shared.outcomes import log_outcome
+        logger.warning("Auto-queue overgeslagen voor run %s: %s", run_id, exc)
+        log_outcome(
+            project or "onbekend", "gauntlet_zonder_project",
+            f"Gauntlet-run {run_id} haalde de benchmark, maar hoort bij geen enkele site "
+            f"(benchmark noemt geen project). Er is niets in de Wachtrij gezet.",
+            next_step="Open de run in de Gauntlet-tab en publiceer hem met het juiste "
+                      "project, of laat hem staan als het werk niet meer nodig is.",
+            status="error",
+        )
+        return None
     logger.info("Auto-queue: run %s -> content_job %s (site %s)", run_id, out.get("job_id"), out.get("site_id"))
     return out.get("job_id")
-
-
-def _resolve_weareimpact_site_id() -> str:
-    """Zoek de WeAreImpact-site in de publish-pijplijn; val terug op 'weareimpact'."""
-    try:
-        from ...domains.seo import sites as sites_service
-        sites = sites_service.list_sites() if hasattr(sites_service, "list_sites") else []
-        for s in sites:
-            if "weareimpact" in str(s.get("name", "")).lower() or "weareimpact" in str(s.get("id", "")).lower():
-                return s.get("id")
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Kon WeAreImpact-site niet resolveren: %s", exc)
-    return "weareimpact"
 
 
 def _resolve_site_id_by_name(site_name: str) -> Optional[str]:
@@ -887,6 +1074,57 @@ def _slugify(text: str) -> str:
     t = re.sub(r"[^a-z0-9\s-]", "", text.lower()).strip()
     t = re.sub(r"\s+", "-", t)
     return t[:80] or "gauntlet-run"
+
+
+_OPDRACHT_OMHULLING = re.compile(
+    r"^\s*(?:herschrijf|schrijf|maak|optimaliseer|werk)\b[^'‘“]*"
+    r"['‘“](?P<titel>[^'’”]{6,})['’”]",
+    re.IGNORECASE,
+)
+
+
+def _titel_uit_draft(draft: str) -> str:
+    """Haal de échte artikelkop uit het geschreven stuk.
+
+    Waarom dit bestaat (15 aug 2026): `publish_run_to_wachtrij` viel bij een
+    ontbrekende `title` terug op `run.objective` — de OPDRACHT. De Wachtrij
+    toonde daardoor kaarten als "Herschrijf het artikel 'Zo vind je als
+    organisatie sneller vrijwilligers' tot wereldklasse SEO-content", en omdat
+    `job_slug = _slugify(job_title)` werd dát ook de URL. Het artikel zelf was
+    prima en droeg de juiste H1 in de body; alleen de administratie eromheen
+    beschreef de opdracht in plaats van het resultaat. Dat is dezelfde storing
+    als 'schrijf-meta-titel-en-description-voor-pagina-c' die als LIVE in het
+    logboek stond: een interne taakomschrijving die naar buiten lekt.
+
+    De kop van het stuk is het enige eerlijke antwoord op "hoe heet dit?" —
+    de builder heeft hem zelf geschreven, voor lezers. De rolkoppen die
+    `_assemble_draft` toevoegt ('## Hoofdtaak') zijn géén titel en worden
+    overgeslagen.
+    """
+    for regel in (draft or "").splitlines():
+        regel = regel.strip()
+        if not regel:
+            continue
+        m = re.match(r"^#\s+(?P<t>.+)$", regel)          # markdown H1
+        if not m:
+            m = re.match(r"^\s*<h1[^>]*>(?P<t>.*?)</h1>", regel, re.IGNORECASE)
+        if m:
+            kop = re.sub(r"<[^>]+>", "", m.group("t")).strip(" #*")
+            if len(kop) >= 6:
+                return kop[:120]
+    return ""
+
+
+def _titel_zonder_opdracht(objective: str) -> str:
+    """Laatste redmiddel: pel de opdracht van een objective af.
+
+    "Herschrijf het artikel 'X' tot wereldklasse SEO-content (...)" → "X".
+    Levert dit niets op, dan geeft de functie leeg terug — een objective die
+    geen artikelkop bevat is er ook geen, en dan is doorgaan met de opdracht
+    als titel erger dan geen titel.
+    """
+    m = _OPDRACHT_OMHULLING.match(objective or "")
+    return m.group("titel").strip()[:120] if m else ""
 
 
 def _draft_to_social_copy(draft: str) -> Dict[str, str]:

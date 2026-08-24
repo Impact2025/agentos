@@ -1,4 +1,4 @@
-"""Geconsolideerde healthcheck voor Agent OS.
+"""Geconsolideerde healthcheck voor Impact OS.
 
 Eén endpoint (/api/healthcheck) dat in één oogopslag laat zien:
   • welke LLM-backend actief is en of OpenModel/Ollama écht live zijn
@@ -13,7 +13,7 @@ altijd snel antwoordt, ook als een provider hangt.
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait
 
 import httpx
 from fastapi import APIRouter
@@ -29,7 +29,7 @@ from ...shared.outcomes import (
 )
 from ...scheduler import get_scheduler_status
 
-# Lokale Omniroute-LLM-gateway (:8899) — de centrale router waar Hermes/AgentOS
+# Lokale Omniroute-LLM-gateway (:8899) — de centrale router waar Hermes/ImpactOS
 # (en de claude-CLI) doorheen praten. Staat los van de cloud-OpenModel-check:
 # openmodel kan bereikbaar zijn maar de gateway zélf down (zoals 13 aug 2026,
 # toen de supervisor crashte en :8899 platlag terwijl openmodel live was).
@@ -37,6 +37,15 @@ LOCAL_GATEWAY_URL = "http://127.0.0.1:8899"
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/healthcheck", tags=["health"])
+
+# Eén langlevende executor voor alle probes, hergebruikt over requests heen.
+# Een executor per aanroep (de oude code) wacht bij __exit__ altijd op zijn
+# threads (shutdown(wait=True)) — dat maakt elke expliciete timeout op
+# .result() zinloos. Met een gedeelde pool submitten we gewoon en gebruiken
+# concurrent.futures.wait(..., timeout=...) om NIET op trage threads te
+# wachten; die lopen op de achtergrond af (probes zijn read-only, geen
+# side-effects) zonder de aanroepende request te blokkeren.
+_HEALTH_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="healthcheck-probe")
 
 
 # ── Liveness probes (parallel, kort time-out) ──────────────────────────────
@@ -142,7 +151,7 @@ def _probe_calendar() -> dict:
 
 def _probe_gateway() -> dict:
     """Lokale Omniroute-LLM-gateway (:8899). Dit is de centrale router waar
-    Hermes/AgentOS/claude doorheen praten. OpenModel kan live zijn maar de
+    Hermes/ImpactOS/claude doorheen praten. OpenModel kan live zijn maar de
     gateway zélf down — dat was de 13-aug-2026-storing (supervisor crashte)."""
     try:
         with httpx.Client(timeout=4.0) as c:
@@ -258,6 +267,33 @@ def _collect_bugs() -> dict:
                     "WHERE active=1 AND failures>0 ORDER BY failures DESC LIMIT 5"
                 ).fetchall()
                 for b in bugs:
+                    sig = (b["signature"] or "")
+                    # Wereldklasse-guard: een signature telt alleen mee voor de
+                    # statusbadge als er nog een actuele open case achter zit.
+                    # Anders blijft de badge permanent rood op dode autoheal-
+                    # pogingen (de bron-job/brief is allang weg — bv. artikel
+                    # afgewezen, of activity_log na 3 dagen gepurged) terwijl er
+                    # niets meer te blokkeren valt. 18 aug 2026: 10 'publish-gate
+                    # blokkades' in de badge bleken allemaal job_status={} — de
+                    # signature leefde voort terwijl de fout al lang was opgelost.
+                    has_case = False
+                    if "publish_failed" in sig or "publicatie" in sig or "taalcorruptie" in sig:
+                        # Heeft de bijbehorende job het nog steeds lastig?
+                        try:
+                            jc = conn.execute(
+                                "SELECT 1 FROM content_jobs "
+                                "WHERE status IN ('publish_failed','needs_work') "
+                                "AND (title LIKE ? OR error LIKE ? OR publish_result LIKE ?) "
+                                "LIMIT 1",
+                                (f"%{sig[:20]}%", f"%{sig[:20]}%", f"%{sig[:20]}%"),
+                            ).fetchone()
+                            has_case = bool(jc)
+                        except Exception:
+                            has_case = True  # bij twijfel wel tonen
+                    else:
+                        has_case = True  # niet-publish-fouten altijd tonen
+                    if not has_case:
+                        continue
                     out["recurring_bugs"].append({
                         "signature": b["signature"],
                         "project": b["project"],
@@ -348,32 +384,64 @@ def healthcheck():
     # pagina-load én elke auto-refresh aangeroepen — als een externe provider
     # hangt, mag de hele Control Room niet 15s blijven laden. Na de timeout
     # krijgen niet-voltooide probes een nette "timeout"-status.
+    #
+    # LET OP (20 aug 2026, gemeten): dit was ooit al zo bedoeld, maar `_run()`
+    # deed `with ThreadPoolExecutor(...) as ex: ex.submit(fn).result(timeout=3)`
+    # — elke aanroep in zijn EIGEN executor, ná elkaar (dus alsnog sequentieel,
+    # niet parallel), én de `with`-context wacht bij __exit__ altijd op de
+    # thread (`shutdown(wait=True)`) ongeacht de timeout op `.result()`. Een
+    # dode gateway-probe (connect-refused, ~3,3s) plus een trage Ollama-probe
+    # (~2,6s) plus dezelfde probe nogmaals voor 'local' telden gewoon op:
+    # 8-9 seconden per aanroep, gemeten met curl. Nu: één gedeelde, langlevende
+    # executor, alle probes tegelijk ingediend, en `wait(..., timeout=3.0)` —
+    # dat wacht nergens op een individuele thread die zijn eigen timeout nog
+    # niet heeft gehaald. Een trage thread mag op de achtergrond uitlopen
+    # (de probes zijn read-only en side-effect-vrij), wij wachten er niet op.
     HEALTHCHECK_TIMEOUT = 3.0
     quota_backoff = llm_quota_backoff_active()
 
-    def _run(fn):
-        try:
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                return ex.submit(fn).result(timeout=HEALTHCHECK_TIMEOUT)
-        except Exception as e:  # timeout of crash → niet-blokkerend
-            return {"live": None, "error": f"timeout/{type(e).__name__}"}
-
-    local = _run(_probe_local)
+    jobs = {
+        "local": _probe_local,
+        "ollama": _probe_ollama,
+        "calendar": _probe_calendar,
+        "gateway": _probe_gateway,
+        "social": _probe_social,
+        "active": _active_work,
+        "bugs": _collect_bugs,
+    }
     # OpenModel-cloud-probe: alleen doen als er geen quota-backoff loopt én
     # de key gezet is. Bij backoff is de cloud toch niet bruikbaar en spaart
-    # dit ~2s netwerklatentie per healthcheck-call.
-    if quota_backoff or not OPENMODEL_API_KEY:
+    # dit netwerklatentie per healthcheck-call.
+    skip_openmodel = quota_backoff or not OPENMODEL_API_KEY
+    if not skip_openmodel:
+        jobs["openmodel"] = _probe_openmodel
+
+    futures = {name: _HEALTH_EXECUTOR.submit(fn) for name, fn in jobs.items()}
+    done, not_done = wait(futures.values(), timeout=HEALTHCHECK_TIMEOUT)
+
+    results = {}
+    for name, fut in futures.items():
+        if fut in not_done:
+            results[name] = {"live": None, "error": "timeout"}
+            continue
+        try:
+            results[name] = fut.result()
+        except Exception as e:  # probe crashte → niet-blokkerend
+            results[name] = {"live": None, "error": f"{type(e).__name__}: {str(e)[:120]}"}
+
+    local = results["local"]
+    ollama = results["ollama"]
+    calendar = results["calendar"]
+    gateway = results["gateway"]
+    social = results["social"]
+    active = results["active"]
+    bugs = results["bugs"]
+    if skip_openmodel:
         openmodel = {"configured": bool(OPENMODEL_API_KEY), "live": None,
                      "note": "overgeslagen (quota-backoff actief)" if quota_backoff
                      else "geen OPENMODEL_API_KEY"}
     else:
-        openmodel = _run(_probe_openmodel)
-    ollama = _run(_probe_ollama)
-    calendar = _run(_probe_calendar)
-    gateway = _run(_probe_gateway)
-    social = _run(_probe_social)
-    active = _run(_active_work)
-    bugs = _run(_collect_bugs)
+        openmodel = results["openmodel"]
 
     backend_now = hermes_backend()
     llm = llm_usage_summary(days=1)

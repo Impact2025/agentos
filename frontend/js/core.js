@@ -1,4 +1,4 @@
-// ── Agent OS — kern: constanten, state, helpers, routing
+// ── Impact OS — kern: constanten, state, helpers, routing
 // Onderdeel van de SPA: klassieke scripts, gedeelde globale scope.
 // Laadvolgorde staat in index.html — core.js eerst.
 
@@ -18,7 +18,7 @@ function apertureMark(size, cls) {
     '<g>' + spokes + '</g><circle cx="12" cy="12" r="2.6" fill="currentColor"></circle></svg>';
 }
 
-// ── Agent OS — Pro SEO Dashboard ──────────────────────────────────
+// ── Impact OS — Pro SEO Dashboard ──────────────────────────────────
 const PROJECTS = ['WeAreImpact', 'IctusGo', 'Pootgelukkig', 'BewaardVoorJou', 'Kappersassistent', 'DatingAssistent', 'Finance Expert', 'Bijeen', 'Brickme', 'Vrijwilligersmatch', 'Skillkaart', 'Steentjeapp', 'Zorgblik', 'Teambuildingmetimpact', 'Daar'];
 const COLORS = { WeAreImpact: ['from-indigo-500 to-indigo-600','indigo'], Pootgelukkig: ['from-emerald-500 to-emerald-600','emerald'], BewaardVoorJou: ['from-amber-500 to-amber-600','amber'], Kappersassistent: ['from-violet-500 to-violet-600','violet'], DatingAssistent: ['from-red-500 to-red-600','red'], 'Finance Expert': ['from-rose-500 to-rose-600','rose'], Bijeen: ['from-cyan-500 to-cyan-600','cyan'], Brickme: ['from-orange-500 to-orange-600','orange'], Vrijwilligersmatch: ['from-teal-500 to-teal-600','teal'], Skillkaart: ['from-pink-500 to-pink-600','pink'], Steentjeapp: ['from-sky-500 to-sky-600','sky'], Zorgblik: ['from-lime-500 to-lime-600','lime'], Teambuildingmetimpact: ['from-amber-500 to-amber-600','amber'], IctusGo: ['from-cyan-700 to-emerald-600','emerald'] };
 const DESCS = { WeAreImpact: 'AI en innovatie voor zorg, welzijn en gemeenten', Pootgelukkig: 'Adoptieplatform voor asieldieren', BewaardVoorJou: 'Digitaal levensboek voor 65-plussers', Kappersassistent: 'Project kappersbranche (in opstart)', DatingAssistent: 'AI dating coach & datingadvies', 'Finance Expert': 'Financiele rapportage en analyse', Bijeen: 'Sociale verbinding & bijeenkomsten', Brickme: 'Bouw & constructie', Vrijwilligersmatch: 'Vrijwilligers matching platform', Skillkaart: 'Vaardigheden & competenties', Steentjeapp: 'Mobiele app Steentjebijsteentje', Zorgblik: 'Zorginnovatie & inzicht', Teambuildingmetimpact: 'Bedrijfsvrijwilligerswerk, impact days & LEGO Serious Play', IctusGo: 'GPS teambuilding met sociale impact (Hoofddorp/Schiphol)' };
@@ -246,44 +246,68 @@ function pollAgentStatus() {
 }
 
 // ── Resolve all failed goals ────────────────────────────────────────
+// Vincent zag na een klik alleen de knop weer "Oplossen" worden — geen enkel
+// spoor van wát er is geprobeerd of hoe het afliep, alleen een stille refresh.
+// Nu: eerst zeggen wélke doelen herstart worden, dan (na de retry-calls) een
+// eerlijke uitkomst — "herstart, draait nu" is het enige wat je op dat moment
+// kunt beloven, want de uitvoering zelf loopt async door (goal/service.py:
+// retry_failed_goal spawnt de executie-lus en komt meteen terug). De toast
+// linkt door naar de Doelen-tab, waar de échte voortgang per taak te zien is.
 function resolveAllFailed() {
   if (!confirm('Alle vastgelopen doelen (mislukt + deels voltooid) resetten en opnieuw proberen met AI?')) return;
   var btn = document.querySelector('[onclick="resolveAllFailed()"]');
   if (btn) { btn.disabled = true; btn.textContent = 'Bezig...'; }
+  var gaNaarDoelen = function() {
+    if (typeof switchViewThen === 'function') switchViewThen('Doelen', function(){});
+  };
   // status='partial' hoort er bewust bij: /api/goals/retry-failed accepteert
   // 'failed' én 'partial' (goal/service.py:retry_failed_goal) en dat is precies
   // wat de badge-teller (bugs.stalled_goals) meetelt — anders lost deze knop
   // niet op wat hij belooft op te lossen.
   fetch('/api/goals?limit=50').then(function(r){return r.json();}).then(function(goals){
     var failed = goals.filter(function(g){return g.status==='failed' || g.status==='partial';});
-    if (!failed.length) { alert('Geen vastgelopen doelen meer.'); pollAgentStatus(); return; }
-    var done = 0;
-    failed.forEach(function(g){
-      fetch('/api/goals/retry-failed', {
+    if (!failed.length) {
+      showToast('Geen vastgelopen doelen meer.', 'info');
+      if (btn) { btn.disabled = false; btn.innerHTML = '\u{1F9E0} Oplossen'; }
+      pollAgentStatus();
+      return;
+    }
+    var titels = failed.map(function(g){ return g.title; });
+    var kop = titels.slice(0, 3).join(', ') + (titels.length > 3 ? ' + ' + (titels.length - 3) + ' meer' : '');
+    showToast('\u{1F9E0} Bezig: ' + failed.length + ' doel(en) herstart — ' + kop, 'info');
+    var results = [];
+    var calls = failed.map(function(g){
+      return fetch('/api/goals/retry-failed', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({goal_id: g.id}),
       }).then(function(r){
-        done++;
-        if (done >= failed.length) {
-          setTimeout(function(){
-            pollAgentStatus();
-            loadActivityLogs();
-            if (btn) { btn.disabled = false; btn.innerHTML = '\u{1F9E0} Oplossen'; }
-          }, 500);
-        }
-      }).catch(function(){
-        done++;
-        if (done >= failed.length) {
-          setTimeout(function(){
-            pollAgentStatus();
-            loadActivityLogs();
-            if (btn) { btn.disabled = false; btn.innerHTML = '\u{1F9E0} Oplossen'; }
-          }, 500);
-        }
+        return r.json().catch(function(){ return null; }).then(function(data){
+          results.push({goal: g, ok: r.ok && !(data && data.error), error: data && data.error});
+        });
+      }).catch(function(e){
+        results.push({goal: g, ok: false, error: e.message});
       });
     });
+    Promise.all(calls).then(function(){
+      setTimeout(function(){
+        pollAgentStatus();
+        loadActivityLogs();
+        if (btn) { btn.disabled = false; btn.innerHTML = '\u{1F9E0} Oplossen'; }
+        var gelukt = results.filter(function(r){ return r.ok; });
+        var mislukt = results.filter(function(r){ return !r.ok; });
+        var msg = gelukt.length
+          ? gelukt.length + ' doel(en) herstart en draaien nu opnieuw'
+          : 'Geen enkel doel kon herstart worden';
+        if (mislukt.length) {
+          msg += ' — ' + mislukt.length + ' mislukte(n): '
+            + mislukt.map(function(r){ return r.goal.title + (r.error ? ' (' + r.error + ')' : ''); }).slice(0, 2).join(', ');
+        }
+        msg += '. Klik hier voor de voortgang per taak.';
+        showToast(msg, mislukt.length ? 'error' : 'ok', gaNaarDoelen);
+      }, 500);
+    });
   }).catch(function(e){
-    alert('Fout: ' + e.message);
+    showToast('Fout: ' + e.message, 'error');
     if (btn) { btn.disabled = false; btn.innerHTML = '\u{1F9E0} Oplossen'; }
   });
 }
@@ -292,7 +316,9 @@ function escHtml(s) { if (!s) return ''; var d = document.createElement('div'); 
 
 // ── Toast — vervangt een alert() voor niet-blokkerende bevestigingen/fouten.
 // Blijft zichtbaar (geen weg-te-klikken popup) en verdwijnt vanzelf na 5s.
-function showToast(message, tone) {
+// `onClick` is optioneel: een toast die naar een uitvoerbare actie verwijst
+// (bv. "bekijk de voortgang") mag daarheen navigeren i.p.v. alleen te sluiten.
+function showToast(message, tone, onClick) {
   var container = document.getElementById('toast-container');
   if (!container) {
     container = document.createElement('div');
@@ -309,10 +335,10 @@ function showToast(message, tone) {
   var el = document.createElement('div');
   el.style.cssText = 'background:' + c.bg + ';border:1px solid ' + c.border + ';color:' + c.fg +
     ';padding:10px 14px;border-radius:8px;font-size:12px;line-height:1.4;box-shadow:0 2px 8px rgba(0,0,0,0.1);cursor:pointer';
-  el.textContent = message;
-  el.onclick = function(){ el.remove(); };
+  el.textContent = message + (onClick ? '  →' : '');
+  el.onclick = function(){ if (onClick) onClick(); el.remove(); };
   container.appendChild(el);
-  setTimeout(function(){ el.remove(); }, 5000);
+  setTimeout(function(){ el.remove(); }, onClick ? 9000 : 5000);
 }
 
 // POST met JSON-body. De `detail` uit een FastAPI-HTTPException wordt de

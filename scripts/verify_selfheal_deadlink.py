@@ -1,15 +1,15 @@
 """Bewijs dat de selfheal-ronde én de triage-knop de publish_failed+link-dood
 jobs nu wél oppakken (tegen de test-DB, geen live data geraakt).
 
-  cd D:/apps/agentos/backend
-  AGENTOS_DB_PATH=D:/apps/agentos/data/agentos_test.db PYTHONPATH=D:/apps/agentos \
-    .venv/Scripts/python.exe D:/apps/agentos/scripts/verify_selfheal_deadlink.py
+  cd D:/apps/impactos/backend
+  IMPACTOS_DB_PATH=D:/apps/impactos/data/agentos_test.db PYTHONPATH=D:/apps/impactos \
+    .venv/Scripts/python.exe D:/apps/impactos/scripts/verify_selfheal_deadlink.py
 """
 from __future__ import annotations
 import asyncio, os, sqlite3
 
-DB = os.environ.get("AGENTOS_DB_PATH", "data/agentos_test.db")
-os.environ["AGENTOS_DB_PATH"] = DB
+DB = os.environ.get("IMPACTOS_DB_PATH", "data/agentos_test.db")
+os.environ["IMPACTOS_DB_PATH"] = DB
 
 from backend.shared.database import get_conn
 from backend.domains.iris import selfheal, triage

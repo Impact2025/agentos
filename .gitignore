@@ -16,20 +16,20 @@ node_modules/
 data/*.db
 data/*.db.bak*
 # Per-klant instances (Nicole, en elke volgende) — eigen DB/vault, nooit in git.
-data/*/agentos.db
-data/*/agentos.db.bak*
+data/*/impactos.db
+data/*/impactos.db.bak*
 .env.*
-# Launch-scripts per klant bevatten een plaintext AGENTOS_PASSWORD (de
+# Launch-scripts per klant bevatten een plaintext IMPACTOS_PASSWORD (de
 # simpelste manier om instance-config te scheiden zonder een tweede .env-
 # loader te bouwen — zie shared/config.py). Nooit committen. Het kale
-# agentos_service.cmd (hoofdinstallatie, geen wachtwoord erin) blijft wel getrackt.
-agentos_service_*.cmd
+# impactos_service.cmd (hoofdinstallatie, geen wachtwoord erin) blijft wel getrackt.
+impactos_service_*.cmd
 # Werkmappen van Claude Code-sessies (snapshot, backtest-scripts, voorstel).
 # Ze zijn het artefact waar invest_proposals.backtest_ref naar wijst en horen
 # dus op schijf te blijven staan — maar niet in git: ~1,3 MB koersdata per run.
 data/claude_code/
 database.db
-agentos.db
+impactos.db
 *.pid
 
 # Logs & procesuitvoer
@@ -37,7 +37,7 @@ logs/
 *.log
 *.out
 *.err
-agentos.err
+impactos.err
 _out.txt
 
 # Door agents gegenereerde werkruimtes (staan in Obsidian/DB als bron van waarheid)

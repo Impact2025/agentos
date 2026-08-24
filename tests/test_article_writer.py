@@ -335,3 +335,44 @@ def test_ensure_faq_inserts_before_meta_block(monkeypatch):
     html, faq = asyncio.run(aw._ensure_faq({"name": "S"}, "kw", body))
     assert faq
     assert html.index("Veelgestelde vragen") < html.index("<!-- Meta-titel")
+
+
+# ── Sanitizer: gelekte persona-labels vóór de H1 ─────────────────────────────
+# 19 aug 2026, Bijeen: "Tool-vergelijker" en "SEO-schrijver en contentstrateeg"
+# stonden als <h2> vóór de artikel-H1 in echte pending_review-jobs. Het
+# woord-matchende deel van de sanitizer (_PERSONA_LABEL_RE) mist "vergelijker"
+# — geen van de bekende _ROLE_WORDS — dus is er een structurele regel bij: elke
+# H2/H3 vóór de eerste H1 is per contract nooit inhoud (elke outline begint met
+# de H1) en wordt onvoorwaardelijk verwijderd.
+
+def test_sanitize_strips_unknown_role_label_before_h1():
+    from backend.domains.publish import article_writer as aw
+
+    body = "<h2>Tool-vergelijker</h2>\n<h1>Titel</h1>\n<p>Inhoud.</p>"
+    out = aw._sanitize_html_body(body)
+    assert "Tool-vergelijker" not in out
+    assert out.startswith("<h1>Titel</h1>")
+
+
+def test_sanitize_strips_known_role_label_before_h1():
+    from backend.domains.publish import article_writer as aw
+
+    body = "<h2>SEO-schrijver en contentstrateeg</h2>\n<h1>Titel</h1>\n<p>Inhoud.</p>"
+    out = aw._sanitize_html_body(body)
+    assert "contentstrateeg" not in out
+    assert out.startswith("<h1>Titel</h1>")
+
+
+def test_sanitize_keeps_h2_after_h1():
+    from backend.domains.publish import article_writer as aw
+
+    body = "<h1>Titel</h1>\n<p>Intro.</p>\n<h2>Een echte sectiekop</h2>\n<p>Body.</p>"
+    out = aw._sanitize_html_body(body)
+    assert "Een echte sectiekop" in out
+
+
+def test_feiten_grondwet_verbiedt_verzonnen_persoonlijke_autoriteit():
+    from backend.domains.publish import article_writer as aw
+
+    assert "als directeur van" in aw.FEITEN_GRONDWET
+    assert "verzonnen ervaringsdeskundige" in aw.FEITEN_GRONDWET

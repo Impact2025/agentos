@@ -1,7 +1,7 @@
 """Parser-test: varianten waarin het LLM de 4 scènes kan aanleveren."""
 import sys
 
-sys.path.insert(0, r"D:/APPS/agentos")
+sys.path.insert(0, r"D:/APPS/impactos")
 
 from backend.shared.blog_video import _parse_script  # noqa: E402
 

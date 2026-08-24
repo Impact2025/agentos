@@ -43,7 +43,7 @@ Blogposts worden gevuld via `prisma/seed-blogs.js` uit Markdown in `D:/APPS/Team
 - **Code pushen (parser/UI):** `git commit` + `git push` naar `master` → Vercel rebuild.
 - De site-renderer (`src/app/blog/[slug]/page.tsx`) kent ALLEEN `#/##/###`, `**bold**`, `[link](url)`, `- ` bullets, genummerde `1. ` lijsten. Geen JSON-LD/HTML-comments/tabellen/CTA-syntax — die moeten bij conversie weg.
 
-## Dashboard data (via AgentOS frontend)
+## Dashboard data (via ImpactOS frontend)
 - **GSC:** sc-domain:teambuildingmetimpact.nl
 - **Site:** https://www.teambuildingmetimpact.nl
 - **Backend stack:** Next.js 16 + React 19 + Prisma 7 + Neon Postgres, Vercel-deploy.

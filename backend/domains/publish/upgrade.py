@@ -183,11 +183,12 @@ async def upgrade_job(job_id: str, target: int = WORLDCLASS_TARGET) -> Dict:
     # Zakt het artikel bij verse meting onder de publiceer-gate, dan volgt de
     # bestaande pijplijn-regel. De oude, hogere score laten staan zou
     # approve_and_publish laten publiceren op een cijfer dat niemand meer meet.
-    from ...shared.config import CONTENT_MIN_SCORE
-    if job.get("status") == "pending_review" and best_score < CONTENT_MIN_SCORE:
+    from ...shared.config import content_min_score
+    _gate = content_min_score(site.get("name"))
+    if job.get("status") == "pending_review" and best_score < _gate:
         fields["status"] = "needs_work"
         report["status"] = "needs_work"
-    elif job.get("status") in ("needs_work", "stuck") and best_score >= CONTENT_MIN_SCORE:
+    elif job.get("status") in ("needs_work", "stuck") and best_score >= _gate:
         fields["status"] = "pending_review"
         report["status"] = "pending_review"
 

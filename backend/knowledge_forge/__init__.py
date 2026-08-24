@@ -1,4 +1,4 @@
-"""Knowledge Forge — document-leren voor Agent OS.
+"""Knowledge Forge — document-leren voor Impact OS.
 
 Publieke API:
   - learn_document(source, llm_call, ...)  -> ingest + index + brain file

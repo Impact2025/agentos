@@ -12,12 +12,12 @@ Alle DA-pagina's: DatingAssistent (hoofd), 30+, 40+, 50+.
 import sqlite3, json
 from datetime import datetime, timedelta
 
-DB = "data/agentos.db"
+DB = "data/impactos.db"
 SITES = ["DatingAssistent", "DatingAssistent 40+", "DatingAssistent 50+"]
 QUIZ = {
-    "DatingAssistent": "https://datingassistent.nl/registreren",
-    "DatingAssistent 40+": "https://datingassistent.nl/dating-voor-40-plussers",
-    "DatingAssistent 50+": "https://datingassistent.nl/dating-voor-50-plussers",
+    "DatingAssistent": "https://datingassistent.nl/quiz",
+    "DatingAssistent 40+": "https://datingassistent.nl/40-plus",
+    "DatingAssistent 50+": "https://datingassistent.nl/50-plus",
 }
 
 def _add(c, pid, proj, camp, cpost, theme, fb, angle, sched, post_type="image", note=""):

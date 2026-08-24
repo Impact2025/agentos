@@ -18,7 +18,7 @@ HOOKS = {
     "sp_da50_04": "Alleen zijn is niet hetzelfde als eenzaam zijn. Wat maakt voor jou het verschil?",
 }
 
-c = sqlite3.connect("data/agentos.db")
+c = sqlite3.connect("data/impactos.db")
 for pid, hook in HOOKS.items():
     row = c.execute("SELECT copy_json FROM social_posts WHERE id=?", (pid,)).fetchone()
     if not row or not row[0]:

@@ -71,8 +71,13 @@ async def run_omni_sweep() -> Dict:
 
     with get_conn() as conn:
         conn.row_factory = __import__("sqlite3").Row
+        # LET OP: de `sites`-tabel heeft géén `status`-kolom — die zit op
+        # `case_studies`/`goals`/etc. De archiveer-flag voor sites is `is_test`
+        # (testsites tellen niet mee in Iris' cijfers/prioritering, zie
+        # database.py). Een harde `WHERE status != 'archived'` gooit de hele
+        # sweep omver met "no such column: status". Filter daarom op is_test.
         sites = conn.execute(
-            "SELECT id, name FROM sites WHERE status != 'archived' OR status IS NULL"
+            "SELECT id, name FROM sites WHERE COALESCE(is_test, 0) = 0"
         ).fetchall()
 
     total_queued = 0
@@ -117,7 +122,7 @@ async def run_omni_sweep() -> Dict:
     }
     if total_queued:
         try:
-            log_outcome(project="AgentOS", action="omni-sweep",
+            log_outcome(project="ImpactOS", action="omni-sweep",
                         detail=f"{total_queued} platform-assets klaargezet uit {considered} keywords",
                         status="ok")
         except Exception:  # noqa: BLE001

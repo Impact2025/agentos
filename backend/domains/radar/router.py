@@ -13,6 +13,7 @@ Endpoints:
   DELETE /api/radar/signals/{id}             Verwijderen
   POST   /api/radar/signals/{id}/scrape      Volledige brontekst ophalen
   POST   /api/radar/signals/{id}/aeo-attack  AEO Domination Journey → conveyor-taken
+  GET    /api/radar/signals/{id}/aeo-progress Status van de gekoppelde conveyor-taken
   POST   /api/radar/signals/{id}/notebooklm  NotebookLM-bronpakket genereren → vault
   POST   /api/radar/signals/{id}/queue-listicle  Afgeronde listicle → publicatie-wachtrij
   POST   /api/radar/signals/{id}/infographic Infographic-PNG genereren → vault + download
@@ -33,7 +34,7 @@ router = APIRouter(prefix="/api/radar", tags=["radar"])
 class WatchCreate(BaseModel):
     project: str = ""
     label: str = ""
-    type: str = "keyword"   # keyword | competitor | rss
+    type: str = "keyword"   # keyword | competitor | rss | youtube | reddit | brand_mention
     value: str
 
 
@@ -127,6 +128,14 @@ def aeo_attack(signal_id: str, body: AeoRequest):
         raise HTTPException(status_code=422, detail=str(e))
 
 
+@router.get("/signals/{signal_id}/aeo-progress")
+def aeo_progress(signal_id: str):
+    progress = get_service().get_aeo_progress(signal_id)
+    if not progress:
+        raise HTTPException(status_code=404, detail="Signaal niet gevonden")
+    return progress
+
+
 @router.post("/signals/{signal_id}/queue-listicle")
 async def queue_listicle(signal_id: str, body: QueueListicleRequest):
     """Zet de afgeronde AEO-listicle in de content_jobs-wachtrij (pending_review).
@@ -174,6 +183,54 @@ def push_to_obsidian(signal_id: str):
     return {"obsidian_path": path}
 
 
+# ── Astros: momentum + dagelijkse digest ──────────────────────────────────
+
+class DigestRequest(BaseModel):
+    project: Optional[str] = None
+
+
+@router.get("/momentum")
+def get_momentum_signals(project: Optional[str] = Query(None), limit: int = 25):
+    from . import momentum as mom
+    mom.ensure_momentum_schema()
+    return mom.top_momentum(project, limit=limit)
+
+
+@router.post("/digest")
+def run_digest(body: Optional[DigestRequest] = None):
+    """Bouw + schrijf het Astros-dagrapport naar de Obsidian-vault."""
+    from . import astros_digest
+    proj = (body.project if body else None) or None
+    rel = astros_digest.write_daily_digest(proj)
+    if not rel:
+        raise HTTPException(status_code=503, detail="Obsidian-vault niet geconfigureerd")
+    return {"obsidian_path": rel}
+
+
+@router.get("/digest/preview")
+def preview_digest(project: Optional[str] = Query(None)):
+    """Geef het digest-rapport terug zónder het naar de vault te schrijven."""
+    from . import astros_digest
+    return astros_digest.build_digest(project)
+
+
+# ── WeAreImpact nieuwsagent ──────────────────────────────────────────────────
+
+@router.get("/news-briefing")
+def get_news_briefing():
+    """Laatste WeAreImpact-nieuwsbriefing (sector/concurrent/algemeen, met
+    per-item relevantie + actie-suggestie) voor het dashboard."""
+    from . import newsroom
+    return newsroom.latest_briefing()
+
+
+@router.post("/news-briefing/run")
+async def run_news_briefing():
+    """Draai de nieuwsagent nu (handmatige trigger, zelfde als de 06:20-job)."""
+    from . import newsroom
+    return await newsroom.build_daily_briefing()
+
+
 # ── Watchlist ────────────────────────────────────────────────────────────────
 
 @router.get("/watch-list")
@@ -202,3 +259,62 @@ def update_watch(watch_id: str, body: WatchUpdate):
 def delete_watch(watch_id: str):
     if not get_service().delete_watch(watch_id):
         raise HTTPException(status_code=404, detail="Watch-item niet gevonden")
+
+
+# ── LinkedIn Hand-Raising Signals (Greg Isenberg / Cody Schneider-masterclass) ──
+
+class LinkedInWatchCreate(BaseModel):
+    project: str = ""
+    label: str = ""
+    account: str            # LinkedIn-handle of profiel-URL
+
+
+class LinkedInScanRequest(BaseModel):
+    project: Optional[str] = None
+    watch_id: Optional[str] = None   # scan één specifieke watch i.p.v. allemaal
+    auto_bridge: bool = True         # fitte hand-raisers → prospecting-lead
+
+
+@router.post("/linkedin-watch", status_code=201)
+def add_linkedin_watch(body: LinkedInWatchCreate):
+    """Voeg een LinkedIn-account toe aan de hand-raising watchlist.
+
+    De agent monitort wie deze account engageert (de warme hand-raisers in je
+    niche) en bridge't fitte profielen naar de prospecting-funnel (mens-in-loop)."""
+    from .linkedin_signals import add_linkedin_watch as _add
+    try:
+        return _add(body.project, body.label, body.account)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/linkedin-watch")
+def list_linkedin_watches(project: Optional[str] = Query(None)):
+    from .linkedin_signals import list_linkedin_watches as _lst
+    return _lst(project=project)
+
+
+@router.post("/linkedin-scan")
+async def scan_linkedin_signals(body: LinkedInScanRequest):
+    """Scan LinkedIn hand-raising signalen en bridge fitte profielen.
+
+    Zonder watch_id: alle actieve linkedin_signal-watches. Met watch_id: één.
+    auto_bridge=False → alleen rapporteren, niets aan de funnel toevoegen."""
+    from .linkedin_signals import scan_watch_account, scan_all_linkedin_watches
+
+    if body.watch_id:
+        from .service import get_service as _radar
+        w = next((x for x in _radar().list_watch(body.project)
+                  if x["id"] == body.watch_id and x["type"] == "linkedin_signal"), None)
+        if not w:
+            raise HTTPException(status_code=404, detail="LinkedIn-watch niet gevonden")
+        return [scan_watch_account(w, project=body.project or w.get("project", ""),
+                                   auto_bridge=body.auto_bridge)]
+    return scan_all_linkedin_watches(project=body.project, auto_bridge=body.auto_bridge)
+
+
+@router.get("/linkedin-bridged")
+def list_bridged_leads(project: Optional[str] = Query(None)):
+    """De uit hand-raisers gebridgede leads (staan in de gewone prospecting-funnel)."""
+    from .linkedin_signals import bridged_leads as _bl
+    return _bl(project=project)

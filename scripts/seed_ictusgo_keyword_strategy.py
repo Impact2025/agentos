@@ -140,7 +140,7 @@ def main():
                 "3. Externe zoekvolumes valideren (Keyword Planner / AnswerThePublic)",
                 "4. Interne linking tussen nieuwe en bestaande pagina's",
                 "",
-                "> Geproduceerd door Agent OS Goal Mode (doel Keyword Research-fundament).",
+                "> Geproduceerd door Impact OS Goal Mode (doel Keyword Research-fundament).",
             ]
             html = "\n".join(lines)
             path = svc.write_note(

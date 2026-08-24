@@ -1,6 +1,6 @@
-// ── Agent OS — Verplichte ritueel-gate ───────────────────────────────────
+// ── Impact OS — Verplichte ritueel-gate ───────────────────────────────────
 // Vertaling van impactreis3's ritual-guard.tsx + weekflow.service.ts naar de
-// AgentOS-SPA. Bij het openen van de Control Room (geen project geselecteerd)
+// ImpactOS-SPA. Bij het openen van de Control Room (geen project geselecteerd)
 // wordt /api/rituals/next-required geraadpleegd. Is er een verplicht ritueel
 // dat nu mag (isAvailable), dan verschijnt een full-screen overlay met het
 // formulier — de Control Room is pas bereikbaar als het ritueel is gedaan.
@@ -38,22 +38,49 @@ function _ritualFormFor(path) {
   return null;
 }
 
+// Vaste volgorde van het dagelijkse ritueel-pad (los van weekend-only paden)
+// — voedt de voortgangsbalk zodat "wat komt hierna" zichtbaar is.
+var _RITUAL_SEQUENCE = ['weekly-start', 'morning', 'evening'];
+
+function _ritualTheme(path) {
+  switch (path) {
+    case 'morning': return { icon: '☀️', c1: '#f59e0b', c2: '#f97316', label: 'Ochtend' };
+    case 'evening': return { icon: '🌙', c1: '#4f46e5', c2: '#4338ca', label: 'Avond' };
+    case 'weekly-start': return { icon: '🧭', c1: '#0891b2', c2: '#0e7490', label: 'Weekstart' };
+    case 'weekly-review': return { icon: '📊', c1: '#7c3aed', c2: '#6d28d9', label: 'Weekreview' };
+    default: return { icon: '✨', c1: '#4f46e5', c2: '#6366f1', label: 'Ritueel' };
+  }
+}
+
 // Toont de overlay en laadt daarna inline het juiste formulier. show*Form()
 // schrijven naar #rituelen-panel; we lenen die id tijdelijk voor de gate.
 function _renderRitualGate(mainEl, next) {
+  var theme = _ritualTheme(next.path);
+  var stepIdx = _RITUAL_SEQUENCE.indexOf(next.path);
+  var dateLabel = new Date().toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long' });
+  var progressDots = stepIdx < 0 ? '' :
+    '<div class="ritual-progress">' +
+    _RITUAL_SEQUENCE.map(function (p, i) {
+      return '<span class="' + (i <= stepIdx ? 'done' : '') + '"></span>';
+    }).join('') + '</div>';
+
   mainEl.innerHTML =
-    '<div id="ritual-gate" style="max-width:640px;margin:40px auto;padding:0 16px">' +
-      '<div style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:14px;' +
-      'padding:22px 24px;box-shadow:0 10px 40px rgba(0,0,0,.25)">' +
-        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">' +
-          '<span style="font-size:20px">☀️</span>' +
-          '<h2 style="font-size:18px;margin:0;color:var(--text)">' + escHtml(next.title) + '</h2>' +
+    '<div id="ritual-gate" class="ritual-overlay">' +
+      '<div class="ritual-card" style="--ritual-c1:' + theme.c1 + ';--ritual-c2:' + theme.c2 + '">' +
+        '<div class="ritual-head">' +
+          '<div class="ritual-head-top">' +
+            '<div class="ritual-head-icon">' + theme.icon + '</div>' +
+            '<div>' +
+              '<h2>' + escHtml(next.title) + '</h2>' +
+              '<div class="ritual-head-meta">' + escHtml(dateLabel.charAt(0).toUpperCase() + dateLabel.slice(1)) + '</div>' +
+            '</div>' +
+          '</div>' +
+          '<p>' + escHtml(next.reason) + ' — doe dit eerst, daarna gaat de Control Room open.</p>' +
+          progressDots +
         '</div>' +
-        '<p style="font-size:13px;color:var(--text-dim);margin:0 0 14px">' + escHtml(next.reason) +
-          '. Doe dit eerst — daarna pas de Control Room.</p>' +
-        '<div id="ritual-gate-form" style="font-size:12px"></div>' +
-        '<div style="margin-top:14px;font-size:11px">' +
-          '<a href="#" onclick="return _bypassRitualGate()" style="color:var(--text-dim);text-decoration:underline">Sla over (deze sessie)</a>' +
+        '<div id="ritual-gate-form"></div>' +
+        '<div style="text-align:center;padding:0 26px 20px">' +
+          '<a href="#" onclick="return _bypassRitualGate()" class="ritual-skip">Sla over voor deze sessie</a>' +
         '</div>' +
       '</div>' +
     '</div>';
@@ -64,7 +91,7 @@ function _renderRitualGate(mainEl, next) {
   if (panel) panel.id = 'rituelen-panel';
   var formFn = _ritualFormFor(next.path);
   if (typeof formFn === 'function') {
-    try { formFn(); } catch (e) { /* form-fout mag de gate niet breken */ }
+    try { formFn(true); } catch (e) { /* form-fout mag de gate niet breken */ }
   }
   // herstel de echte panel-id zodat latere tabs-rituals-gebruik intact blijft
   var restored = document.getElementById('rituelen-panel-orig');
@@ -114,9 +141,7 @@ function _showRitualBanner(reason) {
   if (document.getElementById('ritual-soft-banner')) return;
   var el = document.createElement('div');
   el.id = 'ritual-soft-banner';
-  el.style.cssText = 'background:var(--warn-bg);color:var(--warn-fg);font-size:12px;' +
-    'padding:8px 14px;border-radius:8px;margin:0 0 12px;display:flex;' +
-    'justify-content:space-between;align-items:center;gap:10px';
+  el.className = 'ritual-soft-banner';
   el.innerHTML = '<span>⏳ ' + escHtml(reason || 'Ritueel wacht op je') + '</span>' +
     '<button class="btn btn-sm btn-ghost" onclick="goRitualNow()">Doen</button>';
   main.insertBefore(el, main.firstChild);

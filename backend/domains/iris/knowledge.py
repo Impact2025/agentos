@@ -35,7 +35,7 @@ _MAX_PRINCIPLES_IN_PROMPT = 24
 _README = """# Iris Kennisbank
 
 Drop hier markdown-bestanden met onderzoek, tactieken of strategie die je wilt
-dat **Iris** (de manager-agent van Agent OS) leert en toepast.
+dat **Iris** (de manager-agent van Impact OS) leert en toepast.
 
 Voorbeelden: Generative Engine Optimization (GEO), AEO/AI-Overviews, SEO-updates,
 merkrichtlijnen, doelgroep-inzichten.

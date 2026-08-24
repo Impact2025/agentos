@@ -11,7 +11,7 @@ enkele API-call per definitie niet.
 Vier dingen die dit veilig en eerlijk houden:
 
 (a) **Een eigen werkmap per run.** Claude Code draait nooit in de projectmap
-    van Agent OS. Hij ziet de snapshot en schrijft zijn uitvoer; hij kan niet
+    van Impact OS. Hij ziet de snapshot en schrijft zijn uitvoer; hij kan niet
     bij `.env`, de database of de publicatiecode. De map is meteen het
     artefact: wie later vraagt "waarom dit voorstel?" krijgt het script, de
     uitkomst en de redenering te zien.
@@ -170,7 +170,7 @@ def run(
         "--allowedTools", allowed_tools,
         "--permission-mode", "acceptEdits",
     ]
-    # De sessie erft de omgeving, maar niet de sleutels van Agent OS: Claude
+    # De sessie erft de omgeving, maar niet de sleutels van Impact OS: Claude
     # Code heeft ze niet nodig en een werkmap is geen plek voor secrets.
     omgeving = {k: v for k, v in os.environ.items()
                 if not any(g in k.upper() for g in ("API_KEY", "SECRET", "TOKEN", "PASSWORD"))}

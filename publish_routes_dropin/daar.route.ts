@@ -1,6 +1,6 @@
 // DROP-IN PUBLISH ROUTE voor Daar / Skillkaart (en elke andere Next.js-site).
 //
-// Agent OS stuurt naar {SITE}_PUBLISH_URL een POST met Bearer-token en dit JSON:
+// Impact OS stuurt naar {SITE}_PUBLISH_URL een POST met Bearer-token en dit JSON:
 //   { title, content (HTML), slug, seoTitle, seoDescription, tags (array), source }
 //
 // Deze route slaat het op in een `content`-tabel (type=BLOG, status=PUBLISHED)
@@ -23,10 +23,10 @@
 //          publishedAt DateTime?
 //          updatedAt DateTime  @updatedAt
 //        }
-//   3. Vercel env:  PUBLISH_API_KEY = <dezelfde key als in Agent OS .env DAAR_PUBLISH_KEY>
+//   3. Vercel env:  PUBLISH_API_KEY = <dezelfde key als in Impact OS .env DAAR_PUBLISH_KEY>
 //   4. Deploy (vercel --prod)
-//   5. In Agent OS .env staat al: DAAR_PUBLISH_URL + DAAR_PUBLISH_KEY
-//   6. Agent OS server herstarten.
+//   5. In Impact OS .env staat al: DAAR_PUBLISH_URL + DAAR_PUBLISH_KEY
+//   6. Impact OS server herstarten.
 
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";

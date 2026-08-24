@@ -83,7 +83,7 @@ def _markdown_to_html(md: str) -> str:
 {body}
 <p style="margin-top:32px;padding-top:16px;border-top:1px solid #334155;
    color:#475569;font-size:12px">
-  Agent OS · Finance Expert · automatisch gegenereerd
+  Impact OS · Finance Expert · automatisch gegenereerd
 </p>
 </body>
 </html>"""

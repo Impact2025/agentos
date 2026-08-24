@@ -424,7 +424,7 @@ Regels:
                             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                             "Content-Type": "application/json",
                             "HTTP-Referer": "http://localhost:1250",
-                            "X-Title": "Agent OS Leads",
+                            "X-Title": "Impact OS Leads",
                         },
                         json={
                             "model": model,
@@ -707,7 +707,7 @@ Regels:
             f"**E-mail:** {email}\n\n"
             f"## Samenvatting\n{summary}\n\n"
             f"{context_block}"
-            f"## Relatie\n- Automatisch vastgelegd door Agent OS lead-capture.\n"
+            f"## Relatie\n- Automatisch vastgelegd door Impact OS lead-capture.\n"
             f"- Nog geen contact geweest vanuit WeAreImpact.\n\n"
             f"## Notities\n- \n"
         )

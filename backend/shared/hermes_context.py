@@ -1,7 +1,7 @@
 """
-Hermes-skills ↔ Agent OS context-brug.
+Hermes-skills ↔ Impact OS context-brug.
 
-Doel: Agent OS stuurt Hermes aan als een generieke LLM (default system prompt
+Doel: Impact OS stuurt Hermes aan als een generieke LLM (default system prompt
 "You are Hermes, a helpful AI assistant."). Daardoor mist de autonome
 content/schrijf-pipeline de scherpe projectcontext die wél in Vincent's
 Hermes-skills (C:/Users/v_mun/AppData/Local/hermes/skills) en zijn Obsidian
@@ -12,7 +12,7 @@ overal aan de system prompt kan worden geplakt. Defensief: elke bron kan
 ontbreken zonder crash; lege bron = lege string.
 
 Opt-in via .env:
-    AGENTOS_USE_HERMES_SKILLS=true
+    IMPACTOS_USE_HERMES_SKILLS=true
     HERMES_SKILLS_DIR=C:/Users/v_mun/AppData/Local/hermes/skills
 Als de toggle uit staat (default) geeft build_hermes_context() altijd "" terug,
 zodat bestaande callers nooit van behaviour veranderen.
@@ -26,14 +26,14 @@ from typing import List, Optional
 
 # ----------------------------------------------------------------------------- config
 def _use_hermes_skills() -> bool:
-    return os.getenv("AGENTOS_USE_HERMES_SKILLS", "false").lower() in ("1", "true", "yes", "on")
+    return os.getenv("IMPACTOS_USE_HERMES_SKILLS", os.getenv("AGENTOS_USE_HERMES_SKILLS", "false")).lower() in ("1", "true", "yes", "on")
 
 
 def _allowed_projects() -> set:
     """Comma-gescheiden project-allowlist. Leeg = geldt voor alle projecten
     (wanneer de master-toggle aan staat). Niet-leeg = alleen deze projecten
     krijgen Hermes-context. Projectnaam-vergelijking is case-insensitive."""
-    raw = os.getenv("AGENTOS_HERMES_SKILLS_PROJECTS", "")
+    raw = os.getenv("IMPACTOS_HERMES_SKILLS_PROJECTS", os.getenv("AGENTOS_HERMES_SKILLS_PROJECTS", ""))
     return {p.strip().lower() for p in raw.split(",") if p.strip()}
 
 
@@ -80,7 +80,7 @@ def _load_skill_body(path: Path, max_chars: int = 1800) -> str:
 
 
 def _hermes_skill_context(project_name: Optional[str], max_total: int = 2600) -> str:
-    """Lees relevante Hermes-skills: de 'agentos'-categorie altijd, plus elke
+    """Lees relevante Hermes-skills: de 'impactos'-categorie altijd, plus elke
     skill waarvan de naam/projecthint matcht met het project."""
     sdir = _skills_dir()
     if not sdir:
@@ -90,7 +90,7 @@ def _hermes_skill_context(project_name: Optional[str], max_total: int = 2600) ->
     total = 0
 
     # 1) Agentos-specifieke skills altijd meenemen (operationale kennis).
-    agentos_cat = sdir / "agentos"
+    agentos_cat = sdir / "impactos"
     agentos_files: List[Path] = []
     if agentos_cat.exists():
         for p in sorted(agentos_cat.rglob("SKILL.md")):
@@ -198,7 +198,7 @@ def build_hermes_context(project_name: Optional[str] = None, max_chars: int = 50
         if len(joined) > max_chars:
             joined = joined[:max_chars]
         return (
-            "## Hermes Agent OS-context (skills + schrijf-DNA)\n\n" + joined
+            "## Hermes Impact OS-context (skills + schrijf-DNA)\n\n" + joined
         )
     except Exception:
         # Defensief: context mag nooit een crash veroorzaken.

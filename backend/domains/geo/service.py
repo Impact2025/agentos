@@ -1,4 +1,4 @@
-"""GEO-service — Generative Engine Optimization voor Agent OS.
+"""GEO-service — Generative Engine Optimization voor Impact OS.
 
 Alles hier is deterministisch (geen LLM). Het meet hoe 'AI-ready' een site is
 en genereert de artifacten die ChatGPT/Perplexity/Bing nodig hebben om een
@@ -219,7 +219,7 @@ def _recommendations(p: Dict[str, int], name: str, published: int,
                      "Tools en zorg dat top-ICP-pagina's op posities <15 staan.")
     if p["structured"] < 100:
         recs.append("Voeg Organization + FAQPage JSON-LD toe aan elke pillar-pagina "
-                     "(Agent OS genereert dit al — verifieer de output in de publish-pijplijn).")
+                     "(Impact OS genereert dit al — verifieer de output in de publish-pijplijn).")
     if p["direct_answer"] < 100:
         recs.append("Schrijf een direct-answer-intro (≤55 woorden) + FAQ-sectie per "
                      "ICP-pagina; AI citeert pagina's die de vraag 'direct' beantwoorden.")

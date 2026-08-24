@@ -1,12 +1,12 @@
 ' Mission Control launcher - op de achtergrond starten bij Windows-aanmelding.
 ' Geen admin nodig: plaats een verwijzing naar dit .vbs in de Startup-map
 ' (shell:startup) of voer het eenmalig uit. Het start de Python launcher
-' verborgen; die blijft op 127.0.0.1:8088 draaien en biedt de Agent OS-knop.
+' verborgen; die blijft op 127.0.0.1:8088 draaien en biedt de Impact OS-knop.
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
-Py    = "D:\apps\agentos\.venv\Scripts\python.exe"
-Launcher = "D:\apps\agentos\launcher\server.py"
+Py    = "D:\apps\impactos\.venv\Scripts\python.exe"
+Launcher = "D:\apps\impactos\launcher\server.py"
 
 If Not fso.FileExists(Py) Then
     WScript.Echo "Python venv niet gevonden: " & Py

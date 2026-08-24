@@ -233,6 +233,7 @@ async def _run_worker(delegation_id: str, objective: str, brand_brief: str, work
             model_override=model_override,
             use_tools=worker.get("use_tools", False),
             backend_override=backend_override,
+            purpose=f"delegate:{(profile.get('name') if profile else None) or role}",
         ):
             etype = event.get("type")
             if etype == "error":
@@ -271,7 +272,7 @@ async def _run_worker(delegation_id: str, objective: str, brand_brief: str, work
                 _infinite_ctx.log_agent_session(
                     title=f"Worker: {role}",
                     summary=f"**Doel:** {goal[:300]}\n\n**Resultaat:**\n{result[:1000]}",
-                    tags=["agentos", "delegate", role.replace(" ", "_")],
+                    tags=["impactos", "delegate", role.replace(" ", "_")],
                 )
             except Exception as e:
                 logger.warning("Infinite Context worker log mislukt: %s", e)
@@ -340,9 +341,25 @@ def spawn_delegation(
     Wordt aangeroepen vanuit de `delegate`-tool, die zelf binnen een lopende
     event loop draait (FastAPI/uvicorn). We persisteren synchroon (snel) en
     starten daarna de workers als losse achtergrond-task.
+
+    Prompt-injectie-scan zit hier — in de service-functie — en niet in de
+    HTTP-router: de belangrijkste aanroeper is helemaal geen HTTP-call maar
+    de `delegate`-tool (backend/tools/delegate.py) die het LLM zelf aanroept
+    tijdens een chatgesprek, met een `goal`-tekst die het model formuleert op
+    basis van wat het net gelezen heeft (websearch, mail, een pagina). Dat is
+    het scherpste injectiescenario en het liep tot nu toe niet langs de gate.
+    Zie backend/shared/prompt_safety.py.
     """
     if not workers:
         raise ValueError("Geen workers opgegeven om te delegeren.")
+
+    from ...shared.prompt_safety import guard_structured
+    fields = {"objective": objective}
+    for i, w in enumerate(workers):
+        fields[f"worker[{i}].goal"] = w.get("goal", "")
+        if w.get("role"):
+            fields[f"worker[{i}].role"] = w["role"]
+    guard_structured(**fields)
 
     batch = _create_batch(objective, session_id, workers)
     delegation_id = batch["delegation_id"]

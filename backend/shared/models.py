@@ -9,6 +9,7 @@ class ChatRequest(BaseModel):
     agent: str = "claude"
     use_obsidian: bool = True
     attachments: Optional[List[dict]] = []
+    voice: bool = False
 
 
 class SessionCreate(BaseModel):
@@ -66,6 +67,7 @@ class TaskOut(BaseModel):
     started_at: str = ""
     finished_at: str = ""
     duration_ms: int = 0
+    retry_count: int = 0
     created_at: str
     updated_at: str
 

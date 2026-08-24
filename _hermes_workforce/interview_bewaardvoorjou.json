@@ -1,0 +1,30 @@
+{
+  "project": "BewaardVoorJou",
+  "doel": "Autonome content-machine die dagelijks wereldklasse kennisbank/blog-artikelen produceert, publiceert en opbouwt naar gekwalificeerde leads via outreach — binnen vastgestelde thema's (dementie, mantelzorg, erfgoed, nalatenschap, baby, jubileum), met mens-escalatie bij externe publish.",
+  "bottlenecks": [
+    "Content schrijven + publiceren gebeurt nog handmatig via seed/upgrade-scripts",
+    "Outreach/backlinks te passief (templates bestaan, executie schiet tekort)",
+    "SEO-technisch fundament staat (wereldklasse), maar volume ontbreekt"
+  ],
+  "kanalen": [
+    "BewaardVoorJou live API (Railway: bewaardvoorjou-production.up.railway.app/api/v1)",
+    "Obsidian vault [000] BEWAARDVOORJOU_CORE (brand/SEO context)",
+    "ImpactOS conveyor",
+    "Social (FB/IG/LinkedIn per SOCIAL-AGENT-PLAN)"
+  ],
+  "huidige_tools": [
+    "seed-nieuwe-artikelen.py (7 KB-artikelen naar live API)",
+    "upgrade-artikelen.py (overschrijft 7 KB met SEO-versies)",
+    "OUTREACH-TEMPLATES.md + BACKLINK-STRATEGIE.md",
+    "SEO Sprint 1 (IndexNow, structured data, pillar/cluster)"
+  ],
+  "agent_rollen": [
+    "Simon (Chief of Staff)",
+    "Content Director",
+    "SEO/Publish Director",
+    "Outreach Director",
+    "Toby (Watchdog)"
+  ],
+  "proactiviteit_niveau": 3,
+  "budget_tier": "smart"
+}

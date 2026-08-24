@@ -160,6 +160,39 @@ async def suggestions_apply(sid: str):
 
 
 # ── Zelfherstel: Iris lost fouten zelf op, ongevraagd ───────────────────────
+@router.get("/search-provider-health")
+def search_provider_health():
+    """Live-status van elke zoekprovider (key/quota + echte bereikbaarheid).
+
+    Geeft per provider `status` ('ok' | 'no_key' | 'quota' | 'down'),
+    de geconfigureerde keten-volgorde en welke provider de laatste zoekopdracht
+    daadwerkelijk leverde. Zo ziet Iris/dashboard in één oogopslag of de
+    zoeklaag gezond is of dat een provider verborgen dood is."""
+    from ...shared import websearch as w
+    import time as _t
+    configured = w.providers_configured()
+    live = w.probe_health()
+    status = {}
+    for name in configured:
+        if live.get(name) == "down":
+            status[name] = "down"
+        else:
+            status[name] = w.provider_health().get(name, "ok")
+    return {"configured_chain": configured,
+            "live_health": live,
+            "status": status,
+            "quota_blocked": {k: int(_t.time() < v)
+                              for k, v in w._quota_block.items()}}
+
+
+@router.post("/search-provider-health/heal")
+def search_provider_heal():
+    """Dwing de watchdog: meet alle providers live en hef herstelde blokkades op."""
+    from ...shared import websearch as w
+    lifted = w.clear_recovered_blocks()
+    return {"ok": True, "lifted": lifted}
+
+
 @router.get("/selfheal")
 def selfheal_log(limit: int = Query(20, ge=1, le=100)):
     """Logboek: wat probeerde Iris, wat lukte, en wat moest ze melden."""

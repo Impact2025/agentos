@@ -80,7 +80,7 @@ def test_no_result_gives_empty_string():
 # ── Afwijzen ná publicatie ──────────────────────────────────────────────────
 #
 # 2 aug 2026: negen pagina's stonden live met een 'rejected'-job eronder,
-# waaronder 'Agent OS end-to-end publicatietest' op de site van een klant.
+# waaronder 'Impact OS end-to-end publicatietest' op de site van een klant.
 # Afwijzen verandert de rij, niet de wereld — en omdat de job daarna uit élk
 # overzicht verdwijnt, kijkt niemand er ooit nog naar.
 
@@ -93,7 +93,7 @@ def gepubliceerde_job():
                   "VALUES (?, 'RejectSite', 'https://reject.test', datetime('now'))", (sid,))
         c.execute(
             "INSERT INTO content_jobs (id, site_id, title, status, slug, publish_result, "
-            "created_at) VALUES (?, ?, 'Agent OS end-to-end publicatietest', 'published', "
+            "created_at) VALUES (?, ?, 'Impact OS end-to-end publicatietest', 'published', "
             "'agent-os-e2e', ?, datetime('now'))",
             (jid, sid, json.dumps({"success": True, "url": "https://reject.test/blog/e2e"})))
     yield jid
@@ -147,3 +147,69 @@ def test_afwijzen_vóór_publicatie_blijft_een_gewone_afwijzing():
             c.execute("DELETE FROM content_jobs WHERE id = ?", (jid,))
             c.execute("DELETE FROM sites WHERE id = ?", (sid,))
             c.execute("DELETE FROM activity_log WHERE project = 'RejectSite2'")
+
+
+# ── Depubliceren: niet elke site-CMS deelt hetzelfde contract ──────────────
+# Aanleiding (13 aug 2026, Bewaard voor Jou): PUBLISH_URL eindigde op
+# '/api/v1/publish', niet '/api/publish' — de regex die '/api/publish' naar
+# '/api/unpublish' herschrijft matchte niet, de geraden '/../unpublish'-
+# fallback kreeg een schone 404, en het écht bestaande contract
+# (`DELETE {publish_url}/{slug}`, uit de CMS's eigen OpenAPI-spec) werd nooit
+# geprobeerd. Nu probeert de functie eerst de REST-idiomatische DELETE op de
+# publish-collectie zelf.
+
+@pytest.fixture
+def unpub_env(monkeypatch):
+    monkeypatch.setenv("UNPUBTEST_PUBLISH_URL", "https://unpubtest.example/api/v1/publish")
+    monkeypatch.setenv("UNPUBTEST_PUBLISH_KEY", "test-key")
+    yield {"id": "s-unpub", "name": "UnpubTest", "base_url": "https://unpubtest.example"}
+
+
+def test_delete_op_de_publish_url_wordt_eerst_geprobeerd(unpub_env, monkeypatch):
+    import asyncio
+    from backend.domains.publish import content_pipeline
+
+    calls = []
+
+    def fake_delete(url, headers=None, timeout=None, follow_redirects=None):
+        calls.append(("DELETE", url))
+        class Resp:
+            status_code = 200
+            def json(self): return {"success": True}
+        return Resp()
+
+    def fake_post(*a, **k):
+        calls.append(("POST", a, k))
+        raise AssertionError("had de DELETE-route niet mogen overslaan")
+
+    monkeypatch.setattr("httpx.delete", fake_delete)
+    monkeypatch.setattr("httpx.post", fake_post)
+
+    r = asyncio.run(content_pipeline.unpublish_from_project_site(
+        unpub_env, "mijn-slug", reason="test"))
+    assert r["success"] is True
+    assert calls == [("DELETE", "https://unpubtest.example/api/v1/publish/mijn-slug")]
+
+
+def test_valt_terug_op_post_unpublish_als_delete_404_geeft(unpub_env, monkeypatch):
+    import asyncio
+    from backend.domains.publish import content_pipeline
+
+    def fake_delete(url, headers=None, timeout=None, follow_redirects=None):
+        class Resp:
+            status_code = 404
+            text = '{"detail":"Not Found"}'
+        return Resp()
+
+    def fake_post(url, json=None, headers=None, timeout=None, follow_redirects=None):
+        class Resp:
+            status_code = 200
+            def json(self): return {"success": True}
+        return Resp()
+
+    monkeypatch.setattr("httpx.delete", fake_delete)
+    monkeypatch.setattr("httpx.post", fake_post)
+
+    r = asyncio.run(content_pipeline.unpublish_from_project_site(
+        unpub_env, "mijn-slug", reason="test"))
+    assert r["success"] is True

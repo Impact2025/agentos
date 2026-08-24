@@ -123,6 +123,23 @@ async def poll_inbox(inbox_id: str):
         raise HTTPException(400, str(e)[:300])
 
 
+@router.post("/inboxes/{inbox_id}/ingest")
+def ingest_inbox(inbox_id: str, body: dict):
+    """Voor kanalen zonder partner-API (LinkedIn): de browserautomatisering
+    (buiten dit proces — geen Graph-adapter mogelijk) leest berichten en post
+    ze hierheen. Zelfde dedupe/classify/draft/review-gate als een normale poll,
+    alleen de netwerk-fetch zelf gebeurt elders. body: {"messages": [{external_id,
+    text, author_name?, author_handle?, parent_url?, thread?}, ...]}."""
+    msgs = body.get("messages") or []
+    if not isinstance(msgs, list):
+        raise HTTPException(400, "'messages' moet een lijst zijn")
+    with get_conn() as conn:
+        if not conn.execute("SELECT 1 FROM social_inboxes WHERE id=?", (inbox_id,)).fetchone():
+            raise HTTPException(404, "Inbox niet gevonden")
+    n = svc.ingest_messages(inbox_id, msgs)
+    return {"success": True, "ingested": n}
+
+
 @router.get("/{project}/pending")
 def pending(project: str):
     prj = (project or "").strip()
@@ -139,6 +156,49 @@ def pending(project: str):
     if prj:
         msgs = [m for m in msgs if _norm(m["project"]) == _norm(prj)]
     return msgs
+
+
+@router.post("/backfill-drafts")
+def backfill_drafts():
+    """Genereer concepten voor bestaande berichten die er (nog) geen hebben.
+
+    Idempotent: alleen rijen met status 'pending_review' én een lege
+    draft_body worden aangevuld. Gebruikt dezelfde drafter als run_inbox
+    (zie social_inbox.py) — alleen spam blijft zonder concept.
+    Nooit auto-antwoorden — de mens keurt nog steeds in de UI."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT m.id, m.platform, m.text, m.kind, m.author_name, m.thread_json, "
+            "i.brand_context FROM social_inbox_msg m "
+            "JOIN social_inboxes i ON i.id=m.inbox_id "
+            "WHERE m.status='pending_review' AND (m.draft_body IS NULL OR m.draft_body='')"
+        ).fetchall()
+    done, skipped = 0, 0
+    for r in rows:
+        r = dict(r)
+        # spam krijgt nooit een concept (wordt afgewezen).
+        if r["kind"] == "spam":
+            skipped += 1
+            continue
+        try:
+            draft = svc.draft_reply(
+                r["platform"], r.get("brand_context") or "",
+                r.get("text", ""), r.get("author_name", ""),
+                r.get("thread_json") or "",
+            )
+        except Exception as e:  # noqa: BLE001 — één mislukking mag de rest niet stoppen
+            logger.warning("Backfill draft mislukt voor msg %s: %s", r["id"], e)
+            continue
+        if not draft.strip():
+            skipped += 1
+            continue
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE social_inbox_msg SET draft_body=? WHERE id=?",
+                (draft, r["id"]),
+            )
+        done += 1
+    return {"success": True, "generated": done, "skipped": skipped}
 
 
 @router.get("/msg/{msg_id}")
@@ -172,21 +232,32 @@ async def approve_msg(msg_id: int):
         return {"success": True, "detail": "Al verzonden"}
     text = m.get("edited_body") or m.get("draft_body") or ""
     if not text.strip():
-        raise HTTPException(400, "Geen antwoordtekst om te plaatsen")
+        raise HTTPException(
+            400,
+            "Dit bericht heeft nog geen concept-antwoord. Klik 'Bewerk' en schrijf "
+            "er zelf een, of gebruik 'Social-inbox → Ophalen' om een concept te "
+            "laten genereren voordat je plaatst.",
+        )
     inbox = {"project": m["project"], "platform": m["platform"],
              "creds_json": m["creds_json"]}
     result = await svc.post_reply(inbox, m, text)
     if result.get("manual"):
-        # Kanaal staat geen API-antwoord toe (LinkedIn/TikTok): markeer als
-        # 'manual' zodat de UI een plak-knop toont i.p.v. een verzend-fout.
+        # Kanaal staat geen API-antwoord toe (LinkedIn/TikTok): dit klik is een
+        # GOEDKEURING, geen verzending — 'sent' zou een ingreep in de wereld
+        # beweren die nog niet heeft plaatsgevonden (zelfde les als
+        # `mark_posted_manually` bij de social-campagne). 'approved' is de
+        # wachtrij waaruit de browserautomatisering (of Vincent zelf, via
+        # Kopieer) het daadwerkelijk plaatst; pas `mark-sent` hieronder maakt
+        # het waar.
         with get_conn() as conn:
             conn.execute(
-                "UPDATE social_inbox_msg SET status='sent', manual=1, "
-                "sent_at=datetime('now') WHERE id=?", (msg_id,)
+                "UPDATE social_inbox_msg SET status='approved', manual=1, "
+                "edited_body=? WHERE id=?", (text, msg_id)
             )
         return {"success": True, "manual": True,
-                "detail": "Geen API-antwoord mogelijk op dit kanaal — "
-                          "kopieer het antwoord en plaats het handmatig."}
+                "detail": "Geen API-antwoord mogelijk op dit kanaal — het "
+                          "antwoord staat klaar om geplaatst te worden "
+                          "(automatisch of kopieer het zelf)."}
     if result.get("success"):
         with get_conn() as conn:
             conn.execute(
@@ -195,6 +266,43 @@ async def approve_msg(msg_id: int):
             )
         return {"success": True, "url": result.get("url", "")}
     raise HTTPException(400, result.get("error", "Onbekende fout"))
+
+
+@router.get("/queued")
+def queued(project: Optional[str] = Query(None), platform: Optional[str] = Query(None)):
+    """Goedgekeurde antwoorden op een 'manual'-kanaal die nog daadwerkelijk
+    geplaatst moeten worden (status='approved') — de wachtrij voor de
+    browserautomatisering. `parent_url` is de conversatie/post-link zodat de
+    automatisering weet waar het antwoord moet landen."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT m.id, m.inbox_id, m.platform, m.author_name, m.author_handle, "
+            "m.text, m.parent_url, m.edited_body, m.draft_body, m.created_at, "
+            "i.project FROM social_inbox_msg m JOIN social_inboxes i ON i.id=m.inbox_id "
+            "WHERE m.status='approved' AND m.manual=1 ORDER BY m.created_at ASC"
+        ).fetchall()
+    out = [dict(r) for r in rows]
+    if project:
+        out = [m for m in out if _norm(m["project"]) == _norm(project)]
+    if platform:
+        out = [m for m in out if m["platform"] == platform]
+    for m in out:
+        m["reply_text"] = m.get("edited_body") or m.get("draft_body") or ""
+    return out
+
+
+@router.post("/msg/{msg_id}/mark-sent")
+def mark_sent(msg_id: int):
+    """De browserautomatisering bevestigt hiermee dat een 'approved' antwoord
+    daadwerkelijk op het kanaal is geplaatst. Alleen vanuit 'approved' — een
+    dubbele bevestiging op een al-verzonden of nog-niet-goedgekeurd bericht
+    verandert niets (idempotent, geen foutmelding nodig voor een race)."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE social_inbox_msg SET status='sent', sent_at=datetime('now') "
+            "WHERE id=? AND status='approved'", (msg_id,)
+        )
+    return {"success": True, "updated": cur.rowcount}
 
 
 @router.post("/msg/{msg_id}/reject")

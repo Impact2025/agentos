@@ -3,7 +3,7 @@
 // NOOIT bij start_werk, stel_besluit_voor of Vincents mail/agenda/analytics
 // kunnen komen. Daarom een eigen, veel kleiner toolset (precies één tool:
 // escaleren) en een eigen kennisbron: de `helpdesk`-sectie die de lokale
-// AgentOS-machine elke bridge_sync meestuurt (context.py:build_helpdesk),
+// ImpactOS-machine elke bridge_sync meestuurt (context.py:build_helpdesk),
 // niet de rijke manager-context.
 //
 // Regel, hard: onzeker antwoord of iets met gevolgen (offerte, afspraak,

@@ -1,7 +1,7 @@
 """End-to-end test van de Iris /api/iris/suggestions-endpoints via TestClient.
 
 Draait in-process (geen live server, geen auth-gate — conftest zet
-AGENTOS_PASSWORD='' en roept init_db()). Dekt de volledige flow:
+IMPACTOS_PASSWORD='' en roept init_db()). Dekt de volledige flow:
 briefing-run genereert suggestions -> list -> approve -> apply.
 """
 import json

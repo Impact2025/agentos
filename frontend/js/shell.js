@@ -1,4 +1,4 @@
-// ── Agent OS — project-shell: sidebar, header, tab-loader, Dashboard-tab, pipeline-helpers
+// ── Impact OS — project-shell: sidebar, header, tab-loader, Dashboard-tab, pipeline-helpers
 // Onderdeel van de SPA: klassieke scripts, gedeelde globale scope.
 // Laadvolgorde staat in index.html — core.js eerst.
 
@@ -43,7 +43,7 @@ function renderSidebar() {
     if (!tabs.length) return '';
     return '<div class="nav-group"><div class="nav-group-label">' + escHtml(g.label) + '</div>' + tabs.map(navButton).join('') + '</div>';
   }).join('');
-  return '<div class="sidebar"><div class="sidebar-logo">' + apertureMark(24, 'sidebar-logo-mark') + '<span>' + escHtml(window.__instanceName || 'Agent OS') + '</span></div><nav class="sidebar-nav">' + nav +
+  return '<div class="sidebar"><div class="sidebar-logo">' + apertureMark(24, 'sidebar-logo-mark') + '<span>' + escHtml(window.__instanceName || 'Impact OS') + '</span></div><nav class="sidebar-nav">' + nav +
     '<div class="sidebar-footer">' + (currentProject ? '<button onclick="switchView(\'chat\')"><span class="icon">✎</span>Chat</button>' : '') +
     (currentProject ? '<button onclick="switchView(\'voice\')"><span class="icon">🎙</span>Voice</button>' : '') +
     '<button onclick="goHome()"><span class="icon">←</span>Projecten</button>' +
@@ -65,7 +65,7 @@ function renderMobileBar() {
   return '<div class="nav-scrim" onclick="closeNav()"></div>' +
     '<header class="mobile-topbar">' +
     '<button class="mt-btn" type="button" onclick="toggleNav()" aria-label="Menu" aria-expanded="false" id="nav-toggle"><span class="burger"></span></button>' +
-    '<div class="mt-title"><strong>' + escHtml(currentProject || window.__instanceName || 'Agent OS') + '</strong>' +
+    '<div class="mt-title"><strong>' + escHtml(currentProject || window.__instanceName || 'Impact OS') + '</strong>' +
     (currentProject ? '<span class="mt-sub">' + escHtml(currentTab) + '</span>' : '') + '</div>' +
     '<span id="agent-status-indicator-mobile"></span>' +
     '<button class="mt-btn" type="button" onclick="goHome()" aria-label="Naar projecten">&#8962;</button>' +
@@ -241,6 +241,11 @@ async function renderDashboardTab(el) {
   // op dít project. Hertgebruikt dezelfde kaart-stijl als het Actiecentrum.
   html += '<div id="proj-ac"></div>';
 
+  // ── Bestellingen + inkoop-signalering (alleen Bewaard voor Jou) ──
+  if (currentProject === 'BewaardVoorJou') {
+    html += '<div id="proj-bvj-orders"></div>';
+  }
+
   // ── 2. ALERTS (hele card klikbaar - tekst + knop) ──
   if (advice && advice.alerts && advice.alerts.length) {
     var _alertMeta = {
@@ -337,6 +342,10 @@ async function renderDashboardTab(el) {
   // (30s) die stopt zodra je het project of de tab verlaat.
   loadProjectActionCenter(currentProject);
   startProjectActionCenterRefresh(currentProject);
+  if (currentProject === 'BewaardVoorJou') {
+    var bvjEl = document.getElementById('proj-bvj-orders');
+    if (bvjEl) renderBewaardVoorJouOrders(bvjEl);
+  }
 
   // ── RENDER CHARTS ──
   if (trend && trend.daily && trend.daily.length) {

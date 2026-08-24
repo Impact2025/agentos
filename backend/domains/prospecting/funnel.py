@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional
 
 from ...shared.database import get_conn
 from ...shared.outcomes import log_outcome
+from .opt_out import detect_opt_out
 
 logger = logging.getLogger(__name__)
 
@@ -66,15 +67,24 @@ def advance_lead(lead_id: str, new_status: str) -> Optional[Dict[str, Any]]:
     return dict(row)
 
 
-def mark_replied_if_lead(from_email: str, received_at: str = "") -> Optional[Dict[str, Any]]:
+def mark_replied_if_lead(from_email: str, received_at: str = "", body_text: str = "") -> Optional[Dict[str, Any]]:
     """Reply-detectie: inkomende mail van een benaderde lead → status 'replied'.
 
     Matcht op het hoofdemail én op e-mails in de contacts-JSON. Alleen leads
     die daadwerkelijk benaderd zijn (contacted_at gezet) en waarvan de mail
     ná dat moment binnenkwam tellen — een oude mail in de inbox van vóór de
-    outreach is geen reactie."""
+    outreach is geen reactie.
+
+    Uitzondering: bevat de reply een afmeldverzoek ('STOP', 'afmelden', ...),
+    dan wordt het adres (én domein) geblokkeerd via de opt-out-blocklist en
+    gaat de lead naar 'lost' — wettelijk verplicht (Telecommunicatiewet 11.7)."""
     email = (from_email or "").strip().lower()
     if not email:
+        return None
+    # Opt-out heeft voorrang op reply-tellen: iemand die afmeldt is géén lead meer.
+    if body_text and detect_opt_out(body_text):
+        from . import opt_out as _opt_out
+        _opt_out.record_opt_out(email, source="reply", raw_snippet=body_text[:500])
         return None
     with get_conn() as conn:
         row = conn.execute(

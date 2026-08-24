@@ -34,7 +34,7 @@ import sqlite3
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB = os.path.join(REPO, "data", "agentos.db")
+DB = os.path.join(REPO, "data", "impactos.db")
 ENV = os.path.join(REPO, ".env")
 
 

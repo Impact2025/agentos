@@ -6,7 +6,7 @@ $VenvDir = Join-Path $Root ".venv"
 $EnvFile = Join-Path $Root ".env"
 
 Write-Host ""
-Write-Host "  Agent OS -- Mission Control" -ForegroundColor Cyan
+Write-Host "  Impact OS -- Mission Control" -ForegroundColor Cyan
 Write-Host "  ----------------------------" -ForegroundColor DarkGray
 Write-Host ""
 

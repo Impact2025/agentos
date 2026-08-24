@@ -6,7 +6,7 @@ ECHTE omni_queue (staged) zodat Vincent ze in de Omni-tab kan goedkeuren.
 Leest de site alleen uit de live DB; mutaties beperkt tot omni_queue-inserts.
 """
 import os, sys, json, sqlite3, uuid, datetime, asyncio
-sys.path.insert(0, "D:/APPS/agentos")
+sys.path.insert(0, "D:/APPS/impactos")
 
 from backend.shared.database import get_conn
 from backend.domains.omni.generator import generate_for_keyword

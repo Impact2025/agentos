@@ -1,7 +1,7 @@
 """Auth API — login / logout / me.
 
 Alleen /api/auth/* is open; de rest van de app wordt beschermd door de
-auth_guard-middleware in main.py. Het wachtwoord komt uit env AGENTOS_PASSWORD.
+auth_guard-middleware in main.py. Het wachtwoord komt uit env IMPACTOS_PASSWORD.
 """
 from fastapi import APIRouter, Request
 from pydantic import BaseModel

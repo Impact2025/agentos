@@ -7,13 +7,13 @@ hermes-analytics@weareimpact-482912.iam.gserviceaccount.com moet als
 gebruiker zijn toegevoegd aan de property.
 
 Run:
-  D:/APPS/agentos/.venv/Scripts/python.exe scripts/daar-submit-sitemap.py
+  D:/APPS/impactos/.venv/Scripts/python.exe scripts/daar-submit-sitemap.py
 
 Na succes: GSC toont de sitemap onder "Sitemaps" met status "Voltooid"
 (duurt enkele minuten tot uren voor eerste crawl).
 """
 import sys
-sys.path.insert(0, r"D:/APPS/agentos")
+sys.path.insert(0, r"D:/APPS/impactos")
 
 from backend.domains.seo import gsc
 

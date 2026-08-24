@@ -1,6 +1,6 @@
-"""Researcher-domein — de NotebookLM-onderzoek-agent voor Agent OS.
+"""Researcher-domein — de NotebookLM-onderzoek-agent voor Impact OS.
 
-Sluit de cyclus: AgentOS genereert een onderzoeksvraag -> duwt die
+Sluit de cyclus: ImpactOS genereert een onderzoeksvraag -> duwt die
 naar NotebookLM (RAG, gegrond op JOUW eigen notebooks) -> schrijft
 het rapport terug in de Obsidian-vault -> blogs halen dat rapport op
 als context.

@@ -1,5 +1,5 @@
 """
-Google Agenda-integratie voor Agent OS (Fase 1: lezen + blokkeren).
+Google Agenda-integratie voor Impact OS (Fase 1: lezen + blokkeren).
 
 Dit is de Google-backend achter `calendar/service.py` (CALENDAR_BACKEND=
 'google', default). Zie service_outlook.py voor de Microsoft Graph-variant —
@@ -232,6 +232,14 @@ async def get_week_events(week_start: Optional[str] = None) -> List[dict]:
                 "location": ev.get("location"),
                 "hangout_link": (ev.get("hangoutLink")),
                 "html_link": ev.get("htmlLink"),
+                # Naam+e-mail i.p.v. alleen een telling, zelfde reden als
+                # get_events_range: de UI toont zo mét wie de afspraak is.
+                # Jezelf (self=true) telt niet mee.
+                "attendees": [
+                    {"name": a.get("displayName") or a.get("email") or "?",
+                     "email": (a.get("email") or "").lower()}
+                    for a in (ev.get("attendees") or []) if not a.get("self")
+                ],
             }
         )
 
@@ -443,7 +451,7 @@ async def block_time(
         # Google all-day: start.date = dag, end.date = volgende dag.
         body = {
             "summary": title,
-            "description": description or "Geblokkeerd via Agent OS",
+            "description": description or "Geblokkeerd via Impact OS",
             "start": {"date": start.strftime("%Y-%m-%d")},
             "end": {"date": end.strftime("%Y-%m-%d")},
             "transparency": "opaque",
@@ -451,7 +459,7 @@ async def block_time(
     else:
         body = {
             "summary": title,
-            "description": description or "Geblokkeerd via Agent OS",
+            "description": description or "Geblokkeerd via Impact OS",
             "start": {
                 "dateTime": start.isoformat(),
                 "timeZone": "Europe/Amsterdam",

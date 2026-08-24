@@ -78,10 +78,15 @@ _SAFE_JOB_PREFIXES = ("mail_", "social_")
 # steeds op "geen remedie bekend" uitkwam. Wat je niet kunt oplossen, moet je
 # ook niet claimen te proberen.
 _MENSELIJK_BESLUIT = {
-    "content-stuck",        # kwaliteitsgate: verbeteren of afwijzen is een keuze
-    "gemiste_runs",         # de machine stond uit; de knop staat op de gap-kaart
-    "job_nooit_geslaagd",   # draaien en de fout lezen, niet blind opnieuw proberen
-    "waarheidsaudit",       # een bevinding over de buitenwereld (CMS, 301) — geen agentwerk
+    "content-stuck",           # kwaliteitsgate: verbeteren of afwijzen is een keuze
+    "gemiste_runs",            # de machine stond uit; de knop staat op de gap-kaart
+    "job_nooit_geslaagd",      # draaien en de fout lezen, niet blind opnieuw proberen
+    "waarheidsaudit",          # een bevinding over de buitenwereld (CMS, 301) — geen agentwerk
+    "gauntlet_zonder_project", # de benchmark noemde geen project toen de run al liep; een
+                               # probe kan geen projectnaam verzinnen die er nooit in stond —
+                               # publiceer de run handmatig met het juiste project, of laat
+                               # 'm staan (19 aug 2026, zelfde les als content-stuck: wat je
+                               # niet kunt oplossen door te herhalen, moet je niet claimen te proberen)
 }
 
 
@@ -100,6 +105,32 @@ def _open_cases(limit: int = MAX_CASES_PER_RUN) -> List[Dict[str, Any]]:
             (r["kind"], r["ref_id"])
             for r in conn.execute("SELECT kind, ref_id FROM inbox_dismissals")
         }
+        # Publish-fouten in content_jobs: de echte publicatiestoringen (dode link,
+        # metatitel, serverfout). Ze leven niet in activity_log, dús zonder deze
+        # bron zag zelfherstel ze nooit en bleven artikelen voor altijd
+        # publish_failed. Bewust géén dismiss-skip: een job die ooit op
+        # "Gezien, verberg" ging, mag niet voor altijd onzichtbaar blijven —
+        # juist die onzichtbaarheid was het probleem. De reparatie zet de job op
+        # 'pending_review', dus hij verdwijnt daarna vanzelf uit deze lijst.
+        # Vóór de activity_log-bron zetten, anders kapt [:limit] ze weg (de
+        # activity_log-query levert makkelijk 8 rijen).
+        try:
+            for r in conn.execute(
+                "SELECT id, site_id, title, error, publish_result FROM content_jobs "
+                "WHERE status='publish_failed' AND error LIKE '%link-dood%' "
+                "ORDER BY created_at DESC"
+            ):
+                cases.append({
+                    "kind": "content_job",
+                    "id": r["id"],
+                    "project": "",
+                    "action": "publish_failed",
+                    "detail": r["error"] or "",
+                    "created_at": "",
+                })
+        except Exception:  # noqa: BLE401
+            logger.debug("[iris-selfheal] kon publish_failed-jobs niet lezen", exc_info=True)
+
         rows = conn.execute(
             "SELECT id, project, action, detail, next_step, created_at FROM activity_log "
             "WHERE status = 'error' AND created_at > datetime('now', '-3 day') "
@@ -385,12 +416,39 @@ async def _probe_scheduler_job(case: Dict[str, Any]) -> Tuple[bool, str]:
 def _probe_for(case: Dict[str, Any]) -> Optional[Callable]:
     if case["kind"] == "scheduler":
         return _probe_scheduler_job
+    if case.get("kind") == "content_job":
+        # publish_failed-job: bij een dode link kan Iris hem zelf repareren
+        # (link vervangen + terug in de Wachtrij); anders is er geen veilige probe.
+        if "link-dood" in (case.get("detail") or "").lower():
+            return _probe_dode_link
+        return None
     action = (case.get("action") or "").lower()
     if action == "social_fetch":
         return _probe_social_fetch
     if action == "publicatie_mislukt":
         return _probe_publicatie_mislukt
     return None
+
+
+async def _probe_dode_link(case: Dict[str, Any]) -> Tuple[bool, str]:
+    """Vervang dode bronlinks in een vastgelopen publish_failed-job.
+
+    De reparatie (repair.repareer_dode_link_in_job) controleert elke link,
+    vervangt de doden door een werkende parent-pagina op dezelfde host en zet
+    de job terug in de Wachtrij (pending_review) — achter de gebruikelijke
+    goedkeurings-gate. Dit is géén publicatie, dus de review-gate blijft intact.
+    """
+    from ..publish import repair
+
+    job_id = case["id"]
+    try:
+        uit = await repair.repareer_dode_link_in_job(job_id)
+    except Exception as e:  # noqa: BLE001
+        return False, f"reparatie viel om: {fail.describe_exception(e)}"
+    if uit.get("ok"):
+        n = len(uit.get("vervangen") or [])
+        return True, f"{n} dode link(s) vervangen; job terug in de Wachtrij"
+    return False, uit.get("reden", "onbekend")
 
 
 # ── Afronden: dicht, of gemeld ─────────────────────────────────────────────

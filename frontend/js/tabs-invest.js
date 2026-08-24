@@ -1,4 +1,4 @@
-// ── Agent OS — Beursmeester-dashboard (het beleggingsbureau)
+// ── Impact OS — Beursmeester-dashboard (het beleggingsbureau)
 // Onderdeel van de SPA: klassieke scripts, gedeelde globale scope.
 //
 // Eén ophaal (/api/invest/dashboard), vier vensters. Dat het één call is, is
@@ -43,46 +43,47 @@ function bmNum(v, decimalen) {
   return Number(v).toFixed(decimalen === undefined ? 2 : decimalen);
 }
 function bmKleur(v, omgekeerd) {
-  if (v === null || v === undefined) return '#64748b';
+  if (v === null || v === undefined) return 'var(--text-dim)';
   var goed = omgekeerd ? v <= 0 : v >= 0;
-  return goed ? '#059669' : '#dc2626';
+  return goed ? 'var(--green)' : 'var(--red)';
 }
 function bmDatum(s) { return (s || '').slice(0, 10); }
 
 // KPI-tegel. `hint` is de regel eronder die het getal betekenis geeft — een
 // waarde zonder maatstaf is geen managementinformatie maar een cijfer.
 function bmTegel(label, waarde, hint, kleur, badge) {
-  return '<div style="flex:1 1 170px;min-width:170px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px">' +
+  return '<div style="flex:1 1 170px;min-width:170px;background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius-md);padding:14px 16px">' +
     '<div style="display:flex;align-items:center;gap:6px">' +
-    '<span style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;font-weight:600">' + escHtml(label) + '</span>' +
+    '<span style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);font-weight:600">' + escHtml(label) + '</span>' +
     (badge || '') + '</div>' +
-    '<div style="font-size:24px;font-weight:650;margin-top:6px;letter-spacing:-.01em;color:' + (kleur || '#0f172a') + '">' + waarde + '</div>' +
-    '<div style="font-size:11px;color:#64748b;margin-top:3px;line-height:1.4">' + (hint || '&nbsp;') + '</div></div>';
+    '<div style="font-size:24px;font-weight:650;margin-top:6px;letter-spacing:-.01em;color:' + (kleur || 'var(--text)') + '">' + waarde + '</div>' +
+    '<div style="font-size:11px;color:var(--text-dim);margin-top:3px;line-height:1.4">' + (hint || '&nbsp;') + '</div></div>';
 }
+// Badges hergebruiken de pill-schaal (betekenis, niet een losse hexkleur per
+// kaartsoort) — 'rood'/'oranje'/'groen'/'grijs' mappen op warn/danger/ok/neutral.
+var _bmPillMap = { rood: 'pill-danger', oranje: 'pill-warn', groen: 'pill-ok', grijs: 'pill-neutral' };
 function bmBadge(tekst, tint) {
-  var kleuren = { rood: ['#fef2f2', '#b91c1c'], oranje: ['#fffbeb', '#b45309'],
-                  groen: ['#f0fdf4', '#15803d'], grijs: ['#f1f5f9', '#475569'] };
-  var k = kleuren[tint] || kleuren.grijs;
-  return '<span style="background:' + k[0] + ';color:' + k[1] + ';font-size:9px;font-weight:700;padding:2px 6px;border-radius:5px;text-transform:uppercase;letter-spacing:.04em">' + escHtml(tekst) + '</span>';
+  var cls = _bmPillMap[tint] || 'pill-neutral';
+  return '<span class="pill ' + cls + '" style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em">' + escHtml(tekst) + '</span>';
 }
 function bmKaart(titel, inhoud, subtitel) {
-  return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin-bottom:14px">' +
-    '<h3 style="font-size:13px;font-weight:700;color:#0f172a;margin:0 0 2px">' + titel + '</h3>' +
-    (subtitel ? '<p style="font-size:11px;color:#64748b;margin:0 0 10px;line-height:1.45">' + subtitel + '</p>' : '<div style="height:10px"></div>') +
+  return '<div class="section-card" style="margin-bottom:14px">' +
+    '<h3 style="font-size:13px;font-weight:700;color:var(--text);margin:0 0 2px">' + titel + '</h3>' +
+    (subtitel ? '<p style="font-size:11px;color:var(--text-dim);margin:0 0 10px;line-height:1.45">' + subtitel + '</p>' : '<div style="height:10px"></div>') +
     inhoud + '</div>';
 }
 function bmLeeg(tekst) {
-  return '<p style="font-size:12px;color:#64748b;padding:10px 0;margin:0">' + escHtml(tekst) + '</p>';
+  return '<p style="font-size:12px;color:var(--text-dim);padding:10px 0;margin:0">' + escHtml(tekst) + '</p>';
 }
 function bmTabel(koppen, rijen) {
   if (!rijen.length) return bmLeeg('Geen regels.');
   return '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">' +
-    '<thead><tr style="text-align:left;color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.05em">' +
+    '<thead><tr style="text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.05em">' +
     koppen.map(function(k) { return '<th style="padding:6px 8px;font-weight:600;white-space:nowrap">' + k + '</th>'; }).join('') +
     '</tr></thead><tbody>' + rijen.join('') + '</tbody></table></div>';
 }
 function bmRij(cellen) {
-  return '<tr style="border-top:1px solid #f1f5f9">' +
+  return '<tr style="border-top:1px solid var(--card-border)">' +
     cellen.map(function(c) { return '<td style="padding:7px 8px;white-space:nowrap">' + c + '</td>'; }).join('') + '</tr>';
 }
 
@@ -102,7 +103,7 @@ function laadBeursmeester(stil) {
   }).catch(function(e) {
     var root = document.getElementById('beurs-root');
     if (root && !stil) {
-      root.innerHTML = '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:16px;font-size:13px;color:#b91c1c">' +
+      root.innerHTML = '<div style="background:var(--danger-bg);border:1px solid var(--danger-border);border-radius:var(--radius-md);padding:16px;font-size:13px;color:var(--danger-fg)">' +
         'Beursmeester niet bereikbaar: ' + escHtml(e.message) + '</div>';
     }
   });
@@ -120,11 +121,11 @@ function tekenBeursmeester() {
   if (_beursChart) { _beursChart.destroy(); _beursChart = null; }
 
   var h = beursKop(d) + beursAandacht(d) + beursKpis(d);
-  h += '<div style="display:flex;gap:6px;margin:16px 0 14px;border-bottom:1px solid #e2e8f0">' +
+  h += '<div style="display:flex;gap:6px;margin:16px 0 14px;border-bottom:1px solid var(--card-border)">' +
     BEURS_TABS.map(function(t) {
       var actief = t.id === _beursTab;
       return '<button onclick="beursSwitch(\'' + t.id + '\')" style="padding:8px 14px;border:none;background:none;cursor:pointer;font-size:12px;font-weight:600;color:' +
-        (actief ? '#0f172a' : '#64748b') + ';border-bottom:2px solid ' + (actief ? '#f43f5e' : 'transparent') + ';margin-bottom:-1px">' +
+        (actief ? 'var(--text)' : 'var(--text-dim)') + ';border-bottom:2px solid ' + (actief ? 'var(--accent)' : 'transparent') + ';margin-bottom:-1px">' +
         t.label + '</button>';
     }).join('') + '</div>';
 
@@ -143,13 +144,13 @@ function beursKop(d) {
   var run = (d.rondes && d.rondes.rondes && d.rondes.rondes[0]) || null;
   var modeBadge = pf.mode === 'paper' ? bmBadge('papier', 'grijs') : bmBadge(pf.mode || '?', 'rood');
   return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px">' +
-    '<div><h2 style="font-size:19px;font-weight:700;color:#0f172a;margin:0 0 3px;letter-spacing:-.01em">📈 Beursmeester ' + modeBadge + '</h2>' +
-    '<p style="font-size:11px;color:#64748b;margin:0">Peildatum ' + escHtml(bmDatum(pf.peildatum) || '—') +
+    '<div><h2 style="font-size:19px;font-weight:700;color:var(--text);margin:0 0 3px;letter-spacing:-.01em">Beursmeester ' + modeBadge + '</h2>' +
+    '<p style="font-size:11px;color:var(--text-dim);margin:0">Peildatum ' + escHtml(bmDatum(pf.peildatum) || '—') +
     ' · portefeuille sinds ' + escHtml((d.rendement || {}).sinds || '—') +
     (run ? ' · laatste ronde ' + escHtml(run.run_date) + ' (' + escHtml(run.denkwerk || '—') + ')' : ' · nog nooit gedraaid') + '</p></div>' +
     '<div style="display:flex;gap:8px">' +
-    '<button onclick="laadBeursmeester()" style="padding:8px 14px;border:1px solid #e2e8f0;background:#fff;color:#475569;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Ververs</button>' +
-    '<button onclick="beursRondeNu(this)" style="padding:8px 16px;background:#f43f5e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Ronde nu draaien</button>' +
+    '<button onclick="laadBeursmeester()" class="btn btn-ghost btn-sm">Ververs</button>' +
+    '<button onclick="beursRondeNu(this)" class="btn btn-primary btn-sm">Ronde nu draaien</button>' +
     '</div></div>';
 }
 
@@ -163,18 +164,18 @@ function beursAandacht(d) {
   if (!punten.length && !halt) return '';
   var h = '';
   if (halt) {
-    h += '<div style="background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
-      '<span style="font-size:12px;font-weight:700;color:#b91c1c">🛑 Handel gepauzeerd</span>' +
-      '<span style="font-size:12px;color:#7f1d1d;flex:1">' + escHtml((d.risico.redenen || []).join('; ')) + '</span>' +
-      '<button onclick="beursHervatten(this)" style="padding:6px 12px;border:1px solid #dc2626;background:#fff;color:#dc2626;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer">Hervat</button></div>';
+    h += '<div style="background:var(--danger-bg);border:1px solid var(--danger-border);border-left:4px solid var(--red);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+      '<span style="font-size:12px;font-weight:700;color:var(--danger-fg)">Handel gepauzeerd</span>' +
+      '<span style="font-size:12px;color:var(--danger-fg);flex:1">' + escHtml((d.risico.redenen || []).join('; ')) + '</span>' +
+      '<button onclick="beursHervatten(this)" class="btn btn-danger-outline btn-sm">Hervat</button></div>';
   }
   punten.forEach(function(p) {
-    var stijl = p.ernst === 'blokkerend' ? ['#fef2f2', '#fecaca', '#b91c1c', '⛔']
-              : p.ernst === 'stil' ? ['#fffbeb', '#fde68a', '#b45309', '⚠']
-              : ['#f8fafc', '#e2e8f0', '#475569', 'ℹ'];
-    h += '<div style="background:' + stijl[0] + ';border:1px solid ' + stijl[1] + ';border-radius:10px;padding:10px 14px;margin-bottom:8px">' +
-      '<div style="font-size:12px;font-weight:600;color:' + stijl[2] + '">' + stijl[3] + ' ' + escHtml(p.tekst) + '</div>' +
-      '<div style="font-size:11px;color:#64748b;margin-top:2px;line-height:1.45">' + escHtml(p.waarom || '') + '</div></div>';
+    var stijl = p.ernst === 'blokkerend' ? ['var(--danger-bg)', 'var(--danger-border)', 'var(--danger-fg)']
+              : p.ernst === 'stil' ? ['var(--warn-bg)', 'var(--warn-border)', 'var(--warn-fg)']
+              : ['var(--neutral-bg)', 'var(--card-border)', 'var(--neutral-fg)'];
+    h += '<div style="background:' + stijl[0] + ';border:1px solid ' + stijl[1] + ';border-radius:var(--radius-md);padding:10px 14px;margin-bottom:8px">' +
+      '<div style="font-size:12px;font-weight:600;color:' + stijl[2] + '">' + escHtml(p.tekst) + '</div>' +
+      '<div style="font-size:11px;color:var(--text-dim);margin-top:2px;line-height:1.45">' + escHtml(p.waarom || '') + '</div></div>';
   });
   return h + '<div style="height:6px"></div>';
 }
@@ -195,7 +196,7 @@ function beursKpis(d) {
     'sinds ' + escHtml(r.sinds || '—'), bmKleur(r.rendement_pct));
 
   h += bmTegel('Benchmark', bmPct(r.benchmark_pct),
-    escHtml(r.benchmark_symbol || '') + ' — de meetlat', '#475569');
+    escHtml(r.benchmark_symbol || '') + ' — de meetlat', 'var(--text-dim)');
 
   h += bmTegel('Verschil', bmPct(r.alpha_pct),
     r.alpha_pct === null || r.alpha_pct === undefined ? 'nog niet te bepalen'
@@ -206,21 +207,21 @@ function beursKpis(d) {
   // als élke stop vandaag raakt.
   h += bmTegel('Risico open', orisk.risico_pct_nav === null || orisk.risico_pct_nav === undefined ? '—' : bmNum(orisk.risico_pct_nav, 2) + '%',
     bmEur(orisk.risico_eur) + ' als alle stops raken' + (orisk.zonder_stop && orisk.zonder_stop.length ? ' · ' + orisk.zonder_stop.length + ' zonder stop' : ''),
-    orisk.zonder_stop && orisk.zonder_stop.length ? '#b45309' : '#0f172a',
+    orisk.zonder_stop && orisk.zonder_stop.length ? 'var(--amber)' : 'var(--text)',
     orisk.volledig ? '' : bmBadge('onvolledig', 'oranje'));
 
   h += bmTegel('Terugval', d.risico && d.risico.drawdown_pct !== null && d.risico.drawdown_pct !== undefined ? bmNum(d.risico.drawdown_pct, 2) + '%' : '—',
     'vanaf de top · stop bij ' + bmNum(risicoMaten.grens_drawdown_pct || 20, 0) + '%',
-    d.risico && d.risico.drawdown_pct > 10 ? '#dc2626' : '#0f172a');
+    d.risico && d.risico.drawdown_pct > 10 ? 'var(--red)' : 'var(--text)');
 
   h += bmTegel('Verwachting', tr.n ? bmEur(tr.verwachting_eur, 0) : '—',
     tr.n ? 'per afgesloten idee · n=' + tr.n : 'nog geen afgesloten posities',
-    tr.n ? bmKleur(tr.verwachting_eur) : '#64748b',
+    tr.n ? bmKleur(tr.verwachting_eur) : 'var(--text-dim)',
     tr.n ? bmBadge(tr.zeggingskracht, tr.zeggingskracht === 'betekenisvol' ? 'groen' : 'oranje') : '');
 
   h += bmTegel('Trefkans agent', tk.accuracy === null || tk.accuracy === undefined ? '—' : tk.accuracy + '%',
     (tk.correct || 0) + ' raak / ' + (tk.wrong || 0) + ' mis · ' + (tk.open || 0) + ' lopend',
-    '#0f172a');
+    'var(--text)');
 
   return h + '</div>';
 }
@@ -233,7 +234,7 @@ function beursOverzicht(d) {
 
   var grafiekSub = lijn.punten && lijn.punten.length
     ? 'Beide op 100 gezet op ' + escHtml(lijn.vanaf || '') + '. Herschalen is geen cosmetica: met twee assen kun je elke lijn laten winnen.'
-      + (lijn.gaten ? ' <span style="color:#b45309">' + lijn.gaten + ' handelsdag(en) ontbreken in de reeks.</span>' : '')
+      + (lijn.gaten ? ' <span style="color:var(--warn-fg)">' + lijn.gaten + ' handelsdag(en) ontbreken in de reeks.</span>' : '')
     : 'Nog geen NAV-reeks — die groeit met één punt per ronde.';
   var grafiek = lijn.punten && lijn.punten.length > 1
     ? '<div style="height:260px;position:relative"><canvas id="beurs-koerslijn"></canvas></div>'
@@ -245,7 +246,7 @@ function beursOverzicht(d) {
   // decimaal erachter.
   var maten;
   if (risicoMaten.reden) {
-    maten = '<p style="font-size:12px;color:#64748b;margin:0">Nog niet te berekenen: ' + escHtml(risicoMaten.reden) + '.</p>';
+    maten = '<p style="font-size:12px;color:var(--text-dim);margin:0">Nog niet te berekenen: ' + escHtml(risicoMaten.reden) + '.</p>';
   } else {
     maten = '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
       bmTegel('Volatiliteit', bmNum(risicoMaten.volatiliteit_pct, 1) + '%', 'op jaarbasis · ' + risicoMaten.meetpunten + ' meetpunten') +
@@ -271,26 +272,26 @@ function beursVoorstellen(items) {
     var risicoPct = (v.ref_price && v.stop) ? ((v.ref_price - v.stop) / v.ref_price * 100) : null;
     var rr = (v.target && v.stop && v.ref_price && v.ref_price > v.stop)
       ? (v.target - v.ref_price) / (v.ref_price - v.stop) : null;
-    h += '<div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:10px">' +
+    h += '<div style="border:1px solid var(--card-border);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:10px">' +
       '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-      '<strong style="font-size:14px;color:#0f172a">' + escHtml((v.side || '').toUpperCase()) + ' ' + escHtml(v.symbol) + '</strong>' +
+      '<strong style="font-size:14px;color:var(--text)">' + escHtml((v.side || '').toUpperCase()) + ' ' + escHtml(v.symbol) + '</strong>' +
       bmBadge(v.asset_class || '?', 'grijs') +
       (v.confidence ? bmBadge('vertrouwen ' + v.confidence, 'grijs') : '') +
       (v.denkwerk === 'terugval' ? bmBadge('terugval', 'oranje') : bmBadge('claude code', 'groen')) +
-      '<span style="margin-left:auto;font-size:11px;color:#64748b">koers ' + bmNum(v.ref_price) + ' van ' + escHtml(v.ref_date) + '</span></div>' +
-      '<div style="display:flex;gap:18px;flex-wrap:wrap;margin:8px 0;font-size:11px;color:#475569">' +
+      '<span style="margin-left:auto;font-size:11px;color:var(--text-dim)">koers ' + bmNum(v.ref_price) + ' van ' + escHtml(v.ref_date) + '</span></div>' +
+      '<div style="display:flex;gap:18px;flex-wrap:wrap;margin:8px 0;font-size:11px;color:var(--text-dim)">' +
       '<span>Stuks <strong>' + bmNum(v.qty, 4) + '</strong></span>' +
       '<span>Stop <strong>' + bmNum(v.stop) + '</strong>' + (risicoPct !== null ? ' (' + bmNum(risicoPct, 1) + '% eronder)' : '') + '</span>' +
       '<span>Doel <strong>' + bmNum(v.target) + '</strong>' + (rr !== null ? ' · verhouding ' + bmNum(rr, 1) + ':1' : '') + '</span>' +
       '<span>Horizon <strong>' + (v.horizon_days || '—') + ' dagen</strong></span></div>' +
-      (v.thesis ? '<p style="font-size:12px;color:#334155;margin:6px 0;line-height:1.5">' + escHtml(v.thesis) + '</p>' : '') +
-      (v.invalidation ? '<p style="font-size:11px;color:#b45309;margin:4px 0">Ongeldig als: ' + escHtml(v.invalidation) + '</p>' : '') +
-      (v.risk_note ? '<p style="font-size:11px;color:#64748b;margin:4px 0">Risicotoets: ' + escHtml(v.risk_note) + '</p>' : '') +
-      (v.backtest_ref ? '<p style="font-size:11px;color:#64748b;margin:4px 0">Backtest: <code style="font-size:10px">' + escHtml(v.backtest_ref) + '</code></p>'
-                      : '<p style="font-size:11px;color:#b91c1c;margin:4px 0">Geen backtest-artefact.</p>') +
+      (v.thesis ? '<p style="font-size:12px;color:var(--text);margin:6px 0;line-height:1.5">' + escHtml(v.thesis) + '</p>' : '') +
+      (v.invalidation ? '<p style="font-size:11px;color:var(--warn-fg);margin:4px 0">Ongeldig als: ' + escHtml(v.invalidation) + '</p>' : '') +
+      (v.risk_note ? '<p style="font-size:11px;color:var(--text-dim);margin:4px 0">Risicotoets: ' + escHtml(v.risk_note) + '</p>' : '') +
+      (v.backtest_ref ? '<p style="font-size:11px;color:var(--text-dim);margin:4px 0">Backtest: <code style="font-size:10px">' + escHtml(v.backtest_ref) + '</code></p>'
+                      : '<p style="font-size:11px;color:var(--danger-fg);margin:4px 0">Geen backtest-artefact.</p>') +
       '<div style="display:flex;gap:8px;margin-top:10px">' +
-      '<button onclick="beursKeurGoed(this,\'' + escAttr(v.id) + '\',\'' + escAttr(v.symbol) + '\')" style="padding:7px 14px;background:#059669;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">Goedkeuren &amp; uitvoeren</button>' +
-      '<button onclick="beursWijsAf(this,\'' + escAttr(v.id) + '\')" style="padding:7px 14px;background:#fff;color:#475569;border:1px solid #e2e8f0;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">Afwijzen</button>' +
+      '<button onclick="beursKeurGoed(this,\'' + escAttr(v.id) + '\',\'' + escAttr(v.symbol) + '\')" class="btn btn-primary btn-sm" style="background:var(--green)">Goedkeuren &amp; uitvoeren</button>' +
+      '<button onclick="beursWijsAf(this,\'' + escAttr(v.id) + '\')" class="btn btn-ghost btn-sm">Afwijzen</button>' +
       '</div></div>';
   });
   return h;
@@ -303,16 +304,16 @@ function beursPosities(d) {
 
   var rijen = (orisk.posities || []).map(function(p) {
     return bmRij([
-      '<strong>' + escHtml(p.symbol) + '</strong><div style="font-size:10px;color:#94a3b8">' + escHtml(p.asset_class || '') + '</div>',
+      '<strong>' + escHtml(p.symbol) + '</strong><div style="font-size:10px;color:var(--text-muted)">' + escHtml(p.asset_class || '') + '</div>',
       bmNum(p.qty, 4),
       bmEur(p.waarde),
       '<span style="color:' + bmKleur(p.pnl_pct) + '">' + bmPct(p.pnl_pct) + '</span>',
-      p.stop ? bmNum(p.stop) + (p.afstand_stop_pct !== undefined ? '<div style="font-size:10px;color:#94a3b8">' + bmNum(p.afstand_stop_pct, 1) + '% eronder</div>' : '')
-             : '<span style="color:#b91c1c;font-weight:600">geen</span>',
-      p.risico_eur === null || p.risico_eur === undefined ? '<span style="color:#b45309">onbekend</span>' : bmEur(p.risico_eur),
+      p.stop ? bmNum(p.stop) + (p.afstand_stop_pct !== undefined ? '<div style="font-size:10px;color:var(--text-muted)">' + bmNum(p.afstand_stop_pct, 1) + '% eronder</div>' : '')
+             : '<span style="color:var(--danger-fg);font-weight:600">geen</span>',
+      p.risico_eur === null || p.risico_eur === undefined ? '<span style="color:var(--warn-fg)">onbekend</span>' : bmEur(p.risico_eur),
       p.rr_resterend !== undefined ? bmNum(p.rr_resterend, 1) + ':1' : '—',
       (p.dagen_open === null ? '—' : p.dagen_open + '/' + (p.horizon_days || '?')) +
-        (p.horizon_verstreken ? ' <span style="color:#b45309" title="De ronde hoort deze positie te sluiten">⚠</span>' : ''),
+        (p.horizon_verstreken ? ' <span style="color:var(--warn-fg)" title="De ronde hoort deze positie te sluiten">let op</span>' : ''),
     ]);
   });
   h += bmKaart('Open posities (' + (orisk.posities || []).length + ')',
@@ -324,15 +325,15 @@ function beursPosities(d) {
   // tot ze iets blokkeren; dan is het te laat om te begrijpen waarom.
   var klassen = (expo.klassen || []).map(function(k) {
     var vulling = Math.min(100, k.benutting_pct || 0);
-    var kleur = vulling >= 90 ? '#dc2626' : vulling >= 70 ? '#f59e0b' : '#0ea5e9';
+    var kleur = vulling >= 90 ? 'var(--red)' : vulling >= 70 ? 'var(--amber)' : 'var(--accent)';
     return '<div style="margin-bottom:10px">' +
-      '<div style="display:flex;justify-content:space-between;font-size:12px;color:#334155;margin-bottom:3px">' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text);margin-bottom:3px">' +
       '<span><strong>' + escHtml(k.klasse) + '</strong> ' + bmEur(k.waarde_eur) + '</span>' +
-      '<span style="color:#64748b">' + bmNum(k.pct_nav, 1) + '% van NAV · grens ' + bmNum(k.grens_pct, 0) + '%</span></div>' +
-      '<div style="height:7px;background:#f1f5f9;border-radius:4px;overflow:hidden">' +
+      '<span style="color:var(--text-dim)">' + bmNum(k.pct_nav, 1) + '% van NAV · grens ' + bmNum(k.grens_pct, 0) + '%</span></div>' +
+      '<div style="height:7px;background:var(--neutral-bg);border-radius:4px;overflow:hidden">' +
       '<div style="height:100%;width:' + vulling + '%;background:' + kleur + ';border-radius:4px"></div></div></div>';
   }).join('');
-  var cashRegel = '<div style="font-size:12px;color:#334155;margin-top:12px;padding-top:10px;border-top:1px solid #f1f5f9">' +
+  var cashRegel = '<div style="font-size:12px;color:var(--text);margin-top:12px;padding-top:10px;border-top:1px solid var(--card-border)">' +
     'Cash: <strong>' + bmEur(expo.cash_eur) + '</strong> (' + bmNum(expo.cash_pct, 1) + '%)' +
     (expo.grootste_positie ? ' · grootste positie: <strong>' + escHtml(expo.grootste_positie.symbol) + '</strong> ' +
       bmNum(expo.grootste_positie.pct_nav, 1) + '% (grens ' + bmNum(expo.grens_positie_pct, 0) + '%)' : '') + '</div>';
@@ -342,7 +343,7 @@ function beursPosities(d) {
   var tradeRijen = (d.trades || []).map(function(t) {
     return bmRij([
       escHtml(t.executed_on),
-      '<span style="color:' + (t.side === 'buy' ? '#0369a1' : '#b45309') + ';font-weight:600">' + escHtml((t.side || '').toUpperCase()) + '</span>',
+      '<span style="color:' + (t.side === 'buy' ? 'var(--info-fg)' : 'var(--warn-fg)') + ';font-weight:600">' + escHtml((t.side || '').toUpperCase()) + '</span>',
       '<strong>' + escHtml(t.symbol) + '</strong>',
       bmNum(t.qty, 4),
       bmNum(t.price),
@@ -371,7 +372,7 @@ function beursTrackrecord(d) {
   var tegels = '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
     bmTegel('Resultaat', bmEur(t.resultaat_eur), 'na ' + bmEur(t.kosten_eur, 0) + ' kosten · n=' + t.n, bmKleur(t.resultaat_eur)) +
     bmTegel('Trefpercentage', bmNum(t.trefpercentage, 1) + '%', t.winnaars + ' winst / ' + t.verliezers + ' verlies',
-      '#0f172a', bmBadge(t.zeggingskracht, t.zeggingskracht === 'betekenisvol' ? 'groen' : 'oranje')) +
+      'var(--text)', bmBadge(t.zeggingskracht, t.zeggingskracht === 'betekenisvol' ? 'groen' : 'oranje')) +
     bmTegel('Payoff', bmNum(t.payoff, 2), 'gem. winst ' + bmEur(t.gem_winst_eur, 0) + ' vs verlies ' + bmEur(t.gem_verlies_eur, 0)) +
     bmTegel('Profit factor', bmNum(t.profit_factor, 2), 'winst ÷ verlies · boven 1 is winstgevend', bmKleur(t.profit_factor === null ? null : t.profit_factor - 1)) +
     bmTegel('Verwachting', bmEur(t.verwachting_eur, 0), 'per idee' + (t.verwachting_r !== null && t.verwachting_r !== undefined ? ' · ' + bmNum(t.verwachting_r, 2) + 'R' : ''), bmKleur(t.verwachting_eur)) +
@@ -379,8 +380,8 @@ function beursTrackrecord(d) {
     '</div>';
   h += bmKaart('Wat de strategie oplevert', tegels,
     'Trefpercentage alléén stuurt de verkeerde kant op — dat verhoog je door winst te vroeg te pakken. Daarom staat de payoff ernaast, en is de <strong>verwachting per idee</strong> het cijfer waarop je stuurt: alleen dat zegt of méér ideeën ook méér geld betekenen.' +
-    (t.n_zonder_stop ? ' <span style="color:#b45309">' + t.n_zonder_stop + ' positie(s) zonder stop — daarvoor bestaat geen R-veelvoud.</span>' : '') +
-    (t.n_onmeetbaar ? ' <span style="color:#b45309">' + t.n_onmeetbaar + ' positie(s) vallen buiten de euro-statistiek (geen wisselkoers).</span>' : ''));
+    (t.n_zonder_stop ? ' <span style="color:var(--warn-fg)">' + t.n_zonder_stop + ' positie(s) zonder stop — daarvoor bestaat geen R-veelvoud.</span>' : '') +
+    (t.n_onmeetbaar ? ' <span style="color:var(--warn-fg)">' + t.n_onmeetbaar + ' positie(s) vallen buiten de euro-statistiek (geen wisselkoers).</span>' : ''));
 
   var redenRijen = Object.keys(t.per_reden || {}).map(function(k) {
     var v = t.per_reden[k];
@@ -397,10 +398,10 @@ function beursTrackrecord(d) {
       (p.looptijd_dagen === null ? '—' : p.looptijd_dagen + ' d'),
       escHtml(p.close_reason || '—'),
       '<span style="color:' + bmKleur(p.resultaat_pct) + '">' + bmPct(p.resultaat_pct) + '</span>',
-      p.resultaat_eur === null ? '<span style="color:#b45309">onmeetbaar</span>'
+      p.resultaat_eur === null ? '<span style="color:var(--warn-fg)">onmeetbaar</span>'
         : '<span style="color:' + bmKleur(p.resultaat_eur) + '">' + bmEur(p.resultaat_eur, 2) + '</span>',
       p.r_multiple === null ? '—' : bmNum(p.r_multiple, 2) + 'R',
-      bmEur(p.kosten_eur, 2) + (p.fx_benadering ? ' <span title="Meerdere deelverkopen in vreemde valuta: het euro-bedrag rust op de wisselkoers van de sluitdag" style="color:#b45309">*</span>' : ''),
+      bmEur(p.kosten_eur, 2) + (p.fx_benadering ? ' <span title="Meerdere deelverkopen in vreemde valuta: het euro-bedrag rust op de wisselkoers van de sluitdag" style="color:var(--warn-fg)">*</span>' : ''),
     ]);
   });
   h += bmKaart('Afgesloten posities', bmTabel(['Instrument', 'Periode', 'Looptijd', 'Einde', 'Resultaat %', 'Resultaat €', 'R-veelvoud', 'Kosten'], gesloten),
@@ -423,15 +424,15 @@ function beursMachine(d) {
     return bmRij([
       escHtml(x.run_date),
       x.denkwerk === 'claude_code' ? bmBadge('claude code', 'groen') : x.denkwerk === 'terugval' ? bmBadge('terugval', 'oranje') : bmBadge(x.denkwerk || 'geen', 'grijs'),
-      x.status === 'error' ? '<span style="color:#b91c1c;font-weight:600">fout</span>' : 'ok',
+      x.status === 'error' ? '<span style="color:var(--danger-fg);font-weight:600">fout</span>' : 'ok',
       x.proposals,
       Math.round((x.duration_ms || 0) / 1000) + 's',
-      '<span style="font-size:11px;color:#64748b">' + escHtml((x.error || x.note || '').slice(0, 90)) + '</span>',
+      '<span style="font-size:11px;color:var(--text-dim)">' + escHtml((x.error || x.note || '').slice(0, 90)) + '</span>',
     ]);
   });
   h += bmKaart('Analyse-rondes', '<div style="margin-bottom:10px">' + (stukken || '') +
       (r.echt_denkwerk_pct !== null && r.echt_denkwerk_pct !== undefined
-        ? ' <span style="font-size:11px;color:#64748b;margin-left:6px">' + bmNum(r.echt_denkwerk_pct, 0) + '% écht denkwerk (30 dagen)</span>' : '') + '</div>' +
+        ? ' <span style="font-size:11px;color:var(--text-dim);margin-left:6px">' + bmNum(r.echt_denkwerk_pct, 0) + '% écht denkwerk (30 dagen)</span>' : '') + '</div>' +
     bmTabel(['Datum', 'Denkwerk', 'Status', 'Voorstellen', 'Duur', 'Notitie'], rondeRijen),
     'Een ronde op de <em>terugval</em> draait zonder werkmap en kan dus niets backtesten — die levert per definitie nul voorstellen op. In de cijfers ziet dat er precies zo uit als "de analist vond niets", en dat is een heel ander bericht.');
 
@@ -443,15 +444,15 @@ function beursMachine(d) {
       (dek.rijen ? Number(dek.rijen).toLocaleString('nl-NL') + ' koersdagen' : 'nog geen koersen')) +
     bmTegel('Reeks loopt tot', escHtml(dek.tot || '—'), dek.van ? 'vanaf ' + escHtml(dek.van) : '') +
     bmTegel('Verouderd', verouderd.length, verouderd.length ? 'besluiten zouden op oude data rusten' : 'alle koersen actueel',
-      verouderd.length ? '#b45309' : '#059669') +
+      verouderd.length ? 'var(--warn-fg)' : 'var(--green)') +
     '</div>';
   if (verouderd.length) {
-    dekInhoud += '<p style="font-size:12px;color:#b45309;margin:10px 0 0">Te oud: ' +
+    dekInhoud += '<p style="font-size:12px;color:var(--warn-fg);margin:10px 0 0">Te oud: ' +
       escHtml(verouderd.map(function(v) {
         return v.symbol + ' (' + (v.laatste_dag || 'geen koers') + (v.dagen_oud !== null && v.dagen_oud !== undefined ? ', ' + v.dagen_oud + ' dagen' : '') + ')';
       }).join(', ')) + '</p>';
   }
-  dekInhoud += '<button onclick="beursSyncKoersen(this)" style="margin-top:12px;padding:7px 14px;border:1px solid #e2e8f0;background:#fff;color:#475569;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">Koersen nu ophalen</button>';
+  dekInhoud += '<button onclick="beursSyncKoersen(this)" class="btn btn-ghost btn-sm" style="margin-top:12px">Koersen nu ophalen</button>';
   h += bmKaart('Datakwaliteit', dekInhoud,
     'Crypto en ETF\'s hebben een eigen houdbaarheid: een koers van vrijdag is maandag voor een ETF de meest recente die bestaat, en voor bitcoin drie dagen oud.');
 
@@ -461,28 +462,28 @@ function beursMachine(d) {
 function beursTrechterKaart(d) {
   var f = d.trechter || {};
   var stappen = [
-    ['Voorgesteld', f.voorgesteld, '#0ea5e9'],
-    ['Geblokkeerd door risico', f.geblokkeerd, '#f59e0b'],
+    ['Voorgesteld', f.voorgesteld, 'var(--accent)'],
+    ['Geblokkeerd door risico', f.geblokkeerd, 'var(--amber)'],
     ['Wacht op review', f.in_review, '#8b5cf6'],
-    ['Afgewezen', f.afgewezen, '#94a3b8'],
-    ['Uitgevoerd', f.uitgevoerd, '#059669'],
+    ['Afgewezen', f.afgewezen, 'var(--text-muted)'],
+    ['Uitgevoerd', f.uitgevoerd, 'var(--green)'],
   ];
   var max = Math.max.apply(null, stappen.map(function(s) { return s[1] || 0; }).concat([1]));
   var balken = stappen.map(function(s) {
     var breedte = Math.round((s[1] || 0) / max * 100);
-    return '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px;color:#334155;margin-bottom:3px">' +
+    return '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text);margin-bottom:3px">' +
       '<span>' + s[0] + '</span><strong>' + (s[1] || 0) + '</strong></div>' +
-      '<div style="height:7px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="height:100%;width:' + breedte + '%;background:' + s[2] + ';border-radius:4px"></div></div></div>';
+      '<div style="height:7px;background:var(--neutral-bg);border-radius:4px;overflow:hidden"><div style="height:100%;width:' + breedte + '%;background:' + s[2] + ';border-radius:4px"></div></div></div>';
   }).join('');
   var redenen = (f.blokkade_redenen || []).length
-    ? '<div style="margin-top:12px;padding-top:10px;border-top:1px solid #f1f5f9"><div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:5px">Waarom de risicotoets weigerde</div>' +
+    ? '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--card-border)"><div style="font-size:11px;font-weight:600;color:var(--text-dim);margin-bottom:5px">Waarom de risicotoets weigerde</div>' +
       f.blokkade_redenen.map(function(b) {
-        return '<div style="font-size:11px;color:#475569;margin-bottom:3px">· ' + escHtml(b.reden) + ' <strong>(' + b.n + '×)</strong></div>';
+        return '<div style="font-size:11px;color:var(--text-dim);margin-bottom:3px">· ' + escHtml(b.reden) + ' <strong>(' + b.n + '×)</strong></div>';
       }).join('') + '</div>'
     : '';
   return bmKaart('Van idee naar order — laatste ' + (f.dagen || 90) + ' dagen',
     balken + redenen +
-    '<div style="margin-top:10px;font-size:12px;color:#334155">Conversie: <strong>' +
+    '<div style="margin-top:10px;font-size:12px;color:var(--text)">Conversie: <strong>' +
     (f.conversie_pct === null || f.conversie_pct === undefined ? '—' : bmNum(f.conversie_pct, 1) + '%') +
     '</strong> van de voorstellen werd een order.</div>',
     'Zonder deze verhouding weet je niet of de agent te weinig ideeën heeft of te strakke klemmen — en dat zijn tegengestelde ingrepen.');
@@ -500,10 +501,10 @@ function tekenKoerslijn(lijn) {
       labels: lijn.punten.map(function(p) { return p.date; }),
       datasets: [
         { label: 'Portefeuille', data: lijn.punten.map(function(p) { return p.nav_index; }),
-          borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,.08)', borderWidth: 2,
+          borderColor: '#4f46e5', backgroundColor: 'rgba(79,70,229,.08)', borderWidth: 2,
           fill: true, tension: .2, pointRadius: 0, pointHoverRadius: 4 },
         { label: 'Benchmark', data: lijn.punten.map(function(p) { return p.bench_index; }),
-          borderColor: '#64748b', borderWidth: 1.5, borderDash: [5, 4], fill: false,
+          borderColor: '#94a3b8', borderWidth: 1.5, borderDash: [5, 4], fill: false,
           tension: .2, pointRadius: 0, pointHoverRadius: 4, spanGaps: true },
       ],
     },

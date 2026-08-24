@@ -1,4 +1,4 @@
-"""Configureer de SteentjeAPP-agent in Agent OS als een pro.
+"""Configureer de SteentjeAPP-agent in Impact OS als een pro.
 
 - Vul de `sites`-rij (Steentjebij Steentje) met profile + ctas, zet auto_content aan.
 - Zaai de Mission Radar watchlist (keywords + concurrenten + RSS).
@@ -12,8 +12,8 @@ from __future__ import annotations
 import asyncio, json, sqlite3, sys
 from pathlib import Path
 
-AGENTOS = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(AGENTOS))
+IMPACTOS = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(IMPACTOS))
 from backend.shared.database import get_conn  # noqa
 
 SITE_ID = "686629e7-ab3e-45ed-9a6a-d10753d66fb6"
@@ -108,7 +108,7 @@ def main():
             )
 
     # verify
-    c = sqlite3.connect(str(AGENTOS / "data" / "agentos.db"))
+    c = sqlite3.connect(str(IMPACTOS / "data" / "impactos.db"))
     row = c.execute("SELECT profile, ctas, auto_content_enabled FROM sites WHERE id=?", (SITE_ID,)).fetchone()
     nw = c.execute("SELECT COUNT(*) FROM radar_watchlist WHERE project=?", (PROJECT,)).fetchone()[0]
     ncs = c.execute("SELECT COUNT(*) FROM case_studies WHERE site_id=?", (SITE_ID,)).fetchone()[0]

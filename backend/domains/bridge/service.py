@@ -565,7 +565,7 @@ def report_misconfiguration() -> None:
         "Bridge", "niet_geconfigureerd",
         f"Iris Remote staat half ingesteld: {missing} ontbreekt in .env, dus de "
         "sync slaat elke ronde over en de telefoon toont een bevroren stand.",
-        next_step=f"Zet {missing} in .env en herstart AgentOS (agentos_service.cmd).",
+        next_step=f"Zet {missing} in .env en herstart ImpactOS (impactos_service.cmd).",
         status="error",
     )
     failures.mark_escalated(key)

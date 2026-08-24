@@ -22,6 +22,7 @@ def list_under_threshold(threshold: int = 80):
                 "project": orchestrator_service._project_for_job(j),
                 "seo_score": j.get("seo_score"),
                 "status": j.get("status"),
+                "orchestrator_attempts": int(j.get("orchestrator_attempts") or 0),
             }
             for j in jobs
         ],

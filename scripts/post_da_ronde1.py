@@ -32,7 +32,7 @@ async def gen_photo(pack_id):
     return ""
 
 async def main():
-    c = sqlite3.connect("data/agentos.db")
+    c = sqlite3.connect("data/impactos.db")
     results = []
     for pid in PACKS:
         print(f"== {pid} ==")

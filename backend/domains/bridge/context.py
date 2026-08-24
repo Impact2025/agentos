@@ -142,7 +142,7 @@ def build_mail() -> Dict[str, Any]:
         return {"status": "off", "reason": "Outlook niet geconfigureerd"}
     if not outlook.is_authenticated():
         return {"status": "off", "reason": "Outlook niet ingelogd (device-flow)",
-                "action_hint": "Log opnieuw in via de Mail-tab in Agent OS."}
+                "action_hint": "Log opnieuw in via de Mail-tab in Impact OS."}
 
     # Concepten liggen klaar vóórdat Vincent kijkt — de bridge is een pull-model
     # (max 1x/3 min), dus 'tik en genereer nu' bestaat niet. Kost een LLM-call
@@ -682,11 +682,11 @@ def build_helpdesk(free_by_day: Optional[List[Dict[str, Any]]] = None) -> Dict[s
     return {"sites": out, "maker": maker, "free_by_day": free_by_day or []}
 
 
-# ── Google-config voor live agenda/GSC zonder AgentOS ──────────────────────
+# ── Google-config voor live agenda/GSC zonder ImpactOS ──────────────────────
 
 def build_google_config() -> Optional[Dict[str, Any]]:
     """Het Google-service-account dat de cloud nodig heeft om agenda en GSC
-    zélf te kunnen uitlezen wanneer AgentOS niet draait (Iris Remote).
+    zélf te kunnen uitlezen wanneer ImpactOS niet draait (Iris Remote).
 
     Bewust geen los provisioneringspad: dit meegeeft in elke bridge_sync-push
     houdt één bron van waarheid (deze .env) — roteert Vincent de sleutel
@@ -926,10 +926,31 @@ def _pulse_seo(seo: Dict, good: List, bad: List) -> None:
         elif clicks >= 10:
             good.append({"area": "seo", "project": site["name"],
                          "what": f"{site['name']}: {clicks} klikken meer (week-op-week)"})
-        for faller in (site.get("fallers") or [])[:1]:
+        for faller in (site.get("fallers") or [])[:2]:
+            # Prioriteer page_url, maar val ook terug op de zoekquery en
+            # positie-delta — vele pagina's hebben een lege/root URL maar een
+            # duidelijke klik- en positiedaling op een specifiek zoekwoord.
+            pub = faller.get("page_url") or ""
+            query = faller.get("top_query") or ""
+            dp = faller.get("delta_position")
+            dc = faller.get("delta_clicks")
+            if pub:
+                what = f"{site['name']}: pagina zakt weg"
+            elif query:
+                what = f"{site['name']}: '{query}' zakt weg"
+            else:
+                what = f"{site['name']}: pagina zakt weg"
+            detail_parts = []
+            if pub:
+                detail_parts.append(pub[:80])
+            if dc is not None and dc < 0:
+                detail_parts.append(f"{abs(dc)} klikken minder")
+            if dp is not None and dp > 0:
+                detail_parts.append(f"{dp} positie lager")
+            detail = " — ".join(detail_parts)[:120] if detail_parts else (query[:80] or "")
             bad.append({"area": "seo", "project": site["name"], "severity": "laag",
-                        "what": f"{site['name']}: pagina zakt weg",
-                        "detail": str(faller.get("page_url") or "")[:120],
+                        "what": what,
+                        "detail": detail,
                         "why": "Wegzakkende pagina's zijn de goedkoopste winst — refresh i.p.v. nieuw."})
 
 

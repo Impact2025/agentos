@@ -163,6 +163,10 @@ def sync_trend_opportunities(site: Dict) -> Dict:
         signals = conn.execute(
             "SELECT * FROM radar_signals WHERE status = 'new' AND signal_score >= ? "
             "AND COALESCE(filter_reason, '') = '' AND ai_match_score >= ? "
+            # Merkvermeldingen zijn PR-bewijs ('iemand noemde ons'), geen
+            # content-onderwerp — anders wordt een positieve persvermelding
+            # een artikelopdracht met de merknaam als zoekwoord.
+            "AND watch_id NOT IN (SELECT id FROM radar_watchlist WHERE type = 'brand_mention') "
             "ORDER BY signal_score DESC",
             (TREND_MIN_SIGNAL_SCORE, TREND_MIN_MATCH),
         ).fetchall()

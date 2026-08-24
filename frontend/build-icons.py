@@ -1,15 +1,15 @@
-"""Favicon voor Agent OS genereren — de Iris-aperture, lichte variant.
+"""Favicon voor Impact OS genereren — de Iris-aperture, lichte variant.
 
-Agent OS had tot 13 aug 2026 geen favicon (alleen het losse `logo.png` in de
+Impact OS had tot 13 aug 2026 geen favicon (alleen het losse `logo.png` in de
 zijbalk, een generiek beeld zonder relatie tot de rest van het merk). Iris
 Remote (`remote/build-icons.py`) had al een bewust motief: acht spaken rond
 een pupil, het "oog" van de AI-manager. Dat motief hoort ook hier, niet een
-tweede logo ernaast — Agent OS en Iris Remote zijn hetzelfde product op twee
+tweede logo ernaast — Impact OS en Iris Remote zijn hetzelfde product op twee
 schermen.
 
 Enige verschil met de Remote-versie: die is getekend voor een donkere
-achtergrond (`--surface-bg #121118`); de Agent OS-zijbalk is wit, dus dit
-script gebruikt Agent OS' eigen tokens (`--bg`/`--accent` uit app.css) i.p.v.
+achtergrond (`--surface-bg #121118`); de Impact OS-zijbalk is wit, dus dit
+script gebruikt Impact OS' eigen tokens (`--bg`/`--accent` uit app.css) i.p.v.
 de Remote-kleuren simpelweg te hergebruiken op een verkeerde ondergrond.
 
 Draaien:  .venv/Scripts/python.exe frontend/build-icons.py

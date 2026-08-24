@@ -118,6 +118,7 @@ async def create_triage_plan(user_prompt: str) -> Dict[str, Any]:
         messages=[{"role": "user", "content": user_message}],
         system_prompt=system_prompt,
         agent="hermes",
+        purpose="pipeline-triage",
     ):
         text = event.get("text") or ""
         chunks.append(text)
@@ -368,20 +369,156 @@ def set_task_status(task_id: str, status: str, **fields: Any) -> Optional[Dict[s
     values.append(task_id)
 
     with get_conn() as conn:
-        if not _task_row(conn, task_id):
+        row = _task_row(conn, task_id)
+        if not row:
             return None
         conn.execute(f"UPDATE tasks SET {set_clause} WHERE id = ?", values)
         if status == "done":
-            nxt = conn.execute(
-                "SELECT id FROM tasks WHERE status = 'todo' "
-                "ORDER BY position ASC, created_at ASC LIMIT 1"
-            ).fetchone()
-            if nxt:
-                conn.execute(
-                    "UPDATE tasks SET status = 'ready', updated_at = ? WHERE id = ?",
-                    (_now(), nxt["id"]),
-                )
+            # Alleen de eerstvolgende taak in DEZELFDE keten promoveren (zelfde
+            # workspace-map) — niet de oudste 'todo' over de hele tabel. Die
+            # laatste variant liet ketens elkaars vervolgstappen wegkapen: een
+            # taak die vandaag klaar is, promoveerde een compleet ongerelateerde
+            # taak van weken geleden, terwijl zijn eigen vervolgstap bleef staan
+            # (19 aug 2026: 287 'todo'-taken, 0 'ready', sommige ketens al
+            # sinds 15 juli gestrand op hun eigen tweede stap).
+            ws = row.get("workspace_path") or ""
+            chain_dir = ws.rsplit("/", 1)[0] if "/" in ws else ""
+            if chain_dir:
+                nxt = conn.execute(
+                    "SELECT id FROM tasks WHERE status = 'todo' AND workspace_path LIKE ? "
+                    "ORDER BY position ASC LIMIT 1",
+                    (f"{chain_dir}/%",),
+                ).fetchone()
+                if nxt:
+                    conn.execute(
+                        "UPDATE tasks SET status = 'ready', error = '', updated_at = ? WHERE id = ?",
+                        (_now(), nxt["id"]),
+                    )
         return _task_row(conn, task_id)
+
+
+# ── Vastgelopen ketens vlottrekken ───────────────────────────────────────────
+#
+# Een taak die crasht valt in _execute_task terug naar 'todo' (niet 'ready')
+# zodat de conveyor niet in een faal-lus komt — de fout blijft alleen zichtbaar
+# als er ook iets is dat 'm later weer oppakt. Dat "later" was er niet: zonder
+# deze functie bleef zo'n taak voor altijd op 'todo' staan, ook nadat de
+# onderliggende oorzaak (dagquota, netwerk-blip) allang voorbij was.
+#
+# revive_stalled_chains() draait periodiek vanuit de conveyor-loop en doet twee
+# dingen die strikt gescheiden blijven omdat ze een ander bewijs vragen:
+#   1. Een 'todo'-taak zonder fout wiens voorganger al 'done' is, is nooit
+#      mislukt — hij is alleen nooit gepromoveerd (bug hierboven, of een taak
+#      aangemaakt vóór deze fix). Die mag meteen door.
+#   2. Een 'todo'-taak MET fout is een echte crash. Die krijgt alleen een
+#      nieuwe kans als de faalklasse dat rechtvaardigt (quota/netwerk — geen
+#      mens-alleen fout als een verlopen token), de afkoelperiode voorbij is
+#      (`shared/failures.py`-classificatie bepaalt hoe lang) én de retry-teller
+#      onder het maximum zit. Zonder die teller zou een permanent kapotte taak
+#      voor altijd blijven herstarten.
+RETRY_MAX_ATTEMPTS = 5
+_RETRY_COOLDOWN_MINUTES = {
+    "quota": 30,
+    "ratelimit": 15,
+    "transient": 5,
+    "unknown": 10,
+}
+
+
+def _chain_dir(workspace_path: str) -> str:
+    return workspace_path.rsplit("/", 1)[0] if "/" in (workspace_path or "") else (workspace_path or "")
+
+
+def revive_stalled_chains() -> Dict[str, int]:
+    """Promoveer ontgrendelde 'todo'-taken naar 'ready'. Retourneert
+    {"promoted_new": .., "promoted_retry": .., "blocked_human": ..} zodat de
+    conveyor-loop kan loggen wat er gebeurde zonder zelf de logica te kennen."""
+    from ...shared.failures import classify, HUMAN_ONLY
+
+    now = datetime.now(timezone.utc)
+    to_ready: List[str] = []
+    to_retry: List[str] = []
+    blocked_human = 0
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, status, workspace_path, position, error, retry_count, updated_at "
+            "FROM tasks WHERE workspace_path != '' ORDER BY workspace_path, position ASC"
+        ).fetchall()
+        by_chain: Dict[str, List[Dict[str, Any]]] = {}
+        for r in rows:
+            d = dict(r)
+            by_chain.setdefault(_chain_dir(d["workspace_path"]), []).append(d)
+
+        for _chain, tasks in by_chain.items():
+            for t in tasks:
+                st = t["status"]
+                if st in ("done", "awaiting_approval"):
+                    continue  # voorganger klaar, keten mag verder
+                if st == "needs_work":
+                    # needs_work met geen fout of een quota/transient-klassse
+                    # mag opnieuw geprobeerd worden — de quota is waarschijnlijk
+                    # ondertussen hersteld.
+                    if not t["error"]:
+                        to_retry.append(t["id"])
+                        break
+                    klass = classify(t["error"])
+                    if klass in HUMAN_ONLY:
+                        blocked_human += 1
+                        break
+                    if int(t.get("retry_count") or 0) >= RETRY_MAX_ATTEMPTS:
+                        break  # opgegeven — blijft zichtbaar als 'mislukt' voor een mens
+                    cooldown_min = _RETRY_COOLDOWN_MINUTES.get(klass, 10)
+                    try:
+                        updated_at = datetime.fromisoformat((t["updated_at"] or "").replace("Z", "+00:00"))
+                        if updated_at.tzinfo is None:
+                            updated_at = updated_at.replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        updated_at = now
+                    if (now - updated_at).total_seconds() < cooldown_min * 60:
+                        break  # afkoelperiode nog niet voorbij
+                    to_retry.append(t["id"])
+                    break
+                if st != "todo":
+                    break  # ready/running: keten geblokkeerd tot dit oplost
+                if not t["error"]:
+                    to_ready.append(t["id"])
+                    break  # nooit mislukt, alleen nooit gepromoveerd — meteen door
+                klass = classify(t["error"])
+                if klass in HUMAN_ONLY:
+                    blocked_human += 1
+                    break
+                if int(t["retry_count"] or 0) >= RETRY_MAX_ATTEMPTS:
+                    break  # opgegeven — blijft zichtbaar als 'mislukt' voor een mens
+                cooldown_min = _RETRY_COOLDOWN_MINUTES.get(klass, 10)
+                try:
+                    updated_at = datetime.fromisoformat((t["updated_at"] or "").replace("Z", "+00:00"))
+                    if updated_at.tzinfo is None:
+                        updated_at = updated_at.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    updated_at = now
+                if (now - updated_at).total_seconds() < cooldown_min * 60:
+                    break  # afkoelperiode nog niet voorbij
+                to_retry.append(t["id"])
+                break
+
+        if to_ready:
+            conn.executemany(
+                "UPDATE tasks SET status = 'ready', updated_at = ? WHERE id = ?",
+                [(_now(), tid) for tid in to_ready],
+            )
+        if to_retry:
+            conn.executemany(
+                "UPDATE tasks SET status = 'ready', error = '', "
+                "retry_count = retry_count + 1, updated_at = ? WHERE id = ?",
+                [(_now(), tid) for tid in to_retry],
+            )
+
+    return {
+        "promoted_new": len(to_ready),
+        "promoted_retry": len(to_retry),
+        "blocked_human": blocked_human,
+    }
 
 
 def _slugify(text: str) -> str:

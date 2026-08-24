@@ -443,6 +443,57 @@ _GSC_FACTS_TTL_SECONDS = 600
 _gsc_facts_cache: Dict[str, tuple] = {}
 
 
+def _ranking_page_from_history(site_id: str) -> Dict[str, Dict]:
+    """Welke pagina rankt al voor welk zoekwoord — uit de dagelijks
+    gesynchroniseerde `gsc_history` (scope=page), niet uit een tweede live
+    GSC-call.
+
+    Vóór 13 aug 2026 haalde `_gsc_facts` deze vraag met een eigen live
+    `fetch_page_query_performance`-call op, met een `except Exception:
+    page_queries = []` eronder. Die stille terugval liet het advies "schrijf
+    een artikel" zeggen voor 'voorbeeld korte biografie schrijven' terwijl
+    /kennisbank/memoires-schrijven-voorbeelden-en-tips er al 69 impressies/dag
+    op haalde (positie 17,8) — exact de kannibalisatie die `zero_click_advice`
+    hierboven claimt te voorkomen. Dezelfde vraag ("rankt hier al iets?") is
+    al voor de Kansen-lijst opgelost via `gsc_history`
+    (`opportunity_quality._gsc_coverage`, 3 aug 2026: 'rankt-al'); twee
+    antwoorden op één vraag is hoe zulke fouten ontstaan, dus leest dit
+    dezelfde bron.
+    """
+    ranking: Dict[str, Dict] = {}
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT h.page_url, h.top_query, h.impressions, h.position "
+                "FROM gsc_history h JOIN ("
+                "  SELECT page_url, MAX(date) AS d FROM gsc_history "
+                "  WHERE site_id = ? AND scope = 'page' GROUP BY page_url"
+                ") l ON l.page_url = h.page_url AND l.d = h.date "
+                "WHERE h.site_id = ? AND h.scope = 'page'",
+                (site_id, site_id),
+            ).fetchall()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("ranking_page uit gsc_history niet beschikbaar voor %s: %s",
+                     site_id, str(e)[:150])
+        return ranking
+    for r in rows:
+        q = (r["top_query"] or "").strip().lower()
+        if not q:
+            continue
+        try:
+            impressions = int(r["impressions"] or 0)
+        except (TypeError, ValueError):
+            impressions = 0
+        best = ranking.get(q)
+        if best is None or impressions > best["impressions"]:
+            ranking[q] = {
+                "impressions": impressions,
+                "position": r["position"],
+                "url": r["page_url"],
+            }
+    return ranking
+
+
 def _gsc_facts(site: Dict, days: int) -> Optional[Dict]:
     """Alles wat het advies uit Search Console nodig heeft, in één keer.
 
@@ -465,21 +516,7 @@ def _gsc_facts(site: Dict, days: int) -> Optional[Dict]:
 
     pages = gsc.fetch_page_performance(gsc_prop, days=days, row_limit=500)
     queries = gsc.fetch_query_performance(gsc_prop, days=days, row_limit=500)
-    try:
-        page_queries = gsc.fetch_page_query_performance(gsc_prop, days=days)
-    except Exception:
-        # Best-effort: zonder deze dimensie verliezen we alleen de zekerheid
-        # over "welke pagina rankt hier", niet het hele advies.
-        page_queries = []
-
-    ranking_page: Dict[str, Dict] = {}
-    for r in page_queries:
-        q = (r.get("query") or "").strip().lower()
-        if not q:
-            continue
-        best = ranking_page.get(q)
-        if best is None or r["impressions"] > best["impressions"]:
-            ranking_page[q] = r
+    ranking_page = _ranking_page_from_history(site["id"])
 
     cur_imps = sum(p["impressions"] for p in pages)
     cur_clicks = sum(p["clicks"] for p in pages)
@@ -498,7 +535,7 @@ def _gsc_facts(site: Dict, days: int) -> Optional[Dict]:
 
 
 def zero_click_advice(query: str, position: float, impressions: int,
-                      has_ranking_page: bool) -> Dict[str, str]:
+                      has_ranking_page: bool, page_url: str = "") -> Dict[str, str]:
     """Diagnose én knop voor een zoekwoord met impressies maar nul klikken.
 
     Eén functie, want dit is één beslissing. Vóór 2 aug 2026 stonden diagnose
@@ -508,6 +545,16 @@ def zero_click_advice(query: str, position: float, impressions: int,
     rankte — kannibalisatie als beloning voor het gehoorzamen van je eigen
     dashboard. Zolang die twee op verschillende plekken worden bepaald, lopen
     ze vroeg of laat weer uit elkaar.
+
+    16 aug 2026: dezelfde fout stond nog in de derde tak. Die keek helemaal
+    niet naar `has_ranking_page` en beweerde onvoorwaardelijk "er is nog geen
+    pagina die hierop mikt". Gemeten op WeAreImpact: het dashboard zei dat over
+    'impact strategy' (pos 78.2) terwijl /ai-strategie-consultant er in
+    `gsc_history` mét 45 impressies op stond. De knop eronder zou een tweede
+    pagina hebben geschreven voor een zoekwoord dat er al één had — precies de
+    kannibalisatie waar `cluster_kannibalisatie` op aanslaat. Buiten klikbereik
+    mét rankende pagina is een autoriteitsprobleem van díé pagina: niet de
+    snippet (die wordt op positie 50 niet gezien) en niet een tweede artikel.
     """
     if position <= 20 and has_ranking_page:
         return {
@@ -526,6 +573,16 @@ def zero_click_advice(query: str, position: float, impressions: int,
                       "schrijf er een."),
             "action": f"write_article:{query}",
             "action_label": "Artikel schrijven",
+        }
+    if has_ranking_page:
+        welke = f" ({page_url})" if page_url else ""
+        return {
+            "tekst": (f"'{query}' heeft {impressions} impressies op positie {position} — "
+                      f"te ver weg om klikken te krijgen. Er staat al een pagina op dit "
+                      f"zoekwoord{welke}; die moet sterker worden (contentdiepte, interne "
+                      "links, autoriteit). Een tweede artikel kannibaliseert alleen."),
+            "action": "open_tab:Optimalisatie",
+            "action_label": "Versterk de pagina",
         }
     return {
         "tekst": (f"'{query}' heeft {impressions} impressies op positie {position} — "
@@ -723,10 +780,10 @@ def project_advice(name: str, days: int = Query(28)):
                           if not _keyword_already_covered(q["query"], covered)]
             if zero_click:
                 top = zero_click[0]
+                rankt = facts["ranking_page"].get((top["query"] or "").strip().lower()) or {}
                 diagnose = zero_click_advice(
                     top["query"], top["position"], top["impressions"],
-                    has_ranking_page=bool(
-                        facts["ranking_page"].get((top["query"] or "").strip().lower())),
+                    has_ranking_page=bool(rankt), page_url=rankt.get("url") or "",
                 )
                 advice["alerts"].append({
                     "type": "opportunity",
@@ -756,12 +813,17 @@ def project_advice(name: str, days: int = Query(28)):
             # adviseerde dit dashboard "schrijf 11 artikelen" terwijl er 53
             # concepten op goedkeuring wachtten. Nog eens elf schrijven maakt
             # de rij langer en levert geen enkele klik op — publiceren wel.
+            #
+            # 16 aug 2026: die volgorde stond er wél, maar `if running:` ging er
+            # nog vóór — en een lopend contentdoel ís productie. Gemeten op
+            # WeAreImpact: 41 concepten in `pending_review` terwijl de beste
+            # volgende stap "doel G2 loopt, 5/9 taken" was. De doorvoer-tak was
+            # daarmee per constructie onbereikbaar zolang er een doel draaide,
+            # precies in de situatie waarvoor hij bedoeld is. Een lopend doel is
+            # een status, geen actie voor een mens; de Wachtrij is dat wel.
             queue = _queue_pressure(site["id"])
             advice["queue"] = queue
-            if running:
-                advice["next_step"] = (f"▶️ Doel '{running[0]['title']}' loopt — "
-                                       f"{running[0]['completed_tasks']}/{running[0]['task_count']} taken voltooid")
-            elif queue["pending_review"] >= 5:
+            if queue["pending_review"] >= 5:
                 extra = ""
                 if queue["needs_work"]:
                     extra = f" ({queue['needs_work']} daarvan halen de kwaliteitsgate niet)"
@@ -769,20 +831,28 @@ def project_advice(name: str, days: int = Query(28)):
                     f"✅ Beoordeel de Wachtrij — {queue['pending_review']} concept(en) wachten op "
                     f"jouw goedkeuring{extra}. Niets hiervan levert een klik op zolang het blijft liggen.")
                 advice["next_step_action"] = "open_tab:Wachtrij"
+            elif running:
+                advice["next_step"] = (f"▶️ Doel '{running[0]['title']}' loopt — "
+                                       f"{running[0]['completed_tasks']}/{running[0]['task_count']} taken voltooid")
             elif zero_click:
                 # Zelfde beslissing als de alert hierboven, uit dezelfde functie:
                 # anders adviseert de tip "optimaliseer" terwijl de hoofdknop
                 # eronder een artikel schrijft.
                 top = zero_click[0]
+                rankt = facts["ranking_page"].get((top["query"] or "").strip().lower()) or {}
                 diagnose = zero_click_advice(
                     top["query"], top["position"], top["impressions"],
-                    has_ranking_page=bool(
-                        facts["ranking_page"].get((top["query"] or "").strip().lower())),
+                    has_ranking_page=bool(rankt), page_url=rankt.get("url") or "",
                 )
                 if diagnose["action"].startswith("optimize_page:"):
                     advice["next_step"] = (
                         f"🔧 Optimaliseer de pagina voor '{top['query']}' — "
                         f"{top['impressions']} impressies op positie {top['position']}, nul klikken")
+                elif diagnose["action"] == "open_tab:Optimalisatie":
+                    advice["next_step"] = (
+                        f"🔧 Versterk de pagina voor '{top['query']}' — "
+                        f"{top['impressions']} impressies op positie {top['position']}, "
+                        "te ver weg voor klikken")
                 else:
                     advice["next_step"] = (f"📝 Schrijf een artikel voor '{top['query']}' — "
                                            f"{top['impressions']} onbenutte impressies")

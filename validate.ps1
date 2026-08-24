@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-Write-Host "=== 1. Schieten van Triage Request naar Agent OS ===" -ForegroundColor Cyan
+Write-Host "=== 1. Schieten van Triage Request naar Impact OS ===" -ForegroundColor Cyan
 $body = @{
     prompt = "Schrijf een SEO blog over AI in de zorg"
     workspace_path = "weareimpact/seo/blog-ai-zorg.md"

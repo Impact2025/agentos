@@ -1,4 +1,4 @@
-"""Agent OS — Mission Control
+"""Impact OS — Mission Control
 
 FastAPI server die alle domein-routers monteert onder 1 app.
 Elk domein (chat, pipeline, prospecting, seo, etc.) is een aparte
@@ -23,7 +23,7 @@ from .shared.logging_config import setup_logging
 setup_logging()
 
 from .shared.database import init_db
-from .shared.config import OBSIDIAN_VAULT_PATH, hermes_backend, domain_enabled, ENABLED_DOMAINS, AGENTOS_INSTANCE_NAME
+from .shared.config import OBSIDIAN_VAULT_PATH, hermes_backend, domain_enabled, ENABLED_DOMAINS, IMPACTOS_INSTANCE_NAME
 from .domains.chat import hermes as hermes_service
 from .expert.team import ensure_expert_team
 
@@ -79,7 +79,7 @@ from .domains.auth import service as auth_service
 from .domains.omni import router as omni_router
 
 BASE_DIR = Path(__file__).parent.parent
-logger = logging.getLogger("agentos")
+logger = logging.getLogger("impactos")
 
 
 @asynccontextmanager
@@ -113,6 +113,23 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Autoheal bij opstarten mislukt")
 
+    # Conveyor-taken die op 'running' stonden toen het proces stopte (crash of
+    # herstart) blijven anders eeuwig hangen: de conveyor pakt alléén 'ready'
+    # taken op, dus een taak op 'running' wordt nooit meer aangeraakt en
+    # blokkeert zijn hele keten. recover_orphans() bestond al voor
+    # gauntlet-runs/loops maar werd alleen handmatig aangeroepen via
+    # POST /api/agentctl/recover — nooit bij het opstarten zelf.
+    try:
+        from .domains.agentctl.service import recover_orphans
+        boot_recover = recover_orphans()
+        if boot_recover.get("gauntlet") or boot_recover.get("loops") or boot_recover.get("tasks"):
+            logger.info(
+                "Orphan-recovery bij opstarten: %d gauntlet-run(s), %d loop(s), %d taak/taken hersteld",
+                boot_recover.get("gauntlet", 0), boot_recover.get("loops", 0), boot_recover.get("tasks", 0),
+            )
+    except Exception:
+        logger.exception("Orphan-recovery bij opstarten mislukt")
+
     start_scheduler()
 
     loop_task = asyncio.create_task(conveyor_loop(poll_interval=2.0))
@@ -129,7 +146,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Agent OS",
+    title="Impact OS",
     description="Lokaal AI-dashboard met Obsidian integratie, Claude & Hermes agents",
     version="2.0.0",
     lifespan=lifespan,
@@ -148,7 +165,7 @@ app.add_middleware(
 
 # ── Login-gate ──────────────────────────────────────────────────────
 # Beschermt de hele app (ook de gevaarlijke /api/* die mail versturen en
-# publiceren) met een sessie-cookie. Staat uit zolang AGENTOS_PASSWORD niet
+# publiceren) met een sessie-cookie. Staat uit zolang IMPACTOS_PASSWORD niet
 # is gezet (lokale dev blijft zonder slot). Bij deploy verplicht.
 from .domains.auth import service as _auth_service  # noqa: E402
 
@@ -173,7 +190,7 @@ async def static_no_cache_middleware(request: Request, call_next):
 
 # ── Monteer alle domein-routers ─────────────────────────────────────────────
 # Kern: geen domain-tag, altijd aan (ook op een klant-instance met een
-# beperkte AGENTOS_ENABLED_DOMAINS-whitelist — zie shared/config.py).
+# beperkte IMPACTOS_ENABLED_DOMAINS-whitelist — zie shared/config.py).
 app.include_router(voice_router.router)
 app.include_router(chat_router.router)
 app.include_router(sessions_router.router)
@@ -263,6 +280,9 @@ if domain_enabled("calendar"):
 if domain_enabled("bridge"):
     from .domains.bridge import router as bridge_router
     app.include_router(bridge_router.router)
+if domain_enabled("orders"):
+    from .domains.orders import router as orders_router
+    app.include_router(orders_router.router)
 
 
 # ── Status / health endpoints ──────────────────────────────────────────────
@@ -284,7 +304,7 @@ def status():
         # None = geen whitelist, alles aan (hoofdinstallatie). Een lijst is een
         # klant-instance — de frontend verbergt tabs die niet in de lijst staan.
         "enabled_domains": sorted(ENABLED_DOMAINS) if ENABLED_DOMAINS else None,
-        "instance_name": AGENTOS_INSTANCE_NAME,
+        "instance_name": IMPACTOS_INSTANCE_NAME,
     }
 
 

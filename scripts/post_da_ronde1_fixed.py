@@ -26,7 +26,7 @@ async def fetch_page_tokens():
     return m
 
 async def main():
-    c = sqlite3.connect("data/agentos.db")
+    c = sqlite3.connect("data/impactos.db")
     tokens = await fetch_page_tokens()
     print("Opgehaalde page-tokens:", {k: (v[:8]+"..." if v else None) for k, v in tokens.items()})
 

@@ -15,16 +15,26 @@ from typing import Optional
 
 from ...shared.config import BASE_DIR, hermes_backend
 from ...shared import agent_runner as agent_service
+from ...shared.database import get_conn
 from ...domains.pipeline.service import (
     get_ready_tasks,
     set_task_status,
     get_agent_profile,
     get_previous_result,
+    revive_stalled_chains,
 )
+from ...shared.failures import describe_exception
+from ...shared.outcomes import require_llm_budget, BudgetExceeded
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_WORKSPACE_ROOT = BASE_DIR / "workspaces"
+# Een 'running' taak die langer dan deze grens nergens meer door de conveyor
+# wordt aangeraakt, is een wees: de conveyor pakt alléén 'ready' op, dus een
+# taak op 'running' wordt nooit meer herstart en blokkeert zijn keten. De
+# sweep (en de boot-time recover_orphans) zetten die na deze leeftijd terug
+# naar 'todo', waarna revive_stalled_chains() de foutklasse beoordeelt.
+STALE_RUNNING_HOURS = 6
 STATE_TRANSITIONS = [
     "todo",
     "ready",
@@ -90,6 +100,7 @@ async def _run_agent_for_task(
         agent=agent_name or "hermes",
         model_override=model_override,
         use_tools=False,
+        purpose=f"conveyor:{agent_name}" if agent_name else "conveyor",
     ):
         if event.get("type") == "error":
             raise RuntimeError(event.get("message") or "Onbekende agent-fout")
@@ -105,9 +116,17 @@ def _assess_output(text: str, task: dict) -> dict:
     Houdt rommel uit de downstream Wachtrij-gate: een te korte of structuurloze
     tekst wordt 'needs_work' in plaats van 'done'. Dit is een snelle
     voorfilter — de echte SEO-score (>=80) gebeurt in content_pipeline.
+
+    Drempel wordt dynamisch verlaagd als de actieve backend lokaal/Ollama is
+    (zie hermes_backend()): die leveren kortere responses, maar de content-
+    pipeline-gate (80+) blijft de echte kwaliteitsbeoordeling.
     """
-    if not text or len(text.strip()) < 200:
-        return {"ok": False, "reason": "output te kort (<200 tekens)"}
+    from ...shared.config import hermes_backend
+    _backend = hermes_backend()
+    _is_local = _backend in ("local", "ollama")
+    _min_len = 100 if _is_local else 200
+    if not text or len(text.strip()) < _min_len:
+        return {"ok": False, "reason": f"output te kort (<{_min_len} tekens)"}
     # Lijst-/artikel-taken horen koppen te hebben; een muur aan platte tekst
     # is onbruikbaar als SEO-concept.
     has_heading = any(line.strip().startswith("#") for line in text.splitlines())
@@ -143,10 +162,50 @@ def _write_workspace_file(workspace_path: str, content: str) -> Path:
     return full_path
 
 
+def _sweep_stale_running(stale_hours: int = STALE_RUNNING_HOURS) -> int:
+    """Zet 'running' taken ouder dan `stale_hours` terug naar 'todo'.
+
+    Gedeelde logica tussen de conveyor-sweep (elke revive-ronde) en de
+    handmatige /api/tasks/cleanup-stale. Gebruikt set_task_status zodat de
+    keten-doorrol intact blijft (geen opvolger wordt gepromoveerd — die
+    mag pas als de taak écht 'done' is). Retourneert het aantal geraakte taken.
+    """
+    note = (
+        f"Stale 'running' gereset ({stale_hours}h+) — conveyor kwijt bij "
+        "restart/crash; opnieuw starten of verwijderen."
+    )
+    swept = 0
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id FROM tasks WHERE status='running' "
+            "AND (started_at IS NULL OR started_at < datetime('now', ?))",
+            (f"-{stale_hours} hours",),
+        ).fetchall()
+        for r in rows:
+            set_task_status(r["id"], "todo", error=note)
+            swept += 1
+    return swept
+
+
 async def _execute_task(task: dict) -> dict:
     agent_name = task.get("agent") or "hermes"
     workspace_path = task.get("workspace_path") or ""
     task_id = task.get("id")
+
+    # Budgetrem vóór elke uitvoering, niet alleen bij autonome jobs elders —
+    # zonder dit zou een volle backlog vastgelopen taken (zie revive_stalled_chains)
+    # het dagbudget in één ronde kunnen leegtrekken, precies het patroon uit het
+    # Gauntlet-incident van 15 aug 2026 (6,2M tokens op één dag door een pad
+    # zonder budgetguard). Terug naar 'todo' i.p.v. falen binnen de try-block,
+    # zodat dit niet als een 'transient' crash meetelt in de retry-teller —
+    # revive_stalled_chains classificeert de tekst zelf opnieuw als 'quota'.
+    try:
+        require_llm_budget("conveyor")
+    except BudgetExceeded as exc:
+        detail = str(exc)
+        logger.info("Task %s uitgesteld: %s", task_id, detail)
+        set_task_status(task_id, "todo", error=detail, finished_at=_now())
+        return {"task_id": task_id, "status": "todo", "output": detail, "duration_ms": 0}
 
     # Profiel-bewust: gebruik model + system_prompt van het toegewezen profiel.
     profile = get_agent_profile(task.get("assigned_agent_id"))
@@ -219,18 +278,23 @@ async def _execute_task(task: dict) -> dict:
             "quality": quality,
         }
     except Exception as exc:  # noqa: BLE001
-        logger.exception("Task %s failed: %s", task_id, exc)
+        # str(exc) is bij de hele httpx/anyio-familie vaak leeg (zie
+        # shared/failures.py) — dan staat er "mislukt: " en weet niemand waar
+        # te beginnen. describe_exception() vult 'm altijd.
+        detail = describe_exception(exc)
+        logger.exception("Task %s failed: %s", task_id, detail)
         duration_ms = int((time.perf_counter() - started) * 1000)
-        # Terug naar 'todo' (niet 'ready') zodat de conveyor niet in een faal-lus komt;
-        # de fout blijft zichtbaar in de UI.
+        # Terug naar 'todo' (niet 'ready') zodat de conveyor niet meteen in een
+        # faal-lus komt; revive_stalled_chains() pakt 'm later weer op zodra de
+        # faalklasse en de afkoelperiode dat toestaan (zie pipeline/service.py).
         updated = set_task_status(
             task_id, "todo",
-            error=str(exc), finished_at=_now(), duration_ms=duration_ms,
+            error=detail, finished_at=_now(), duration_ms=duration_ms,
         )
         return {
             "task_id": task_id,
             "status": (updated or {}).get("status", "todo"),
-            "output": f"Fout tijdens uitvoering: {exc}",
+            "output": f"Fout tijdens uitvoering: {detail}",
             "duration_ms": duration_ms,
         }
 
@@ -263,6 +327,9 @@ async def conveyor_loop(
     )
     if stop_event is None:
         stop_event = asyncio.Event()
+
+    revive_interval = 30.0
+    last_revive = 0.0
 
     while not stop_event.is_set():
         try:
@@ -302,6 +369,42 @@ async def conveyor_loop(
                     logger.exception("Auto-stage na batch mislukt (niet fataal)")
             else:
                 await asyncio.sleep(poll_interval)
+
+            # Vastgelopen ketens vlottrekken: gecrashte taken die hun
+            # afkoelperiode hebben uitgezeten, en 'todo'-taken die alleen nooit
+            # gepromoveerd werden. Debounced (elke 30s, niet elke poll) — de
+            # scan loopt over de hele tasks-tabel en hoeft niet elke 2s.
+            now_mono = time.monotonic()
+            if now_mono - last_revive >= revive_interval:
+                last_revive = now_mono
+                try:
+                    stats = revive_stalled_chains()
+                    if stats.get("promoted_new") or stats.get("promoted_retry"):
+                        logger.info(
+                            "Revive: %d nieuw ontgrendeld, %d herprobeerd, %d wacht op een mens",
+                            stats.get("promoted_new", 0), stats.get("promoted_retry", 0),
+                            stats.get("blocked_human", 0),
+                        )
+                except Exception:  # noqa: BLE001
+                    logger.exception("Revive van vastgelopen ketens mislukt (niet fataal)")
+                # Zombie-sweep: 'running' taken die al urenlang nergens meer
+                # door de conveyor worden aangeraakt, terugzetten naar 'todo'.
+                # De conveyor pakt alléén 'ready' op, dus een taak die op
+                # 'running' vastzit (crash zonder terugschrijven, of een taak
+                # die in een except bleef hangen) blokkeert zijn hele keten voor
+                # altijd — tenzij iemand handmatig /api/tasks/cleanup-stale
+                # aanriep. Deze sweep doet dat automatisch, debounced, net als
+                # de revive-stap. Idempotent: na de reset pakt
+                # revive_stalled_chains() de foutklasse weer op.
+                try:
+                    swept = _sweep_stale_running(stale_hours=STALE_RUNNING_HOURS)
+                    if swept:
+                        logger.warning(
+                            "Stale-sweep: %d 'running' taak/taken (>%dh) teruggezet naar 'todo'",
+                            swept, STALE_RUNNING_HOURS,
+                        )
+                except Exception:  # noqa: BLE001
+                    logger.exception("Stale-sweep mislukt (niet fataal)")
         except Exception as exc:  # noqa: BLE001
             logger.exception("Fout in conveyor loop: %s", exc)
             await asyncio.sleep(poll_interval)

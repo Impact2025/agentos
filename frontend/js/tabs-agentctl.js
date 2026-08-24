@@ -1,4 +1,4 @@
-// ── Agent OS — tab: Agent Control (Iris' stal-overzicht & deploy)
+// ── Impact OS — tab: Agent Control (Iris' stal-overzicht & deploy)
 // Toont de 13 expert-agenten met live occupancy (idle/busy) en laat Iris
 // (of Vincent) elke agent direct op een taak zetten via /api/agentctl/deploy.
 // Werkt tegen de backend-domain agentctl (backend/domains/agentctl).
@@ -199,6 +199,16 @@ async function runOrchestratorOne() {
   }
 }
 
+// Pijler -> wat een 'staged'/'running' resultaat concreet betekent, voor de
+// per-project regel. 'content' publiceert async (Gauntlet-run duurt minuten),
+// de rest is synchroon klaar zodra de respons terug is.
+var _PILLAR_LANDING = {
+  seo: 'CTR-varianten klaar in Optimalisatie',
+  content: 'artikel wordt geschreven — komt in de Wachtrij zodra de Gauntlet-run klaar is',
+  uitvoering: 'doelen bijgewerkt',
+  hygiene: 'stuk herschreven, in de Wachtrij',
+};
+
 async function executeAllSuggestions() {
   var box = document.getElementById('agentctl-suggest');
   var btn = document.getElementById('ac-exec-all');
@@ -206,8 +216,24 @@ async function executeAllSuggestions() {
   try {
     var r = await fetch('/api/agentctl/suggest/execute', { method: 'POST' });
     var d = await r.json();
-    if (box) box.innerHTML = '<span style="color:#16a34a">' + (d.succeeded || 0) + '/' + (d.executed || 0) +
-      ' agent-runs gestart.</span> <span style="color:#64748b">Bekijk de bezetting hieronder — agents flipperen naar "bezig".</span>';
+    var results = d.results || [];
+    var lines = results.map(function (res) {
+      var project = escHtml(res.project || '');
+      if (!res.ok) {
+        var reason = escHtml(res.reason || 'geen effect');
+        return '<div style="padding:3px 0;color:#94a3b8">' + project + ' — ' + reason + '</div>';
+      }
+      var label = escHtml(res.detail || _PILLAR_LANDING[res.pillar] || 'gedaan');
+      var link = res.artifact
+        ? ' <a href="' + escHtml(res.artifact) + '" style="color:#4f46e5;text-decoration:underline">bekijk</a>'
+        : '';
+      return '<div style="padding:3px 0"><span style="color:#16a34a">' + project + '</span> → ' +
+        label + link + '</div>';
+    });
+    if (box) {
+      box.innerHTML = '<div style="margin-bottom:6px">' + (d.succeeded || 0) + '/' + (d.executed || 0) +
+        ' suggesties uitgevoerd:</div>' + lines.join('');
+    }
     loadAgentControl();
     setTimeout(loadAgentSuggestions, 4000);
   } catch (e) {

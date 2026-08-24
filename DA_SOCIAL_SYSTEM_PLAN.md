@@ -1,9 +1,9 @@
 # DatingAssistent — Wereldklasse Social System (integratieplan)
 
 ## Status nu (17 aug 2026)
-- 3 DA-pagina's (30+/40+/50+) als aparte AgentOS-sites, eigen page-tokens in DB.
+- 3 DA-pagina's (30+/40+/50+) als aparte ImpactOS-sites, eigen page-tokens in DB.
 - 3 openingsposts LIVE (MJ-beeld + template, echt logo, leeftijd-badge, merknaam).
-- Auto-comment module: na elke FB-post plaatst AgentOS een first-comment met
+- Auto-comment module: na elke FB-post plaatst ImpactOS een first-comment met
   leeftijd-specifieke CTA-link + hashtags (link-in-comment trick, bereik-vriendelijk).
 - Cron-engine (elke 2u): plaatst de 9 geplande posts automatisch op hun tijd,
   met token-refresh + auto-comment. Idempotent.

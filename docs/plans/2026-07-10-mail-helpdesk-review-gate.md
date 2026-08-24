@@ -16,7 +16,7 @@ Verzending hergebruikt de bestaande `shared/email_service.py` SMTP-sender (START
 **Tech Stack:** Python 3.11, poplib (POP3), FastAPI router, SQLite (bestaande `shared/database.py`),
 OpenRouter/Claude LLM-client (bestaande `domains/chat`), bestaande SMTP-sender.
 
-**Veiligheidsmodel:** VARIANT A — co-pilot. AgentOS verstuurt NOOIT zelf. Alles ligt klaar in
+**Veiligheidsmodel:** VARIANT A — co-pilot. ImpactOS verstuurt NOOIT zelf. Alles ligt klaar in
 het Actiecentrum; Vincent klikt één keer. Dit is een harde eis, geen optie.
 
 **Scope (YAGNI):** géén IMAP, géén autonome verzending, géén multi-mailbox-fusie, géén
@@ -29,9 +29,9 @@ tweede adres later 1 regel is.
 
 De SMTP-sender in `shared/email_service.py` leest `SMTP_HOST/PORT/USER/PASSWORD` uit
 `shared/config.py` (defaults: gmail:587). Voor skillkaart/bijeen moet je ZXCS-credentials
-zelf in `D:/apps/agentos/.env` zetten (Hermes mag geen .env schrijven in deze omgeving).
+zelf in `D:/apps/impactos/.env` zetten (Hermes mag geen .env schrijven in deze omgeving).
 
-Voeg aan `D:/apps/agentos/.env` toe (voorbeeld skillkaart):
+Voeg aan `D:/apps/impactos/.env` toe (voorbeeld skillkaart):
 
 ```
 SMTP_HOST=mail.skillkaart.nl
@@ -99,7 +99,7 @@ aangemaakt en voeg de call toe).
 
 **Step 3:** Verifieer dat de tabellen bestaan:
 
-Run: `cd D:/apps/agentos/backend && python3 -c "from shared.database import get_conn; c=get_conn(); print([r['name'] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'mail%'\")])"`
+Run: `cd D:/apps/impactos/backend && python3 -c "from shared.database import get_conn; c=get_conn(); print([r['name'] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'mail%'\")])"`
 
 Expected: `['mail_inbox', 'mail_reply']`
 
@@ -149,13 +149,13 @@ def test_fetch_new_marks_seen(monkeypatch, tmp_path):
     monkeypatch.setattr(poplib, 'POP3', FakePop)
     saved = inbox_mod.fetch_new(
         host='h', port=110, user='u', pw='p',
-        db_path=str(tmp_path/'agentos.db'))
+        db_path=str(tmp_path/'impactos.db'))
     assert len(saved) == 1
     assert saved[0]['subject'] == 'Hoe reset ik mijn wachtwoord?'
     # tweede keer: geen dupes
     saved2 = inbox_mod.fetch_new(
         host='h', port=110, user='u', pw='p',
-        db_path=str(tmp_path/'agentos.db'))
+        db_path=str(tmp_path/'impactos.db'))
     assert saved2 == []
 ```
 
@@ -525,7 +525,7 @@ MAIL_HELPDESK_POP_PASSWORD: str = os.getenv("MAIL_HELPDESK_POP_PASSWORD", "")
 Controleer dat `BRAND_CONTEXT` en `IRIS_KNOWLEDGE` al in `config.py` bestaan; zo niet,
 laad ze uit je vault (zie Task 8).
 
-**Step 3:** Start AgentOS-lokaal, wacht één poll-interval, check logs op "mail_helpdesk".
+**Step 3:** Start ImpactOS-lokaal, wacht één poll-interval, check logs op "mail_helpdesk".
 Controleer DB: `SELECT count(*) FROM mail_reply`.
 
 **Step 4:** Commit.
@@ -540,7 +540,7 @@ Controleer DB: `SELECT count(*) FROM mail_reply`.
 - Modify: `backend/shared/config.py` (BRAND_CONTEXT / IRIS_KNOWLEDGE uit vault of .env)
 
 **Step 1:** Bepaal waar je SCHRIJF-DNA + FAQ staan (vault: `D:/APPS/Hermes Brein/.../SCHRIJF-DNA-Vincent.md`
-en eventuele FAQ-markdown). Zet die tekst in `D:/apps/agentos/.env`:
+en eventuele FAQ-markdown). Zet die tekst in `D:/apps/impactos/.env`:
 
 ```
 BRAND_CONTEXT="Skillkaart — [jouw merkzin in 1-2 zinnen]"
@@ -559,7 +559,7 @@ of laad ze in `config.py` via `os.getenv("BRAND_CONTEXT","")` / `os.getenv("IRIS
 
 **Objective:** Bewijs dat een echte vraagmail → concept → Actiecentrum → (na klik) verzending.
 
-**Files:** geen nieuwe; draai tegen de lokale AgentOS.
+**Files:** geen nieuwe; draai tegen de lokale ImpactOS.
 
 **Step 1:** Stel `MAIL_HELPDESK_ENABLED=1` in `.env`, start backend.
 
@@ -569,7 +569,7 @@ of laad ze in `config.py` via `os.getenv("BRAND_CONTEXT","")` / `os.getenv("IRIS
 **Step 3:** Wacht ≤ poll-interval. Controleer:
 
 ```bash
-cd D:/apps/agentos/backend && python3 -c "
+cd D:/apps/impactos/backend && python3 -c "
 from shared.database import get_conn
 c=get_conn()
 print('inbox:', list(c.execute('SELECT from_addr,classified FROM mail_inbox')))

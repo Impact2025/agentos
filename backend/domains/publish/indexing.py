@@ -44,7 +44,7 @@ def ensure_indexnow_key(site: Dict) -> str:
     klinkt overbodig — waarom zou er een sleutel live staan die wij niet
     kennen? — maar precies dat was op 4 aug 2026 het geval bij WeAreImpact en
     DatingAssistent. Beide droegen een werkend keybestand op hun site-root,
-    aangemaakt toen die repo's zelf werden opgezet; Agent OS zag een lege
+    aangemaakt toen die repo's zelf werden opgezet; Impact OS zag een lege
     kolom, verzon een tweede sleutel, en meldde vanaf dat moment elke nieuwe
     URL aan onder een adres dat 404 gaf. Bing en Yandex negeerden alles, stil,
     maandenlang. De administratie week af van de wereld en niets vergeleek ze.
@@ -71,7 +71,7 @@ def ensure_indexnow_key(site: Dict) -> str:
 async def verify_indexnow(site: Dict) -> Dict:
     """Controleer of het IndexNow-keybestand écht live staat op de site-root.
 
-    Voor Netlify-sites deployt Agent OS het bestand zelf mee, maar extern
+    Voor Netlify-sites deployt Impact OS het bestand zelf mee, maar extern
     gehoste sites (Vercel/eigen CMS) moeten het handmatig plaatsen — zonder
     dat bestand negeren Bing/Yandex/Naver elke IndexNow-submit stilletjes."""
     base_url = (site.get("base_url") or "").strip().rstrip("/")

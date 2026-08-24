@@ -415,6 +415,6 @@ async def run_weekly_linkbuilding() -> None:
         log_outcome(
             "Linkbuilding", "linkbuilding_weekrun",
             f"Linkbuilding-weekrun gefaald: {e}",
-            next_step="Bekijk logs/agentos.log en draai handmatig: POST /api/linkbuilding/prospect-run.",
+            next_step="Bekijk logs/impactos.log en draai handmatig: POST /api/linkbuilding/prospect-run.",
             status="error",
         )

@@ -105,6 +105,53 @@ async def multiply_job(job_id: str, with_video: bool = True) -> Dict:
                            job_id, str(e)[:200])
             result["social_pack"] = {"error": str(e)[:200]}
 
+    # ── 1b. DatingAssistent: doelgroep-varianten (30+/40+/50+) ──────────────
+    # DatingAssistent heeft 3 leeftijdsgebonden FB-pagina's náást de hoofd-
+    # pagina (`shared/facebook.py:check_age_targeting`, zie CLAUDE.md §7i) —
+    # een blog dat bv. over "daten na je scheiding" gaat, leest voor een
+    # 30-jarige anders dan voor een 55-jarige. We genereren hier alléén de
+    # tekst-varianten (geen video, geen automatische post): de leeftijds-
+    # pagina's hebben géén eigen `sites`-rij en dus geen page-token via de
+    # gewone route, en `check_age_targeting` weigert bewust élke leeftijds-
+    # geframede tekst op de hoofdpagina — posten kan alleen via het bestaande
+    # doelgroep-mechanisme (`scripts/da_post_engine.py`), niet via de
+    # standaard Plaats-knop. De varianten landen daarom als concept in Social
+    # Creatie mét een next_step die dat expliciet maakt, i.p.v. een knop te
+    # tonen die altijd zal falen.
+    result["doelgroep_varianten"] = []
+    if project == "datingassistent":
+        _DOELGROEPEN = (
+            ("30+", "Schrijf de invalshoek voor twintigers/dertigers: net op de datingmarkt, "
+                    "drukke agenda, wil het slim aanpakken."),
+            ("40+", "Schrijf de invalshoek voor veertigers: vaak een eerdere relatie/gezin achter "
+                    "de rug, weet wat ze niet meer willen, zoekt oprechte verbinding."),
+            ("50+", "Schrijf de invalshoek voor vijftigplussers: nieuw hoofdstuk na een lange "
+                    "relatie of pensioen in zicht, zoekt gelijkwaardigheid en gezelschap."),
+        )
+        for label, angle_hint in _DOELGROEPEN:
+            variant_theme = f"{title} ({label})"
+            if _existing_pack_for_job(project, variant_theme):
+                result["doelgroep_varianten"].append({"doelgroep": label, "skipped": True})
+                continue
+            try:
+                vpack = await asyncio.to_thread(
+                    sc.generate_content_pack,
+                    project=project,
+                    theme=variant_theme,
+                    angle=(f"Vermenigvuldigd uit het blogartikel over '{keyword}' — {angle_hint}"
+                           if keyword else angle_hint),
+                    platforms=["facebook", "instagram"],
+                    with_image=False,
+                    with_video=False,
+                )
+                result["doelgroep_varianten"].append(
+                    {"doelgroep": label, "pack_id": vpack.id, "concept": vpack.concept})
+                artifacts.append(f"/api/social-content/packs/{vpack.id}/export")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[multiplier] DA-doelgroepvariant %s mislukt voor %s: %s",
+                               label, job_id, str(e)[:200])
+                result["doelgroep_varianten"].append({"doelgroep": label, "error": str(e)[:200]})
+
     # ── 2. Blog → 9:16-video ────────────────────────────────────────────────
     # make_blog_video dedupet zelf (pack-id 'blog_{job_id}', video_path op de
     # job); een tweede run overschrijft hooguit het videobestand.
@@ -132,22 +179,36 @@ async def multiply_job(job_id: str, with_video: bool = True) -> Dict:
         made.append("social-pack")
     if (result["video"] or {}).get("success"):
         made.append("video")
+    variant_hits = [v for v in result.get("doelgroep_varianten", [])
+                    if v.get("pack_id") and not v.get("skipped")]
+    if variant_hits:
+        made.append(f"{len(variant_hits)} doelgroepvariant(en)")
     failed = []
     if (result["social_pack"] or {}).get("error"):
         failed.append("social-pack")
     if (result["video"] or {}).get("error"):
         failed.append("video")
+    if any(v.get("error") for v in result.get("doelgroep_varianten", [])):
+        failed.append("doelgroepvariant")
     try:
         from ...shared.outcomes import log_outcome
         if made or failed:
+            next_step = ("Bekijk en keur de posts/video in Social Creatie."
+                         if made else "Bekijk de fout en probeer /multiply opnieuw.")
+            if variant_hits:
+                next_step += (" De doelgroepvarianten (30+/40+/50+) posten NIET via de "
+                              "gewone Plaats-knop — die pagina's hebben geen eigen "
+                              "site-token en de leeftijds-check op de hoofdpagina "
+                              "weigert leeftijdsgeframede tekst bewust. Gebruik het "
+                              "bestaande DA-doelgroepmechanisme (da_post_engine.py) "
+                              "om ze op de juiste pagina te plaatsen.")
             log_outcome(
                 project or "Multiplier", "content_multiplier",
                 f"Format-waaier voor '{title}': "
                 + (f"gemaakt: {', '.join(made)}" if made else "niets nieuws")
                 + (f"; mislukt: {', '.join(failed)}" if failed else ""),
                 artifact="; ".join(a for a in artifacts if a),
-                next_step=("Bekijk en keur de posts/video in Social Creatie."
-                           if made else "Bekijk de fout en probeer /multiply opnieuw."),
+                next_step=next_step,
                 status="error" if failed and not made else "ok",
             )
     except Exception as e:  # noqa: BLE001

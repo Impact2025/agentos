@@ -26,7 +26,7 @@ def _pick(frag):
     return hits[0] if hits else None
 
 async def main():
-    c = sqlite3.connect("data/agentos.db")
+    c = sqlite3.connect("data/impactos.db")
     async with httpx.AsyncClient() as client:
         for pack_id, frag, age, brand in PACKS:
             photo = _pick(frag)

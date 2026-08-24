@@ -1,15 +1,15 @@
 """IndexNow-ping voor Bijeen na elke deploy.
 
 Leest de gepubliceerde blog-slugs uit de Neon-DB (via de repo's db-import is lastig
-in een los script, dus lezen we ze uit de AgentOS content_jobs die 'published' zijn
+in een los script, dus lezen we ze uit de ImpactOS content_jobs die 'published' zijn
 voor Bijeen) en pingt ze naar IndexNow met de gevalideerde key.
 
 Gebruik: python scripts/bijeen_indexnow_ping.py
 """
 import sqlite3, json, sys, urllib.request, urllib.error
-sys.path.insert(0, r"D:\APPS\agentos")
+sys.path.insert(0, r"D:\APPS\impactos")
 
-DB = r"D:\APPS\agentos\data\agentos.db"
+DB = r"D:\APPS\impactos\data\impactos.db"
 KEY = "82cbb4725e849b2ebf8196e279e62ae0"  # gevalideerd op bijeen.app (public/82cbb...txt)
 HOST = "bijeen.app"
 

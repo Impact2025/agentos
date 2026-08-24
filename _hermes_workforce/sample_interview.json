@@ -1,0 +1,9 @@
+{
+  "project": "IctusGo",
+  "doel": "Autonome AI-workforce die tours genereert, QA'd en publiceert met mens-escalatie bij publish.",
+  "bottlenecks": ["externe publish zonder go/no-go", "context veroudert snel"],
+  "kanalen": ["Slack", "Obsidian vault", "ImpactOS conveyor"],
+  "agent_rollen": ["Simon (Chief of Staff)", "Tour Director", "QA Director", "Toby (Watchdog)"],
+  "proactiviteit_niveau": 3,
+  "budget_tier": "cheap"
+}

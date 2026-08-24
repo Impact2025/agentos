@@ -259,6 +259,29 @@ async def apply(sid: str) -> Dict[str, Any]:
             )
             _finish(sid, "applied", detail)
             return {"ok": True, "detail": detail, "type": typ, "target": target}
+        if typ == "geo_fix":
+            # GEO Specialist (agent id 15) op het project zetten: past de 5
+            # GEO-hefbomen toe (Bing-ranking, structured data, direct-answer,
+            # entity/negations, UGC) zodat ChatGPT/Perplexity het merk citeren.
+            agent_id = int(payload.get("agent_id") or 15)
+            from ..agentctl import service as agentctl_service
+            task = (f"Verhoog de AI-zichtbaarheid (GEO) van '{target}' naar een "
+                    f"wereldklasse-score: pas de 5 GEO-hefbomen toe — (1) Bing-indexatie "
+                    f"en ranking van top-ICP-pagina's, (2) Organization+FAQPage "
+                    f"structured data op elke pillar, (3) direct-answer-intro's + FAQ "
+                    f"per ICP-vraag, (4) entity-block + negations tegen hallucinaties, "
+                    f"(5) UGC-signaaldekking op Reddit/FB/LinkedIn. Rapporteer concreet "
+                    f"uitgevoerde wijzigingen.")
+            done = agentctl_service.deploy_agent(agent_id, task, project=target)
+            if not done.get("ok"):
+                return _result(sid, None, typ, target)
+            detail = (f"GEO Specialist gestart op {target} (run "
+                      f"{done.get('run_id')}) — past de 5 GEO-hefbomen toe. "
+                      f"Volg via /api/gauntlet/stream.")
+            log_outcome(target, "iris_actie", detail,
+                        next_step="Controleer de GEO-scan na afloop (tab GEO) — de score moet stijgen.")
+            _finish(sid, "applied", detail)
+            return {"ok": True, "detail": detail, "type": typ, "target": target}
         return {"ok": False, "error": f"Onbekend actie-type: {typ}"}
     except Exception as e:  # noqa: BLE001
         logger.exception("[iris] apply() mislukt voor %s (%s)", sid, typ)

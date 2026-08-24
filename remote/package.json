@@ -1,9 +1,9 @@
 {
-  "name": "agentos-remote",
+  "name": "impactos-remote",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Agent OS Remote — cloud-companion: review-gates goedkeuren als de pc uitstaat (Vercel + Neon).",
+  "description": "Impact OS Remote — cloud-companion: review-gates goedkeuren als de pc uitstaat (Vercel + Neon).",
   "scripts": {
     "assets": "npm run assets:css && npm run assets:fonts",
     "assets:css": "tailwindcss -c tailwind.config.js -i tailwind-src.css -o tailwind.css --minify",

@@ -319,10 +319,12 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str,
         # resultaat de grens niet, dan wordt er NIETS gestaged — de taak valt
         # terug op een concept en de Wachtrij blijft vrij van niet-publiceerbare
         # items.
-        from ...shared.config import CONTENT_MIN_SCORE
+        from ...shared.config import content_min_score
+        _gate = content_min_score(full_site.get("name"))
         import httpx as _httpx
         try:
-            html_body, review = await content_pipeline.review_and_improve(full_site, "", html_body)
+            html_body, review = await content_pipeline.review_and_improve(
+                full_site, "", html_body, target_score=_gate)
             seo_score = int(review.get("score", 0))
         except (_httpx.ConnectError, _httpx.TimeoutException, _httpx.ConnectTimeout,
                 _httpx.ReadTimeout, _httpx.WriteTimeout, _httpx.PoolTimeout) as e:
@@ -338,14 +340,14 @@ async def _stage_to_wachtrij(goal_id: str, task_title: str, project: str,
         except Exception as e:
             logger.warning(f"Review/verbeter-loop mislukt voor '{title}': {e}")
             seo_score = 0
-        if seo_score < CONTENT_MIN_SCORE:
+        if seo_score < _gate:
             _log_activity(
                 goal_id, "wachtrij_geweigerd",
-                f"'{title}' haalde {seo_score}/100 (grens {CONTENT_MIN_SCORE}) — "
+                f"'{title}' haalde {seo_score}/100 (grens {_gate}) — "
                 "niet gestaged; resultaat blijft een concept",
             )
             return None, (f"'{title}' haalde de kwaliteitsgate niet "
-                          f"({seo_score}/100, grens {CONTENT_MIN_SCORE})")
+                          f"({seo_score}/100, grens {_gate})")
 
         # Relevantie-gate: hoort dit artikel inhoudelijk bij deze site? Blokkeert
         # off-topic content (uit een andere goal/project) en agent-tussenstappen
@@ -546,6 +548,7 @@ async def _stream_text(system_prompt: str, user_prompt: str, max_tokens: int = 3
                 use_tools=False,
                 model_override=attempt["model_override"],
                 backend_override=attempt["backend_override"],
+                purpose="goal-plan",
             ):
                 if chunk.get("type") == "text":
                     full += chunk["text"]
@@ -1171,7 +1174,17 @@ async def create_and_plan(title: str, objective: str, project: str = "WeAreImpac
 
     Geeft een waarschuwing bij extreem vage objectives, maar blokkeert niet meer —
     de agent kan nog steeds aan de slag. Voorkomen is beter dan frustreren.
+
+    Prompt-injectie-scan zit hier — in de service-functie zelf — en niet (ook)
+    in de HTTP-router. Deze functie wordt ook rechtstreeks aangeroepen door
+    Iris (concept-doelen op basis van haar eigen LLM-analyse) en de strategist
+    (met STRATEGIST_AUTOSTART=1 bevestigt en start die het doel meteen, buiten
+    elke review-gate om) — een scan die alleen bij de HTTP-route staat mist
+    precies die twee paden. Zie backend/shared/prompt_safety.py.
     """
+    from ...shared.prompt_safety import guard_structured
+    guard_structured(title=title, objective=objective)
+
     existing = _find_similar_open_goal(title, project)
     if existing:
         logger.info(
@@ -1662,7 +1675,7 @@ async def _route_by_skill(
     project = _resolve_goal_project(goal_id)
 
     # Merk-/projectverankering: voorkomt dat een taak het verkeerde merk
-    # noemt (bv. "Agent OS" i.p.v. Bijeen). Staat altijd bovenaan de prompt.
+    # noemt (bv. "Impact OS" i.p.v. Bijeen). Staat altijd bovenaan de prompt.
     brand_line = (
         f"\n\nMERK & PROJECT (verplicht, ga hier strikt van uit): je werkt voor "
         f"het merk/project **{project or 'het aangegeven project'}**. Noem "
@@ -1793,6 +1806,7 @@ async def _route_by_skill(
             system_prompt=system_prompt,
             agent="hermes",
             use_tools=agentic,
+            purpose=f"goal-{skill}",
         ):
             if chunk.get("type") == "text":
                 full += chunk["text"]
@@ -1853,6 +1867,7 @@ async def _find_alternative(skill: str, title: str, description: str, error: str
             system_prompt=system,
             agent="hermes",
             use_tools=False,
+            purpose="goal-alternative",
         ):
             if chunk.get("type") == "text":
                 full += chunk["text"]
@@ -1943,6 +1958,26 @@ async def _execution_loop(goal_id: str) -> None:
                                 "phase_id": p["id"], "phase_title": p["title"],
                             })
                             _log_activity(goal_id, "phase_done", f"Fase {p['ord']}: {p['title']}")
+                        else:
+                            # Geen enkele taak in deze fase is completed (alles
+                            # failed/aborted) en er draait niets meer — zonder
+                            # deze tak bleef de fase op 'pending'/'running' hangen
+                            # en herhaalde de while-loop zichzelf voor altijd:
+                            # geen ready taken, geen pending taken, dus nooit
+                            # all_done. De goal stond dan permanent op 'running'
+                            # — geen mens ziet 'm (lopende doelen worden bewust
+                            # gedempt) en zelfherstel raakt 'm niet aan (dat
+                            # opereert op status='error', niet op een oneindige
+                            # lus). Markeer de fase 'failed' zodat de goal kan
+                            # doorlopen naar de volgende fase, of eindigt op
+                            # 'partial' als dit de laatste fase was (20 aug 2026).
+                            _update_phase(p["id"], status="failed")
+                            event_bus.publish({
+                                "type": "goal_phase_failed", "goal_id": goal_id,
+                                "phase_id": p["id"], "phase_title": p["title"],
+                            })
+                            _log_activity(goal_id, "phase_failed",
+                                          f"Fase {p['ord']}: {p['title']} — geen enkele taak gelukt")
                     else:
                         # Update pending tasks — check of dependencies nu resolved zijn
                         for pt in pending:

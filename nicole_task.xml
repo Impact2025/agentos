@@ -3,7 +3,7 @@
   <RegistrationInfo>
     <Date>2026-08-12T00:00:00</Date>
     <Author>v_mun</Author>
-    <Description>Start Nicole's geïsoleerde AgentOS-instance (poort 1251) bij systeemstart.</Description>
+    <Description>Start Nicole's geïsoleerde ImpactOS-instance (poort 1251) bij systeemstart.</Description>
   </RegistrationInfo>
   <Triggers>
     <BootTrigger>
@@ -33,8 +33,8 @@
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>D:\apps\agentos\run_nicole_instance.bat</Command>
-      <WorkingDirectory>D:\apps\agentos</WorkingDirectory>
+      <Command>D:\apps\impactos\run_nicole_instance.bat</Command>
+      <WorkingDirectory>D:\apps\impactos</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>

@@ -39,25 +39,19 @@ class DelegateRequest(BaseModel):
 async def start_delegation(body: DelegateRequest):
     if not body.workers:
         raise HTTPException(status_code=400, detail="Minstens één worker vereist.")
-    # Prompt-injectie-scan: worker-goals en het hoofd-objective kunnen uit een
-    # externe bron komen (chat-tool, mail, webhook). Blokkeer instructies die
-    # het model dwingen zijn systeem-prompt te negeren of een andere rol aan
-    # te nemen. Zie backend/shared/prompt_safety.py.
-    from ...shared.prompt_safety import scan_structured
-    fields = {"objective": body.objective}
-    for i, w in enumerate(body.workers):
-        fields[f"worker[{i}].goal"] = w.goal
-        if w.role:
-            fields[f"worker[{i}].role"] = w.role
-    scan = scan_structured(**fields)
-    if scan.blocked:
-        raise HTTPException(status_code=400, detail=scan.reason())
-    return delegate_service.spawn_delegation(
-        objective=body.objective,
-        workers=[w.model_dump() for w in body.workers],
-        session_id=body.session_id,
-        cta=body.cta,
-    )
+    # De prompt-injectie-scan zit in delegate_service.spawn_delegation() zelf
+    # (niet hier), zodat ook de `delegate`-tool-aanroep vanuit de chat-agent
+    # (backend/tools/delegate.py) — geen HTTP-call — hem passeert.
+    # Zie backend/shared/prompt_safety.py.
+    try:
+        return delegate_service.spawn_delegation(
+            objective=body.objective,
+            workers=[w.model_dump() for w in body.workers],
+            session_id=body.session_id,
+            cta=body.cta,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)[:300])
 
 
 @router.get("")

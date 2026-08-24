@@ -2,10 +2,10 @@
 # Draai dit script eenmalig als Administrator.
 # Fallback voor wanneer de FastAPI app om 08:00 nog niet actief is.
 
-$ProjectDir = "D:\apps\agentos"
+$ProjectDir = "D:\apps\impactos"
 $PythonExe  = "$ProjectDir\.venv\Scripts\python.exe"
 $Script     = "$ProjectDir\scripts\run_weekly_analytics.py"
-$TaskName   = "AgentOS - Weekly GA Report"
+$TaskName   = "ImpactOS - Weekly GA Report"
 
 if (-not (Test-Path $PythonExe)) {
     Write-Error "Python venv niet gevonden op $PythonExe. Start eerst .\start.ps1 zodat de venv aangemaakt wordt."

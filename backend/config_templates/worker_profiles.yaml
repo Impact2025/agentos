@@ -1,5 +1,5 @@
 # ===========================================================================
-# Worker Profile Templates — Delegate / Subagent Framework (Agent OS)
+# Worker Profile Templates — Delegate / Subagent Framework (Impact OS)
 # ===========================================================================
 # Een 'profiel' is het BREIN van een worker: welk model het draait en welke
 # system prompt (rol + grenzen) het meekrijgt. Profielen worden opgeslagen in
@@ -11,7 +11,7 @@
 #   2. API: POST /api/agents  met {name, model, system_prompt}.
 #   3. Bulk: zie het seed-script in DELEGATE_FRAMEWORK.md (Stap 4).
 #
-# 'model' volgt de Agent OS-conventie 'openrouter/<vendor>/<model>'. Voor de
+# 'model' volgt de Impact OS-conventie 'openrouter/<vendor>/<model>'. Voor de
 # lokale Hermes/Ollama-backend wordt het model door de gateway bepaald en
 # negeert de conveyor/delegate de override automatisch.
 # ---------------------------------------------------------------------------

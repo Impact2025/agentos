@@ -97,7 +97,7 @@ export const TOOLS = [
       'Gebruik dit zodra Vincent iets in zijn agenda wil zetten, blokken, reserveren of ' +
       'plannen (bv. "blok de komende 6 weken op maandag van 08.30 tot 10.00 voor Focustijd", ' +
       '"dinsdag 18 augustus 12.15 tandarts", "online meeting met Thijs op 19 augustus 10.00"). ' +
-      'AgentOS parseert de zin, checkt reistijd en conflicten, en zet het als voorstel in het ' +
+      'ImpactOS parseert de zin, checkt reistijd en conflicten, en zet het als voorstel in het ' +
       'Actiecentrum — Vincent boekt het met één tik. Zeg dus NOOIT dat je geen agenda-tool ' +
       'hebt of dat Vincent het zelf in Google Calendar moet zetten: roep deze tool aan met ' +
       'zijn volledige zin.',
@@ -197,8 +197,8 @@ function longOfflineSuffix(snapshotAt) {
   if (ageMin < LONG_OFFLINE_MIN) return '';
   const uur = Math.round(ageMin / 60);
   return uur >= 24
-    ? ` Let op: AgentOS staat al ${Math.round(uur / 24)} dag(en) niet gesynct — dit kan dus ook pas over dagen draaien, niet bij de eerstvolgende sync.`
-    : ` Let op: AgentOS heeft al ${uur} uur niet gesynct — dit wacht tot de machine weer aan staat.`;
+    ? ` Let op: ImpactOS staat al ${Math.round(uur / 24)} dag(en) niet gesynct — dit kan dus ook pas over dagen draaien, niet bij de eerstvolgende sync.`
+    : ` Let op: ImpactOS heeft al ${uur} uur niet gesynct — dit wacht tot de machine weer aan staat.`;
 }
 
 export async function runTool(name, input, effects, tenant, snapshotAt) {
@@ -266,7 +266,7 @@ export async function runTool(name, input, effects, tenant, snapshotAt) {
       RETURNING id`;
     effects.commands.push({ action, label: COMMANDS[action], queued: rows.length > 0 });
     return rows.length
-      ? `In de rij gezet: ${COMMANDS[action]}. AgentOS voert dit uit bij de volgende sync; het resultaat komt achter de review-gate.${longOfflineSuffix(snapshotAt)}`
+      ? `In de rij gezet: ${COMMANDS[action]}. ImpactOS voert dit uit bij de volgende sync; het resultaat komt achter de review-gate.${longOfflineSuffix(snapshotAt)}`
       : `Stond al in de rij: ${COMMANDS[action]}. Niet dubbel gestart.`;
   }
 
@@ -466,10 +466,10 @@ function stalenessNote(snapshotAt) {
   const ageMin = Math.round((Date.now() - new Date(snapshotAt)) / 60000);
   if (ageMin < 15) return null;
   if (ageMin < 60) return `De snapshot is ${ageMin} minuten oud — nog redelijk vers, noem het niet tenzij het relevant is.`;
-  if (ageMin < 180) return `De snapshot is ${ageMin} minuten oud. AgentOS synct mogelijk niet — zeg dit als je cijfers of de agenda noemt.`;
-  if (ageMin < 1440) return `AgentOS heeft al ${Math.round(ageMin / 60)} uur niet gesynct. Alles wat je weet is van toen — zeg dit EXPLICIET voordat je cijfers, mail of agenda noemt.`;
+  if (ageMin < 180) return `De snapshot is ${ageMin} minuten oud. ImpactOS synct mogelijk niet — zeg dit als je cijfers of de agenda noemt.`;
+  if (ageMin < 1440) return `ImpactOS heeft al ${Math.round(ageMin / 60)} uur niet gesynct. Alles wat je weet is van toen — zeg dit EXPLICIET voordat je cijfers, mail of agenda noemt.`;
   const days = Math.round(ageMin / 1440);
-  return `AgentOS heeft al ${days} dag(en) niet gesynct — de machine staat waarschijnlijk uit. Zeg dit ALTIJD als eerste als Vincent iets vraagt over actuele stand van zaken, en waarschuw dat een commando via start_werk/plan_agenda pas draait zodra AgentOS weer aan staat (dus mogelijk pas over dagen, niet "bij de volgende sync").`;
+  return `ImpactOS heeft al ${days} dag(en) niet gesynct — de machine staat waarschijnlijk uit. Zeg dit ALTIJD als eerste als Vincent iets vraagt over actuele stand van zaken, en waarschuw dat een commando via start_werk/plan_agenda pas draait zodra ImpactOS weer aan staat (dus mogelijk pas over dagen, niet "bij de volgende sync").`;
 }
 
 // `channel` bepaalt alleen hoe ze zich uit, niet wat ze mag: dezelfde TOOLS,
@@ -499,7 +499,7 @@ function systemPrompt(snapshotAt, pulse, openCount, channel) {
       '  Cijfers met hun vergelijking erbij ("412 sessies, 22% minder dan vorige week").',
     ];
   return [
-    'Je bent Iris: de manager-agent van Agent OS en Vincents persoonlijke assistent.',
+    'Je bent Iris: de manager-agent van Impact OS en Vincents persoonlijke assistent.',
     `Het is nu ${now} (Europe/Amsterdam). ${kanaal}`,
     '',
     '## Hoe je werkt',
@@ -507,7 +507,7 @@ function systemPrompt(snapshotAt, pulse, openCount, channel) {
     '  Nooit gokken, nooit cijfers uit je hoofd noemen.',
     '- `lees_context` met sectie "agenda" of "seo" geeft een veld `live` terug: true',
     '  betekent dat dit zojuist rechtstreeks bij Google is opgehaald (dus actueel, ook',
-    '  als AgentOS al dagen uitstaat); false betekent dat het uit de snapshot komt.',
+    '  als ImpactOS al dagen uitstaat); false betekent dat het uit de snapshot komt.',
     '  Zeg dat er nooit "de snapshot is oud" bij als `live` true is voor dat onderdeel.',
     '- Denk mee als een scherpe stafchef: benoem wat opvalt, wat het betekent, en wat',
     '  de eerstvolgende stap is. Niet opsommen wat hij al ziet.',

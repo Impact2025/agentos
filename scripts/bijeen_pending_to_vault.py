@@ -1,7 +1,7 @@
 """Schrijf de ge-upgrade Bijeen pending_review-jobs (uit Gauntlet) terug naar de vault
 als schone SEO-artikelen. Alleen Bijeen-project. Idempotent: overschrijft bestaande."""
 import sqlite3, os, sys, re
-sys.path.insert(0, r"D:\APPS\agentos")
+sys.path.insert(0, r"D:\APPS\impactos")
 
 VAULT = r"D:\APPS\Hermes Brein\Hermes Breind\10_Projects\Bijeen\content"
 
@@ -11,7 +11,7 @@ def slugify(s):
     s = re.sub(r"\s+", "-", s)
     return s[:70]
 
-conn = sqlite3.connect(r"D:\APPS\agentos\data\agentos.db")
+conn = sqlite3.connect(r"D:\APPS\impactos\data\impactos.db")
 conn.row_factory = sqlite3.Row
 
 # Alle Bijeen content_jobs met status pending_review die uit een gauntlet-run komen

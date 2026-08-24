@@ -119,6 +119,21 @@ def run_quality_gate(status_filter: Tuple[str, ...] = ("new", "enriched", "valid
             else:
                 promoted.append({"id": lead["id"], "org_name": lead["org_name"], "score": score})
         else:
+            # Geen statuswijziging (B/C-fit, of A die al verder in de funnel
+            # staat) — maar het label MOET alsnog geschreven worden. Vóór deze
+            # fix schreef alleen de A/D-tak quality_label weg, dus liet elke
+            # scan de fit-verdeling in de UI permanent op 0×B, 0×C staan, hoe
+            # de score-verdeling ook lag (bewezen: 75 leads met score 70-89
+            # in de tabel, allemaal met een lege quality_label). "Fewer is
+            # better" werkt alleen als de B/C-groep zichtbaar is — dat is nu
+            # net het bewijs dat de gate wél scherp filtert.
+            if not dry_run:
+                with get_conn() as conn:
+                    conn.execute(
+                        "UPDATE leads SET quality_score = ?, quality_label = ?, "
+                        "updated_at = ? WHERE id = ?",
+                        (score, label, now, lead["id"]),
+                    )
             kept.append({"id": lead["id"], "org_name": lead["org_name"], "score": score,
                          "label": label})
 

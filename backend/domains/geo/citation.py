@@ -47,7 +47,7 @@ def ensure_schema() -> None:
 def _ask_llm(question: str) -> Optional[str]:
     """Stel de vraag aan de OpenModel-gateway en retourneer de tekst.
 
-    Gebruikt dezelfde client als de rest van Agent OS (chat/claude.py), zodat
+    Gebruikt dezelfde client als de rest van Impact OS (chat/claude.py), zodat
     routing/quota-rem/gebruikslogging centraal blijven.
     """
     try:

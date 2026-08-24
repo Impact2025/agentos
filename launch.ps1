@@ -1,15 +1,15 @@
 #Requires -Version 5.1
-# Agent OS Launcher
-# Opstartvolgorde: Hermes gateway -> Hermes API (8642) -> Agent OS (1250) -> browser
+# Impact OS Launcher
+# Opstartvolgorde: Hermes gateway -> Hermes API (8642) -> Impact OS (1250) -> browser
 
 $HermesGatewayCmd = "C:\Users\v_mun\AppData\Local\hermes\gateway-service\Hermes_Gateway.cmd"
 $HermesPid        = "C:\Users\v_mun\AppData\Local\hermes\gateway.pid"
-$AgentRoot        = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$AgentOsServiceCmd = Join-Path $AgentRoot "agentos_service.cmd"
-$AgentOsPid       = Join-Path $AgentRoot "agentos.pid"
+$ImpactRoot       = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$ImpactOsServiceCmd = Join-Path $ImpactRoot "impactos_service.cmd"
+$ImpactOsPid       = Join-Path $ImpactRoot "impactos.pid"
 $HermesApiUrl     = "http://127.0.0.1:8642/health"
-$AgentOsUrl       = "http://localhost:1250/api/status"
-$HermesApiKey     = "agentos-hermes-local-2026"
+$ImpactOsUrl       = "http://localhost:1250/api/status"
+$HermesApiKey     = "impactos-hermes-local-2026"
 
 function Test-Port {
     param([string]$Url)
@@ -22,9 +22,9 @@ function Test-Port {
     }
 }
 
-function Test-AgentOs {
+function Test-ImpactOs {
     try {
-        $r = Invoke-WebRequest -Uri $AgentOsUrl -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+        $r = Invoke-WebRequest -Uri $ImpactOsUrl -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
         return $r.StatusCode -eq 200
     } catch {
         return $false
@@ -61,10 +61,10 @@ function Is-HermesGatewayRunning {
     return $proc -ne $null
 }
 
-function Is-AgentOsRunning {
-    if (-not (Test-Path $AgentOsPid)) { return $false }
+function Is-ImpactOsRunning {
+    if (-not (Test-Path $ImpactOsPid)) { return $false }
     try {
-        $pid = [int](Get-Content $AgentOsPid -ErrorAction Stop)
+        $pid = [int](Get-Content $ImpactOsPid -ErrorAction Stop)
         $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
         return $proc -ne $null
     } catch { return $false }
@@ -72,7 +72,7 @@ function Is-AgentOsRunning {
 
 # ── Stap 1: Hermes gateway starten als nodig ────────────────────────────────
 Write-Host ""
-Write-Host "  Agent OS + Hermes -- opstarten" -ForegroundColor Cyan
+Write-Host "  Impact OS + Hermes -- opstarten" -ForegroundColor Cyan
 Write-Host "  --------------------------------" -ForegroundColor DarkGray
 Write-Host ""
 
@@ -117,20 +117,20 @@ if ($hermesApiReady) {
     }
 }
 
-# ── Stap 2: Agent OS starten als nodig ─────────────────────────────────────
-$agentOsReady = Test-AgentOs
+# ── Stap 2: Impact OS starten als nodig ─────────────────────────────────────
+$impactOsReady = Test-ImpactOs
 
-if ($agentOsReady) {
-    Write-Host "  [OK] Agent OS al actief op poort 1250" -ForegroundColor Green
+if ($impactOsReady) {
+    Write-Host "  [OK] Impact OS al actief op poort 1250" -ForegroundColor Green
 } else {
     # Zorg dat de venv en packages aanwezig zijn
-    $venvPip = Join-Path $AgentRoot ".venv\Scripts\pip.exe"
-    $reqFile = Join-Path $AgentRoot "requirements.txt"
-    $stamped = Join-Path $AgentRoot ".venv\.installed_stamp"
-    if (-not (Test-Path (Join-Path $AgentRoot ".venv\Scripts\uvicorn.exe"))) {
+    $venvPip = Join-Path $ImpactRoot ".venv\Scripts\pip.exe"
+    $reqFile = Join-Path $ImpactRoot "requirements.txt"
+    $stamped = Join-Path $ImpactRoot ".venv\.installed_stamp"
+    if (-not (Test-Path (Join-Path $ImpactRoot ".venv\Scripts\uvicorn.exe"))) {
         Write-Host "  [->] Venv aanmaken..." -ForegroundColor DarkGray
         $python = "python"
-        & $python -m venv (Join-Path $AgentRoot ".venv") | Out-Null
+        & $python -m venv (Join-Path $ImpactRoot ".venv") | Out-Null
         & $venvPip install -q -r $reqFile | Out-Null
         New-Item -ItemType File -Force $stamped | Out-Null
         Write-Host "  [OK] Venv klaar" -ForegroundColor Green
@@ -141,15 +141,15 @@ if ($agentOsReady) {
         Write-Host "  [OK] Dependencies klaar" -ForegroundColor Green
     }
 
-    Write-Host "  [->] Agent OS starten (achtergrond)..." -ForegroundColor DarkGray
-    $proc = Start-Process "cmd.exe" -ArgumentList "/c `"$AgentOsServiceCmd`"" -WindowStyle Hidden -PassThru
-    if ($proc) { $proc.Id | Out-File $AgentOsPid -Encoding ascii }
+    Write-Host "  [->] Impact OS starten (achtergrond)..." -ForegroundColor DarkGray
+    $proc = Start-Process "cmd.exe" -ArgumentList "/c `"$ImpactOsServiceCmd`"" -WindowStyle Hidden -PassThru
+    if ($proc) { $proc.Id | Out-File $ImpactOsPid -Encoding ascii }
 
-    $agentOsReady = Wait-For -Check { Test-AgentOs } -Seconds 30 -Label "Agent OS"
-    if ($agentOsReady) {
-        Write-Host "  [OK] Agent OS actief op poort 1250" -ForegroundColor Green
+    $impactOsReady = Wait-For -Check { Test-ImpactOs } -Seconds 30 -Label "Impact OS"
+    if ($impactOsReady) {
+        Write-Host "  [OK] Impact OS actief op poort 1250" -ForegroundColor Green
     } else {
-        Write-Host "  [!]  Agent OS niet bereikbaar na 30s" -ForegroundColor Yellow
+        Write-Host "  [!]  Impact OS niet bereikbaar na 30s" -ForegroundColor Yellow
     }
 }
 

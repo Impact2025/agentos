@@ -274,6 +274,49 @@ def test_publisher_met_eigen_job_is_geen_bevinding():
                 if b.project == "WeAreImpact" and "Publiceer artikel'" in b.detail]
 
 
+def _outreach_taak(goal_id: str, titel: str, result: str) -> None:
+    fase_id = str(uuid.uuid4())
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO goal_phases (id, goal_id, title, status, ord, created_at, updated_at) "
+            "VALUES (?, ?, '__test__fase', 'completed', 1, datetime('now'), datetime('now'))",
+            (fase_id, goal_id),
+        )
+        conn.execute(
+            "INSERT INTO goal_tasks (id, goal_id, phase_id, title, description, skill, "
+            "status, result, created_at, updated_at) VALUES "
+            "(?, ?, ?, ?, '__test__', 'outreach', 'completed', ?, datetime('now'), datetime('now'))",
+            (str(uuid.uuid4()), goal_id, fase_id, titel, result),
+        )
+
+
+def test_outreach_concept_met_de_echte_banner_is_geen_fabricatie():
+    """13 aug 2026, Bewaard voor Jou: een outreach-taak zonder eigen
+    partnership-systeem loopt via de generieke concept-route en krijgt daar in
+    code de `_CONCEPT_BANNER` voorgeplakt ('⚠️ CONCEPT — geen echte actie
+    uitgevoerd'). Die banner is precies het bewijs dat de toets zoekt — vóór
+    deze fix werd elke zo'n taak gemeld, ook wanneer hij correct gelabeld was."""
+    from backend.domains.goal.service import _CONCEPT_BANNER
+    from backend.domains.iris import integrity
+    goal_id = _nieuw_doel("Bewaard voor Jou", "outreachdoel", status="completed")
+    _outreach_taak(goal_id, "Outreach naar zorg/uitvaart-partners",
+                   _CONCEPT_BANNER + "# Outreach-concept\n\nVoorbeeldtekst.")
+    assert not [b for b in integrity._check_uitvoertaak_zonder_uitvoering()
+                if b.subject.startswith("taak:") and "zorg/uitvaart" in b.detail]
+
+
+def test_outreach_zonder_enig_bewijs_wordt_nog_steeds_gezien():
+    """De toets moet blijven werken voor de fout die hij oorspronkelijk ving:
+    kaal instructie-proza zonder banner, job-id of 'outreach_review'."""
+    from backend.domains.iris import integrity
+    goal_id = _nieuw_doel("Bewaard voor Jou", "outreachdoel2", status="completed")
+    _outreach_taak(goal_id, "Outreach naar zorg/uitvaart-partners",
+                   "# Instructie: benader zorgpartners voor backlinks.")
+    gevonden = [b for b in integrity._check_uitvoertaak_zonder_uitvoering()
+                if b.subject.startswith("taak:") and "zorg/uitvaart" in b.detail]
+    assert len(gevonden) == 1
+
+
 # ── Wat de tweede ronde opleverde (WeAreImpact, 4 aug 2026) ────────────────
 
 def test_dubbele_planning_wordt_gezien():

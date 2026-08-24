@@ -12,7 +12,7 @@ _RSS_FEEDS = {
     "investing_nl":      ("Investing.com NL",    "https://nl.investing.com/rss/news.rss"),
 }
 
-_HEADERS = {"User-Agent": "Mozilla/5.0 AgentOS/1.0 financial-reader"}
+_HEADERS = {"User-Agent": "Mozilla/5.0 ImpactOS/1.0 financial-reader"}
 
 
 def _strip_html(text: str) -> str:

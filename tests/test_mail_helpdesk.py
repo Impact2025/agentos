@@ -13,13 +13,13 @@ import types
 import tempfile
 import pytest
 
-# AgentOS draait met `backend` als package; zet de agentos-root op het pad.
+# ImpactOS draait met `backend` als package; zet de impactos-root op het pad.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-AGENTOS_ROOT = os.path.dirname(_HERE)  # D:/apps/agentos
-sys.path.insert(0, AGENTOS_ROOT)
+IMPACTOS_ROOT = os.path.dirname(_HERE)  # D:/apps/impactos
+sys.path.insert(0, IMPACTOS_ROOT)
 
 _TMP = tempfile.mkdtemp()
-_DB = os.path.join(_TMP, "test_agentos.db")
+_DB = os.path.join(_TMP, "test_impactos.db")
 
 import poplib  # noqa: E402
 from email.mime.text import MIMEText  # noqa: E402
@@ -151,7 +151,7 @@ def test_appointment_mail_is_processed_outside_the_poll_transaction(mailbox_row,
 
     calls = []
 
-    def fake_create_proposal(mid, inbox_id, subject, from_addr, body):
+    def fake_create_proposal(mid, inbox_id, subject, from_addr, body, from_name=""):
         calls.append((mid, inbox_id))
         with db.get_conn() as conn:  # eigen verbinding — dít is de scherpe rand
             conn.execute(
@@ -442,7 +442,7 @@ def test_send_skips_generic_footer_when_signature_set(mailbox_row, monkeypatch):
         def sendmail(self, frm, to, msg): sent["msg"] = msg
     monkeypatch.setattr(service, "smtplib", types.SimpleNamespace(SMTP=FakeSMTP))
     assert service.send_reply(rid) is True
-    assert "voorbereid met Agent OS" not in sent["msg"]  # geen dubbele afsluiting
+    assert "voorbereid met Impact OS" not in sent["msg"]  # geen dubbele afsluiting
     # verzending is als uitkomst-kaart gelogd
     with db.get_conn() as conn:
         row = conn.execute(

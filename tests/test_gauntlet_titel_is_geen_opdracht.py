@@ -35,7 +35,7 @@ import pytest
 def temp_db(monkeypatch):
     fd, path = tempfile.mkstemp(suffix=".db", prefix="agentos_titel_")
     os.close(fd)
-    monkeypatch.setenv("AGENTOS_DB_PATH", path)
+    monkeypatch.setenv("IMPACTOS_DB_PATH", path)
     from backend.shared import database as db_mod
     monkeypatch.setattr(db_mod, "DB_PATH", path, raising=False)
     db_mod.init_db()

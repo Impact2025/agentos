@@ -6,7 +6,7 @@ domineren (Pootgelukkig, DatingAssistent). Schrijft assets naar de echte
 omni_queue (staged). Leest sites alleen uit de live DB.
 """
 import sys, json, sqlite3, uuid, datetime, asyncio
-sys.path.insert(0, "D:/APPS/agentos")
+sys.path.insert(0, "D:/APPS/impactos")
 
 from backend.shared.database import get_conn
 from backend.domains.omni.generator import generate_for_keyword

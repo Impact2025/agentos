@@ -152,3 +152,28 @@ def test_markdown_metadata_zonder_meta_blijft_ongemoeid():
     cleaned, title, desc = cp._strip_meta_and_suggestions(html)
     assert cleaned == html
     assert title == "" and desc == ""
+
+
+# 18 aug 2026: het glipte een tweede keer door, live op weareimpact.nl, in een
+# variant die de regex hierboven niet dekte: de kop droeg een prefix
+# ('**SEO/GEO Metadata**' i.p.v. kaal '**Metadata**'), elk label was zélf
+# vetgedrukt ('- **Focus keyword:** …'), een losse '---' stond ervoor, en alle
+# vier bullets zaten in ÉÉN <p>-tag (niet elk apart gewrapt).
+def test_markdown_metadata_met_prefix_en_vetgedrukte_labels_wordt_gestript():
+    html = (
+        "<h1>Kunstmatige intelligentie in de zorg</h1>\n"
+        "<p>De laatste alinea van het echte artikel.</p>\n"
+        "<p>---</p>\n"
+        "<p>**SEO/GEO Metadata**</p>\n"
+        "<p>- **Focus keyword:** AI in de zorg zonder vertrouwen te verliezen\n"
+        "- **URL-slug:** /ai-in-de-zorg-zonder-vertrouwen-te-verliezen\n"
+        "- **Meta-title:** AI in de zorg: impact boeken zonder vertrouwen te verliezen\n"
+        "- **Meta-description:** Ontdek hoe je AI inzet met behoud van vertrouwen.</p>"
+    )
+    cleaned, title, desc = cp._strip_meta_and_suggestions(html)
+    assert "Metadata" not in cleaned
+    assert "Focus keyword" not in cleaned
+    assert "---" not in cleaned
+    assert title == "AI in de zorg: impact boeken zonder vertrouwen te verliezen"
+    assert desc == "Ontdek hoe je AI inzet met behoud van vertrouwen."
+    assert "De laatste alinea van het echte artikel." in cleaned

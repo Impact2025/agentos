@@ -3,7 +3,7 @@
 Wereldklasse-gedachte (Vincent): Iris plant op basis van binnenkomende mail
 automatisch afspraken, incalculeert reistijd, stelt prioriteiten, en voorkomt
 dubbele boekingen — zónder dat Vincent er handwerk aan heeft. Maar: net als de
-mail-helpdesk en content-pipeline hanteert Agent OS een menselijke review-gate.
+mail-helpdesk en content-pipeline hanteert Impact OS een menselijke review-gate.
 We schrijven NIET direct in de agenda; we leggen een `calendar_proposals`-rij
 neer (status=pending_review). Vincent keurt goed → pas dán gaat hij naar
 Google Calendar. Nooit auto-boeken.

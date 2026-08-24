@@ -3,15 +3,15 @@ raak de live data niet). Roept repair.repareer_dode_link_in_job aan op de
 3 publish_failed-jobs in de test-DB en toont het resultaat.
 
 Gebruik:
-  cd D:/apps/agentos
-  AGENTOS_DB_PATH=D:/apps/agentos/data/agentos_test.db \
+  cd D:/apps/impactos
+  IMPACTOS_DB_PATH=D:/apps/impactos/data/agentos_test.db \
     .venv/Scripts/python.exe scripts/verify_deadlink_repair.py
 """
 from __future__ import annotations
 import asyncio, os, sqlite3, sys
 
-DB = os.environ.get("AGENTOS_DB_PATH", "data/agentos_test.db")
-os.environ["AGENTOS_DB_PATH"] = DB  # vóór elke import die de DB bindt
+DB = os.environ.get("IMPACTOS_DB_PATH", "data/agentos_test.db")
+os.environ["IMPACTOS_DB_PATH"] = DB  # vóór elke import die de DB bindt
 
 from backend.shared.database import get_conn
 from backend.domains.publish import repair

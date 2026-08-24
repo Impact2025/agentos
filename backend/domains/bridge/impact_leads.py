@@ -2,7 +2,7 @@
 Impact Calculator-leads (weareimpact.nl/impact-calculator).
 
 De website pusht elke ontgrendeling rechtstreeks naar de bridge
-(remote/api/bridge.js, op=impact-lead) — dit ontstaat buiten AgentOS om, dus
+(remote/api/bridge.js, op=impact-lead) — dit ontstaat buiten ImpactOS om, dus
 is er geen lokale rij om op te reageren totdat een sync 'm ophaalt. De klant
 krijgt zijn cijferrapport al automatisch van de website zelf (Next.js stuurt
 dat direct); wat hier gebeurt is Iris' toevoeging voor Vincent: wie is dit
@@ -171,7 +171,7 @@ async def _process_one(lead: Dict[str, Any]) -> Tuple[bool, str]:
         # 'ImpactLead'-project: activity_log wordt per project.activity-endpoint
         # met een exacte WHERE project = ? opgehaald, dus een niet-bestaand
         # project logt wél maar is in de UI nergens te zien (20 aug 2026: Vincent
-        # zag het verslag in Outlook, maar niets in AgentOS zelf).
+        # zag het verslag in Outlook, maar niets in ImpactOS zelf).
         log_outcome(
             "WeAreImpact", "impact_lead_niet_vastgelegd",
             f"De Impact Calculator-lead van {naam_of_org} kon niet in de Leads-tab "

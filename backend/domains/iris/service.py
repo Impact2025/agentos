@@ -1,4 +1,4 @@
-"""Iris — de manager-agent van Agent OS.
+"""Iris — de manager-agent van Impact OS.
 
 Elke ochtend (06:45, vóór het ochtendrapport) doet Iris drie dingen:
 1. ANALYSEREN — de harde cijfers per project (metrics.snapshot) plus wat er
@@ -63,7 +63,7 @@ _LLM_MAX_TOKENS = 6000
 _LLM_ATTEMPTS = 3
 
 _IRIS_SYSTEM = (
-    "Je bent Iris, de manager van Agent OS — een autonoom AI-systeem dat voor "
+    "Je bent Iris, de manager van Impact OS — een autonoom AI-systeem dat voor "
     "Vincent content schrijft, SEO doet, leads werft en doelen uitvoert. Je bent "
     "een wereldklasse SEO-expert en een nuchtere Nederlandse operationeel manager. "
     "Je bent geen adviseur maar een uitvoerder: wat agents kunnen doen zet je zelf "
@@ -445,7 +445,7 @@ async def _apply_draft_goal(project: str, title: str, objective: str, reason: st
         if not gid:
             return None
         detail = f"Concept-doel voorgesteld voor {project}: {title}. Reden: {reason}"
-        log_outcome(project or "Agent OS", "iris_bijsturing", detail,
+        log_outcome(project or "Impact OS", "iris_bijsturing", detail,
                     artifact=f"/api/goals/{gid}",
                     next_step="Beoordeel Iris' concept-doel in het Actiecentrum")
         return {"detail": detail, "goal_id": gid}
@@ -456,7 +456,7 @@ async def _apply_draft_goal(project: str, title: str, objective: str, reason: st
             # als concept, maar dat mag geen stille log-regel zijn: Iris'
             # analyse-input komt deels uit externe bronnen (mail, radar,
             # geplakte kennisbank-tekst).
-            log_outcome(project or "Agent OS", "iris_bijsturing_geweigerd",
+            log_outcome(project or "Impact OS", "iris_bijsturing_geweigerd",
                         f"Concept-doel '{title}' geweigerd: {e}", status="error",
                         next_step="Controleer welke bron Iris' analyse heeft beïnvloed.")
         else:
@@ -752,6 +752,18 @@ def _weekrapport_blok() -> str:
                 f"Er is dus géén 28-daags beeld; oordeel alleen op de dagcijfers.")
 
 
+def _nieuws_blok() -> str:
+    """De WeAreImpact-nieuwsbriefing (sector/concurrent/algemeen, met per-item
+    relevantie + actie) als tekst voor de prompt. Zelfde regel als de andere
+    blokken: een falende ophaal is een expliciete melding, geen stilte."""
+    try:
+        from ..radar import newsroom
+        return newsroom.prompt_block()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[iris] nieuws-blok bouwen mislukt")
+        return f"WeAreImpact-nieuws: NIET beschikbaar deze ronde ({type(e).__name__})."
+
+
 async def gather_context(snapshot: Optional[Dict[str, Any]] = None,
                       validation: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Bouw de context voor de prompt. Roep dit ná evaluate_due aan, zodat de
@@ -796,6 +808,7 @@ async def gather_context(snapshot: Optional[Dict[str, Any]] = None,
         "validation": validation,
         "integrity": _audit_blok(),
         "weekrapport": _weekrapport_blok(),
+        "nieuws": _nieuws_blok(),
         "agenda": agenda_summary,
         "agenda_proposals": agenda_proposals,
         "rituals": rituals_context,
@@ -811,7 +824,7 @@ async def gather_context(snapshot: Optional[Dict[str, Any]] = None,
 def _build_prompt(ctx: Dict[str, Any]) -> str:
     snapshot = ctx["snapshot"]
     parts = [
-        f"Datum: {_today()}. Hieronder de actuele stand van Agent OS.",
+        f"Datum: {_today()}. Hieronder de actuele stand van Impact OS.",
         "",
         "## Waarheidsaudit — wat is er stil kapot? (LEES DIT EERST)",
         "Deze toetsen vergelijken wat het systeem over zichzelf beweert met wat er "
@@ -884,6 +897,12 @@ def _build_prompt(ctx: Dict[str, Any]) -> str:
                   "Weeg ze zwaar: pas ze toe in je oordeel, advies en bijsturing, en toets waar "
                   "mogelijk of ze in de cijfers terugkomen.",
                   ctx["knowledge"]]
+    if ctx.get("nieuws"):
+        parts += ["", "## WeAreImpact Nieuwsagent (branche-nieuws, met relevantie + actie-suggestie)",
+                  "Dit is duiding, geen opdracht: alleen bruikbaar als het een concreet advies "
+                  "onderbouwt (bijv. content_run op een sector-ontwikkeling). Geen nieuws is geen "
+                  "signaal om iets te forceren.",
+                  ctx["nieuws"]]
     if ctx["lessons"]:
         parts += ["", "## Jouw eerdere lessen (confidence = bewezen trefkans, 0-1; hoger = betrouwbaarder)",
                   json.dumps(ctx["lessons"], ensure_ascii=False)]

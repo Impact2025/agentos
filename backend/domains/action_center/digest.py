@@ -296,14 +296,14 @@ async def run_daily_digest() -> None:
         from ...shared import email_service
         if email_service.is_configured():
             mailed = email_service.send_report(
-                f"Agent OS ochtendrapport {digest['date']} — {summary}",
+                f"Impact OS ochtendrapport {digest['date']} — {summary}",
                 digest["markdown"],
             )
     except Exception as e:
         logger.warning(f"Ochtendrapport mailen mislukt: {e}")
 
     log_outcome(
-        "Agent OS", "ochtendrapport", summary,
+        "Impact OS", "ochtendrapport", summary,
         next_step=(
             "" if mailed else
             "Bekijk het rapport op het dashboard (mail ontvangen? stel SMTP_HOST/USER/PASSWORD in .env in)"

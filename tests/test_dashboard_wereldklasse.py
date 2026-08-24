@@ -101,8 +101,40 @@ def test_ver_buiten_klikbereik_is_een_rankingprobleem():
     'optimaliseer de snippet' het verkeerde advies, ook mét rankende pagina."""
     from backend.domains.projects.router import zero_click_advice
     d = zero_click_advice("ver weg", 45.0, 80, has_ranking_page=True)
-    assert d["action"].startswith("write_article:")
+    assert not d["action"].startswith("optimize_page:")
     assert "te ver weg" in d["tekst"]
+
+
+def test_ver_weg_maar_er_staat_al_een_pagina_schrijft_geen_tweede():
+    """16 aug 2026. De derde tak keek helemaal niet naar `has_ranking_page` en
+    beweerde onvoorwaardelijk "er is nog geen pagina die hierop mikt". Gemeten
+    op WeAreImpact: dat stond op het scherm over 'impact strategy' (pos 78,2)
+    terwijl /ai-strategie-consultant er met 45 impressies op rankte. De knop
+    eronder zou een tweede pagina hebben geschreven — kannibalisatie."""
+    from backend.domains.projects.router import zero_click_advice
+    d = zero_click_advice("impact strategy", 78.2, 22, has_ranking_page=True,
+                          page_url="https://weareimpact.nl/ai-strategie-consultant")
+    assert not d["action"].startswith("write_article:")
+    assert "nog geen pagina" not in d["tekst"]
+    assert "ai-strategie-consultant" in d["tekst"]
+
+
+def test_ver_weg_zonder_pagina_mag_wel_schrijven():
+    """De keerzijde: zonder rankende pagina blijft schrijven het eerlijkste
+    advies dat de data toelaat, ook ver buiten klikbereik."""
+    from backend.domains.projects.router import zero_click_advice
+    d = zero_click_advice("nieuw ding", 78.2, 22, has_ranking_page=False)
+    assert d["action"].startswith("write_article:")
+
+
+def test_geen_enkele_tak_belooft_een_lege_serp_bij_een_rankende_pagina():
+    """De generieke regressie op deze klasse fout: zolang er een pagina rankt,
+    mag geen enkele tak beweren dat die er niet is."""
+    from backend.domains.projects.router import zero_click_advice
+    for pos in (3.0, 12.0, 20.0, 25.0, 45.0, 78.2):
+        d = zero_click_advice("q", pos, 50, has_ranking_page=True)
+        assert "geen pagina" not in d["tekst"]
+        assert not d["action"].startswith("write_article:")
 
 
 def test_diagnose_en_knop_spreken_elkaar_nooit_tegen():
@@ -158,7 +190,7 @@ def test_iris_schrijft_niet_bij_op_een_volle_wachtrij(site, monkeypatch):
     import asyncio
     from backend.domains.iris import actions
 
-    for _ in range(actions._QUEUE_JAM):
+    for _ in range(actions.QUEUE_JAM):
         _job(site["id"], "pending_review")
 
     gedraaid = []
@@ -169,7 +201,7 @@ def test_iris_schrijft_niet_bij_op_een_volle_wachtrij(site, monkeypatch):
     uitkomst = asyncio.run(actions.content_run(site["name"], 1, "test"))
     assert gedraaid == [], "contentmotor had niet mogen draaien"
     assert "NIET gestart" in uitkomst
-    assert str(actions._QUEUE_JAM) in uitkomst
+    assert str(actions.QUEUE_JAM) in uitkomst
 
 
 def test_iris_meldt_doorvoer_als_eigen_knelpunt():
@@ -182,3 +214,58 @@ def test_iris_meldt_doorvoer_als_eigen_knelpunt():
     assert "doorvoer" in issues
     doorvoer = next(b for b in bottlenecks(snap) if b["issue"] == "doorvoer")
     assert "content_run" in doorvoer["waarom"]
+
+
+# ── 5. "Beste volgende stap" mag niet gokken of een pagina al rankt ─────────
+# Aanleiding (13 aug 2026, Bewaard voor Jou): _gsc_facts haalde de
+# pagina/zoekwoord-dimensie op met een eigen live GSC-call en een stille
+# `except Exception: page_queries = []` eronder. Toen die call leeg terugkwam,
+# adviseerde het dashboard "schrijf een artikel" voor 'voorbeeld korte
+# biografie schrijven' terwijl /kennisbank/memoires-schrijven-voorbeelden-en-
+# tips er al 69 impressies/dag op haalde (positie 17,8) — precies de fout die
+# `zero_click_advice` claimt te voorkomen. De bron is nu `gsc_history`,
+# dezelfde tabel als de Kansen-lijst gebruikt voor 'rankt-al'.
+
+def _gsc_page_row(site_id: str, url: str, top_query: str,
+                  impressions: int, position: float) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO gsc_history (id, site_id, scope, page_url, date, "
+            "clicks, impressions, ctr, position, top_query, created_at) "
+            "VALUES (?, ?, 'page', ?, date('now'), 1, ?, 1.0, ?, ?, datetime('now'))",
+            (f"test-{url}", site_id, url, impressions, position, top_query),
+        )
+
+
+def test_ranking_page_komt_uit_gsc_history_niet_uit_een_losse_live_call(site):
+    from backend.domains.projects.router import _ranking_page_from_history
+
+    _gsc_page_row(site["id"], "https://dashboardtest.nl/artikel-a",
+                  "voorbeeld korte biografie schrijven", 69, 17.8)
+    ranking = _ranking_page_from_history(site["id"])
+    assert "voorbeeld korte biografie schrijven" in ranking
+    assert ranking["voorbeeld korte biografie schrijven"]["url"] == \
+        "https://dashboardtest.nl/artikel-a"
+    with get_conn() as conn:
+        conn.execute("DELETE FROM gsc_history WHERE site_id = ?", (site["id"],))
+
+
+def test_ranking_page_overleeft_een_kapotte_live_gsc_call(site, monkeypatch):
+    """De oude fout: een falende live GSC-call degradeerde stil naar 'geen
+    pagina rankt hier', wat het advies liet zeggen 'schrijf er een' voor een
+    zoekwoord dat allang een pagina had. gsc_history is lokaal en hoeft de
+    live API niet aan te roepen, dus die faalmodus kan hier niet meer."""
+    from backend.domains.seo import gsc as gsc_module
+
+    def kapot(*a, **k):
+        raise RuntimeError("GSC quota exceeded")
+
+    monkeypatch.setattr(gsc_module, "fetch_page_query_performance", kapot)
+
+    _gsc_page_row(site["id"], "https://dashboardtest.nl/artikel-b",
+                  "digitale erfenis", 40, 9.0)
+    from backend.domains.projects.router import _ranking_page_from_history
+    ranking = _ranking_page_from_history(site["id"])
+    assert "digitale erfenis" in ranking
+    with get_conn() as conn:
+        conn.execute("DELETE FROM gsc_history WHERE site_id = ?", (site["id"],))

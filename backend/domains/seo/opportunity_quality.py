@@ -76,7 +76,28 @@ REASON_LABELS = {
     "vreemde-taal": "Andere taal",
     "te-vaag": "Te vaag",
     "geen-zoekwoord": "Lijkt op een titel, geen zoekopdracht",
+    "geen-topkans": "Buiten de top — speculatief, geen gemeten vraag",
 }
+
+# Hoeveel speculatieve kansen mag een site tegelijk aanbieden? (16 aug 2026)
+#
+# Aanleiding: WeAreImpact bood 24 'nieuwe' kansen aan waarvan er nul één enkele
+# impressie in Search Console had — de Demand Engine leverde voor deze site geen
+# gemeten vraag, dus was de hele lijst gevuld door de trend-brug. Onder de knop
+# "Schrijf 22 kansen" lagen 22 artikelen zonder één aanwijzing dat er iemand naar
+# zoekt. Elke afzonderlijke kans was verdedigbaar; het aantal was dat niet.
+#
+# Waarom een cap en niet een strengere vormregel: een speculatieve kans is per
+# definitie een gok, en of een gok goed is kun je vooraf niet aan de tekst zien
+# (dat is precies wat 'speculatief' betekent). Wat je wél kunt bepalen is hoevéél
+# gokken je tegelijk betaalt. De grens ligt op de schaal van één contentronde —
+# `sites.content_batch_size` is geklemd op 1-5 — zodat de aangeboden voorraad
+# nooit groter is dan wat er in één ronde geschreven kan worden.
+#
+# Gemeten kansen worden NOOIT afgekapt. Die zijn schaars en dragen bewijs; ze
+# afkappen omdat er toevallig zes zijn zou de enige categorie treffen die zich
+# heeft bewezen. De cap bijt alleen op de overloop van giswerk.
+_TOP_SPECULATIEVE_KANSEN = 3
 
 # Open werk: een artikel in een van deze statussen is "in behandeling".
 _OPEN_JOB_STATUSES = ("pending_review", "needs_work", "approved", "publish_failed")
@@ -177,11 +198,51 @@ def _lijkt_op_titel(query: str) -> Optional[str]:
     hit = _TITEL_LEESTEKENS.search(raw)
     if hit:
         return f"bevat '{hit.group(0).strip()}' — leesteken dat niemand intypt"
+    # Een afsluitende punt zet er niemand achter in een zoekbalk; een kop of een
+    # overgenomen zin heeft hem wél ('Datagedreven werken in zorg en welzijn.').
+    # Vraagteken bewust niet: dat typen mensen juist wél.
+    if raw.endswith(".") and not raw.endswith(".."):
+        return "eindigt op een punt — overgenomen zin, geen zoekopdracht"
     woorden = raw.split()
     if len(woorden) > _MAX_QUERY_WOORDEN:
         return f"{len(woorden)} woorden — een zoekopdracht is kort, dit is een kop"
     if len(woorden) >= 5 and normalize(woorden[-1]) in _EINDIGT_ONAF:
         return f"eindigt op '{woorden[-1]}' — lijkt afgekapt"
+    kop = _kopvorm(woorden)
+    if kop:
+        return kop
+    return None
+
+
+def _kopvorm(woorden: List[str]) -> Optional[str]:
+    """Hoofdletters midden in de regel verraden een kop, geen zoekopdracht.
+
+    16 aug 2026: de bestaande vormregels (leestekens, >8 woorden, afgekapt)
+    lieten op WeAreImpact alle 24 openstaande kansen door, waaronder
+    'Online Dossier Digitale transformatie sociaal domein',
+    'Programma MentalAIde versnelt AI-gedreven innovaties voor de GGZ' en
+    'Inspiratiebijeenkomst Hybride Zorg en AI in de ggz' — koppen van andermans
+    nieuwsberichten, via de trend-brug in de queryregel beland. Ze zijn kort
+    genoeg en leestekenvrij, dus geen enkele vormregel raakte ze; wat ze
+    verraadt is de hoofdletter.
+
+    Drie grenzen die dit veilig houden:
+      * het eerste woord telt nooit mee — een gewone zoekopdracht mag met een
+        hoofdletter beginnen (de cold-start-generator doet dat zelf ook);
+      * woorden korter dan 3 letters tellen niet mee, want 'AI' en 'GGZ' zijn
+        legitieme afkortingen in een échte zoekopdracht;
+      * er zijn er mínstens twee nodig. Eén losse eigennaam ('interim consultant
+        sociaal domein Amsterdam') is precies de longtail-kans die we willen.
+
+    Bewust géén verlaging van `_MAX_QUERY_WOORDEN` erbij: een longtail-vraag
+    ('hoe maak je een team digitaal handiger', 7 woorden) is exact het soort
+    kans waar het om gaat, en die zou bij 6 woorden sneuvelen.
+    """
+    caps = [w for w in woorden[1:]
+            if len(re.sub(r"[^\w-]", "", w, flags=re.UNICODE)) >= 3 and w[:1].isupper()]
+    if len(caps) >= 2:
+        return (f"hoofdletters midden in de regel ({', '.join(caps[:3])}) — "
+                "dit is een kop, geen getypte zoekopdracht")
     return None
 
 
@@ -405,7 +466,7 @@ def _url_from_publish_result(raw) -> str:
 
 
 def _external_coverage(site: Dict) -> List[Dict]:
-    """Wat er buiten Agent OS om al op de site staat (extern CMS + live
+    """Wat er buiten Impact OS om al op de site staat (extern CMS + live
     sitemap). Dit is de énige bron die de échte blogs kent — `published_pages`
     is voor de meeste sites leeg by design. Faalt stil: een onbereikbare
     sitemap mag het Kansen-paneel nooit platleggen."""
@@ -720,4 +781,45 @@ def annotate(opportunities: List[Dict], site: Dict) -> List[Dict]:
     coverage = site_coverage(site)
     for opp in opportunities:
         opp.update(assess(opp, coverage, site))
-    return potential.annotate(opportunities)
+    gesorteerd = potential.annotate(opportunities)
+    _cap_speculatief(gesorteerd)
+    return gesorteerd
+
+
+def _cap_speculatief(opportunities: List[Dict]) -> None:
+    """Houd alleen de top-`_TOP_SPECULATIEVE_KANSEN` speculatieve kansen over.
+
+    Draait ná `potential.annotate`, dus de lijst staat al in de enige volgorde
+    waarin dit eerlijk is: gemeten vraag eerst (op verwachte extra klikken),
+    daarbinnen giswerk op de opgeslagen score. De cap knipt van onderaf.
+
+    Wat er níét wordt aangeraakt, en waarom:
+      * gemeten kansen — die dragen bewijs en zijn schaars;
+      * kansen die al een `filter_reason` hebben — die zijn al verklaard, en er
+        een tweede reden overheen leggen maakt het bewijs onleesbaar;
+      * alles wat niet meer op 'new' staat — dat is lopend of afgerond werk,
+        geen aanbod.
+
+    Niets verdwijnt stil: net als elke andere reden komt dit terug onder
+    `status='uitgefilterd'` mét een "Toch oppakken"-knop. Dat pad is hier
+    load-bearing — de fout valt naar 'te streng', en te streng is met één klik
+    herstelbaar, terwijl twintig gegokte artikelen dat niet zijn.
+    """
+    over = 0
+    for opp in opportunities:
+        if opp.get("filter_reason") or opp.get("status") != "new":
+            continue
+        if opp.get("demand") == "gemeten":
+            continue
+        over += 1
+        if over <= _TOP_SPECULATIEVE_KANSEN:
+            continue
+        opp.update({
+            "filter_reason": "geen-topkans",
+            "filter_label": REASON_LABELS["geen-topkans"],
+            "filter_detail": (
+                f"nummer {over} van de speculatieve kansen; er is nul gemeten vraag "
+                f"in Search Console en we bieden er hooguit {_TOP_SPECULATIEVE_KANSEN} "
+                "tegelijk aan. Pak 'm op zodra de bovenste af zijn."),
+            "filter_source": "regel",
+        })

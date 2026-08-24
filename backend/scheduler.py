@@ -1,4 +1,4 @@
-"""APScheduler — alle terugkerende agent-jobs van Agent OS.
+"""APScheduler — alle terugkerende agent-jobs van Impact OS.
 
 Drie eigenschappen die deze scheduler betrouwbaar maken op een machine die niet
 24/7 aanstaat:
@@ -31,7 +31,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Dict
 
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -65,7 +65,10 @@ from .domains.analytics.facebook_store import snapshot_all_facebook as run_faceb
 from .domains.analytics.facebook_content import suggest_facebook_content as run_facebook_content_ideas
 
 from .domains.radar.service import scan_the_skies
+from .domains.radar.linkedin_signals import scan_all_linkedin_watches
+from .domains.radar import newsroom as _newsroom
 from .domains.seo.feedback import run_daily_gsc_sync
+from .domains.loop.seo_loop import run_seo_loop as _run_seo_loop
 from .domains.researcher.service import get_service as researcher_svc
 from .domains.action_center.digest import run_daily_digest
 from .domains.radar import astros_digest as astros_digest_mod
@@ -76,6 +79,72 @@ from .domains.linkbuilding.prospector import run_weekly_linkbuilding
 from .domains.linkbuilding.monitor import run_link_monitor
 
 logger = logging.getLogger(__name__)
+
+
+async def _weareimpact_news_briefing_job() -> None:
+    """Scheduler-entry voor de WeAreImpact-nieuwsagent (dagelijks, vóór Iris'
+    06:45-briefing zodat prompt_block() verse data heeft). Zelfde circuit-
+    breaker als de sky-scan: geen LLM-analyse als het dagbudget al op is —
+    de watchlist blijft dan gewoon liggen voor morgen (gap_cost="", de
+    briefing veroudert per dag en is dan vanzelf weer vers)."""
+    from .shared.outcomes import require_llm_budget
+    try:
+        require_llm_budget("weareimpact-nieuws")
+    except Exception as e:
+        logger.warning("[newsroom] LLM-budget op — nieuwsbriefing slaat vandaag over: %s", e)
+        return
+    await _newsroom.build_daily_briefing()
+
+
+def _run_linkedin_signals() -> int:
+    """Scheduler-entry voor LinkedIn hand-raising signals.
+
+    Scant alle actieve linkedin_signal-watches en bridge't fitte hand-raisers
+    naar de prospecting-funnel (mens-in-loop). Geeft het aantal gebridgede
+    leads terug. Faalt zacht — de sky-scan en de rest van de scheduler mogen
+    er niet door ontsporen.
+    """
+    try:
+        reports = scan_all_linkedin_watches(auto_bridge=True)
+    except Exception:  # noqa: BLE001
+        log.exception("[scheduler] LinkedIn hand-raising scan mislukt")
+        return 0
+    total_bridged = sum(r.get("bridged", 0) for r in reports if isinstance(r, dict))
+    if total_bridged:
+        try:
+            from .shared.outcomes import log_outcome
+            log_outcome(
+                "Radar", "linkedin-signals",
+                f"{total_bridged} nieuwe hand-raising leads gebridged naar de "
+                f"prospecting-funnel (uit {len(reports)} gemonitorde accounts).",
+                next_step="Review de leads in de Actiecentrum — zij wachten op de "
+                          "outreach-batch + jouw goedkeuring. Geen auto-verzending.",
+                status="ok",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    return total_bridged
+
+async def _seo_loop_job() -> None:
+    """Scheduler-entry voor de maandelijkse SEO-loop (Loop Engineering).
+
+    Draait de objectieve GSC-verbeterlus voor elke site die GSC-data heeft.
+    Faalt zacht per site — de rest van de scheduler mag er niet door ontsporen.
+    """
+    from .shared.database import get_conn
+    with get_conn() as conn:
+        sites = [r["id"] for r in conn.execute(
+            "SELECT id FROM sites WHERE gsc_property <> ''"
+        ).fetchall()]
+    if not sites:
+        logger.info("[scheduler] SEO-loop: geen GSC-sites geconfigureerd, sla over")
+        return
+    for site_id in sites:
+        try:
+            await _run_seo_loop(site_id, dry_run=False, window_days=28)
+        except Exception:  # noqa: BLE001
+            logger.exception("[scheduler] SEO-loop mislukt voor %s", site_id)
+
 
 _scheduler: AsyncIOScheduler | None = None
 _catchup_task: asyncio.Task | None = None
@@ -115,6 +184,7 @@ _CATCHUP_TIMEOUT = timedelta(minutes=40)
 # ── Jobs die eigen orkestratie nodig hebben ────────────────────────────────
 
 from .shared.config import BRIDGE_SYNC_MINUTES as _BRIDGE_SYNC_MINUTES
+from .shared.config import BEWAARDVOORJOU_ORDERS_SYNC_MINUTES as _ORDERS_SYNC_MINUTES
 
 
 async def _postvak_sync_job() -> None:
@@ -147,6 +217,21 @@ async def _bridge_sync_job() -> None:
     if state == "off":
         return
     await bridge.sync_once()
+
+
+async def _orders_sync_job() -> None:
+    """Bewaard voor Jou: bestellingen ophalen bij life-journey-backend en de
+    inkoopstaat herberekenen. Zelfde off/partial/on-patroon als de bridge."""
+    from .domains.orders import procurement, service as orders
+    state = orders.config_state()
+    if state == "partial":
+        orders.report_misconfiguration()
+        return
+    if state == "off":
+        return
+    result = await orders.sync_once()
+    if result.get("ok"):
+        procurement.evaluate()
 
 
 async def _autoheal_job() -> None:
@@ -396,7 +481,7 @@ class JobSpec:
     # grens liet overschrijden en de staart liet liggen.
     priority: int = 10
     # Domain-tag (zie shared/config.py:domain_enabled). Leeg = kernfunctionaliteit,
-    # draait altijd. Een klant-instance met een AGENTOS_ENABLED_DOMAINS-whitelist
+    # draait altijd. Een klant-instance met een IMPACTOS_ENABLED_DOMAINS-whitelist
     # slaat elke job over waarvan de tag niet in de lijst staat — anders draait
     # Beursmeester/Finance/de client-specifieke maandelijkse contentgoals gewoon
     # door op een instance die daar nooit om heeft gevraagd, en betaalt die klant
@@ -408,23 +493,69 @@ def _cron(**kwargs) -> CronTrigger:
     return CronTrigger(timezone=_TZ, **kwargs)
 
 
+# ── Per-project content-slots (22 aug 2026) ───────────────────────────────
+# Elk project heeft zijn eigen doelgroep en dus zijn eigen beste dag/tijd
+# (zie CLAUDE.md §7): WeAreImpact/Bijeen zijn B2B en willen 's ochtends op
+# LinkedIn-achtige tijden staan, BewaardVoorJou wil late ochtend/weekend
+# (65+-doelgroep), DatingAssistent/LiefdeVoorIedereen willen 's avonds (de
+# doelgroep swipet op de bank, niet op kantoor). In plaats van één
+# gezamenlijke di/vr 09:00-run voor alle sites (die het verschil negeerde)
+# draait de contentjob nu op een vaste reeks tijd-sloten; per site bepaalt
+# `sites.content_schedule` op wélke van die sloten hij daadwerkelijk iets
+# doet (`content_pipeline._site_scheduled_now`). Elk slot is een eigen
+# JobSpec zodat de bestaande inhaalslag/gap_cost-machinery per slot blijft
+# werken — een gemiste avondrun (DatingAssistent) hoort niet de ochtendrun
+# (WeAreImpact) van diezelfde dag te blokkeren of andersom.
+_CONTENT_WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+def _content_slot(hour: int, minute: int) -> Callable[[], Awaitable[Dict]]:
+    async def _run():
+        weekday = _CONTENT_WEEKDAYS[datetime.now(_TZ).weekday()]
+        return await run_biweekly_content_job(at=(weekday, hour, minute))
+    return _run
+
+
 # ── Google Agenda-sync ────────────────────────────────────────────────────
 # Periodieke cache-verversing zodat de UI/Iris altijd verse events heeft.
 # Stil als niet geconfigureerd (geen side-effects). Gedefinieerd vóór _SPECS
 # zodat de JobSpec ernaar kan verwijzen.
+#
+# Auth-ontbreken (Outlook/Microsoft niet gekoppeld) is GEEN crash: wie de
+# integratie niet gebruikt, krijgt géén tracestack- Sparta in de logs. We
+# loggen één heldere "actie vereist"-status die in het Actiecentrum komt als
+# één kaart (scheduler_runs = één rij per job, dus geen spam), en gaan
+# verder. Een echte API-fout (bijv. agenda niet gedeeld) vertalen we wél
+# leesbaar door — maar als RuntimeError, niet als onbehandelde traceback.
+def _calendar_auth_action_required(job_id: str, detail: str) -> None:
+    """Markeer een kalender-job als 'actie vereist' i.p.v. te crashen.
+
+    Komt als één regel in het Actiecentrum (status 'action_required'), geen
+    tracestack, geen 314× herhaalde crash bij elke run.
+    """
+    logger.warning("Scheduler-job '%s': actie vereist — %s", job_id, detail)
+    _record_run(job_id, "action_required", detail)
+
+
 def calendar_sync_job() -> None:
     from .domains.calendar import service as calendar_service
     if not calendar_service.is_configured():
+        # Geen integratie ingesteld: niets aan de hand, geen lawaai.
         return
     try:
         asyncio.run(calendar_service.get_week_events())
         logger.info("Calendar-sync: week-cache bijgewerkt")
     except Exception as e:
-        # Leesbaar doorgooien: de kale API-fout ('404 Not Found') vertelt niet
-        # dat de agenda met het service-account gedeeld moet worden. De
-        # vertaling belandt via scheduler_runs in het Actiecentrum (één rij per
-        # job, dus geen kaarten-spam).
-        raise RuntimeError(calendar_service.explain_error(e)) from e
+        # De kale API-fout ('404 Not Found') vertelt niet dat de agenda met
+        # het service-account gedeeld moet worden. Ontbrekende auth is echter
+        # géén bug — dat is een mens die nog moet inloggen. Vertaal dat naar
+        # een heldere status i.p.v. een tracestack.
+        msg = calendar_service.explain_error(e)
+        if "niet" in msg.lower() and ("ingelogd" in msg.lower() or "authentic" in msg.lower()):
+            _calendar_auth_action_required("calendar_sync", msg)
+            return
+        raise RuntimeError(msg) from e
+
 
 
 def calendar_reminder_job() -> None:
@@ -435,6 +566,17 @@ def calendar_reminder_job() -> None:
         logger.info("Agenda-herinnering: %s mail(s) verstuurd", n)
     except Exception as e:  # noqa: BLE001
         logger.exception("Agenda-herinnering mislukt: %s", e)
+
+
+def calendar_whatsapp_reminder_job() -> None:
+    """Herinnering per WhatsApp, 1 uur van tevoren, voor élke afspraak."""
+    from .domains.calendar import whatsapp_reminder as cal_wa
+    try:
+        n = asyncio.run(cal_wa.run())
+        if n:
+            logger.info("Agenda-WhatsApp: %s herinnering(en) verstuurd", n)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Agenda-WhatsApp-herinnering mislukt: %s", e)
 
 
 # ── Iris-herkanselaar ──────────────────────────────────────────────────────
@@ -515,7 +657,7 @@ async def _researcher_job() -> None:
                 from .shared.outcomes import log_outcome
                 log_outcome(
                     project=project, action="notebooklm_research",
-                    detail=f"Kennisronde mislukt voor {project} (zie agentos.log).",
+                    detail=f"Kennisronde mislukt voor {project} (zie impactos.log).",
                     next_step="Controleer of notebooklm-mcp is ingelogd (re_auth).",
                     status="error",
                 )
@@ -603,6 +745,17 @@ _SPECS: list[JobSpec] = [
         "gsc_sync", "GSC-feedback-loop (performance → Radar growth-signalen)",
         run_daily_gsc_sync, _cron(hour=6, minute=30), catch_up=True, domain="seo",
     ),
+    # SEO Loop Engineering (Greg Isenberg / Ellie-case): elke maand meet de
+    # objectieve GSC-KPI (positie/klikken vs. vorige venster), stelt de maker
+    # verbeteringen voor op basis van de zwakke plekken, en zet ze klaar als
+    # Actiecentrum-kaart voor menselijke goedkeuring. De 'Verify' of een
+    # verbetering écht werkte, is de delta bij de VOLGENDE maandelijkse run.
+    # catch_up=True: een gemiste maand bij downtime wordt bij opstart ingehaald
+    # — de maandelijkse cadans is juist de kern van de loop.
+    JobSpec(
+        "seo_loop", "SEO-loop (meet GSC-KPI, stel verbeteringen voor, klaar voor goedkeuring)",
+        _seo_loop_job, _cron(hour=6, minute=10, day=1), catch_up=True, domain="seo",
+    ),
     JobSpec(
         "iris_briefing", "Iris dagbriefing (manager-analyse · cijfers per project · bijsturing)",
         run_morning_briefing, _cron(hour=6, minute=45), catch_up=True, domain="iris",
@@ -650,6 +803,17 @@ _SPECS: list[JobSpec] = [
     JobSpec(
         "calendar_reminder", "Agenda-herinnering (1 dag van tevoren, per mail)",
         calendar_reminder_job, _cron(hour=7, minute=5), domain="calendar",
+    ),
+    # 1 uur van tevoren, per WhatsApp: elke afspraak, ook handmatig ingevoerde.
+    # Interval i.p.v. cron — geen vast tijdstip, dit vuurt op elk moment van de
+    # dag afhankelijk van wanneer er iets gepland staat. Bewust geen gap_cost:
+    # een gemiste ronde is morgen geen gemis meer (de opbrengst is per
+    # definitie van vandaag) en de dedupe in calendar_hourly_reminders maakt
+    # inhalen sowieso zinloos — het uur is dan al voorbij.
+    JobSpec(
+        "calendar_whatsapp_reminder", "Agenda-herinnering (1 uur van tevoren, per WhatsApp)",
+        calendar_whatsapp_reminder_job, IntervalTrigger(minutes=10),
+        misfire_grace_time=300, coalesce=True, domain="calendar",
     ),
     JobSpec(
         "vacancy_scan", "Opdrachten-zoekagent (2x/week)",
@@ -737,8 +901,50 @@ _SPECS: list[JobSpec] = [
         domain="facebook",
     ),
     JobSpec(
-        "biweekly_content", "Blog + social auto-content (2x/week)",
-        run_biweekly_content_job, _cron(day_of_week="tue,fri", hour=9, minute=0), catch_up=True,
+        # di/vr 09:00 blijft ongewijzigd t.o.v. voor 22 aug 2026 — sites zonder
+        # eigen `content_schedule` vallen hierop terug (_LEGACY_DEFAULT_SCHEDULE).
+        # De cron-dagen matchen bewust exact de site-schema's die op dit slot
+        # leunen: een dag waarop hier NIETS geplands staat, hoort geen gemiste-
+        # run-kaart op te leveren (dat zou de catch-up/gap_cost-machinery een
+        # "gemiste dag" laten melden voor werk dat nooit gepland was).
+        "biweekly_content", "Blog + social auto-content — legacy-slot 09:00 di/vr (sites zonder eigen schema)",
+        _content_slot(9, 0), _cron(day_of_week="tue,fri", hour=9, minute=0), catch_up=True,
+        gap_cost="geen artikelen geschreven; de Wachtrij is die ronde niet aangevuld",
+        domain="publish",
+    ),
+    JobSpec(
+        "content_slot_0800", "Blog + social — ochtendslot 08:00 di/do (WeAreImpact, LinkedIn/B2B)",
+        _content_slot(8, 0), _cron(day_of_week="tue,thu", hour=8, minute=0), catch_up=True,
+        gap_cost="geen artikelen geschreven; de Wachtrij is die ronde niet aangevuld",
+        domain="publish",
+    ),
+    JobSpec(
+        "content_slot_0930", "Blog + social — ochtendslot 09:30 wo/vr (Bijeen, B2B-welzijn)",
+        _content_slot(9, 30), _cron(day_of_week="wed,fri", hour=9, minute=30), catch_up=True,
+        gap_cost="geen artikelen geschreven; de Wachtrij is die ronde niet aangevuld",
+        domain="publish",
+    ),
+    JobSpec(
+        "content_slot_1030", "Blog + social — late ochtend 10:30 di/za (BewaardVoorJou, 65+)",
+        _content_slot(10, 30), _cron(day_of_week="tue,sat", hour=10, minute=30), catch_up=True,
+        gap_cost="geen artikelen geschreven; de Wachtrij is die ronde niet aangevuld",
+        domain="publish",
+    ),
+    JobSpec(
+        "content_slot_1900", "Blog + social — avondslot 19:00 zo (LiefdeVoorIedereen)",
+        _content_slot(19, 0), _cron(day_of_week="sun", hour=19, minute=0), catch_up=True,
+        gap_cost="geen artikelen geschreven; de Wachtrij is die ronde niet aangevuld",
+        domain="publish",
+    ),
+    JobSpec(
+        "content_slot_1930", "Blog + social — avondslot 19:30 do (LiefdeVoorIedereen)",
+        _content_slot(19, 30), _cron(day_of_week="thu", hour=19, minute=30), catch_up=True,
+        gap_cost="geen artikelen geschreven; de Wachtrij is die ronde niet aangevuld",
+        domain="publish",
+    ),
+    JobSpec(
+        "content_slot_2000", "Blog + social — avondslot 20:00 wo/zo (DatingAssistent)",
+        _content_slot(20, 0), _cron(day_of_week="wed,sun", hour=20, minute=0), catch_up=True,
         gap_cost="geen artikelen geschreven; de Wachtrij is die ronde niet aangevuld",
         domain="publish",
     ),
@@ -768,6 +974,16 @@ _SPECS: list[JobSpec] = [
     JobSpec(
         "radar_sky_scan", "Mission Radar sky-scan (concurrenten & trends, elke 4 uur)",
         scan_the_skies, IntervalTrigger(hours=4), domain="radar",
+    ),
+    JobSpec(
+        "radar_linkedin_signals", "Mission Radar LinkedIn hand-raising signals (elke 6 uur)",
+        _run_linkedin_signals, IntervalTrigger(hours=6), domain="radar",
+    ),
+    JobSpec(
+        "weareimpact_news_briefing",
+        "WeAreImpact nieuwsagent (dagelijkse pro-analyse van sector/concurrent/algemeen nieuws)",
+        _weareimpact_news_briefing_job, _cron(hour=6, minute=20), catch_up=True,
+        gap_cost="", domain="radar",
     ),
     JobSpec(
         "content_improver", "Content-verbeteraar (onder-85 artikelen zelf bijschaven, elke 45 min)",
@@ -808,6 +1024,11 @@ _SPECS: list[JobSpec] = [
         # geen uitzondering meer, en ruim genoeg om een korte drukte te
         # overleven zonder een pull-cyclus over te slaan.
         misfire_grace_time=300, coalesce=True, domain="bridge",
+    ),
+    JobSpec(
+        "orders_sync", "Bewaard voor Jou — bestellingen ophalen + voorraad checken",
+        _orders_sync_job, IntervalTrigger(minutes=_ORDERS_SYNC_MINUTES),
+        misfire_grace_time=600, coalesce=True, domain="orders",
     ),
     JobSpec(
         "outlook_sync", "Postvak ophalen + triëren (elke 20 min)",
@@ -884,7 +1105,7 @@ async def run_ritual_morning_check() -> None:
                 from email.mime.text import MIMEText
                 msg = MIMEText(
                     "Goedemorgen Vincent,\n\nJe verplichte %s staat nog open: %s.\n"
-                    "Open Agent OS om hem te doen — de Control Room wacht erop.\n\n"
+                    "Open Impact OS om hem te doen — de Control Room wacht erop.\n\n"
                     "Met vriendelijke groet,\nIris" % (title, reason)
                 )
                 msg["Subject"] = "Herinnering: %s nog niet gedaan" % title

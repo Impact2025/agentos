@@ -2,7 +2,7 @@
 
 Genereert per aanbevolen platform-asset (uit serp.analyze_serp) een kant-en-
 klaar concept. Elk asset gaat door dezelfde kwaliteitsdiscipline als de rest
-van AgentOS:
+van ImpactOS:
 
   - tekst komt via `article_writer._llm`, die FEITEN_GRONDWET forceert
     (geen verzonnen awards/bedrijven/cijfers — zie de anti-verzinsel-regel);

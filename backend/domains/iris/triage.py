@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 _MAX_TOKENS = 1200
 
 _SYSTEM = (
-    "Je bent Iris, de manager van Agent OS. Vincent klikte 'Analyseer & fix' op "
+    "Je bent Iris, de manager van Impact OS. Vincent klikte 'Analyseer & fix' op "
     "een foutmelding uit het Actiecentrum. Diagnosticeer de oorzaak in 1-2 zinnen "
     "en kies PRECIES ÉÉN remedie uit deze whitelist — nooit iets anders:\n"
     "  content_run       — herstart de contentmotor voor een site (target = sitenaam)\n"
@@ -200,7 +200,7 @@ def _pattern_diagnose(action: str, detail: str) -> Optional[Dict[str, Any]]:
                          "afgebroken. Niet alle taken hebben vandaag gedraaid."),
             "remedy_type": "human_step",
             "human_step": ("Verhoog de timeout in .env (INHAAL_TIMEOUT_MIN van 40 naar 60) en herstart "
-                           "Agent OS, óf start de gemiste runs handmatig via hun kaarten. De afgekapte run "
+                           "Impact OS, óf start de gemiste runs handmatig via hun kaarten. De afgekapte run "
                            "zelf hoeft niet opnieuw — alleen wat eronder niet draaide."),
             "source": "patroonherkenning (catch-up timeout)",
         }
@@ -278,6 +278,29 @@ async def analyze_and_fix(error_id: str, kind: str = "activity_log") -> Dict[str
     actie = (err.get("action") or "").strip()
     if actie == "waarheidsaudit":
         return await _waarheidsaudit(error_id, err)
+
+    # Dode bronlink in een publish_failed-job: volledig machine-oplosbaar, géén
+    # LLM nodig. Direct naar de reparatie (vervangt de dode link, zet de job
+    # terug in de Wachtrij achter de goedkeurings-gate). De LLM koos hier
+    # steevast human_step ("los het zelf op") — precies de ruis die we wegnemen.
+    if kind == "content_job" and actie == "publish_failed" and \
+            "link-dood" in ((err.get("error") or err.get("detail") or "")).lower():
+        from ..publish import repair
+        try:
+            uit = await repair.repareer_dode_link_in_job(error_id)
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "diagnosis": "Reparatie mislukte",
+                    "remedy_type": "human_step",
+                    "human_step": f"De dode-link-reparatie viel om: {fail.describe_exception(e)}"}
+        if uit.get("ok"):
+            n = len(uit.get("vervangen") or [])
+            return {"ok": True, "diagnosis": f"{n} dode bronlink(s) vervangen",
+                    "remedy_type": "dode_link",
+                    "result": f"Job terug in de Wachtrij — één klik op Publiceer zet hem live.",
+                    "source": "deterministische dode-link-reparatie (geen LLM)"}
+        return {"ok": False, "diagnosis": "Geen vervangbare dode link gevonden",
+                "remedy_type": "human_step",
+                "human_step": uit.get("reden", "zie log")}
 
     # Kaarten die per ontwérp op een mens wachten dragen hun eigen stap al (de
     # inhaalknop bij een gemiste run, "draai hem en lees de fout" bij een job

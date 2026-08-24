@@ -2,10 +2,10 @@
 Lead Machine-endpoints end-to-end te valideren ZONDER de live :1250 te killen.
 
 Draait init_db() zodat de quality-kolommen + lead_opt_outs-tabel gemigreerd
-worden tegen dezelfde live data/agentos.db. Start en curl de endpoints.
+worden tegen dezelfde live data/impactos.db. Start en curl de endpoints.
 """
 import sys
-sys.path.insert(0, r"D:\APPS\agentos")
+sys.path.insert(0, r"D:\APPS\impactos")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

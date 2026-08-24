@@ -30,7 +30,7 @@ tags: [vrijwilligers, vrijwilligersmanagement, saas, kennisbank, blog, seo]
 ## Techniek / publiceren
 - Repo: `D:\daarwebsite\daar-nextjs` (Next.js 15 App Router, deploy via Vercel).
 - Content staat NIET in de repo maar in een Neon Postgres-database, Prisma-model `Article` (`type` = `KENNISBANK` | `BLOG`, `status` = `PUBLISHED`). Connectiestring: `DATABASE_URL` in `D:\daarwebsite\daar-nextjs\.env`.
-- De AgentOS-dedup via `external_db_url` werkt hier niet (verwacht tabel `blog_posts`); de live-sitemap-fallback (`https://daar.nl/sitemap.xml`) dekt dit af — de sitemap bevat sinds 2026-07-07 alle blog- én kennisbank-URL's.
+- De ImpactOS-dedup via `external_db_url` werkt hier niet (verwacht tabel `blog_posts`); de live-sitemap-fallback (`https://daar.nl/sitemap.xml`) dekt dit af — de sitemap bevat sinds 2026-07-07 alle blog- én kennisbank-URL's.
 - Publiceren = artikel in de database zetten (status `PUBLISHED`) — dit gaat direct live. Dus: concepten altijd eerst als `DRAFT` en via de Wachtrij-gate laten reviewen.
 
 ## Eerder werk

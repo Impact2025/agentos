@@ -36,7 +36,7 @@ function hashToken(t) {
   return crypto.createHash('sha256').update(String(t)).digest('hex');
 }
 
-// ── Bridge-auth: bearer-token → tenant, alleen voor lokale AgentOS-machines ─
+// ── Bridge-auth: bearer-token → tenant, alleen voor lokale ImpactOS-machines ─
 // Vóór multi-tenant was dit één globale BRIDGE_TOKEN. Nu draagt élke lokale
 // instance zijn eigen token (in zijn eigen .env), en zoekt de server via de
 // hash op welke tenant daarbij hoort — dezelfde token kan dus nooit twee
@@ -121,7 +121,7 @@ const MAX_LOCK_MINUTES = 60;
 function ipHash(req) {
   const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
   const ip = fwd || req.socket?.remoteAddress || 'onbekend';
-  const pepper = process.env.IP_PEPPER || 'agentos-remote-default-pepper';
+  const pepper = process.env.IP_PEPPER || 'impactos-remote-default-pepper';
   return crypto.createHmac('sha256', pepper).update(ip).digest('hex');
 }
 

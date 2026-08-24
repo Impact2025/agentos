@@ -105,7 +105,7 @@ def to_html(md: str, brand: str = "Iris") -> str:
 {body}
 </td></tr>
 <tr><td style="padding:16px 32px 24px;border-top:1px solid {_BORDER}">
-  <p style="margin:0;color:{_MUTE};font-size:12px">Automatisch gegenereerd door Agent OS</p>
+  <p style="margin:0;color:{_MUTE};font-size:12px">Automatisch gegenereerd door Impact OS</p>
 </td></tr>
 </table>
 </td></tr>

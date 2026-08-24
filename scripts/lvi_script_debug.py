@@ -2,13 +2,13 @@
 import sqlite3
 import sys
 
-sys.path.insert(0, r"D:/APPS/agentos")
+sys.path.insert(0, r"D:/APPS/impactos")
 
 from backend.shared import blog_video as bv  # noqa: E402
 from backend.shared import social_content as sc  # noqa: E402
 
 JOB_ID = "c8054d4c-c100-44c5-bf0e-0b88103dfde1"
-db = sqlite3.connect(r"D:/APPS/agentos/data/agentos.db")
+db = sqlite3.connect(r"D:/APPS/impactos/data/impactos.db")
 db.row_factory = sqlite3.Row
 row = db.execute("SELECT title, blog_html FROM content_jobs WHERE id=?", (JOB_ID,)).fetchone()
 db.close()

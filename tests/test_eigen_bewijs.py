@@ -1,6 +1,6 @@
 """Information gain: publiceren we iets dat alleen wíj kunnen schrijven?
 
-Aanleiding (5 aug 2026, gemeten op `data/agentos.db`): de kennisbank-haak
+Aanleiding (5 aug 2026, gemeten op `data/impactos.db`): de kennisbank-haak
 bestaat al sinds de Goldie-pipeline — `_make_outline` eist dat één sectie de
 casestudy als bewijs gebruikt — maar `case_studies` bevatte 4 rijen op één van
 de twaalf sites, en van de 138 artikelen met een QC-rapport hadden er 7 een écht

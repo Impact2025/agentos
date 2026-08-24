@@ -1,4 +1,9 @@
-"""Seed DatingAssistent 30+/40+/50+ als aparte sites + doelgroep-specifieke
+"""GEDEACTIVEERD 19-08-2026 — datingassistent.nl is de ENIGE DatingAssistent-site.
+Dit script maakte spooksites 'DatingAssistent 40+/50+' (site_id dating40/dating50)
+zonder publish-config; artikelen faalden daardoor met 'site-publicatie overgeslagen'.
+Gebruik altijd site_id 'datingassistent'.
+
+(origineel) Seed DatingAssistent 30+/40+/50+ als aparte sites + doelgroep-specifieke
 social_posts met gevarieerde plaats­tijden.
 
 - Bestaande site 'DatingAssistent' = de 30+ pagina (id 107835799327006).
@@ -12,10 +17,13 @@ social_posts met gevarieerde plaats­tijden.
 Idempotent: (project, campaign, campaign_post) is uniek per post; sites insert
 slaat over als de naam al bestaat.
 """
+import sys
+print("GEDEACTIVEERD: geen aparte 40+/50+ DatingAssistent-sites meer. Gebruik site_id 'datingassistent' (datingassistent.nl).")
+sys.exit(1)
 import sqlite3, json, uuid
 from datetime import datetime, timedelta
 
-DB = "data/agentos.db"
+DB = "data/impactos.db"
 CAMPAGNE = "da-doelgroepen-2026"
 
 # ── 1. Sites ──────────────────────────────────────────────────────────────

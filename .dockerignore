@@ -6,10 +6,10 @@ __pycache__
 .pytest_cache
 logs
 *.log
-agentos.log
-agentos.out
-agentos.err
-agentos.pid
+impactos.log
+impactos.out
+impactos.err
+impactos.pid
 .env
 .env.example
 _docs

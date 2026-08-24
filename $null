@@ -1,0 +1,7 @@
+At line:6 char:2
++  | ForEach-Object { Write-Output ('PID={0}' -f $_.ProcessId) }
++  ~
+An empty pipe element is not allowed.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : EmptyPipeElement
+ 

@@ -1,6 +1,6 @@
 """Expert Team — een vaste, idempotent geseede set scherp afgestelde agent-profielen.
 
-Doel: de vier kernbanen van Agent OS op wereldklasse-niveau tillen door ze NIET op
+Doel: de vier kernbanen van Impact OS op wereldklasse-niveau tillen door ze NIET op
 het generieke default-model met een vage prompt te laten draaien, maar elk op een
 specialist met een strakke, vakgerichte system-prompt:
 
@@ -329,11 +329,25 @@ EXPERT_TEAM: List[Dict[str, str]] = [
 ]
 
 
+def _face_for_profile(name: str) -> str:
+    """Welk marketing-gezicht dekt dit expert-profiel? (zie backend/agents)."""
+    try:
+        from ..agents import get_faces
+        for face in get_faces():
+            if name in face.covers_profiles:
+                return face.key
+    except Exception:
+        pass
+    return ""
+
+
 def ensure_expert_team() -> Dict[str, int]:
     """Seed de expert-profielen idempotent (op naam). Retourneert naam → id.
 
     Bestaande profielen met dezelfde naam worden met rust gelaten (geen overschrijven),
-    zodat handmatige tweaks in de UI behouden blijven.
+    zodat handmatige tweaks in de UI behouden blijven. Bij aanmaak én bij bestaande
+    profielen zonder face_key koppelen we het profiel aan zijn marketing-gezicht
+    (wereldklasse roster) zodat code/UI/marketing één waarheid delen.
     """
     mapping: Dict[str, int] = {}
     created = 0
@@ -341,15 +355,24 @@ def ensure_expert_team() -> Dict[str, int]:
     with get_conn() as conn:
         for spec in EXPERT_TEAM:
             row = conn.execute(
-                "SELECT id FROM agent_profiles WHERE name = ?", (spec["name"],)
+                "SELECT id, face_key FROM agent_profiles WHERE name = ?", (spec["name"],)
             ).fetchone()
             if row:
                 mapping[spec["name"]] = row["id"]
+                # Bestaande profielen zonder face-link alsnog koppelen.
+                if not row["face_key"]:
+                    fk = _face_for_profile(spec["name"])
+                    if fk:
+                        conn.execute(
+                            "UPDATE agent_profiles SET face_key = ? WHERE id = ?",
+                            (fk, row["id"]),
+                        )
                 continue
+            fk = _face_for_profile(spec["name"])
             cur = conn.execute(
-                "INSERT INTO agent_profiles (name, model, system_prompt, memory_session, mcp_servers, created_at) "
-                "VALUES (?, ?, ?, '', '[]', ?)",
-                (spec["name"], DEFAULT_PROFILE_MODEL, spec["system_prompt"], now),
+                "INSERT INTO agent_profiles (name, model, system_prompt, memory_session, mcp_servers, face_key, created_at) "
+                "VALUES (?, ?, ?, '', '[]', ?, ?)",
+                (spec["name"], DEFAULT_PROFILE_MODEL, spec["system_prompt"], fk, now),
             )
             mapping[spec["name"]] = cur.lastrowid
             created += 1

@@ -111,7 +111,7 @@
            kop i.p.v. alleen een teller — "3 besluiten wachten" zegt niets over
            wélk het belangrijkst is. Leeg totdat loadToday() 'm vult. -->
       <p class="font-body-md text-body-md hidden" id="today-pulse-line"></p>
-      <!-- Besluiten die Vincent al nam (via chat of knop) maar die AgentOS nog niet
+      <!-- Besluiten die Vincent al nam (via chat of knop) maar die ImpactOS nog niet
            kon uitvoeren omdat de machine niet synct — anders staat die wachtrij
            alleen verstopt in het Systeem-tabblad. Zie app.js:loadToday. -->
       <p class="font-body-md text-body-md hidden stale-note" id="today-queue-note"></p>
@@ -190,7 +190,7 @@
   <section id="view-note" hidden class="space-y-stack-lg">
     <div class="space-y-stack-sm">
       <h2 class="font-display-lg-mobile text-display-lg-mobile">Notities</h2>
-      <p class="font-body-md text-body-md text-on-surface-variant">Vang vluchtige ideeën op — ze landen als markdown in je vault, zodra AgentOS weer synct.</p>
+      <p class="font-body-md text-body-md text-on-surface-variant">Vang vluchtige ideeën op — ze landen als markdown in je vault, zodra ImpactOS weer synct.</p>
     </div>
     <div class="glass-panel rounded-xl p-4 flex flex-col gap-3">
       <textarea id="note-text" rows="3" placeholder="Typ hier je 'thought-dump'..."
@@ -218,9 +218,9 @@
       <h2 class="font-display-lg-mobile text-display-lg-mobile">Systeem</h2>
     </div>
     <div id="system-status"></div>
-    <!-- Live agenda/GSC zonder AgentOS (api/_google.js) — status apart van de
+    <!-- Live agenda/GSC zonder ImpactOS (api/_google.js) — status apart van de
          sync-pill hierboven, want dit kan werken (of stuk zijn) onafhankelijk
-         van of AgentOS zelf online is. -->
+         van of ImpactOS zelf online is. -->
     <div id="google-status"></div>
 
     <!-- Iris-onboarding: wizard verhuisd hierheen (was lokaal op localhost,

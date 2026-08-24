@@ -5,7 +5,7 @@ Haalt de live sitemap op, extraheert alle URLs en pingt ze in batches van 10
 naar api.indexnow.org. Draait als no_agent cron job (0 8 * * *) zodat nieuwe
 content die tussen deploys door gepubliceerd wordt snel geindexeerd blijft.
 
-Key: 650b5a5027da410fbccebd304bc176ec (staat ook in AgentOS sites-DB).
+Key: 650b5a5027da410fbccebd304bc176ec (staat ook in ImpactOS sites-DB).
 """
 import urllib.request
 import urllib.error

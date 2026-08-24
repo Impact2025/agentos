@@ -69,7 +69,7 @@ Op basis van het merk-DNA en de bestaande 21 artikelen zijn dit de strategische 
 
 ## 3. Kritische verschil vs bewaardvoorjou: de publicatie-pijplijn
 
-bewaardvoorjou publiceert via de AgentOS `content_pipeline` (content_jobs → site).
+bewaardvoorjou publiceert via de ImpactOS `content_pipeline` (content_jobs → site).
 teambuildingmetimpact publiceert via een **eigen Next.js/Prisma-stack**:
 `artikelen/blog/<slug>.md` → `node prisma/seed-blogs.js` → Neon DB → live.
 

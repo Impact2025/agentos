@@ -113,7 +113,7 @@ export default async function handler(req, res) {
   const tenant = tenantFromHost(req);
   try {
     // ── Bridge-proxy variant van whatsapp-stats (VOÓR de sessie-check) ──────
-    // De lokale AgentOS-backend (SQLite) bedient het dashboard op :1250, maar de
+    // De lokale ImpactOS-backend (SQLite) bedient het dashboard op :1250, maar de
     // WhatsApp-data staat in de aparte Neon-Postgres van het remote-systeem.
     // In plaats van de twee databases aan elkaar te koppelen, proxy't de lokale
     // backend hiernaartoe met zijn BRIDGE_TOKEN — remote blijft bron van
@@ -228,7 +228,7 @@ export default async function handler(req, res) {
 
 async function items(res, tenant) {
   // Actieve items, mét het laatste besluit erbij zodat de UI kan tonen
-  // "⏳ wacht op AgentOS" / "✓ uitgevoerd" / "⚠ mislukt: ...".
+  // "⏳ wacht op ImpactOS" / "✓ uitgevoerd" / "⚠ mislukt: ...".
   const rows = await sql`
     SELECT i.*, d.status AS decision_status, d.action AS decision_action,
            d.result AS decision_result
@@ -468,7 +468,7 @@ async function context(res, tenant) {
     console.error('tenant-info ophalen mislukt', tenant, e);
   }
   // Agenda en GSC-trend proberen we altijd live te verversen (Google-
-  // service-account, geen AgentOS nodig) — de rest van de snapshot blijft
+  // service-account, geen ImpactOS nodig) — de rest van de snapshot blijft
   // uit de cache. Nooit laten falen op de rest van het antwoord: één tenant
   // zonder Google-koppeling krijgt gewoon zijn snapshot terug, ongewijzigd.
   if (snap.payload) {

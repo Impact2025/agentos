@@ -189,6 +189,7 @@ async def _run_analysis(user_content: str, system: str, model_override: Optional
         model_override=model_override,
         use_tools=False,
         max_tokens=6000,
+        purpose="analytics",
     ):
         if ev.get("type") == "error":
             raise RuntimeError(ev.get("message") or "Onbekende agent-fout")
@@ -546,7 +547,7 @@ async def run_weekly_report() -> dict:
         # Een weekrapport dat niet verschijnt hoort een kaart te zijn, geen
         # print: de maandagrun is de enige plek waar het 28-daagse beeld ontstaat.
         log_outcome(
-            "Agent OS", "weekrapport", msg,
+            "Impact OS", "weekrapport", msg,
             next_step="Controleer de GA4-koppeling (service-account + GA4_PROPERTY_ID); "
                       "zonder deze run is er deze week geen portfolio-beeld.",
             status="error",
@@ -573,7 +574,7 @@ async def run_weekly_report() -> dict:
                 except Exception as e:  # noqa: BLE001
                     print(f"[Analytics] weekbevindingen opslaan mislukt: {e}")
                     log_outcome(
-                        "Agent OS", "weekrapport", f"Weekbevindingen niet opgeslagen: {e}",
+                        "Impact OS", "weekrapport", f"Weekbevindingen niet opgeslagen: {e}",
                         next_step="Controleer de tabel weekly_insights; zonder deze rijen "
                                   "stuurt het weekrapport niets aan en leert Iris er niets van.",
                         status="error",
@@ -597,7 +598,7 @@ async def run_weekly_report() -> dict:
         # Een rapport zonder synthese ziet er compleet uit en is dat niet. Zonder
         # kaart merkt niemand dat de duiding weken achtereen ontbreekt.
         log_outcome(
-            "Agent OS", "weekrapport",
+            "Impact OS", "weekrapport",
             f"Weekrapport {week_label} zonder LLM-synthese: alleen de datagedreven fallback.",
             next_step="Controleer de modelgateway (ANTHROPIC_API_KEY/OPENMODEL_API_KEY, quota); "
                       "de reden staat onderaan het rapport.",
@@ -645,7 +646,7 @@ async def run_weekly_report() -> dict:
     try:
         artefact = results.get("obsidian_note") or ""
         log_outcome(
-            "Agent OS", "weekrapport",
+            "Impact OS", "weekrapport",
             f"Weekrapport {week_label}: {len(gsc_analyses)} project(en) met zoekdata, "
             f"analyse via {source}",
             artifact=artefact,

@@ -76,7 +76,15 @@ FEITEN_GRONDWET = (
     "Een korter, kloppend artikel is beter dan een langer artikel met een "
     "plausibel klinkend verzinsel. Het devies is: het beste of niets.\n"
     "7. Vul een gevraagd aantal (bv. '7 tips') NOOIT op met verzonnen items. "
-    "Lever er liever minder en zet dat eerlijk in de tekst."
+    "Lever er liever minder en zet dat eerlijk in de tekst.\n"
+    "8. Schrijf NOOIT in de eerste persoon met een verzonnen functietitel, "
+    "dienstverband, trackrecord of jarenlange ervaring ('als directeur van...', "
+    "'in mijn X jaar als...', 'ik heb persoonlijk N keer...') tenzij die naam en "
+    "achtergrond letterlijk in de meegeleverde context/merk-brief staan. Een "
+    "artikel zonder geclaimde persoonlijke autoriteit is beter dan een artikel "
+    "met een verzonnen ervaringsdeskundige — dat geldt ook als eerste persoon "
+    "elders wél is toegestaan (bv. bij een merk-brief die 'ik' voorschrijft): "
+    "toon en stem mag geleend zijn, biografische feiten nooit."
 )
 
 
@@ -98,6 +106,105 @@ def _extract_json(raw: str) -> str:
 def _plain_text(html: str) -> str:
     text = re.sub(r"<[^>]+>", " ", html or "")
     return re.sub(r"\s+", " ", text).strip()
+
+
+# ── Deterministische sanitizer (wereldklasse-leveringslaag) ──────────────────
+# Het model plakt ondanks de "geen labels"-instructie soms nog persona-rolnamen
+# (bv. "Intro-schrijver", "Cadeau-lijst-schrijver", "SEO-technisch specialist")
+# als <h2> in de body, of laat ruwe schrijfnotities (Answer island, DNA-profiel,
+# Zoekwoordgebruik:) achter. Die rommel breekt de HTML-structuur (dubbele H1),
+# leest onprofessioneel en geeft een technische SEO-straf. We wieden het hier
+# deterministisch, ZONDER LLM, zodat elke toekomstige batch schoon de wachtrij
+# in gaat. Nooit een crash: bij twijfel laten we de body ongemoeid.
+# Elke <h2>/<h3> waarvan de tekst een rol/persona-naam bevat (ook met
+# koppeltekens: "Sectie-schrijver", "Intro-schrijver", "Cadeau-lijst-schrijver").
+# We matchen genereus op de bekende rol-woorden en een expliciete allowlist van
+# label-prefixen, zodat geen enkele scaffold-label de productie haalt.
+_ROLE_WORDS = r"(?:schrijver|specialist|strateeg|redacteur|editor|schrijvers)"
+_ROLE_PREFIX = (
+    r"(?:hoofdtaak|intro(?:ductie)?|voorbereiding|activiteiten|voordelen|"
+    r"kenmerken-vergelijking|cc|probleem-oplossing|introductie|sectie|"
+    r"conclusie-en-faq|seo-technisch|seo[-/ ]geo|case-?study|tussenkop|"
+    r"[a-zà-ÿ0-9]+-schrijver|[a-zà-ÿ0-9]+-specialist)"
+)
+_PERSONA_LABEL_RE = re.compile(
+    r"<h[23][^>]*>\s*"
+    r"(?:" + _ROLE_PREFIX + r"|[\wÀ-ÿ\-]*?" + _ROLE_WORDS + r")"
+    r"\b[\wÀ-ÿ\s\-:()]*?"
+    r"\s*</h[23]>",
+    re.IGNORECASE,
+)
+_SCRATCH_RE = re.compile(
+    r"<p>\s*(?:\*\*)?\s*(?:"
+    r"Answer island|DNA-profiel|Zoekwoordgebruik|Interne link|Gedetailleerde opbouw"
+    r"|Out[ -]?line|totaal woorddoel|Ik ga nu (?:een|de|het)|Tussenkop|Intro-schrijver"
+    r"|Focus keyword|URL-slug|Meta (?:title|description)"
+    r")\b.*?</p>",
+    re.IGNORECASE | re.DOTALL,
+)
+_MD_HOST_RE = re.compile(r"^\s*#{1,6}\s+", re.MULTILINE)
+_META_BLOCK_RE = re.compile(r"(\n*<!--\s*META[\s\S]*?-->|\n*<!--\s*[Mm]eta[\s\S]*?-->)")
+
+
+def _sanitize_html_body(html_body: str) -> str:
+    """Stript persona-labels, schrijfnotities en normaliseert H1's.
+
+    Het META-blok (<!-- META ... -->) en JSON-LD blijven intact. Deterministisch;
+    bij een lege/ongeldige body geven we het origineel terug.
+    """
+    if not html_body or not html_body.strip():
+        return html_body
+
+    # Splits het (optionele) META-blok eraf zodat we dat nooit aanraken.
+    meta_match = _META_BLOCK_RE.search(html_body)
+    meta_block = meta_match.group(1) if meta_match else ""
+    body = html_body[: meta_match.start()] if meta_match else html_body
+
+    # 0) Alles vóór de eerste H1 is altijd gelekte scaffolding, nooit inhoud —
+    # elke outline in dit systeem begint met de H1 als eerste kop (zie
+    # _make_outline). Eerst ving dit alleen H2/H3-labels ("Tool-vergelijker",
+    # 19 aug 2026, Bijeen); een Gauntlet-run leverde daarna een variant die
+    # geen kop maar kale <p>-alinea's gebruikte ("**SEO-titel:**",
+    # "**Meta-omschrijving:**", een losse "---") — die glipten er zo doorheen
+    # en stonden zichtbaar boven het echte artikel (22 aug 2026, Liefde voor
+    # Iedereen). Positie is het structurele signaal, onafhankelijk van wélk
+    # label/woord het model gebruikt: de hele kop vóór de H1 verdwijnt, niet
+    # alleen de H2/H3's erin.
+    h1_pos_match = re.search(r"<h1[^>]*>", body, re.IGNORECASE)
+    if h1_pos_match:
+        body = body[h1_pos_match.start():]
+
+    # 1) Persona-/rol-labels als H2/H3 volledig verwijderen.
+    body = _PERSONA_LABEL_RE.sub("", body)
+    # 2) Achtergebleven schrijfnotities (Answer island, DNA-profiel, ...).
+    body = _SCRATCH_RE.sub("", body)
+    # 3) Ruwe Markdown-koppen die in de body zijn gelekt.
+    body = _MD_HOST_RE.sub("", body)
+
+    # 4) H1 normaliseren: exact één H1, de eerste wint. Latere H1's → H2.
+    h1_parts = re.split(r"(<h1[^>]*>)", body, flags=re.IGNORECASE)
+    # h1_parts: [pre, <h1..>, content, <h1..>, content, ...]
+    first_h1_done = False
+    out = []
+    for i, seg in enumerate(h1_parts):
+        if re.match(r"<h1[^>]*>", seg, re.IGNORECASE):
+            if not first_h1_done:
+                out.append(seg)
+                first_h1_done = True
+            else:
+                out.append(re.sub(r"^<h1", "<h2", seg, flags=re.IGNORECASE))
+        else:
+            out.append(seg)
+    body = "".join(out)
+
+    # 5) Opruimen van lege/whitespace-H2-H3 die na het wieden overblijven.
+    body = re.sub(r"<h[23][^>]*>\s*</h[23]>\s*", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+
+    # META-blok (en eventuele JSON-LD die erachter hangt) terugplakken.
+    if meta_block:
+        body = body.rstrip() + "\n" + meta_block
+    return body
 
 
 def fold_diacritics(text: str) -> str:
@@ -815,7 +922,7 @@ def check_keyword(html_body: str, keyword: str) -> List[str]:
 
 # ── Eigen bewijs (information gain) ─────────────────────────────────────────
 #
-# Waarom deze toets bestaat (5 aug 2026, gemeten op `data/agentos.db`): de haak
+# Waarom deze toets bestaat (5 aug 2026, gemeten op `data/impactos.db`): de haak
 # is er al sinds de kennisbank — `_make_outline` eist dat één sectie de
 # casestudy als bewijs gebruikt — maar de tabel `case_studies` bevatte 4 rijen
 # op één van de twaalf sites, en van de 138 artikelen met een QC-rapport hadden
@@ -1073,5 +1180,11 @@ async def write_article_staged(site: Dict, keyword: str, angle: str, rationale: 
     except Exception as e:
         logger.warning("[article-writer] Meta-stap mislukt: %s", e)
         qc["meta"] = {"ok": False, "error": str(e)[:150]}
+
+    # ── Wereldklasse-leveringslaag: deterministische sanitizer ──────────────
+    # Verwijdert persona-labels, schrijfnotities en dubbele H1's vóór opslag,
+    # zodat elke batch schone HTML oplevert (geen "Intro-schrijver"-koppen live).
+    html_body = _sanitize_html_body(html_body)
+    qc["sanitized"] = True
 
     return html_body, qc

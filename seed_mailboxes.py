@@ -1,5 +1,5 @@
 """
-Seed drie helpdesk-mailboxen in AgentOS vanuit de Outlook .reg exports.
+Seed drie helpdesk-mailboxen in ImpactOS vanuit de Outlook .reg exports.
 
 De .reg bestanden (outlook_info/outlook_hello) bevatten ALLEEN server-instellingen
 (POP3 110 / SMTP 587, host mail.<domein>), GEEN wachtwoorden. Dit script haalt de
@@ -14,7 +14,7 @@ Gebruik:
   export MAIL_PW_DATINGASSISTENT='...'
   export MAIL_PW_BIJEEN='...'
   export MAIL_PW_ICTUSGO='...'
-  cd D:/apps/agentos
+  cd D:/apps/impactos
   python3 seed_mailboxes.py
 
 Een box zonder wachtwoord wordt AANGEMAAKT MAAR disabled (enabled=0), zodat de

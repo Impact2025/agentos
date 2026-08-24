@@ -1,6 +1,6 @@
 """Testconfiguratie: alle tests draaien tegen een wegwerp-SQLite-database.
 
-De env-var AGENTOS_DB_PATH moet gezet zijn VOORDAT backend.shared.config
+De env-var IMPACTOS_DB_PATH moet gezet zijn VOORDAT backend.shared.config
 geïmporteerd wordt — daarom staat dit bovenaan conftest en importeren de
 tests backend-modules pas binnen fixtures/functies.
 """
@@ -8,13 +8,13 @@ import os
 import tempfile
 import uuid
 
-_TMP_DB = os.path.join(tempfile.gettempdir(), f"agentos-test-{uuid.uuid4().hex[:8]}.db")
-os.environ["AGENTOS_DB_PATH"] = _TMP_DB
+_TMP_DB = os.path.join(tempfile.gettempdir(), f"impactos-test-{uuid.uuid4().hex[:8]}.db")
+os.environ["IMPACTOS_DB_PATH"] = _TMP_DB
 
-# Login-gate uit in tests: de auth-middleware leest AGENTOS_PASSWORD per request
+# Login-gate uit in tests: de auth-middleware leest IMPACTOS_PASSWORD per request
 # uit os.environ, en een gevulde .env zou anders elke API-test op 401 laten
 # stranden. Leeg = gate uit (zelfde gedrag als lokale dev zonder wachtwoord).
-os.environ["AGENTOS_PASSWORD"] = ""
+os.environ["IMPACTOS_PASSWORD"] = ""
 
 # Geen echte mail vanuit tests. email_service.is_configured() / resend_service
 # .is_configured() lezen deze vars uit de echte .env — tests die run_morning_

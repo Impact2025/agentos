@@ -54,6 +54,22 @@ def _with_parsed_social_copy(job: dict) -> dict:
         job["seo_worldclass"] = assess_seo_worldclass(html, kw, site)
     except Exception:
         job["seo_worldclass"] = None
+    # Publiceerbaarheids-vlag voor de UI: als dit een interne werkbon/opdracht is,
+    # verberg dan de groene "Publiceer"-knop en toon een waarschuwing. Dit is de
+    #zelfde check als in approve_and_publish(), hier al vóóraf uitgerekend zodat de
+    # frontend niet eerst hoeft te falen bij de klik.
+    try:
+        from .publish.content_pipeline import is_internal_document
+        blocked = is_internal_document(job.get("title") or "", job.get("blog_html") or "")
+        if blocked:
+            job["publish_blocked"] = True
+            job["publish_block_reason"] = blocked
+        else:
+            job["publish_blocked"] = False
+            job["publish_block_reason"] = None
+    except Exception:
+        job["publish_blocked"] = False
+        job["publish_block_reason"] = None
     return job
 
 
@@ -86,7 +102,10 @@ def _channels_from_body(body: Optional[Dict]) -> list:
 async def approve_content_job(job_id: str, body: Optional[Dict] = Body(None)):
     try:
         result = await content_pipeline.approve_and_publish(
-            job_id, social_channels=_channels_from_body(body))
+            job_id,
+            social_channels=_channels_from_body(body),
+            publish_date=(body or {}).get("publish_date") or None,
+        )
         return {"success": True, "result": result}
     except ValueError as e:
         raise HTTPException(400, detail=str(e))
@@ -95,11 +114,36 @@ async def approve_content_job(job_id: str, body: Optional[Dict] = Body(None)):
         raise HTTPException(500, detail=str(e)[:300])
 
 
+@router.post("/{job_id}/ready-linkedin")
+def mark_ready_for_linkedin(job_id: str):
+    """Markeer een LinkedIn-outreach job als 'klaar voor LinkedIn' (geen site-publish).
+
+    Dit is de expliciete menselijke bevestiging dat de berichten op LinkedIn mogen —
+    door de gebruiker, niet automatisch. Blokkeert elke Netlify-deploy.
+    """
+    try:
+        content_pipeline.mark_ready_for_linkedin(job_id)
+        return {"success": True, "status": "ready_for_linkedin"}
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+
+
+
 @router.post("/{job_id}/reject")
 def reject_content_job(job_id: str):
     try:
         content_pipeline.reject_job(job_id)
         return {"success": True}
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+
+
+@router.post("/{job_id}/confirm-depublished")
+async def confirm_content_job_depublished(job_id: str):
+    """Haal een 'afgekeurd maar live'-artikel écht offline en sluit de kaart."""
+    try:
+        result = await content_pipeline.confirm_depublished(job_id)
+        return {"success": True, "result": result}
     except ValueError as e:
         raise HTTPException(400, detail=str(e))
 

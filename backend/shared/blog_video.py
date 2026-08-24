@@ -69,7 +69,7 @@ def _write_script(title: str, blog_text: str, project: str) -> List[vr.Scene]:
     raw = ""
     for attempt in range(3):
         try:
-            raw = sc._sync_openmodel(system, user, max_tokens=400).strip()
+            raw = sc._sync_script_writer(system, user, max_tokens=400).strip()
         except Exception as e:
             logger.warning("Blog-script LLM poging %d mislukt: %s", attempt + 1, e)
             raw = ""

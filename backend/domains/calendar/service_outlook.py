@@ -1,5 +1,5 @@
 """
-Microsoft Outlook / Graph Agenda-integratie voor Agent OS.
+Microsoft Outlook / Graph Agenda-integratie voor Impact OS.
 
 Dit is de Outlook-backend achter `calendar/service.py` (CALENDAR_BACKEND=
 'outlook') — voor klanten die zelf Outlook gebruiken (bv. Nicole @ WE SHAPE
@@ -152,6 +152,8 @@ async def get_week_events(week_start: Optional[str] = None) -> List[dict]:
     end = start + timedelta(days=7)
 
     raw = await _list_events(start, end)
+    info = outlook_service.get_account_info()
+    own_email = (info or {}).get("email", "").lower()
     events = []
     for ev in raw:
         if ev.get("isCancelled"):
@@ -166,6 +168,12 @@ async def get_week_events(week_start: Optional[str] = None) -> List[dict]:
             "location": (ev.get("location") or {}).get("displayName") or "",
             "hangout_link": ev.get("onlineMeetingUrl") or "",
             "html_link": ev.get("webLink") or "",
+            "attendees": [
+                {"name": (a.get("emailAddress") or {}).get("name") or (a.get("emailAddress") or {}).get("address") or "?",
+                 "email": ((a.get("emailAddress") or {}).get("address") or "").lower()}
+                for a in (ev.get("attendees") or [])
+                if ((a.get("emailAddress") or {}).get("address") or "").lower() != own_email
+            ],
         })
     _cache_events(events)
     return events
@@ -271,7 +279,7 @@ async def block_time(
     token = _require_token()
     body = {
         "subject": title,
-        "body": {"contentType": "Text", "content": description or "Geblokkeerd via Agent OS"},
+        "body": {"contentType": "Text", "content": description or "Geblokkeerd via Impact OS"},
         "start": {"dateTime": start.astimezone(timezone.utc).isoformat(), "timeZone": "UTC"},
         "end": {"dateTime": end.astimezone(timezone.utc).isoformat(), "timeZone": "UTC"},
         "showAs": "busy",

@@ -6,7 +6,7 @@ Vertaalt de video's /learn-belofte naar een concreet, agent-leesbaar artifact:
   2. GLOSSARY    — sleuteltermen uit het document met een korte definitie
   3. CHEAT SHEET — 5-10 direct toepasbare vuistregels ("quick rules")
 
-Dit is de gestructureerde laag die AgentOS nu MIS (NotebookLM geeft wel RAG
+Dit is de gestructureerde laag die ImpactOS nu MIS (NotebookLM geeft wel RAG
 maar bouwt geen glossary/cheat-sheet; iris-knowledge distilleert alleen
 principes). De brain file wordt opgeslagen als een aparte vault-note én als
 JSON in de DB, zodat agents hem zowel semantisch (embeddings) als
@@ -59,7 +59,7 @@ async def extract_brain_file(title: str, chunks: List[dict],
     """Bouw de brain file via de LLM.
 
     ``llm_call(system, prompt, max_tokens) -> str | None`` — injecteer de
-    centrale AgentOS-LLM hier (OpenModel/Ollama) zonder die te importeren,
+    centrale ImpactOS-LLM hier (OpenModel/Ollama) zonder die te importeren,
     zodat deze module los testbaar blijft.
 
     Retourneert altijd een geldige dict met keys:

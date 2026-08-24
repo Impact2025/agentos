@@ -10,7 +10,7 @@ from backend.shared import facebook as fb
 import httpx
 
 async def main():
-    c = sqlite3.connect("data/agentos.db"); c.row_factory = sqlite3.Row
+    c = sqlite3.connect("data/impactos.db"); c.row_factory = sqlite3.Row
 
     print("=== 1. LVI eigen token vs DA tokens in sites-tabel ===")
     for r in c.execute("SELECT name, facebook_page_id, facebook_page_token FROM sites WHERE name LIKE 'DatingAssistent%' OR name='Liefde voor Iedereen'"):

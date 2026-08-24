@@ -10,7 +10,7 @@ TeambuildingMetImpact-site via de publieke /api/blog-endpoint (Bijeen-compatibel
 - Idempotent: bijgehouden in een state-file; al geposte slugs worden overgeslagen.
 - status=published -> live op de site met de historische datum.
 
-Run vanuit de agentos-venv (heeft httpx + yaml + markdown):
+Run vanuit de impactos-venv (heeft httpx + yaml + markdown):
   .venv/Scripts/python.exe scripts/import_teambuilding_blogs.py
 """
 import os
@@ -26,18 +26,18 @@ import httpx
 # ── config ────────────────────────────────────────────────────────────────
 ARTICLES_DIR = r"D:/apps/Teambuilding/artikelen/blog"
 API_URL = "https://www.teambuildingmetimpact.nl/api/blog"
-KEY_FILE = r"D:/apps/agentos/.env"  # niet gelezen; key komt uit env of onderstaand
-STATE_FILE = r"D:/apps/agentos/scripts/.tbi_import_state.json"
+KEY_FILE = r"D:/apps/impactos/.env"  # niet gelezen; key komt uit env of onderstaand
+STATE_FILE = r"D:/apps/impactos/scripts/.tbi_import_state.json"
 
 DATE_START = dt.date(2025, 12, 20)
 DATE_END = dt.date(2026, 6, 20)
 
-# Key uit omgeving (Agent OS .env wordt geladen door het run-script); fallback
+# Key uit omgeving (Impact OS .env wordt geladen door het run-script); fallback
 # naar hetzelfde bestand als de site gebruikt. We lezen 'm veilig uit de env.
 import os as _os
 API_KEY = _os.getenv("TEAMBUILDINGMETIMPACT_PUBLISH_KEY") or _os.getenv("TEAMBUILDING_API_KEY")
 if not API_KEY:
-    # laatste redmiddel: lees uit agentos .env (niet als secret gelogd)
+    # laatste redmiddel: lees uit impactos .env (niet als secret gelogd)
     try:
         with open(KEY_FILE, encoding="utf-8") as f:
             for line in f:

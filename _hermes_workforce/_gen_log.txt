@@ -1,0 +1,2 @@
+[content] gateway-fout: HTTPConnectionPool(host='127.0.0.1', port=8899): Read timed out. (read timeout=300)
+[content] week34-01: generatie mislukt (gateway down?)

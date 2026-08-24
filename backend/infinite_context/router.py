@@ -42,8 +42,13 @@ _engine = InfiniteContextEngine(OBSIDIAN_VAULT_PATH)
 
 
 def _get_folder_stats(vault: Path, subfolder: str) -> Dict[str, Any]:
-    """Tel bestanden in een subfolder van de vault."""
+    """Tel bestanden in een subfolder van de vault. Valt terug op de legacy
+    'AgentOS/'-map als de nieuwe 'ImpactOS/'-map niet (nog) bestaat — zodat
+    bestaande vault-content na de AgentOS->ImpactOS rename zichtbaar blijft."""
     folder = vault / subfolder
+    legacy = vault / subfolder.replace("ImpactOS", "AgentOS", 1)
+    if not folder.exists() and legacy.exists():
+        folder = legacy
     if not folder.exists():
         return {"folder": subfolder, "count": 0, "recent_files": []}
     files = sorted(folder.rglob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -79,7 +84,7 @@ def status() -> Dict[str, Any]:
         )
         return base
 
-    # Tel bestanden in AgentOS folders
+    # Tel bestanden in ImpactOS folders
     if vault:
         vault_p = Path(vault)
         base["note_count"] = sum(1 for _ in vault_p.rglob("*.md")) if vault_p.exists() else 0
@@ -87,9 +92,9 @@ def status() -> Dict[str, Any]:
 
         # Subfolder statistieken
         base["folders"] = [
-            _get_folder_stats(vault_p, "AgentOS/Sessions"),
-            _get_folder_stats(vault_p, "AgentOS/Tasks"),
-            _get_folder_stats(vault_p, "AgentOS/Goals"),
+            _get_folder_stats(vault_p, "ImpactOS/Sessions"),
+            _get_folder_stats(vault_p, "ImpactOS/Tasks"),
+            _get_folder_stats(vault_p, "ImpactOS/Goals"),
         ]
 
     # Dagboek vandaag

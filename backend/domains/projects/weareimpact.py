@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Streefscore (0-100) voor automatische SEO-optimalisatie, en het maximum aantal
 # optimalisatierondes voordat we stoppen (kostenbeheersing + garantie dat het ooit eindigt).
-# Agent OS-eis: de agent MOET de 85%-grens altijd halen. Daarom itereren we door
+# Impact OS-eis: de agent MOET de 85%-grens altijd halen. Daarom itereren we door
 # tot de score WORLD_CLASS_SCORE bereikt of het rondemaximum is bereikt. 6 rondes
 # geeft voldoende marge om van ~70 naar 85+ te komen; de harde publish-gate
 # (PUBLISH_MIN_SCORE) blokkeert alsnog alles wat onder de 85 blijft, dus er kan
@@ -37,7 +37,7 @@ MIN_WORD_COUNT = 1000
 
 # Harde publicatie-gate (0-10): onder deze score wordt een artikel alleen als
 # concept opgeslagen — géén Netlify-deploy en géén zoekmachine-indiening.
-# Agent OS-eis: GEEN enkel blog mag onder de 85% (0-100) live gaan in welk
+# Impact OS-eis: GEEN enkel blog mag onder de 85% (0-100) live gaan in welk
 # project dan ook. De review-score is 0-100; we tonen hem als 0-10
 # (seo_score = score / 10). De gate checkt daarom op 8.5 (== 85/100).
 # Een artikel dat na MAX_OPTIMIZE_ROUNDS de 85 niet haalt, blijft als
@@ -464,10 +464,10 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
     site_id = site["id"]
     project_dir = _find_project_dir(name)
     # BUG-FIX: als _find_project_dir None geeft (project niet in vault én niet
-    # in de fallback 'projects/'-map), viel content vroeger op TEMP/agentos-content
+    # in de fallback 'projects/'-map), viel content vroeger op TEMP/impactos-content
     # — een onvoorspelbaar pad waar het artikel na de run onvindbaar bleef (job
     # meldde 'success' maar het bestand bestond nergens). We dwingen nu altijd
-    # een stabiel, absoluut pad binnen de agentos-tree, zodat het artikel
+    # een stabiel, absoluut pad binnen de impactos-tree, zodat het artikel
     # garandeerd terug te vinden is onder projects/<name>/content/.
     if project_dir:
         content_dir = project_dir / "content"
@@ -689,7 +689,7 @@ async def _write_and_publish_pipeline(job_id: str, name: str, site: dict, body: 
     # ── Wachtrij-gate: deze pipeline publiceert NOOIT rechtstreeks ──────
     # Vroeger ging dit artikel hier meteen live via het externe /api/publish
     # van het project — inclusief een 'socials'-afhandeling die dat externe
-    # endpoint zelf deed, buiten agentos' opt-in-controle om (zie de regel
+    # endpoint zelf deed, buiten impactos' opt-in-controle om (zie de regel
     # "social is altijd opt-in, nooit automatisch" in CLAUDE.md). Dat gaf twee
     # problemen: geen menselijke goedkeuring vóórdat iets live ging, en geen
     # garantie dat social-posten optioneel bleef. Nu staagt deze pipeline het
@@ -787,7 +787,10 @@ async def project_content_queue_approve(name: str, job_id: str,
     from ..content_queue.router import _channels_from_body
     try:
         result = await content_pipeline.approve_and_publish(
-            job_id, social_channels=_channels_from_body(body))
+            job_id,
+            social_channels=_channels_from_body(body),
+            publish_date=(body or {}).get("publish_date") or None,
+        )
         return {"success": True, "result": result}
     except ValueError as e:
         raise HTTPException(400, detail=str(e))

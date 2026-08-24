@@ -1,4 +1,4 @@
-"""quality_guard.py — Pre-publish content validator voor Agent OS.
+"""quality_guard.py — Pre-publish content validator voor Impact OS.
 
 Gespiegeld aan de TypeScript `quality-guard.ts` in de Bijeen-app, zodat de
 automation (Iris) dezelfde controles doet vóórdat ze pusht naar de site. Doel:

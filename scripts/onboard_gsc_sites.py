@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Onboard GSC properties (daarwebsite, vrijwilligersmatch) into the AgentOS
+Onboard GSC properties (daarwebsite, vrijwilligersmatch) into the ImpactOS
 `sites` table so the Demand Engine (POST /api/demand/scan) can scan them.
 
 Design:
@@ -11,7 +11,7 @@ Design:
     skips targets whose property the SA is not (yet) Owner of.
 
 Run:
-    cd /d/apps/agentos
+    cd /d/apps/impactos
     .venv/Scripts/python scripts/onboard_gsc_sites.py
 """
 import os
@@ -19,8 +19,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # .../agentos
-DB_PATH = ROOT / "data" / "agentos.db"
+ROOT = Path(__file__).resolve().parent.parent          # .../impactos
+DB_PATH = ROOT / "data" / "impactos.db"
 CREDS = ROOT / "google-credentials.json"               # hermes-analytics SA
 SCOPES = ["https://www.googleapis.com/auth/webmasters"]
 

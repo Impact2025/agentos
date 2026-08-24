@@ -1,4 +1,4 @@
-# AgentOS GEO-module — herstart & verificatie recept
+# ImpactOS GEO-module — herstart & verificatie recept
 
 ## Wat is gebouwd
 - `backend/domains/geo/__init__.py` — domein-package
@@ -14,7 +14,7 @@
 
 ## 1) Herstart (vereist — laadt nieuwe code + endpoints)
 ```powershell
-cd D:/APPS/agentos
+cd D:/APPS/impactos
 $pid = (netstat -ano | Select-String ":1250.*LISTEN" | Select-Object -First 1) -split '\s+' | Select-Object -Last 1
 taskkill /PID $pid /F
 Start-Process -FilePath ".venv\Scripts\python.exe" -ArgumentList "backend\main.py" -NoNewWindow
@@ -27,7 +27,7 @@ Start-Process -FilePath ".venv\Scripts\python.exe" -ArgumentList "backend\main.p
 # health
 curl -s -m3 http://localhost:1250/api/health
 
-# login (lees AGENTOS_PASSWORD uit .env)
+# login (lees IMPACTOS_PASSWORD uit .env)
 curl -X POST localhost:1250/api/auth/login -d '{"username":"vincent","password":"<pwd>"}' -c /tmp/c.txt
 
 # GEO summary (alle sites)

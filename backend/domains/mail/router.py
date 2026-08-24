@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, model_validator
 
 from . import service
+from ..bridge import actions as bridge_actions
 
 router = APIRouter(prefix="/api/mail", tags=["mail"])
 
@@ -160,6 +161,28 @@ def reject_reply(reply_id: int):
     return {"ok": True}
 
 
+# ── Persoonlijke mail (Vincents eigen postvak, via Graph) ──────────────────
+# De Actiecentrum-kaarten voor persoonlijke mail sturen `personal_mail_send` /
+# `personal_mail_reject`; die lopen via de bridge-handlers (Outlook/Graph),
+# niet via de project-mailbox-service hierboven.
+
+@router.post("/personal/{item_id}/send")
+async def personal_mail_send(item_id: str, body: Optional[Dict] = None):
+    ok, msg = await bridge_actions._personal_mail_send(
+        item_id, (body or {}))
+    if not ok:
+        raise HTTPException(502, msg)
+    return {"ok": True, "message": msg}
+
+
+@router.post("/personal/{item_id}/reject")
+async def personal_mail_reject(item_id: str):
+    ok, msg = await bridge_actions._personal_mail_reject(item_id, {})
+    if not ok:
+        raise HTTPException(502, msg)
+    return {"ok": True, "message": msg}
+
+
 @router.post("/replies/reject-bulk")
 def reject_replies_bulk(body: BulkRejectBody):
     n = service.reject_replies_bulk(body.ids)
@@ -242,6 +265,35 @@ def ignore_sender(reply_id: int):
     return {"ok": True, **result}
 
 
+@router.post("/reply/{reply_id}/mark-known")
+@router.post("/replies/{reply_id}/mark-known")  # alias
+def mark_sender_known(reply_id: int):
+    """'Markeer als bekend': zet de afzender van dit concept in het
+    bekende-afzenders-register, zodat hij voortaan géén 'Nieuwe afzender'
+    meer is in het Actiecentrum (ook al staat hij niet in de CRM/leads-tafel).
+    Idempotent — een tweede keer markeren verandert niets."""
+    result = service.mark_sender_known(reply_id)
+    if not result:
+        raise HTTPException(404, "Concept niet gevonden")
+    return {"ok": True, **result}
+
+
+@router.post("/inbox/{inbox_id}/archive")
+def archive_inbox_mail(inbox_id: int):
+    """Markeer een project-mailbox-bericht als verwerkt (classified='ignored').
+
+    Comes uit het Postvak (project-modus), dat lezen + archiveren is — geen
+    review-gate. De rij blijft in de DB staan voor de Helpdesk-tab; hij
+    verdwijnt alleen uit de Postvak-weergave. Idempotent.
+    """
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE mail_inbox SET classified='ignored' WHERE id=? AND classified!='ignored'",
+            (inbox_id,),
+        )
+    return {"ok": True, "archived": cur.rowcount}
+
+
 @router.get("/ignored")
 def get_ignored():
     return {"ignored": service.list_ignored_senders()}
@@ -252,3 +304,33 @@ def delete_ignored(ignored_id: int):
     if not service.unignore_sender(ignored_id):
         raise HTTPException(404, "Niet gevonden")
     return {"ok": True}
+
+
+@router.get("/known")
+def get_known():
+    return {"known": service.list_known_senders()}
+
+
+@router.delete("/known/{known_id}")
+def delete_known(known_id: int):
+    if not service.unmark_sender_known(known_id):
+        raise HTTPException(404, "Niet gevonden")
+    return {"ok": True}
+
+
+class BulkTriageBody(BaseModel):
+    ids: list[str] = []
+    label: str = "actie"
+    priority: Optional[int] = None
+
+
+@router.post("/inbox/bulk-triage")
+def bulk_triage(body: BulkTriageBody):
+    """Bulk-triage meerdere Outlook-mails in één database-call.
+
+    De inbox groeit sneller dan handmatige triage hem kan wegwerken
+    (incident 23 aug 2026: 73 onbeantwoorde mails). Deze bulk-actie
+    markeert één of meerdere emails tegelijk als getrieerd.
+    """
+    result = service.bulk_triage(body.ids, body.label, body.priority)
+    return result

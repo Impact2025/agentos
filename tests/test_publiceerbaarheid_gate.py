@@ -56,7 +56,7 @@ class TestInterneDocumentenHerkennen:
         assert cp.is_internal_document(titel, "<p>Een artikel voor bezoekers.</p>") is None
 
     def test_werkproces_tekst_wordt_geweigerd_ondanks_neutrale_titel(self):
-        html = ("<p>We zetten dit in de wachtrij van Agent OS zodat de agent "
+        html = ("<p>We zetten dit in de wachtrij van Impact OS zodat de agent "
                 "het oppakt. De SEO-score bepaalt of het live gaat.</p>")
         assert cp.is_internal_document("Vindbaarheid verbeteren", html) is not None
 
@@ -199,7 +199,7 @@ def _fake_httpx(status: int = 200, exc: Exception | None = None,
         async def get(self, url, **kw):
             if exc:
                 raise exc
-            if "agentos-bestaat-niet-" in url:
+            if "impactos-bestaat-niet-" in url:
                 return _Resp(probe_status, probe_body)
             return _Resp(status, body or "<html>artikel</html>")
 
@@ -217,7 +217,7 @@ def _fake_httpx(status: int = 200, exc: Exception | None = None,
 # regel die zei dat ze geen artikel waren.
 
 def test_test_artefact_wordt_geblokkeerd():
-    reden = cp.is_internal_document("Agent OS end-to-end publicatietest")
+    reden = cp.is_internal_document("Impact OS end-to-end publicatietest")
     assert reden and "test-artefact" in reden
 
 
@@ -235,3 +235,51 @@ def test_gewoon_artikel_met_het_woord_test_mag_wel():
 
 def test_versienummer_in_een_productnaam_blokkeert_niet():
     assert cp.is_internal_document("Wat is er nieuw in iOS 26 voor mantelzorgers") is None
+
+
+# ── Gemeten lekken uit de Wachtrij van 15 aug 2026 ─────────────────────────
+
+class TestGemetenLekken15Aug:
+    """Drie titels die als 'publiceerbaar' in de Wachtrij stonden.
+
+    Alle drie kwamen uit de herschrijflus en alle drie hadden een nette score.
+    Ze lekten langs een andere naad, en dat is de reden dat ze hier per stuk
+    staan: een gate die één vorm kent, mist de volgende.
+    """
+
+    def test_placeholder_telt_ook_zonder_opdracht_werkwoord(self):
+        """'pagina 3' is een verwijzing naar een werklijst, waar hij ook staat.
+
+        De placeholder-toets zat achter de verb-first-poort, en deze titel
+        opent met een zelfstandig naamwoord.
+        """
+        reden = cp.is_internal_document(
+            "Meta-titel en -description schrijven voor pagina 3 van Bewaard voor Jou")
+        assert reden and "placeholder" in reden
+
+    def test_metadata_van_de_eigen_homepage_is_geen_artikel(self):
+        """Opdracht-werkwoord + 'metadata'/'homepage' — het object stond niet
+        in _TASK_TITLE_OBJECT, dus glipte hij langs elke toets."""
+        assert cp.is_internal_document("Herschrijf homepage metadata")
+
+    def test_plandocument_in_de_kop_wordt_geweigerd(self):
+        """'implementatieplan' stond alleen als body-marker (3+ hits nodig)."""
+        reden = cp.is_internal_document("SEO-optimalisatie van alle content – Implementatieplan")
+        assert reden and "plandocument" in reden
+
+    @pytest.mark.parametrize("kop", [
+        "Zo weet ik of het liefde is",
+        "7 signalen om de reputatie van een AI-adviseur te toetsen",
+        "Vrijwilligers werven: checklist in 5 stappen",
+        "Wat is een meta description en waarom telt hij?",
+        "Netwerkbijeenkomst organiseren in 5 stappen",
+        "De boodschap blijft hangen of verdwijnt",
+    ])
+    def test_echte_artikelkoppen_blijven_door(self, kop):
+        """De prijs van strenger filteren mag geen echte kop zijn.
+
+        'checklist' en 'stappen' zijn juist góéde artikelwoorden, en een
+        artikel mág over een meta description gáán — jargon alleen is nooit
+        genoeg, het is de opdrachtvorm eromheen die telt.
+        """
+        assert cp.is_internal_document(kop) is None

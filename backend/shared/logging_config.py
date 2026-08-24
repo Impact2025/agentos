@@ -5,13 +5,13 @@ zijn eigen loggers), waardoor elke `logger.info()` uit de domeinen en de
 scheduler spoorloos verdwijnt. Hier zetten we:
 
   * root op INFO (of $LOG_LEVEL), met tijdstempels;
-  * een meegroeiende maar begrensde `logs/agentos.log` (5 MB x 5);
+  * een meegroeiende maar begrensde `logs/impactos.log` (5 MB x 5);
   * een filter op de access-log die het geratel van de UI-pollers wegneemt,
     zodat wat er wél toe doet leesbaar blijft.
 
-Het stdout-spoor blijft intact — `agentos_service.cmd` vangt dat op in
-`agentos.log`. Dat bestand blijft de ruwe vangnet-log (ook voor tracebacks die
-buiten logging om op stderr belanden); `logs/agentos.log` is de leesbare.
+Het stdout-spoor blijft intact — `impactos_service.cmd` vangt dat op in
+`impactos.log`. Dat bestand blijft de ruwe vangnet-log (ook voor tracebacks die
+buiten logging om op stderr belanden); `logs/impactos.log` is de leesbare.
 """
 import logging
 import os
@@ -19,8 +19,10 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-_LOG_DIR = Path(os.environ["AGENTOS_LOG_DIR"]) if os.getenv("AGENTOS_LOG_DIR") else (
-    Path(__file__).parent.parent.parent / "logs"
+_LOG_DIR = (
+    Path(os.environ["IMPACTOS_LOG_DIR"]) if os.getenv("IMPACTOS_LOG_DIR")
+    else Path(os.environ["AGENTOS_LOG_DIR"]) if os.getenv("AGENTOS_LOG_DIR")
+    else Path(__file__).parent.parent.parent / "logs"
 )
 
 # Endpoints die de SPA elke paar seconden pollt. Een geslaagde poll is geen
@@ -64,7 +66,7 @@ def _rotating_handler(fmt: logging.Formatter) -> logging.Handler | None:
     try:
         _LOG_DIR.mkdir(parents=True, exist_ok=True)
         handler = RotatingFileHandler(
-            _LOG_DIR / "agentos.log", maxBytes=5 * 1024 * 1024, backupCount=5,
+            _LOG_DIR / "impactos.log", maxBytes=5 * 1024 * 1024, backupCount=5,
             encoding="utf-8",
         )
     except OSError as e:  # bv. een volle of read-only schijf — stdout is dan genoeg
@@ -96,10 +98,22 @@ def setup_logging() -> None:
     rotating = _rotating_handler(fmt)
     if rotating is not None:
         root.addHandler(rotating)
-        # uvicorn's loggers hebben propagate=False en hun eigen stdout-handler; ze
-        # zouden dus nooit in het roterende bestand belanden. Hang die er los aan.
+        # uvicorn's loggers hebben hun eigen stdout-handler; zonder dit belanden
+        # ze nooit in het roterende bestand. Hang die er dus los aan.
+        #
+        # `propagate = False` erbij (16 aug 2026), en dat is niet cosmetisch:
+        # `uvicorn.error` is een kind van `uvicorn`, dus zonder dit schrijft één
+        # bericht zich twee keer weg — één keer via de eigen handler en één keer
+        # via die van de ouder. Gemeten stond "Started server process [9652]"
+        # letterlijk dubbel in impactos.log, wat zich bij het onderzoeken van een
+        # herstart-race voordeed als twéé draaiende servers. Een logboek waarop
+        # geteld wordt, moet elke regel precies één keer bevatten — anders is elke
+        # telling erop een gok, en dit bestand telt op access-regels.
         for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-            logging.getLogger(name).addHandler(rotating)
+            lg = logging.getLogger(name)
+            if rotating not in lg.handlers:
+                lg.addHandler(rotating)
+            lg.propagate = False
 
     if os.getenv("LOG_ACCESS_FILTER", "1") != "0":
         logging.getLogger("uvicorn.access").addFilter(_AccessNoiseFilter())

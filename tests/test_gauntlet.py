@@ -188,3 +188,110 @@ def test_decompose_splits_landingpage_into_parts(temp_db, monkeypatch):
     roles = {s["role"] for s in subtasks}
     assert "Hoofdtaak" not in roles
     assert len(subtasks) >= 2
+
+
+# ── Budgetrem op de duurste beweging in het systeem ────────────────────────
+
+def test_spawn_gauntlet_weigert_boven_het_dagbudget(monkeypatch):
+    """15 aug 2026: de Gauntlet was de zwaarste LLM-consument zónder budget-guard.
+
+    `DAILY_TOKEN_BUDGET` (10M) werd gepasseerd, er kwamen 603 waarschuwingen in
+    het log, en de runs gingen door tot 20,5M tokens in drie dagen. `log_llm_usage`
+    logt alleen; remmen doet uitsluitend `require_llm_budget`.
+    """
+    import pytest
+    from backend.shared import outcomes
+    from backend.domains.gauntlet import service as gs
+
+    monkeypatch.setattr(outcomes, "llm_budget_exceeded", lambda: True)
+
+    with pytest.raises(outcomes.BudgetExceeded):
+        gs.spawn_gauntlet(objective="Herschrijf iets duurs", benchmark="BENCHMARK = x")
+
+
+def test_geweigerde_run_laat_geen_lege_rij_achter(monkeypatch):
+    """De guard staat vóór _create_run: geen spookrun in gauntlet_runs."""
+    import pytest
+    from backend.shared import outcomes
+    from backend.domains.gauntlet import service as gs
+
+    voor = len(gs.list_runs(limit=200))
+    monkeypatch.setattr(outcomes, "llm_budget_exceeded", lambda: True)
+    with pytest.raises(outcomes.BudgetExceeded):
+        gs.spawn_gauntlet(objective="Nog iets duurs", benchmark="BENCHMARK = x")
+
+
+# ── Merkbrief-scoping + anti-verzinsel (19 aug 2026, Bijeen) ─────────────────
+# get_brand_brief() werd zonder project aangeroepen, dus schreef ELKE Gauntlet-
+# run "als Vincent van Munster (WeAreImpact), eerste persoon". Voor Bijeen
+# verzon het model daaronder zelf een naam, functie en trackrecord ("als
+# directeur van Stichting de Baan... 180+ vrijwilligers... 70.000+
+# geluksmomenten"). De brief moet nu per project gekozen worden, en de harde
+# feitenregels moeten altijd meegaan — los van welke brief er wint.
+
+def test_brand_brief_alleen_weareimpact_krijgt_vincents_identiteit():
+    from backend.domains.gauntlet import brand_brief as bb
+
+    wai = bb.get_brand_brief("WeAreImpact")
+    bijeen = bb.get_brand_brief("Bijeen")
+    onbekend = bb.get_brand_brief(None)
+
+    assert "Vincent" in wai
+    assert "Vincent" not in bijeen
+    assert "Vincent" not in onbekend
+    # Generiek betekent niet vrijblijvend: het verbod op verzonnen autoriteit
+    # staat er expliciet in, niet alleen impliciet via FEITEN_GRONDWET.
+    assert "verzin" in bijeen.lower()
+
+
+def test_brand_brief_matcht_project_case_en_schrijfwijze_ongevoelig():
+    from backend.domains.gauntlet import brand_brief as bb
+
+    # squash_project: hoofdletters en spaties/leestekens mogen niet uitmaken —
+    # dezelfde storing als de 17-projectnamen-voor-12-projecten-bug (4 aug 2026).
+    assert bb.get_brand_brief("weareimpact") == bb.get_brand_brief("WeAreImpact")
+    assert bb.get_brand_brief("We Are Impact") == bb.get_brand_brief("WeAreImpact")
+
+
+def test_maker_default_verbiedt_rolnaam_in_output_en_bevat_feitenregels():
+    from backend.domains.gauntlet import service as gs
+    from backend.domains.publish.article_writer import FEITEN_GRONDWET
+
+    assert "NOOIT je eigen rolnaam" in gs.MAKER_DEFAULT
+    assert FEITEN_GRONDWET in gs.MAKER_DEFAULT
+
+
+def test_project_from_benchmark_extraheert_project():
+    from backend.domains.gauntlet import service as gs
+
+    assert gs._project_from_benchmark("Herschrijf voor project 'Bijeen': ...") == "Bijeen"
+    assert gs._project_from_benchmark("BENCHMARK = x") is None
+
+
+def test_publish_run_to_wachtrij_wiedt_gelekt_persona_label():
+    """Reproductie van het echte Bijeen-incident: de builder levert een draft
+    met zijn eigen rolnaam als eerste kop. publish_run_to_wachtrij mag dat
+    nooit ongefilterd in content_jobs.blog_html zetten."""
+    from backend.domains.gauntlet import service as gs
+    from backend.domains.publish.content_pipeline import get_job
+    from backend.domains.seo import sites as sites_service
+
+    site = sites_service.create_site({"name": "GauntletTestBijeen"})
+    site_id = site["id"]
+
+    run_id = gs._create_run(
+        objective="Herschrijf artikel X", benchmark="project 'GauntletTestBijeen'",
+        session_id=None, threshold=80, max_iterations=1,
+    )
+    st_id = gs._create_subtask(run_id, 0, "Tool-vergelijker", "Schrijf het artikel")
+    gs._update_subtask(
+        st_id,
+        best_output="## Tool-vergelijker\n\n# Netwerkbijeenkomst organiseren\n\nEcht artikel.",
+        best_score=90, status="passed", iterations_run=1,
+    )
+    gs._update_run(run_id, status="passed", finished_at=gs._now())
+
+    out = gs.publish_run_to_wachtrij(run_id, site_id=site_id, site_name="GauntletTestBijeen")
+    job = get_job(out["job_id"])
+    assert "Tool-vergelijker" not in job["blog_html"]
+    assert "<h1>Netwerkbijeenkomst organiseren</h1>" in job["blog_html"]

@@ -1,6 +1,6 @@
 ---
 name: ictusgo
-description: "IctusGo.nl — GPS Teambuilding met Sociale Impact. Next.js 15, Drizzle ORM, Neon DB. Mission Radar agent volledig aangesloten op Agent OS sinds 8 juli 2026."
+description: "IctusGo.nl — GPS Teambuilding met Sociale Impact. Next.js 15, Drizzle ORM, Neon DB. Mission Radar agent volledig aangesloten op Impact OS sinds 8 juli 2026."
 version: 1.0.0
 tags: [gps, teambuilding, sociale-impact, welzijn, hr, wkr, csrd, hoofddorp, schiphol, ictusgo, seo, aeo]
 ---
@@ -13,7 +13,7 @@ tags: [gps, teambuilding, sociale-impact, welzijn, hr, wkr, csrd, hoofddorp, sch
 - **Code:** `D:\apps\ictusgo\`
 - **5 varianten:** WijkTocht · ImpactSprint · FamilieTocht · JeugdTocht · VoetbalMissie
 - **USP:** Geluksmomenten Score (GMS) — verbinding, betekenis, plezier, groei
-- **Agent OS aansluiting:** project-folder aangemaakt, frontend geregistreerd, Mission Radar watchlist geseed, goals aangemaakt. Sky Scanner pikt IctusGo elke 4u automatisch mee.
+- **Impact OS aansluiting:** project-folder aangemaakt, frontend geregistreerd, Mission Radar watchlist geseed, goals aangemaakt. Sky Scanner pikt IctusGo elke 4u automatisch mee.
 
 ## Merkidentiteit
 - **Toon:** Deskundig, warm, nuchter, B1-niveau. Geen zweverige AI-hype.
@@ -68,4 +68,4 @@ Geseed 8 juli 2026. Drie lagen, exact zoals BVJ:
 ## Kwaliteitsparameters
 - Max 3 auto-AEO-aanvallen per scan (menselijke review-gate op publicatie)
 - Human-in-the-loop: agent publiceert NOOIT automatisch
-- Wekelijkse review in Agent OS dashboard (Radar-tab + Demand Engine)
+- Wekelijkse review in Impact OS dashboard (Radar-tab + Demand Engine)

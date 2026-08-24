@@ -8,7 +8,7 @@
 // Voorbeeld:
 //   node scripts/add-tenant.mjs nicole "WE SHAPE THE FUTURE"
 //
-// Print aan het eind het BRIDGE_TOKEN dat je in de lokale AgentOS-.env van
+// Print aan het eind het BRIDGE_TOKEN dat je in de lokale ImpactOS-.env van
 // die klant moet zetten (agentos_service_<slug>.cmd) — dat token is daarna
 // nergens in leesbare vorm meer op te vragen, alleen zijn hash staat in de
 // database. Opnieuw draaien voor een bestaande slug roteert wachtwoord én
@@ -92,7 +92,7 @@ async function main() {
       password_hash = EXCLUDED.password_hash`;
 
   console.log(`\nTenant '${slug}' (${name}) staat klaar.\n`);
-  console.log('Zet dit in de lokale AgentOS-.env van deze klant (agentos_service_' + slug + '.cmd):');
+  console.log('Zet dit in de lokale ImpactOS-.env van deze klant (agentos_service_' + slug + '.cmd):');
   console.log(`  BRIDGE_TOKEN=${token}`);
   console.log(`  BRIDGE_REMOTE_URL=<jouw Vercel-URL, bv. https://${slug}.<BASE_DOMAIN>>`);
   console.log('\nZonder BASE_DOMAIN in de Vercel-env draait alles nog op DEFAULT_TENANT — pas');

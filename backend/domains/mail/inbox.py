@@ -7,6 +7,7 @@ from email.header import decode_header
 from typing import List, Dict, Optional
 
 from . import bulk
+from . import ticket as ticket_mod
 
 # Afzenders die nooit een antwoord verdienen: nieuwsbrieven / hoster-spamrapporten.
 SPAM_SENDERS = (
@@ -186,6 +187,66 @@ def fetch_new(
         # (het bericht staat al in het geheugen) en het scheelde vijf
         # concept-antwoorden op nieuwsbrieven (1 aug 2026).
         body = _body(msg)
+
+        # Ticket-notificatie van het eigen domein? Ontpak vóór elke
+        # ignore/bulk-check — anders wint 'noreply-afzender' altijd en gaat
+        # de échte klantvraag + het échte antwoordadres verloren (zie
+        # ticket.py: BVJ-0002/BVJ-0003 op Bewaardvoorjou, 13 aug 2026).
+        own_domain = user.split("@", 1)[1] if "@" in user else ""
+        ticket = ticket_mod.unwrap_ticket_notification(subject, body, from_addr, own_domain)
+        if ticket:
+            from_addr = ticket["customer_email"]
+            from_name = ticket["customer_name"]
+            subject = ticket["subject"]
+            body = ticket["question"]
+            cur = conn.execute(
+                "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
+                "classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (mailbox_id, uidl, from_addr, from_name, subject, body, "unknown",
+                 _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"), _hdr(msg, "References"), 0),
+            )
+            out.append({
+                "id": cur.lastrowid,
+                "uidl": uidl,
+                "from_addr": from_addr,
+                "from_name": from_name,
+                "subject": subject,
+                "body_text": body,
+                "message_id": _hdr(msg, "Message-ID"),
+                "in_reply_to": _hdr(msg, "In-Reply-To"),
+                "references": _hdr(msg, "References"),
+                "headers": msg,
+                "_forced_kind": "question",
+            })
+            continue
+
+        # Ruikt naar een ticketmelding maar het velden-sjabloon hierboven
+        # kende het niet (ander project, andere support-tool): hou de body
+        # intact i.p.v. hem straks als 'newsletter' te legen — zie
+        # ticket.looks_like_ticket_notification.
+        if ticket_mod.looks_like_ticket_notification(subject, from_addr, own_domain):
+            cur = conn.execute(
+                "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
+                "classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (mailbox_id, uidl, from_addr, from_name, subject, body, "unknown",
+                 _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"), _hdr(msg, "References"), 0),
+            )
+            out.append({
+                "id": cur.lastrowid,
+                "uidl": uidl,
+                "from_addr": from_addr,
+                "from_name": from_name,
+                "subject": subject,
+                "body_text": body,
+                "message_id": _hdr(msg, "Message-ID"),
+                "in_reply_to": _hdr(msg, "In-Reply-To"),
+                "references": _hdr(msg, "References"),
+                "headers": msg,
+            })
+            continue
+
         bulk_reden = bulk.bulk_reason(msg, from_addr, subject, body)
         if _should_ignore(from_addr, subject, body=body,
                           auto_submitted=auto_sub, headers=msg):

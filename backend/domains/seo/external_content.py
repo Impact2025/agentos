@@ -3,7 +3,7 @@ External content check — voorkomt dat de contentpijplijn een onderwerp kiest
 dat op de site zelf al bestaat.
 
 Sommige sites (Bijeen, Steentjebijsteentje) hebben een eigen CMS/blog buiten
-Agent OS om (los Next.js/Neon-project), dus de eigen `published_pages`-tabel
+Impact OS om (los Next.js/Neon-project), dus de eigen `published_pages`-tabel
 weet niets van wat daar al live staat. Als `sites.external_db_url` is
 ingevuld (een read-only/gewone Postgres-connectiestring naar die site's eigen
 database), halen we hier live de bestaande titels + slugs op zodat de
@@ -41,7 +41,7 @@ def fetch_external_titles(site: Dict) -> List[Dict[str, str]]:
 
 # ── Zero-config fallback: live sitemap van de site zelf ─────────────────────
 # Werkt zonder credentials voor élke live site — vangt content die buiten
-# Agent OS om is gepubliceerd, ook als er geen external_db_url is ingevuld
+# Impact OS om is gepubliceerd, ook als er geen external_db_url is ingevuld
 # (precies het gat waardoor Bijeen een duplicaat-artikel kreeg).
 
 _sitemap_cache: Dict[str, Tuple[float, List[Dict[str, str]]]] = {}

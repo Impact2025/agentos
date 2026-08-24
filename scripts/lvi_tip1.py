@@ -1,5 +1,5 @@
 import json, sys, os
-sys.path.insert(0, r"D:/APPS/agentos")
+sys.path.insert(0, r"D:/APPS/impactos")
 from backend.shared import social_content as sc
 from backend.shared.social_style import load_style
 
@@ -30,7 +30,7 @@ print("\n=== INSTAGRAM ===\n", pack.copy.get("instagram", ""))
 print("\n=== IMAGE BRIEF ===")
 print(json.dumps(pack.image_brief, ensure_ascii=False, indent=2)[:1100])
 # dump full pack to a json for later review
-with open(r"D:/APPS/agentos/scripts/lvi_tip1_out.json", "w", encoding="utf-8") as f:
+with open(r"D:/APPS/impactos/scripts/lvi_tip1_out.json", "w", encoding="utf-8") as f:
     json.dump({
         "id": pack.id, "status": pack.status, "concept": pack.concept,
         "copy": pack.copy, "image_brief": pack.image_brief,

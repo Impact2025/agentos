@@ -1,4 +1,4 @@
-# Agent OS
+# Impact OS
 
 Lokaal AI-mission-control voor Vincents projecten (WeAreImpact, Bijeen, Bewaard voor Altijd, …):
 agents doen het werk — content, SEO, prospecting, vacature-scans, trendradar — en **het
@@ -10,8 +10,8 @@ Actiecentrum** vertelt je wat er is gebeurd, waar de resultaten staan en wat er 
 # Volledig (incl. Hermes-gateway + browser):
 .\launch.ps1
 
-# Alleen de server (achtergrond, logt naar agentos.log):
-.\agentos_service.cmd
+# Alleen de server (achtergrond, logt naar impactos.log):
+.\impactos_service.cmd
 ```
 
 Dashboard: **http://localhost:1250** — de Control Room opent met de inbox
@@ -21,7 +21,7 @@ Dashboard: **http://localhost:1250** — de Control Room opent met de inbox
 
 1. **Wat moet ik doen?** → het Actiecentrum bovenaan de Control Room. Elk item heeft
    één-klik-acties (bevestig/start/publiceer/wijs af); bulk-knoppen bij 3+ wachtende doelen.
-   De browsertab toont `(N) Agent OS` zolang er iets wacht.
+   De browsertab toont `(N) Impact OS` zolang er iets wacht.
 2. **Waar staan de resultaten?** → elke agent-run eindigt met een uitkomst-kaart:
    wat gedaan → artefact-link (vault-pad of live-URL) → volgende stap. Zichtbaar in de
    feed en in het dagelijkse Ochtendrapport (07:00; mailt zodra SMTP in `.env` staat).
@@ -40,6 +40,6 @@ Agents publiceren of versturen **nooit** zelfstandig. Alles wat extern live gaat
 - Frontend: `frontend/js/*.js` — klassieke scripts met gedeelde globale scope,
   laadvolgorde in `index.html` (core eerst, INIT laatst). Geen build-stap.
 - Backend: FastAPI, domain-driven (`backend/domains/<domein>/router.py + service.py`),
-  SQLite (`data/agentos.db`), APScheduler-jobs in `backend/scheduler.py`.
+  SQLite (`data/impactos.db`), APScheduler-jobs in `backend/scheduler.py`.
 - Config: `.env` (zie `.env.example`); schakelaars: `GOAL_USE_CLAUDE`,
-  `STRATEGIST_AUTOSTART`, `AGENTOS_DB_PATH` (tests).
+  `STRATEGIST_AUTOSTART`, `IMPACTOS_DB_PATH` (tests).

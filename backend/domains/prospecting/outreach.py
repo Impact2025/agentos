@@ -217,6 +217,14 @@ def _draft_prompt(lead: Dict[str, Any], variant: Optional[Dict[str, str]] = None
     eisen = style + [
         "Eén laagdrempelige call-to-action (kort kennismakingsgesprek)",
         "AVG-veilig: alleen zakelijke context, geen aannames over personen",
+        # Wetgeving (Telecommunicatiewet art. 11.7 + e-Privacy): elke ongevraagde
+        # B2B-commercial mail MOET de afzender identificeren én een werkende
+        # afmeldmogelijkheid bevatten. De LLM schrijft dit blok daarom altijd,
+        # ook als de gebruiker er niet om vraagt — anders is de mail illegaal.
+        "VERPLICICHT (wetgeving): eindig de mail met een werkende afmeldregel, "
+        "bijv. 'Geen interesse meer in deze mails? Antwoord met 'STOP' en je "
+        "staat uit ons bestand. — Vincent van Munster, WeAreImpact, "
+        "v.munster@weareimpact.nl, 06-14470977'.",
         f"Onderteken met:\n{_SIGNATURE}",
     ]
     # Geleerde lessen (gemeten reply-rates) — leeg blok zolang er niets is.
@@ -232,7 +240,8 @@ def _draft_prompt(lead: Dict[str, Any], variant: Optional[Dict[str, str]] = None
         + "Eisen:\n"
         + "\n".join(f"- {e}" for e in eisen) + "\n\n"
         "Antwoord UITSLUITEND met JSON (geen markdown):\n"
-        '{"subject": "onderwerpregel van max 60 tekens", "body": "de volledige mailtekst"}'
+        '{"subject": "onderwerpregel van max 60 tekens", "body": "de volledige mailtekst '
+        '(inclusief de verplichte afmeldregel aan het eind)"}'
     )
 
 
@@ -378,6 +387,6 @@ async def run_daily_outreach_batch() -> None:
         logger.exception("Dagelijkse outreach-batch gefaald")
         log_outcome(
             "Leads", "outreach_batch", f"Dagelijkse outreach-batch gefaald: {e}",
-            next_step="Bekijk agentos.err en draai de batch handmatig (POST /api/leads/outreach-batch).",
+            next_step="Bekijk impactos.err en draai de batch handmatig (POST /api/leads/outreach-batch).",
             status="error",
         )

@@ -1,0 +1,45 @@
+# Agent-Workforce Spec — IctusGo
+# Gegenereerd: 2026-08-21  (bootstrap.py)
+# Proactiviteit-niveau: 3/5   Budget-tier: cheap
+
+workforce:
+  name: "IctusGo Agent Workforce"
+  orchestrator:
+    name: "Simon"
+    role: "Chief of Staff — routeert taken, escaleert naar mens bij kritieke beslissing"
+    model: "deepseek-v4-flash / qwen3.6-flash (lokale Ollama fallback)"
+    escalation: "mens (Vincent) bij externe writes: GitHub push, e-mail, Stripe, publish"
+  context_engine:
+    name: "AI Diary"
+    source: "D:/APPS/Hermes Brein/Hermes Breind/10_Projects/_ai_diary/AI_DIARY_DIGEST.md"
+    cadence: "dagelijks rollup van spraak/notes"
+  watchdog:
+    name: "Toby"
+    role: "Workforce Watchdog — monitort infra, signaleert frictie vóóraf"
+    script: "D:/APPS/impactos/_hermes_workforce/toby.py"
+  directors:
+    - name: "Simon (Chief of Staff)"
+      model: "deepseek-v4-flash / qwen3.6-flash (lokale Ollama fallback)"
+      proactivity: 3
+      reports_to: "Simon"
+    - name: "Tour Director"
+      model: "deepseek-v4-flash / qwen3.6-flash (lokale Ollama fallback)"
+      proactivity: 3
+      reports_to: "Simon"
+    - name: "QA Director"
+      model: "deepseek-v4-flash / qwen3.6-flash (lokale Ollama fallback)"
+      proactivity: 3
+      reports_to: "Simon"
+    - name: "Toby (Watchdog)"
+      model: "deepseek-v4-flash / qwen3.6-flash (lokale Ollama fallback)"
+      proactivity: 3
+      reports_to: "Simon"
+
+  guardrails:
+    - "Geen externe write zonder orchestrator-go/no-go"
+    - "Proactiviteit-niveau 3: " + ("reactief tot gedefinieerde triggers" if niveau<=2 else "proactief, maar binnen kaders" if niveau<=4 else "volledig proactief — alleen bij verified low-risk")
+    - "Context eerst: laad AI_DIARY_DIGEST vóór strategische actie"
+
+  kanalen: ["Slack", "Obsidian vault", "ImpactOS conveyor"]
+  bottlenecks: ["externe publish zonder go/no-go", "context veroudert snel"]
+  doel: "Autonome AI-workforce die tours genereert, QA'd en publiceert met mens-escalatie bij publish."

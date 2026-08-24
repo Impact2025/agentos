@@ -23,7 +23,7 @@ def _make_site(name="TrendSite", base_url=""):
 
 def _insert_signal(project, keyword, score, status="new", title=None,
                    ai_angle="Unieke invalshoek", ai_hook="Sterke hook",
-                   match=80, url=None):
+                   match=80, url=None, watch_id=""):
     """Eén radarsignaal. `title` draagt het onderwerp — dát wordt het zoekwoord.
 
     `keyword` blijft het gemonitorde watchlist-woord en hoort nadrukkelijk NIET
@@ -37,15 +37,29 @@ def _insert_signal(project, keyword, score, status="new", title=None,
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO radar_signals
-               (id, project, keyword, title, url, source, signal_score,
+               (id, watch_id, project, keyword, title, url, source, signal_score,
                 ai_hook, ai_angle, ai_match_score, status, scanned_at,
                 created_at, updated_at, filter_reason)
-               VALUES (?, ?, ?, ?, ?, 'news', ?, ?, ?, ?, ?, ?, ?, ?, '')""",
-            (sig_id, project, keyword, title if title is not None else keyword,
+               VALUES (?, ?, ?, ?, ?, ?, 'news', ?, ?, ?, ?, ?, ?, ?, ?, '')""",
+            (sig_id, watch_id, project, keyword, title if title is not None else keyword,
              url or f"https://bron.nl/blog/{sig_id}",
              score, ai_hook, ai_angle, match, status, now, now, now),
         )
     return sig_id
+
+
+def _insert_watch(project, wtype, value="merk"):
+    from backend.domains.radar.models import ensure_schema
+    from backend.shared.database import get_conn
+    ensure_schema()
+    wid = str(uuid.uuid4())
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO radar_watchlist (id, project, label, type, value, active, "
+            "last_scanned_at, created_at) VALUES (?, ?, ?, ?, ?, 1, '', datetime('now'))",
+            (wid, project, value, wtype, value),
+        )
+    return wid
 
 
 @pytest.fixture()
@@ -57,6 +71,7 @@ def trend_site():
     with get_conn() as c:
         c.execute("DELETE FROM opportunities WHERE site_id = ?", (site["id"],))
         c.execute("DELETE FROM radar_signals")
+        c.execute("DELETE FROM radar_watchlist WHERE project = ?", (site["name"].lower(),))
     sites_service.delete_site(site["id"])
 
 
@@ -113,6 +128,19 @@ def test_trend_sync_slaat_geweerde_en_onbeoordeelde_signalen_over(trend_site):
         c.execute("UPDATE radar_signals SET filter_reason = 'vacature' WHERE id = ?",
                   (geweerd,))
     _insert_signal("TrendSite", "signaal zonder relevantie oordeel", 90, match=-1)
+    assert trends.sync_trend_opportunities(trend_site)["created"] == 0
+
+
+def test_trend_sync_slaat_merkvermeldingen_over(trend_site):
+    """Een merkvermelding is PR-bewijs ('iemand noemde ons'), geen content-
+    onderwerp. Zonder deze uitsluiting werd een positieve persvermelding een
+    artikelopdracht met de merknaam als zoekwoord — precies het omgekeerde
+    van wat een `brand_mention`-watch beoogt te meten."""
+    from backend.domains.seo import trends
+    wid = _insert_watch("TrendSite", "brand_mention", "WeAreImpact")
+    _insert_signal("TrendSite", "WeAreImpact", 90,
+                   title="WeAreImpact genoemd als koploper AI in sociaal domein",
+                   watch_id=wid)
     assert trends.sync_trend_opportunities(trend_site)["created"] == 0
 
 

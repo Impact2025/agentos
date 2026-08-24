@@ -1,6 +1,6 @@
 # Ad-hoc verification script - token optimizer
 import sys
-sys.path.insert(0, r"D:\APPS\agentos")
+sys.path.insert(0, r"D:\APPS\impactos")
 
 from backend.shared.token_optimizer import strip_context_noise, truncate_to_token_budget, deduplicate_context, estimate_savings, optimize_prompt_messages
 

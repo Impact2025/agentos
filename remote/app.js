@@ -74,7 +74,7 @@
 
   // Een pilletje in de kopregel is te weinig waarschuwing: 32 kaarten van een
   // week oud zien er exact zo uit als 32 verse. Bij een oude push zeggen we in
-  // de lijst zélf hoe oud de stand is en dat besluiten pas landen zodra AgentOS
+  // de lijst zélf hoe oud de stand is en dat besluiten pas landen zodra ImpactOS
   // weer draait — die blijven namelijk gewoon werken, ze wachten alleen.
   function setStaleness(lastPush, age) {
     const dot = document.querySelector('#view-inbox .status-dot');
@@ -87,8 +87,8 @@
     info.hidden = false;
     info.className = 'font-body-md text-body-md stale-note';
     info.textContent = lastPush
-      ? `Bevroren stand van ${fmtDate(lastPush)} — AgentOS synct niet. Je besluiten blijven in de wachtrij staan en worden uitgevoerd zodra de verbinding terug is.`
-      : 'Nog nooit gesynchroniseerd — AgentOS heeft deze cloud nog niet bereikt.';
+      ? `Bevroren stand van ${fmtDate(lastPush)} — ImpactOS synct niet. Je besluiten blijven in de wachtrij staan en worden uitgevoerd zodra de verbinding terug is.`
+      : 'Nog nooit gesynchroniseerd — ImpactOS heeft deze cloud nog niet bereikt.';
   }
 
   function spinSync(on) {
@@ -281,7 +281,7 @@
       failedTxt = it.summary.length > 60 ? it.summary.slice(0, 57) + '…' : it.summary;
     }
     const map = {
-      pending: ['schedule', 'bdg pending', 'Wacht op AgentOS-sync'],
+      pending: ['schedule', 'bdg pending', 'Wacht op ImpactOS-sync'],
       applied: ['check_circle', 'bdg applied', it.decision_result || 'Uitgevoerd'],
       failed: ['warning', 'bdg failed', failedTxt || 'Mislukt — tik voor details'],
     };
@@ -572,7 +572,7 @@
             item_key: it.key, action, payload: payloadFor(it, action),
           });
           if (res.queued) {
-            status.innerHTML = '<span class="text-primary">✓ Besluit vastgelegd — AgentOS voert het uit bij de volgende sync.</span>';
+            status.innerHTML = '<span class="text-primary">✓ Besluit vastgelegd — ImpactOS voert het uit bij de volgende sync.</span>';
             toast('Besluit vastgelegd', 'ok', 'check_circle');
           } else {
             status.innerHTML = '<span class="text-warn">Al vastgelegd — staat nog in de wachtrij.</span>';
@@ -1147,18 +1147,18 @@
     if (!lastPushAt) {
       el.innerHTML = `<div class="flex items-start gap-2 text-warn font-body-md text-body-md">
         <span class="material-symbols-outlined text-[18px] mt-0.5">warning</span>
-        <span>${label} — AgentOS heeft nog nooit gesynchroniseerd. Controleer of de lokale machine draait.</span></div>`;
+        <span>${label} — ImpactOS heeft nog nooit gesynchroniseerd. Controleer of de lokale machine draait.</span></div>`;
       return;
     }
     const age = Math.round((Date.now() - new Date(lastPushAt)) / 60000);
     if (age < 180) {
       el.innerHTML = `<div class="flex items-start gap-2 text-on-surface-variant font-body-md text-body-md">
         <span class="material-symbols-outlined text-[18px] mt-0.5 text-primary">schedule</span>
-        <span>${label} — AgentOS haalt ze elke ~3 min op, laatste sync ${age < 1 ? 'net' : `${age}m geleden`}.</span></div>`;
+        <span>${label} — ImpactOS haalt ze elke ~3 min op, laatste sync ${age < 1 ? 'net' : `${age}m geleden`}.</span></div>`;
     } else {
       el.innerHTML = `<div class="flex items-start gap-2 text-warn font-body-md text-body-md">
         <span class="material-symbols-outlined text-[18px] mt-0.5">warning</span>
-        <span>${label} — AgentOS lijkt al ${Math.round(age / 60)}u offline. Ze staan veilig te wachten en landen zodra de machine terug is.</span></div>`;
+        <span>${label} — ImpactOS lijkt al ${Math.round(age / 60)}u offline. Ze staan veilig te wachten en landen zodra de machine terug is.</span></div>`;
     }
   }
 
@@ -1230,7 +1230,7 @@
       if (!r) {
         el.innerHTML = `<div class="glass-panel rounded-xl p-10 text-center">
           <span class="material-symbols-outlined text-primary text-4xl mb-2">cloud_off</span>
-          <p class="font-body-lg text-body-lg text-on-surface-variant">Nog geen context gesynchroniseerd.<br>Draait AgentOS?</p></div>`;
+          <p class="font-body-lg text-body-lg text-on-surface-variant">Nog geen context gesynchroniseerd.<br>Draait ImpactOS?</p></div>`;
         return;
       }
       ritualsCache = r;
@@ -1450,7 +1450,7 @@
               <h3 class="font-headline-sm text-headline-sm">Sync status</h3>
               <div class="flex items-center gap-2 mt-1">
                 <span class="status-dot ${online ? 'pulse' : 'offline'}"></span>
-                <p class="font-body-md text-body-md text-on-surface-variant">Lokale AgentOS-bridge:
+                <p class="font-body-md text-body-md text-on-surface-variant">Lokale ImpactOS-bridge:
                   <span class="${online ? 'text-primary' : 'text-error'} font-medium">${online ? 'Online' : 'Offline / uit'}</span></p>
               </div>
             </div>
@@ -1469,7 +1469,7 @@
             <div class="glass-panel rounded-xl p-6 fade-up">
               <div class="flex items-center gap-2">
                 <span class="material-symbols-outlined text-on-surface-variant">calendar_month</span>
-                <p class="font-body-md text-body-md text-on-surface-variant">Live agenda/GSC: nog niet gekoppeld — komt automatisch mee bij de eerstvolgende sync zodra AgentOS een Google-agenda heeft.</p>
+                <p class="font-body-md text-body-md text-on-surface-variant">Live agenda/GSC: nog niet gekoppeld — komt automatisch mee bij de eerstvolgende sync zodra ImpactOS een Google-agenda heeft.</p>
               </div>
             </div>`;
         } else {
@@ -1521,7 +1521,7 @@
   }
 
   // ── Iris-onboarding-wizard ───────────────────────────────────────────────
-  // Verhuisd hierheen vanaf de lokale AgentOS-SPA (localhost:1250, onbereik-
+  // Verhuisd hierheen vanaf de lokale ImpactOS-SPA (localhost:1250, onbereik-
   // baar voor een klant zoals Nicole) — zie backend/domains/bridge/context.py:
   // build_onboarding voor de databron en backend/domains/bridge/actions.py:
   // _cmd_onboarding_* voor wat er met een ingediende stap gebeurt. Alles hier
@@ -1604,10 +1604,10 @@
   }
 
   $('onboardingNewBtn').onclick = async () => {
-    const name = prompt('Naam van de nieuwe klant (zoals hij overal in Agent OS moet heten):');
+    const name = prompt('Naam van de nieuwe klant (zoals hij overal in Impact OS moet heten):');
     if (!name || !name.trim()) return;
     await sendCommand('onboarding_new_client', { name: name.trim() }, name.trim());
-    toast('Verschijnt hieronder zodra AgentOS gesynchroniseerd heeft.', '', 'hourglass_top');
+    toast('Verschijnt hieronder zodra ImpactOS gesynchroniseerd heeft.', '', 'hourglass_top');
   };
 
   $('onboardingBack').onclick = () => show('system');
@@ -1861,7 +1861,7 @@
     if (!site) return;
     if (q.get('connecting')) {
       onbNotice = { step: String(step), kind: 'connecting',
-        text: `Bezig met koppelen — dit duurt tot een paar minuten (wacht op de volgende AgentOS-sync).` };
+        text: `Bezig met koppelen — dit duurt tot een paar minuten (wacht op de volgende ImpactOS-sync).` };
     } else if (q.get('connect_error')) {
       onbNotice = { step: String(step), kind: 'error', text: `Koppelen mislukt: ${q.get('connect_error')}` };
     }
@@ -2034,7 +2034,7 @@
   }
 
   // `live`: opgehaald rechtstreeks bij Google (api/_google.js), dus actueel
-  // óók als AgentOS niet draait — i.t.t. de rest van het scherm, dat uit de
+  // óók als ImpactOS niet draait — i.t.t. de rest van het scherm, dat uit de
   // laatste bridge_sync-snapshot komt. Zonder dit onderscheid ziet een verse
   // live-agenda er identiek uit aan een agenda van drie dagen geleden, en dat
   // is precies het soort onzichtbaar verschil dat vertrouwen kost.
@@ -2268,7 +2268,7 @@
   // waar de vraag gevolgen heeft: offerte/afspraak/klacht/persoonsgegevens) —
   // zie backend `_customer_core.js`. Bewust een eigen, simpel paneel i.p.v.
   // het sync_items-mechanisme van de rest van deze pagina: dat wordt bij elke
-  // bridge_sync-push volledig overschreven door wat AgentOS lokaal aanlevert,
+  // bridge_sync-push volledig overschreven door wat ImpactOS lokaal aanlevert,
   // en een WhatsApp-escalatie ontstaat rechtstreeks in Neon — hij zou binnen
   // een paar minuten weer verdwijnen. Antwoorden gaat dan ook niet via
   // `decide` (dat wacht op de eerstvolgende sync) maar rechtstreeks naar Meta
@@ -2708,7 +2708,7 @@
       if (!ctx) {
         el.innerHTML = `<div class="glass-panel rounded-xl p-10 text-center">
           <span class="material-symbols-outlined text-primary text-4xl mb-2">cloud_off</span>
-          <p class="font-body-lg text-body-lg text-on-surface-variant">Nog geen context gesynchroniseerd.<br>Draait AgentOS?</p></div>`;
+          <p class="font-body-lg text-body-lg text-on-surface-variant">Nog geen context gesynchroniseerd.<br>Draait ImpactOS?</p></div>`;
         return;
       }
       contextCache = ctx;
@@ -2748,7 +2748,7 @@
           const wanneer = lastPushAt
             ? (syncAgeMin < 180 ? `${syncAgeMin}m geleden` : syncAgeMin < 1440 ? `${Math.round(syncAgeMin / 60)}u geleden` : `${Math.round(syncAgeMin / 1440)}d geleden`)
             : 'nog nooit';
-          queueNote.textContent = `⏳ ${pendingOutbox} actie${pendingOutbox === 1 ? '' : 's'} wacht${pendingOutbox === 1 ? '' : 'en'} op AgentOS — laatst gesynct ${wanneer}.`;
+          queueNote.textContent = `⏳ ${pendingOutbox} actie${pendingOutbox === 1 ? '' : 's'} wacht${pendingOutbox === 1 ? '' : 'en'} op ImpactOS — laatst gesynct ${wanneer}.`;
           queueNote.classList.remove('hidden');
         } else {
           queueNote.classList.add('hidden');
@@ -2947,7 +2947,7 @@
         btn.disabled = true;
         try {
           const r = await api('decide', 'POST', { item_key: p.item_key, action: p.action, payload: {} });
-          btn.textContent = r.queued ? '✓ Vastgelegd — AgentOS voert het uit' : 'Stond al in de wachtrij';
+          btn.textContent = r.queued ? '✓ Vastgelegd — ImpactOS voert het uit' : 'Stond al in de wachtrij';
           toast('Besluit vastgelegd', 'ok', 'check_circle');
           refresh();
         } catch (e) {

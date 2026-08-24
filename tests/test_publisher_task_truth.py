@@ -53,7 +53,7 @@ def _task_row(task_id="tp1"):
 def test_publisher_zonder_publiceerbaar_artikel_faalt(clean_tables, monkeypatch):
     from backend.domains.goal import service
 
-    async def _niets(goal_id, task_title, project):
+    async def _niets(goal_id, task_title, project, task_id=""):
         return None, "geen publiceerbaar artikel in dit doel"
 
     monkeypatch.setattr(service, "_stage_to_wachtrij", _niets)
@@ -74,7 +74,7 @@ def test_publisher_faalt_zonder_retry_of_alternatief(clean_tables, monkeypatch):
 
     geroepen = {"alt": 0}
 
-    async def _niets(goal_id, task_title, project):
+    async def _niets(goal_id, task_title, project, task_id=""):
         return None, "kwaliteitsgate niet gehaald (78/100)"
 
     async def _alt(*a, **kw):
@@ -98,7 +98,7 @@ def test_publisher_met_gestaged_artikel_slaagt(clean_tables, monkeypatch):
     De review-gate blijft staan: er is niets live gezet."""
     from backend.domains.goal import service
 
-    async def _gestaged(goal_id, task_title, project):
+    async def _gestaged(goal_id, task_title, project, task_id=""):
         return ("job-123", "Vier microgewoontes", 86), ""
 
     monkeypatch.setattr(service, "_stage_to_wachtrij", _gestaged)

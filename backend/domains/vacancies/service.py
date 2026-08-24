@@ -198,6 +198,7 @@ class VacancyService:
             model_override=model_override,
             use_tools=False,
             max_tokens=700,
+            purpose="vacancies-fit",
         ):
             if ev.get("type") == "text":
                 chunks.append(ev["text"])

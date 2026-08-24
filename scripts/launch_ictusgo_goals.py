@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Lanceer 3 serieuze IctusGo-doelen in Agent OS (plan -> confirm -> start).
+"""Lanceer 3 serieuze IctusGo-doelen in Impact OS (plan -> confirm -> start).
 
 Stap 1 plant (Hermes-decompositie), toont het plan, bevestigt het en start de
 achtergrond-executie-loop. Doelen zijn bewust multi-tool (research, seo,
 analyst, content-writer, publisher->Wachtrij, outreach) zodat de agent alle
-pijlers van Agent OS benut.
+pijlers van Impact OS benut.
 """
 import json
 import time

@@ -1,4 +1,4 @@
-// Headless test van tour.js via jsdom — simuleert de AgentOS SPA-omgeving.
+// Headless test van tour.js via jsdom — simuleert de ImpactOS SPA-omgeving.
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
@@ -87,9 +87,9 @@ function buildProjectDashboard(window) {
 
   // 3) toggle aan/uit
   window.setTourEnabled(false);
-  console.log('TEST 3 setTourEnabled(false) stored:', window.localStorage.getItem('agentos.tour.enabled'));
+  console.log('TEST 3 setTourEnabled(false) stored:', window.localStorage.getItem('impactos.tour.enabled'));
   window.setTourEnabled(true);
-  console.log('TEST 3 setTourEnabled(true) stored:', window.localStorage.getItem('agentos.tour.enabled'));
+  console.log('TEST 3 setTourEnabled(true) stored:', window.localStorage.getItem('impactos.tour.enabled'));
 
   // 4) settings HTML bevat toggle + start-knop
   const settingsHtml = window.renderTourSettings();

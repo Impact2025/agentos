@@ -1,5 +1,5 @@
 {
   "to": "chat@weareimpact.nl",
-  "subject": "Testmail AgentOS outreach-pijplijn",
-  "body_html": "Dit is een testmail vanuit AgentOS via de Outlook/Graph API.<br><br>Als je deze mail ontvangt in chat@weareimpact.nl, werkt de outreach-verzending (device-code flow + sendMail).<br><br>Vincent van Munster<br>WeAreImpact<br>v.munster@weareimpact.nl"
+  "subject": "Testmail ImpactOS outreach-pijplijn",
+  "body_html": "Dit is een testmail vanuit ImpactOS via de Outlook/Graph API.<br><br>Als je deze mail ontvangt in chat@weareimpact.nl, werkt de outreach-verzending (device-code flow + sendMail).<br><br>Vincent van Munster<br>WeAreImpact<br>v.munster@weareimpact.nl"
 }

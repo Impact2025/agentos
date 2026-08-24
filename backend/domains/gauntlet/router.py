@@ -110,16 +110,29 @@ def record_verdict(run_id: str, body: GauntletVerdict):
 
 class GauntletPublish(BaseModel):
     site_id: Optional[str] = None
+    site_name: Optional[str] = None   # Orchestrator stuurt de project-naam; wordt naar site_id vertaald
+    title: Optional[str] = None       # echte titel i.p.v. de vage objective
+    keyword: Optional[str] = None
+    slug: Optional[str] = None
 
 
 @router.post("/{run_id}/publish")
 def publish_gauntlet(run_id: str, body: Optional[GauntletPublish] = None):
     """Publish-gate: zet een PASSED/partial Gauntlet-run om in een content_job.
 
-    Blokkeert als de blinde criticus de benchmark niet haalde (zie service.publish_to_weareimpact).
+    Blokkeert als de blinde criticus de benchmark niet haalde (zie service.publish_run_to_wachtrij).
     """
     try:
-        site_id = body.site_id if body else None
-        return gauntlet_service.publish_to_weareimpact(run_id, site_id=site_id)
+        site_id = site_name = title = keyword = slug = None
+        if body:
+            site_id = body.site_id
+            site_name = body.site_name
+            title = body.title
+            keyword = body.keyword
+            slug = body.slug
+        return gauntlet_service.publish_run_to_wachtrij(
+            run_id, site_id=site_id, site_name=site_name,
+            title=title, keyword=keyword, slug=slug,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

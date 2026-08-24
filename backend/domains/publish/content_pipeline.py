@@ -321,7 +321,7 @@ def select_topic(site: Dict) -> Optional[Dict]:
     geen kansen klaarstaan (bijv. nog geen scan gedraaid, of alles al in gebruik).
 
     Kansen die overlappen met content die al écht op de site staat (via
-    `external_db_url`, buiten Agent OS' eigen `published_pages` om) worden
+    `external_db_url`, buiten Impact OS' eigen `published_pages` om) worden
     overgeslagen en op 'dismissed' gezet i.p.v. verspild te worden aan een
     dubbel artikel.
 
@@ -333,7 +333,7 @@ def select_topic(site: Dict) -> Optional[Dict]:
     if not kansen:
         return None
     # Externe CMS-DB (indien geconfigureerd) + live sitemap (zero-config) —
-    # zodat ook content die buiten Agent OS om is gepubliceerd meetelt.
+    # zodat ook content die buiten Impact OS om is gepubliceerd meetelt.
     external_titles = external_content_service.fetch_all_known_content(site)
     try:
         demand_quality.annotate(kansen, site)
@@ -442,7 +442,7 @@ async def _write_article(site: Dict, keyword: str, angle: str, rationale: str) -
     # HERMES-context: als de vault-context hierboven leeg viel (geen PROJECT_CORE/
     # SCHRIJF-DNA via VaultReader), gebruik dan Vincent's Hermes-skills + de
     # vault SCHRIJF-DNA-note als robuuste, projectbewuste aanvulling. Opt-in via
-    # AGENTOS_USE_HERMES_SKILLS. Nooit een crash, lege context = geen effect.
+    # IMPACTOS_USE_HERMES_SKILLS. Nooit een crash, lege context = geen effect.
     hermes_ctx = build_hermes_context(project_name)
     if hermes_ctx:
         write_system += f"\n\n{hermes_ctx}"
@@ -2550,7 +2550,7 @@ _PLAN_DOC_MARKERS = (
 )
 
 # Test-artefacten. Een titel die zegt dat hij een test is, is er een — en die
-# hoort niet op de site van een klant. 'Agent OS end-to-end publicatietest'
+# hoort niet op de site van een klant. 'Impact OS end-to-end publicatietest'
 # stond tot 1 aug 2026 als publicatiepoging in de historie: hij haalde de
 # kwaliteitsgate niet als bezwaar tegen (het is technisch prima proza) en er
 # was geen enkele regel die zei dat het een proefrit was.
@@ -2559,7 +2559,7 @@ _PLAN_DOC_MARKERS = (
 _TEST_ARTIFACT_MARKERS = (
     "publicatietest", "publicatie-test", "testartikel", "test artikel",
     "testpublicatie", "end-to-end", "end to end", "e2e", "smoke test",
-    "lorem ipsum", "dummy-artikel", "dummy artikel", "agent os", "agentos",
+    "lorem ipsum", "dummy-artikel", "dummy artikel", "agent os", "impactos",
 )
 
 # Redactionele werktitels: de versie-aanduiding waarmee een mens zijn eigen
@@ -2577,7 +2577,7 @@ _WORKING_TITLE_MARKERS = (
 # Zinsneden die verraden dat de tekst over het eigen werkproces gaat in plaats
 # van over het onderwerp van de site.
 _INTERNAL_BODY_MARKERS = (
-    "agent os", "agentos", "wachtrij", "content_jobs", "seo-score",
+    "agent os", "impactos", "wachtrij", "content_jobs", "seo-score",
     "deze goal", "deze taak", "de agent", "onze website aanpassen",
     "pagina's aanpassen", "implementatieplan", "sprint", "ticket",
 )
@@ -2741,7 +2741,7 @@ async def _verify_live_once(url: str) -> Optional[str]:
         return None
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-            headers = {"User-Agent": "AgentOS-publish-check"}
+            headers = {"User-Agent": "ImpactOS-publish-check"}
             resp = await client.get(url, headers=headers)
             if resp.status_code != 200:
                 return f"live-controle: {url} gaf HTTP {resp.status_code}"
@@ -2754,7 +2754,7 @@ async def _verify_live_once(url: str) -> Optional[str]:
             # een URL die gegarandeerd niet bestaat: lijken de antwoorden op
             # elkaar, dan rendert het artikel niet.
             base, _, _ = url.rpartition("/")
-            probe_url = f"{base}/agentos-bestaat-niet-{uuid.uuid4().hex[:12]}"
+            probe_url = f"{base}/impactos-bestaat-niet-{uuid.uuid4().hex[:12]}"
             try:
                 probe = await client.get(probe_url, headers=headers)
             except Exception:
@@ -2855,7 +2855,7 @@ async def _publish_to_project_site(site: Dict, title: str, html_body: str,
                 _nl = _d.strftime("%d-%m-%Y")
             except Exception:
                 _nl = created
-            _date_line = (f'<p class="agentos-published-on" style="color:#94a3b8;font-size:0.85rem;'
+            _date_line = (f'<p class="impactos-published-on" style="color:#94a3b8;font-size:0.85rem;'
                           f'margin:0 0 1em">Gepubliceerd op {_nl}</p>')
             if "<h1" in html_body:
                 html_body = re.sub(r"(<h1[^>]*>)", _date_line + r"\1", html_body, count=1, flags=re.I)
@@ -2985,9 +2985,9 @@ async def unpublish_from_project_site(site: Dict, slug: str, reason: str = "") -
     """Haal een gepubliceerd artikel OFFLINE via {PREFIX}_PUBLISH_URL → /api/unpublish.
 
     Aanleiding (04-08-2026): twee artikelen met verzonnen bedrijfsnamen en
-    verzonnen pilotprijzen over echt bestaande partijen stonden live. AgentOS
+    verzonnen pilotprijzen over echt bestaande partijen stonden live. ImpactOS
     kon ze afkeuren in de eigen database, maar niet van de site halen — de
-    actiekaart zei letterlijk "AgentOS kan niet depubliceren, de pagina staat
+    actiekaart zei letterlijk "ImpactOS kan niet depubliceren, de pagina staat
     nog live". Een reputatierisico dat op de gebruiker werd afgeschoven.
 
     De site zet de post op status 'draft' (geen harde delete), zodat de tekst
@@ -3454,7 +3454,7 @@ async def approve_and_publish(job_id: str,
     else:
         if social_copy.get("linkedin") and _wants("linkedin") and linkedin_service.is_configured(site_name):
             # VIN EXPLICIT BLOCK (2026-08-24): sites met block_linkedin=1 mogen
-            # NOOIT via AgentOS op LinkedIn gepost worden — niet eens als de
+            # NOOIT via ImpactOS op LinkedIn gepost worden — niet eens als de
             # reviewer 'linkedin' handmatig aanvinkt. Deze check hier is de
             # harde stop; is_configured() leunt wel al uit als de override in de
             # sites-tabel ontbreekt.
@@ -3577,7 +3577,7 @@ def reject_job(job_id: str) -> None:
     # wereld: de pagina blijft staan en verdwijnt tegelijk uit élk overzicht,
     # want in de Wachtrij en de tellingen is hij netjes afgewezen. Zo stonden op
     # 2 aug 2026 negen pagina's live met een afgewezen job eronder, waaronder
-    # 'Agent OS end-to-end publicatietest' op de site van een klant. De afwijzing
+    # 'Impact OS end-to-end publicatietest' op de site van een klant. De afwijzing
     # gaat gewoon door (dat is wat de mens bedoelt), maar het depubliceren is
     # werk dat blijft liggen — dus wordt het een beslissing in het Actiecentrum
     # in plaats van een stille statuswijziging.

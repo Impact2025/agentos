@@ -5,7 +5,7 @@ streaks, briefing-context voor Iris).
 
 Overgezet uit impactreis3 (waar dit alleen client-side in localStorage stond).
 Datum-/weeknummerlogica is 1-op-1 overgenomen van weekflow.service.ts, maar nu
-server-side zodat Iris — en een herstart van AgentOS — er zicht op hebben.
+server-side zodat Iris — en een herstart van ImpactOS — er zicht op hebben.
 """
 from __future__ import annotations
 
@@ -100,17 +100,19 @@ class RitualsService:
             conn.execute(
                 """INSERT INTO ritual_evening
                    (date, what_went_well, biggest_win, what_learned, challenges,
-                    energy_level, tomorrow_top3, gratitude, adhd_scores, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    energy_level, tomorrow_top3, gratitude, adhd_scores, focus_check, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(date) DO UPDATE SET
                      what_went_well=excluded.what_went_well, biggest_win=excluded.biggest_win,
                      what_learned=excluded.what_learned, challenges=excluded.challenges,
                      energy_level=excluded.energy_level, tomorrow_top3=excluded.tomorrow_top3,
-                     gratitude=excluded.gratitude, adhd_scores=excluded.adhd_scores""",
+                     gratitude=excluded.gratitude, adhd_scores=excluded.adhd_scores,
+                     focus_check=excluded.focus_check""",
                 (date, data.get("whatWentWell", ""), data.get("biggestWin", ""),
                  data.get("whatLearned", ""), data.get("challenges", ""),
                  int(data.get("energyLevel", 5)), json.dumps(data.get("tomorrowTop3", [])),
-                 data.get("gratitude", ""), json.dumps(data.get("adhdScores", {})), _now()),
+                 data.get("gratitude", ""), json.dumps(data.get("adhdScores", {})),
+                 json.dumps(data.get("focusCheck", [])), _now()),
             )
         return self.get_evening(date) or {}
 
@@ -119,7 +121,22 @@ class RitualsService:
             row = conn.execute("SELECT * FROM ritual_evening WHERE date = ?", (date,)).fetchone()
         if not row:
             return None
-        return _parse_json_fields(_row_to_dict(row), ["tomorrow_top3", "adhd_scores"])
+        return _parse_json_fields(_row_to_dict(row), ["tomorrow_top3", "adhd_scores", "focus_check"])
+
+    def get_morning_focus_blocks(self, date: str) -> List[Dict[str, Any]]:
+        """Focusblokken van de ochtend van `date`, alleen de ingevulde — voor de
+        avond-terugkoppeling ("is focusblok 1 gelukt?"). Geen ochtend of een
+        leeg blok levert een lege lijst, nooit een placeholder-vraag over niets."""
+        morning = self.get_morning(date)
+        if not morning:
+            return []
+        out = []
+        for key in ("focus_blok1", "focus_blok2"):
+            blok = morning.get(key) or {}
+            onderwerp = (blok.get("onderwerp") or "").strip()
+            if onderwerp:
+                out.append({"onderwerp": onderwerp})
+        return out
 
     # ----------------------------------------------------------- weekly start
     def save_weekly_start(self, year: int, week: int, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -349,6 +366,19 @@ class RitualsService:
     def get_recent_wins(self, limit: int = 5) -> List[Dict[str, Any]]:
         return self.list_wins(limit=limit)
 
+    def get_focus_completion(self, date: str) -> Optional[Dict[str, Any]]:
+        """Hoeveel van de ochtend-focusblokken zijn 's avonds als 'gelukt' afgevinkt.
+        None (niet 0) zolang er geen avondritueel is — 'nog niet afgesloten' is
+        iets anders dan 'niets gehaald'."""
+        evening = self.get_evening(date)
+        if evening is None:
+            return None
+        checks = evening.get("focus_check") or []
+        if not checks:
+            return None
+        done = sum(1 for c in checks if c.get("done"))
+        return {"total": len(checks), "done": done}
+
     def get_open_goals(self) -> List[Dict[str, Any]]:
         return self.list_goals(include_completed=False)
 
@@ -357,7 +387,7 @@ class RitualsService:
         """Bepaalt het volgende verplichte ritueel op basis van dag-type en een
         17:00-time-gate. Server-side vertaling van weekflow.service.ts uit
         impactreis3 (daar draaide dit client-side op localStorage, dus de gate
-        was onzichtbaar voor AgentOS/Iris). Retourneert exact dezelfde shape als
+        was onzichtbaar voor ImpactOS/Iris). Retourneert exact dezelfde shape als
         `getNextRequiredRitual()` in impactreis3:
 
           {path, title, isRequired, isAvailable, reason}
@@ -435,6 +465,7 @@ class RitualsService:
             "recent_wins": [{"title": w["title"], "date": w["date"]} for w in wins],
             "open_goals": [{"title": g["title"], "progress": g["progress"]} for g in goals],
             "energy_today": (evening or morning or {}).get("energy_level"),
+            "focus_completion_today": self.get_focus_completion(status["date"]),
         }
 
 

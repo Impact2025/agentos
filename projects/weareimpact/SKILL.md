@@ -25,7 +25,7 @@ projects/weareimpact/
 └── SEO/                     ← SEO-analyses, concurrentie, content
 ```
 
-## Dashboard data (via AgentOS frontend)
+## Dashboard data (via ImpactOS frontend)
 - **GSC:** sc-domain:weareimpact.nl
 - **Indexatie:** Aantal geïndexeerde pagina's uit GSC
 - **Posities:** Gemiddelde posities per query

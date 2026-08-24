@@ -6,7 +6,7 @@ server wel overleeft maar in deze isolated test faalt).
 Dit script raakt de live :1250 server NIET. Start het en curl de endpoints.
 """
 import sys
-sys.path.insert(0, r"D:\APPS\agentos")
+sys.path.insert(0, r"D:\APPS\impactos")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

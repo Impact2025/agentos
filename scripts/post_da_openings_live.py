@@ -34,7 +34,7 @@ async def post_with_photo(pack_id, client):
     return False, str(r.json().get("error", {}).get("message", ""))[:100]
 
 async def main():
-    c = sqlite3.connect("data/agentos.db")
+    c = sqlite3.connect("data/impactos.db")
     results = []
     async with httpx.AsyncClient() as client:
         for pack_id in PACKS:

@@ -1,4 +1,4 @@
-// ── Agent OS — Rituelen: ochtend/avond, week, wins, doelen, focus ──
+// ── Impact OS — Rituelen: ochtend/avond, week, wins, doelen, focus ──
 // Onderdeel van de SPA: klassieke scripts, gedeelde globale scope.
 // Overgezet uit impactreis3 (Next.js/Neon, alleen localStorage) naar een
 // eigen backend-domein (backend/domains/rituals) zodat Iris meekijkt.
@@ -28,12 +28,18 @@ function _ritBadge(done, label) {
 }
 
 function renderRituelenOverview(el, status, wins, goals) {
-  var today = status.today || {}, streaks = status.streaks || {};
+  var today = status.today || {}, streaks = status.streaks || {}, focus = status.focus_completion;
+  var focusBadge = '';
+  if (focus) {
+    var pillClass = focus.done === focus.total ? 'pill-ok' : (focus.done === 0 ? 'pill-danger' : 'pill-warn');
+    focusBadge = '<span class="pill ' + pillClass + '">Focus ' + focus.done + '/' + focus.total + ' gehaald</span>';
+  }
   var html = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">' +
     _ritBadge(today.morning_done, 'Ochtend') +
     _ritBadge(today.evening_done, 'Avond') +
     _ritBadge(today.weekly_start_done, 'Weekstart') +
     _ritBadge(today.weekly_review_done, 'Weekreview') +
+    focusBadge +
     '<span style="font-size:11px;color:var(--accent);font-weight:600;margin-left:4px">' +
     (streaks.morning || 0) + 'd ochtend · ' + (streaks.evening || 0) + 'd avond</span></div>';
 
@@ -88,47 +94,81 @@ function renderRituelenOverview(el, status, wins, goals) {
   el.innerHTML = html;
 }
 
+// ── Gedeelde bouwstenen (professioneel formulier i.p.v. losse inline-styles) ──
+function _ritualPanelHeader(icon, title) {
+  return '<div style="display:flex;align-items:center;gap:8px;padding:16px 16px 0;margin-bottom:2px">' +
+    '<span style="font-size:16px">' + icon + '</span>' +
+    '<div style="font-size:13px;font-weight:700;color:var(--text)">' + escHtml(title) + '</div></div>';
+}
+
+function _ritualScaleField(id, label, value, defVal) {
+  var v = value || defVal;
+  return '<div class="ritual-field"><label>' + escHtml(label) + '</label>' +
+    '<div class="ritual-scale">' +
+    '<input type="range" min="1" max="10" id="' + id + '" value="' + v + '" ' +
+    'oninput="document.getElementById(\'' + id + '-val\').textContent=this.value">' +
+    '<span class="ritual-scale-val" id="' + id + '-val">' + v + '</span></div></div>';
+}
+
+function _ritualListField(idPrefix, label, values, placeholder, count) {
+  count = count || 3;
+  var vals = values && values.length ? values : new Array(count).fill('');
+  var rows = [];
+  for (var i = 0; i < count; i++) {
+    rows.push('<div class="ritual-list-item"><span class="ritual-list-num">' + (i + 1) + '</span>' +
+      '<input id="' + idPrefix + i + '" value="' + escAttr(vals[i] || '') + '" placeholder="' + escAttr(placeholder) + '"></div>');
+  }
+  return '<div class="ritual-field"><label>' + escHtml(label) + '</label>' +
+    '<div class="ritual-list">' + rows.join('') + '</div></div>';
+}
+
+function _ritualFooter(saveFn, inGate) {
+  var back = inGate ? '' : '<button onclick="loadRituelenSection()" class="btn btn-ghost">Terug</button>';
+  return '<div class="ritual-footer" style="justify-content:flex-end">' + back +
+    '<button onclick="' + saveFn + '()" class="btn btn-primary">Opslaan &amp; verder</button></div>';
+}
+
 // ── Ochtendritueel ──────────────────────────────────────────────────
-function showMorningForm() {
+function showMorningForm(inGate) {
   var el = document.getElementById('rituelen-panel');
   if (!el) return;
-  el.innerHTML = '<div style="color:#64748b">Laden...</div>';
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Laden...</div>';
   fetch('/api/rituals/morning').then(function (r) { return r.json(); }).then(function (d) {
     d = d || {};
     var dank = d.dankbaarheid && d.dankbaarheid.length ? d.dankbaarheid : ['', '', ''];
     var fb1 = d.focus_blok1 || {}, fb2 = d.focus_blok2 || {};
     el.innerHTML =
-      '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Ochtendritueel &mdash; vandaag</div>' +
-      '<label style="font-size:11px;color:#64748b">Intentie voor vandaag</label>' +
-      '<textarea id="rit-m-intentie" rows="2" style="width:100%;margin:2px 0 8px;font-size:12px;padding:6px;' +
-      'border:1px solid var(--card-border);border-radius:6px" placeholder="Vandaag focus ik op...">' + escHtml(d.intentie || '') + '</textarea>' +
-      '<div style="display:flex;gap:6px;margin-bottom:8px">' +
-      '<div style="flex:1"><label style="font-size:11px;color:#64748b">Focusblok 1</label>' +
-      '<input id="rit-m-fb1" style="width:100%;font-size:12px;padding:5px;border:1px solid var(--card-border);border-radius:6px" ' +
-      'value="' + escAttr(fb1.onderwerp || '') + '" placeholder="Wat ga ik doen?"></div>' +
-      '<div style="flex:1"><label style="font-size:11px;color:#64748b">Focusblok 2</label>' +
-      '<input id="rit-m-fb2" style="width:100%;font-size:12px;padding:5px;border:1px solid var(--card-border);border-radius:6px" ' +
-      'value="' + escAttr(fb2.onderwerp || '') + '" placeholder="Wat ga ik doen?"></div></div>' +
-      '<div style="display:flex;gap:12px;margin-bottom:8px">' +
-      '<div style="flex:1"><label style="font-size:11px;color:#64748b">Energie (1-10)</label>' +
-      '<input id="rit-m-energy" type="number" min="1" max="10" value="' + (d.energy_level || 7) +
-      '" style="width:100%;font-size:12px;padding:5px;border:1px solid var(--card-border);border-radius:6px"></div>' +
-      '<div style="flex:1"><label style="font-size:11px;color:#64748b">Slaap (1-10)</label>' +
-      '<input id="rit-m-sleep" type="number" min="1" max="10" value="' + (d.sleep_quality || 7) +
-      '" style="width:100%;font-size:12px;padding:5px;border:1px solid var(--card-border);border-radius:6px"></div></div>' +
-      '<label style="font-size:11px;color:#64748b">3× dankbaarheid</label>' +
-      '<div style="display:flex;flex-direction:column;gap:4px;margin:2px 0 8px">' +
-      [0, 1, 2].map(function (i) {
-        return '<input id="rit-m-dank' + i + '" style="width:100%;font-size:12px;padding:5px;border:1px solid var(--card-border);' +
-          'border-radius:6px" value="' + escAttr(dank[i] || '') + '" placeholder="Ik ben dankbaar voor...">';
-      }).join('') + '</div>' +
-      '<label style="font-size:11px;color:#64748b">Affirmatie</label>' +
-      '<textarea id="rit-m-affirmatie" rows="2" style="width:100%;margin:2px 0 10px;font-size:12px;padding:6px;' +
-      'border:1px solid var(--card-border);border-radius:6px" placeholder="Ik ben... Ik heb... Ik bereik...">' +
-      escHtml(d.affirmatie || '') + '</textarea>' +
-      '<div style="display:flex;gap:6px">' +
-      '<button onclick="saveMorningForm()" class="btn btn-sm btn-primary">Opslaan</button>' +
-      '<button onclick="loadRituelenSection()" class="btn btn-sm btn-ghost">Terug</button></div>';
+      (inGate ? '' : _ritualPanelHeader('☀️', 'Ochtendritueel — vandaag')) +
+      '<div class="ritual-body">' +
+        '<div class="ritual-section">' +
+          '<div class="ritual-section-label">Intentie</div>' +
+          '<div class="ritual-field">' +
+            '<label>Waar focus ik vandaag op?</label>' +
+            '<textarea id="rit-m-intentie" rows="2" placeholder="Vandaag focus ik op...">' + escHtml(d.intentie || '') + '</textarea>' +
+          '</div>' +
+          '<div class="ritual-row2">' +
+            '<div class="ritual-field"><label>Focusblok 1</label>' +
+              '<input id="rit-m-fb1" value="' + escAttr(fb1.onderwerp || '') + '" placeholder="Belangrijkste taak"></div>' +
+            '<div class="ritual-field"><label>Focusblok 2</label>' +
+              '<input id="rit-m-fb2" value="' + escAttr(fb2.onderwerp || '') + '" placeholder="Tweede prioriteit"></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="ritual-section">' +
+          '<div class="ritual-section-label">Staat van vandaag</div>' +
+          '<div class="ritual-row2">' +
+            _ritualScaleField('rit-m-energy', 'Energie', d.energy_level, 7) +
+            _ritualScaleField('rit-m-sleep', 'Slaapkwaliteit', d.sleep_quality, 7) +
+          '</div>' +
+        '</div>' +
+        '<div class="ritual-section">' +
+          '<div class="ritual-section-label">Dankbaarheid &amp; affirmatie</div>' +
+          _ritualListField('rit-m-dank', '3× dankbaarheid', dank, 'Ik ben dankbaar voor...') +
+          '<div class="ritual-field"><label>Affirmatie</label>' +
+            '<textarea id="rit-m-affirmatie" rows="2" placeholder="Ik ben... Ik heb... Ik bereik...">' +
+            escHtml(d.affirmatie || '') + '</textarea></div>' +
+        '</div>' +
+      '</div>' +
+      _ritualFooter('saveMorningForm', inGate);
   });
 }
 
@@ -146,46 +186,94 @@ function saveMorningForm() {
 }
 
 // ── Avondritueel ────────────────────────────────────────────────────
-function showEveningForm() {
+function _ritualToggleRow(idx, onderwerp, done) {
+  // done: true/false/null (null = nog niet beantwoord — geen kleur, geen gok)
+  return '<div class="ritual-focus-row" data-focus-onderwerp="' + escAttr(onderwerp) + '">' +
+    '<span>' + escHtml(onderwerp) + '</span>' +
+    '<div class="ritual-toggle" id="rit-e-focus' + idx + '">' +
+    '<button type="button" class="on-yes' + (done === true ? ' active' : '') + '" ' +
+      'onclick="_setFocusCheck(' + idx + ', true)">Gelukt</button>' +
+    '<button type="button" class="on-no' + (done === false ? ' active' : '') + '" ' +
+      'onclick="_setFocusCheck(' + idx + ', false)">Niet gelukt</button>' +
+    '</div></div>';
+}
+
+function _setFocusCheck(idx, done) {
+  var wrap = document.getElementById('rit-e-focus' + idx);
+  if (!wrap) return;
+  wrap.dataset.done = done ? '1' : '0';
+  var yes = wrap.querySelector('.on-yes'), no = wrap.querySelector('.on-no');
+  if (yes) yes.classList.toggle('active', done === true);
+  if (no) no.classList.toggle('active', done === false);
+}
+
+function showEveningForm(inGate) {
   var el = document.getElementById('rituelen-panel');
   if (!el) return;
-  el.innerHTML = '<div style="color:#64748b">Laden...</div>';
-  fetch('/api/rituals/evening').then(function (r) { return r.json(); }).then(function (d) {
-    d = d || {};
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Laden...</div>';
+  Promise.all([
+    fetch('/api/rituals/evening').then(function (r) { return r.json(); }),
+    fetch('/api/rituals/morning').then(function (r) { return r.json(); }),
+  ]).then(function (res) {
+    var d = res[0] || {}, morning = res[1] || {};
     var top3 = d.tomorrow_top3 && d.tomorrow_top3.length ? d.tomorrow_top3 : ['', '', ''];
+    var focusBlokken = [morning.focus_blok1, morning.focus_blok2]
+      .map(function (b) { return (b && b.onderwerp || '').trim(); })
+      .filter(Boolean);
+    var prevChecks = d.focus_check || [];
+    var focusSection = '';
+    if (focusBlokken.length) {
+      focusSection = '<div class="ritual-section">' +
+        '<div class="ritual-section-label">☀️ Terugkoppeling op je focusblokken van vanochtend</div>' +
+        '<div class="ritual-focus-check">' +
+        focusBlokken.map(function (onderwerp, i) {
+          var prev = prevChecks.filter(function (c) { return c.onderwerp === onderwerp; })[0];
+          var done = prev ? !!prev.done : null;
+          return _ritualToggleRow(i, onderwerp, done);
+        }).join('') +
+        '</div></div>';
+    }
     el.innerHTML =
-      '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Avondritueel &mdash; vandaag</div>' +
-      _ritField('rit-e-goed', 'Wat ging goed vandaag?', d.what_went_well, true) +
-      _ritField('rit-e-win', 'Grootste overwinning', d.biggest_win, false, true) +
-      _ritField('rit-e-geleerd', 'Wat heb je geleerd?', d.what_learned, true) +
-      _ritField('rit-e-uitdaging', 'Uitdagingen', d.challenges, true) +
-      '<label style="font-size:11px;color:#64748b">Energie nu (1-10)</label>' +
-      '<input id="rit-e-energy" type="number" min="1" max="10" value="' + (d.energy_level || 5) +
-      '" style="width:100%;margin:2px 0 8px;font-size:12px;padding:5px;border:1px solid var(--card-border);border-radius:6px">' +
-      '<label style="font-size:11px;color:#64748b">Top 3 voor morgen</label>' +
-      '<div style="display:flex;flex-direction:column;gap:4px;margin:2px 0 8px">' +
-      [0, 1, 2].map(function (i) {
-        return '<input id="rit-e-top' + i + '" style="width:100%;font-size:12px;padding:5px;border:1px solid var(--card-border);' +
-          'border-radius:6px" value="' + escAttr(top3[i] || '') + '" placeholder="Prioriteit ' + (i + 1) + '">';
-      }).join('') + '</div>' +
-      _ritField('rit-e-dankbaarheid', 'Dankbaarheid voor vandaag', d.gratitude, true) +
-      '<div style="display:flex;gap:6px;margin-top:2px">' +
-      '<button onclick="saveEveningForm()" class="btn btn-sm btn-primary">Opslaan</button>' +
-      '<button onclick="loadRituelenSection()" class="btn btn-sm btn-ghost">Terug</button></div>';
+      (inGate ? '' : _ritualPanelHeader('🌙', 'Avondritueel — vandaag')) +
+      '<div class="ritual-body">' +
+        focusSection +
+        '<div class="ritual-section">' +
+          '<div class="ritual-section-label">Terugblik</div>' +
+          _ritField('rit-e-goed', 'Wat ging goed vandaag?', d.what_went_well, true) +
+          _ritField('rit-e-win', 'Grootste overwinning', d.biggest_win, false) +
+          _ritField('rit-e-geleerd', 'Wat heb je geleerd?', d.what_learned, true) +
+          _ritField('rit-e-uitdaging', 'Waar liep je tegenaan?', d.challenges, true) +
+        '</div>' +
+        '<div class="ritual-section">' +
+          '<div class="ritual-section-label">Energie &amp; morgen</div>' +
+          _ritualScaleField('rit-e-energy', 'Energie nu', d.energy_level, 5) +
+          _ritualListField('rit-e-top', 'Top 3 voor morgen', top3, 'Prioriteit...') +
+        '</div>' +
+        '<div class="ritual-section">' +
+          '<div class="ritual-section-label">Afsluiten</div>' +
+          _ritField('rit-e-dankbaarheid', 'Dankbaarheid voor vandaag', d.gratitude, true) +
+        '</div>' +
+      '</div>' +
+      _ritualFooter('saveEveningForm', inGate);
   });
 }
 
-function _ritField(id, label, value, textarea, marginSmall) {
+function _ritField(id, label, value, textarea) {
   var tag = textarea
-    ? '<textarea id="' + id + '" rows="2" style="width:100%;font-size:12px;padding:6px;border:1px solid var(--card-border);' +
-      'border-radius:6px">' + escHtml(value || '') + '</textarea>'
-    : '<input id="' + id + '" style="width:100%;font-size:12px;padding:6px;border:1px solid var(--card-border);' +
-      'border-radius:6px" value="' + escAttr(value || '') + '">';
-  return '<label style="font-size:11px;color:#64748b">' + escHtml(label) + '</label>' +
-    '<div style="margin:2px 0 8px">' + tag + '</div>';
+    ? '<textarea id="' + id + '" rows="2">' + escHtml(value || '') + '</textarea>'
+    : '<input id="' + id + '" value="' + escAttr(value || '') + '">';
+  return '<div class="ritual-field"><label>' + escHtml(label) + '</label>' + tag + '</div>';
 }
 
 function saveEveningForm() {
+  var focusCheck = Array.prototype.map.call(
+    document.querySelectorAll('.ritual-focus-row'),
+    function (row) {
+      var wrap = row.querySelector('.ritual-toggle');
+      var done = wrap && wrap.dataset.done;
+      return { onderwerp: row.dataset.focusOnderwerp, done: done === undefined ? null : done === '1' };
+    }
+  ).filter(function (c) { return c.done !== null; });
   var body = {
     whatWentWell: document.getElementById('rit-e-goed').value,
     biggestWin: document.getElementById('rit-e-win').value,
@@ -194,33 +282,40 @@ function saveEveningForm() {
     energyLevel: parseInt(document.getElementById('rit-e-energy').value, 10) || 5,
     tomorrowTop3: [0, 1, 2].map(function (i) { return document.getElementById('rit-e-top' + i).value; }),
     gratitude: document.getElementById('rit-e-dankbaarheid').value,
+    focusCheck: focusCheck,
   };
   post('/api/rituals/evening', body).then(function (d) { loadRituelenSection(); afterRitualSaved(); return d; }).catch(function (e) { alert(e.message); });
 }
 
 // ── Weekstart / Weekreview ──────────────────────────────────────────
-function showWeeklyStartForm() {
+function showWeeklyStartForm(inGate) {
   var el = document.getElementById('rituelen-panel');
   if (!el) return;
-  el.innerHTML = '<div style="color:#64748b">Laden...</div>';
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Laden...</div>';
   fetch('/api/rituals/weekly-start').then(function (r) { return r.json(); }).then(function (d) {
     d = d || {};
     var goals = d.main_goals && d.main_goals.length ? d.main_goals : ['', '', ''];
     el.innerHTML =
-      '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Weekstart</div>' +
-      _ritField('rit-ws-intentie', 'Weekintentie', d.week_intention, true) +
-      '<label style="font-size:11px;color:#64748b">Hoofddoelen (3-5)</label>' +
-      '<div id="rit-ws-goals" style="display:flex;flex-direction:column;gap:4px;margin:2px 0 8px">' +
-      goals.map(function (g, i) {
-        return '<input class="rit-ws-goal" style="width:100%;font-size:12px;padding:5px;border:1px solid var(--card-border);' +
-          'border-radius:6px" value="' + escAttr(g || '') + '" placeholder="Doel ' + (i + 1) + '">';
-      }).join('') + '</div>' +
-      _ritField('rit-ws-leer', 'Leerdoel', d.learning_goal, false) +
-      _ritField('rit-ws-obstakels', 'Obstakels', d.obstacles, true) +
-      _ritField('rit-ws-succes', 'Succes metrics', d.success_metrics, false) +
-      '<div style="display:flex;gap:6px">' +
-      '<button onclick="saveWeeklyStartForm()" class="btn btn-sm btn-primary">Opslaan</button>' +
-      '<button onclick="loadRituelenSection()" class="btn btn-sm btn-ghost">Terug</button></div>';
+      (inGate ? '' : _ritualPanelHeader('🧭', 'Weekstart')) +
+      '<div class="ritual-body">' +
+        '<div class="ritual-section">' +
+          '<div class="ritual-section-label">Richting voor deze week</div>' +
+          _ritField('rit-ws-intentie', 'Weekintentie', d.week_intention, true) +
+          '<div class="ritual-field"><label>Hoofddoelen (3-5)</label>' +
+          '<div id="rit-ws-goals" class="ritual-list">' +
+          goals.map(function (g, i) {
+            return '<div class="ritual-list-item"><span class="ritual-list-num">' + (i + 1) + '</span>' +
+              '<input class="rit-ws-goal" value="' + escAttr(g || '') + '" placeholder="Doel ' + (i + 1) + '"></div>';
+          }).join('') + '</div></div>' +
+        '</div>' +
+        '<div class="ritual-section">' +
+          '<div class="ritual-section-label">Leren &amp; risico</div>' +
+          _ritField('rit-ws-leer', 'Leerdoel', d.learning_goal, false) +
+          _ritField('rit-ws-obstakels', 'Verwachte obstakels', d.obstacles, true) +
+          _ritField('rit-ws-succes', 'Waaraan zie ik dat het gelukt is?', d.success_metrics, false) +
+        '</div>' +
+      '</div>' +
+      _ritualFooter('saveWeeklyStartForm', inGate);
   });
 }
 
@@ -236,45 +331,41 @@ function saveWeeklyStartForm() {
   post('/api/rituals/weekly-start', body).then(function (d) { loadRituelenSection(); afterRitualSaved(); return d; }).catch(function (e) { alert(e.message); });
 }
 
-function showWeeklyReviewForm() {
+function showWeeklyReviewForm(inGate) {
   var el = document.getElementById('rituelen-panel');
   if (!el) return;
-  el.innerHTML = '<div style="color:#64748b">Laden...</div>';
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Laden...</div>';
   fetch('/api/rituals/weekly-review').then(function (r) { return r.json(); }).then(function (d) {
     d = d || {};
     var wins = d.wins && d.wins.length ? d.wins.join(', ') : '';
     el.innerHTML =
-      '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Weekreview</div>' +
-      _ritField('rit-wr-wins', 'Grootste overwinningen (komma-gescheiden)', wins, true) +
-      _ritField('rit-wr-uitdaging', 'Wat ging niet zoals gepland?', d.challenges, true) +
-      _ritField('rit-wr-lessen', 'Belangrijkste lessen', d.learnings, true) +
-      '<div style="display:flex;gap:12px;margin-bottom:8px">' +
-      '<div style="flex:1"><label style="font-size:11px;color:#64748b">Productiviteit (1-10)</label>' +
-      '<input id="rit-wr-prod" type="number" min="1" max="10" value="' + (d.productivity_score || 7) +
-      '" style="width:100%;font-size:12px;padding:5px;border:1px solid var(--card-border);border-radius:6px"></div>' +
-      '<div style="flex:1"><label style="font-size:11px;color:#64748b">Energie (1-10)</label>' +
-      '<input id="rit-wr-energy" type="number" min="1" max="10" value="' + (d.energy_score || 7) +
-      '" style="width:100%;font-size:12px;padding:5px;border:1px solid var(--card-border);border-radius:6px"></div></div>' +
-      _ritField('rit-wr-meenemen', 'Wat neem je mee?', d.carry_forward, true) +
-      _ritField('rit-wr-loslaten', 'Wat laat je achter?', d.leave_behind, true) +
-      '<div style="background:#0f172a;border-radius:8px;padding:10px;margin-bottom:8px">' +
-      '<div style="font-size:11px;color:#f59e0b;font-weight:600;margin-bottom:6px">Tony Robbins Quality Questions</div>' +
-      _ritFieldDark('rit-wr-gaf', 'Wat heb ik deze week GEGEVEN?', d.what_gave) +
-      _ritFieldDark('rit-wr-leerde', 'Wat heb ik deze week GELEERD?', d.what_learned) +
-      _ritFieldDark('rit-wr-bijdrage', 'Hoe heeft deze week bijgedragen?', d.how_contributed) +
-      _ritFieldDark('rit-wr-beter', 'Hoe kan ik volgende week beter maken?', d.how_make_better) +
+      (inGate ? '' : _ritualPanelHeader('📊', 'Weekreview')) +
+      '<div class="ritual-body">' +
+        '<div class="ritual-section">' +
+          '<div class="ritual-section-label">Terugblik op de week</div>' +
+          _ritField('rit-wr-wins', 'Grootste overwinningen (komma-gescheiden)', wins, true) +
+          _ritField('rit-wr-uitdaging', 'Wat ging niet zoals gepland?', d.challenges, true) +
+          _ritField('rit-wr-lessen', 'Belangrijkste lessen', d.learnings, true) +
+          '<div class="ritual-row2">' +
+            _ritualScaleField('rit-wr-prod', 'Productiviteit', d.productivity_score, 7) +
+            _ritualScaleField('rit-wr-energy', 'Energie', d.energy_score, 7) +
+          '</div>' +
+        '</div>' +
+        '<div class="ritual-section">' +
+          '<div class="ritual-section-label">Meenemen naar volgende week</div>' +
+          _ritField('rit-wr-meenemen', 'Wat neem je mee?', d.carry_forward, true) +
+          _ritField('rit-wr-loslaten', 'Wat laat je achter?', d.leave_behind, true) +
+        '</div>' +
+        '<div class="ritual-quality">' +
+          '<div class="ritual-section-label">🎯 Tony Robbins Quality Questions</div>' +
+          _ritField('rit-wr-gaf', 'Wat heb ik deze week GEGEVEN?', d.what_gave, true) +
+          _ritField('rit-wr-leerde', 'Wat heb ik deze week GELEERD?', d.what_learned, true) +
+          _ritField('rit-wr-bijdrage', 'Hoe heeft deze week bijgedragen?', d.how_contributed, true) +
+          _ritField('rit-wr-beter', 'Hoe kan ik volgende week beter maken?', d.how_make_better, true) +
+        '</div>' +
       '</div>' +
-      '<div style="display:flex;gap:6px">' +
-      '<button onclick="saveWeeklyReviewForm()" class="btn btn-sm btn-primary">Opslaan</button>' +
-      '<button onclick="loadRituelenSection()" class="btn btn-sm btn-ghost">Terug</button></div>';
+      _ritualFooter('saveWeeklyReviewForm', inGate);
   });
-}
-
-function _ritFieldDark(id, label, value) {
-  return '<label style="font-size:10px;color:#cbd5e1">' + escHtml(label) + '</label>' +
-    '<textarea id="' + id + '" rows="2" style="width:100%;margin:2px 0 6px;font-size:11px;padding:5px;' +
-    'background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:5px;color:#fff">' +
-    escHtml(value || '') + '</textarea>';
 }
 
 function saveWeeklyReviewForm() {

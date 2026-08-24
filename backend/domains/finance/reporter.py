@@ -9,6 +9,7 @@ Beide hergebruiken het patroon van analytics_reporter, maar draaien op de agenti
 tool-loop (get_market_data / fetch_financial_news / web_search) i.p.v. een kale
 LLM-call, zodat het rapport op geverifieerde data is gebouwd.
 """
+import logging
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -21,6 +22,8 @@ from ...shared.failures import describe_exception, note_success, should_escalate
 from ...shared.outcomes import log_outcome
 from .prompts import FINANCE_DAILY_SYSTEM, FINANCE_WEEKLY_SYSTEM
 
+logger = logging.getLogger(__name__)
+
 # Het rapport leunt op meerdere tool-rondes; geef de agent ruimte per beurt.
 _MAX_TOKENS = 8192
 
@@ -30,7 +33,9 @@ async def _agent_complete(system: str, user: str) -> str:
     messages = [{"role": "user", "content": user}]
     chunks: list[str] = []
     last_error: Optional[str] = None
-    async for event in run_agent(messages, system, agent="finance", max_tokens=_MAX_TOKENS):
+    async for event in run_agent(
+        messages, system, agent="finance", max_tokens=_MAX_TOKENS, purpose="finance",
+    ):
         etype = event.get("type")
         if etype == "text":
             chunks.append(event.get("text", ""))
@@ -75,7 +80,7 @@ async def _run_report(
     obsidian_subfolder: str, obsidian_title: str, obsidian_tags: list[str],
     email_subject: str,
 ) -> dict:
-    print(f"[Finance] Start {kind}-rapport…")
+    logger.info("[Finance] Start %s-rapport…", kind)
     # Een mislukt rapport was tot 2 aug 2026 alleen een print() plus een
     # dict met success=False: de scheduler-job slaagde, er kwam geen kaart, en
     # een rapport dat weken niet meer verscheen was nergens te zien. Dat is
@@ -85,10 +90,10 @@ async def _run_report(
     faalsleutel = f"finance_report:{kind}"
     try:
         analysis = await _agent_complete(system, prompt)
-        print(f"[Finance] {kind}-analyse gereed ({len(analysis)} tekens)")
+        logger.info("[Finance] %s-analyse gereed (%d tekens)", kind, len(analysis))
     except Exception as e:
         msg = f"{kind}-analyse mislukt: {describe_exception(e)}"
-        print(f"[Finance] {msg}")
+        logger.warning("[Finance] %s", msg)
         if should_escalate(faalsleutel, e):
             log_outcome(
                 "Finance Expert", f"{kind}rapport", msg,
@@ -99,7 +104,7 @@ async def _run_report(
         return {"success": False, "error": msg}
 
     if not analysis:
-        print(f"[Finance] {kind}-rapport leeg — overgeslagen")
+        logger.warning("[Finance] %s-rapport leeg — overgeslagen", kind)
         # Een leeg antwoord is geen uitzondering maar wél een mislukking: er is
         # vandaag geen rapport, en dat mag niet als geslaagde run doorgaan.
         if should_escalate(faalsleutel, RuntimeError("leeg rapport")):
@@ -118,32 +123,32 @@ async def _run_report(
     try:
         sid = _save_dashboard(session_name, prompt, analysis)
         results["session_id"] = sid
-        print(f"[Finance] Sessie aangemaakt: {sid}")
+        logger.info("[Finance] Sessie aangemaakt: %s", sid)
     except Exception as e:
-        print(f"[Finance] Dashboard opslaan mislukt: {e}")
+        logger.warning("[Finance] Dashboard opslaan mislukt: %s", e)
 
     try:
         note = _save_obsidian(analysis, obsidian_subfolder, obsidian_title, obsidian_tags)
         if note:
             results["obsidian_note"] = str(note)
-            print(f"[Finance] Obsidian note: {note}")
+            logger.info("[Finance] Obsidian note: %s", note)
     except Exception as e:
-        print(f"[Finance] Obsidian opslaan mislukt: {e}")
+        logger.warning("[Finance] Obsidian opslaan mislukt: %s", e)
 
     if email_configured():
         try:
             body = f"{email_subject}\n{'=' * 50}\n\n{analysis}"
             sent = send_report(email_subject, body)
             results["email_sent"] = sent
-            print(f"[Finance] E-mail {'verstuurd' if sent else 'mislukt'}")
+            logger.info("[Finance] E-mail %s", "verstuurd" if sent else "mislukt")
         except Exception as e:
-            print(f"[Finance] E-mail versturen mislukt: {e}")
+            logger.warning("[Finance] E-mail versturen mislukt: %s", e)
             results["email_sent"] = False
     else:
         results["email_sent"] = False
-        print("[Finance] SMTP niet geconfigureerd, e-mail overgeslagen")
+        logger.info("[Finance] SMTP niet geconfigureerd, e-mail overgeslagen")
 
-    print(f"[Finance] {kind}-rapport voltooid")
+    logger.info("[Finance] %s-rapport voltooid", kind)
     # Uitkomstkaart mét artefact: een run die "klaar" claimt hoort aanwijsbaar
     # iets te hebben opgeleverd (CLAUDE.md). Zonder vault is de chat-sessie het
     # artefact — nooit een lege verwijzing.

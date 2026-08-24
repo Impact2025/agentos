@@ -16,14 +16,14 @@ REPLY = (
 
 
 async def _ensure_table():
-    with sqlite3.connect("data/agentos.db") as c:
+    with sqlite3.connect("data/impactos.db") as c:
         c.execute("""CREATE TABLE IF NOT EXISTS da_replied_comments (
             comment_id TEXT PRIMARY KEY, replied_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
 
 
 async def run():
     await _ensure_table()
-    c = sqlite3.connect("data/agentos.db")
+    c = sqlite3.connect("data/impactos.db")
     c.row_factory = sqlite3.Row
     # haal de live post-ids op per DA-site
     posts = c.execute(

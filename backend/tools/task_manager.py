@@ -10,7 +10,7 @@ def _now() -> str:
 
 class CreateTaskTool(Tool):
     name = "create_task"
-    description = "Maak een nieuwe taak aan in het Kanban-bord van Agent OS."
+    description = "Maak een nieuwe taak aan in het Kanban-bord van Impact OS."
     input_schema = {
         "type": "object",
         "properties": {

@@ -110,7 +110,7 @@ class RadarService:
 
     def add_watch(self, project: str, label: str, wtype: str, value: str) -> Dict:
         project = (project or "").strip().lower()
-        if wtype not in ("keyword", "competitor", "rss"):
+        if wtype not in ("keyword", "competitor", "rss", "youtube", "reddit", "brand_mention"):
             raise ValueError(f"Ongeldig watch-type '{wtype}'")
         value = value.strip()
         if wtype == "competitor":
@@ -297,8 +297,24 @@ class RadarService:
     def _gather(self, watch: Dict) -> List[Dict]:
         """Ruwe resultaten per watch-item. Voor keywords doen we ook een
         Reddit-gescopeerde zoekactie — Google weegt Reddit-discussies zwaar
-        mee in AI Overviews, dus die signalen willen we niet missen."""
+        mee in AI Overviews, dus die signalen willen we niet missen.
+        `brand_mention` is de PR-tegenhanger van `competitor`: geen zoekwoord
+        voor content-ideeën maar een merknaam, en resultaten stromen bewust
+        NIET de trend-brug (seo/trends.py) of auto-AEO in — zie de filters
+        daar en in `_auto_aeo_top_signals` hieronder."""
         wtype, value = watch["type"], watch["value"]
+        if wtype == "youtube":
+            from .sources_extra import gather_creator
+            results = gather_creator("youtube", value)
+            for r in results:
+                r["source"] = "youtube"
+            return results
+        if wtype == "reddit":
+            from .sources_extra import gather_creator
+            results = gather_creator("reddit", value)
+            for r in results:
+                r["source"] = "reddit"
+            return results
         if wtype == "rss":
             results = self._fetch_rss(value)
             for r in results:
@@ -318,6 +334,18 @@ class RadarService:
                 f"site:{value} ({brand} OR teambuilding OR training OR 'team uitje')",
                 days=90,
             )
+        elif wtype == "brand_mention":
+            # Ongekoppelde merkvermeldingen (digital PR / off-page-signaal
+            # zónder link) — géén '-site:'-uitsluiting in de querytekst: die
+            # Tavily-syntax geeft op de DuckDuckGo/Brave-terugval nul
+            # resultaten (zelfde les als `linkbuilding/prospector.simplify_
+            # query`). We zoeken gewoon op de merknaam en laten `quality.py`'s
+            # bestaande eigen-site-regel (stap 1 in `assess()`) onze eigen
+            # pagina's eruit filteren — die regel is al domeinbewust en werkt
+            # provider-onafhankelijk. Langer venster dan een gewone keyword-
+            # watch: een merkvermelding is geen actualiteit die na 14 dagen
+            # verjaart, dus 60 dagen i.p.v. SCAN_LOOKBACK_DAYS.
+            results = self._tavily_search(f'"{value}"', days=60)
         else:  # keyword
             results = self._tavily_search(value)
             results += self._tavily_search(f"site:reddit.com {value}", max_results=3)
@@ -510,6 +538,20 @@ class RadarService:
                         rows,
                     )
                 total_saved += len(fresh)
+                # Momentum: log per vers signaal een meting zodat de
+                # velocity-engine na een paar scans een echte trend ziet.
+                # Additief — bestaande signalen zonder momentum-rij vullen we
+                # hier gaandeweg. Faalt zacht.
+                try:
+                    from . import momentum as _mom
+                    _mom.ensure_momentum_schema()
+                    for r in fresh:
+                        sig = self._signal_by_url(watch["project"], r["url"])
+                        if sig:
+                            _mom.record_measurement(
+                                sig["id"], watch["project"], r["signal_score"])
+                except Exception:
+                    log.exception("[radar] Momentum-logging mislukt (niet fataal)")
 
             # De scan-status wordt altijd bijgewerkt, ook bij nul nieuwe hits.
             # Tot 3 aug 2026 gebeurde dat alleen `if rows:`, waardoor
@@ -614,7 +656,18 @@ class RadarService:
             match = match if match is not None else -1
             return (s.get("signal_score") or 0) >= AEO_AUTO_MIN_SCORE and match >= AEO_AUTO_MIN_MATCH
 
-        top = [s for s in self.list_signals(status="new", limit=50) if _eligible(s)]
+        # Merkvermeldingen zijn PR-bewijs, geen content-idee — "iemand noemde
+        # ons" is geen onderwerp om een listicle/video/Reddit-post over te
+        # schrijven. Zonder deze uitsluiting zou de agent op een positieve
+        # persvermelding een AEO-aanval starten alsof het een trending topic was.
+        with get_conn() as _conn:
+            merk_watch_ids = {
+                r["id"] for r in _conn.execute(
+                    "SELECT id FROM radar_watchlist WHERE type = 'brand_mention'"
+                ).fetchall()
+            }
+        top = [s for s in self.list_signals(status="new", limit=50)
+               if _eligible(s) and s.get("watch_id") not in merk_watch_ids]
         if not top:
             return []
 
@@ -1045,6 +1098,7 @@ class RadarService:
             agent="hermes",
             use_tools=False,
             max_tokens=2000,
+            purpose="radar-multimedia",
         ):
             if ev.get("type") == "text":
                 chunks.append(ev["text"])
@@ -1086,6 +1140,32 @@ class RadarService:
                 (f"{base}/%",),
             ).fetchone()
         return dict(row) if row else None
+
+    def get_aeo_progress(self, signal_id: str) -> Optional[Dict]:
+        """Status van de gekoppelde AEO-conveyor-taken voor dit signaal, zodat
+        de UI kan tonen wat er gebeurt in plaats van te beloven dat het "vanzelf
+        gaat" (2 aug 2026: de AEO-aanval was voor een gebruiker onzichtbaar
+        tussen klik en Wachtrij-item — geen enkel scherm toonde de taken)."""
+        sig = self.get_signal(signal_id)
+        if not sig:
+            return None
+        base = f"radar-aeo-{_slugify(self._chosen_title(sig))}"
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT title, status, agent, workspace_path, error, updated_at "
+                "FROM tasks WHERE workspace_path LIKE ? ORDER BY position ASC",
+                (f"{base}/%",),
+            ).fetchall()
+        tasks = []
+        for r in rows:
+            t = dict(r)
+            wp = t.get("workspace_path") or ""
+            # workspace_path eindigt op '01-listicle.md' / '02-video.md' / '03-reddit.md'
+            stem = wp.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            channel = stem.split("-", 1)[-1] if "-" in stem else stem
+            t["channel"] = channel
+            tasks.append(t)
+        return {"signal_id": signal_id, "workspace": base, "tasks": tasks}
 
     def _resolve_site(self, sig: Dict, site_id: Optional[str]) -> Dict:
         """Bepaal naar welke site de listicle-job moet: expliciete site_id,
@@ -1185,6 +1265,7 @@ class RadarService:
             agent="hermes",
             use_tools=False,
             max_tokens=1200,
+            purpose="radar-infographic",
         ):
             if ev.get("type") == "text":
                 chunks.append(ev["text"])

@@ -417,6 +417,7 @@ async def generate_angle(
             model_override=model_override,
             use_tools=False,
             max_tokens=1000,
+            purpose="radar-angle",
         ):
             if ev.get("type") == "text":
                 chunks.append(ev["text"])
@@ -490,6 +491,7 @@ async def score_relevance(
             # <think>-block van deepseek — het budget op en wordt het cijfer
             # afgekapt (→ onparseerbaar → -1). 300 bleek te krap.
             max_tokens=700,
+            purpose="radar-relevantie",
         ):
             if ev.get("type") == "text":
                 chunks.append(ev["text"])

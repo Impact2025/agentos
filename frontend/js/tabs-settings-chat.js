@@ -1,4 +1,4 @@
-// ── Agent OS — tabs: Instellingen, Chat, Finance Expert + INIT
+// ── Impact OS — tabs: Instellingen, Chat, Finance Expert + INIT
 // Onderdeel van de SPA: klassieke scripts, gedeelde globale scope.
 // Laadvolgorde staat in index.html — core.js eerst.
 
@@ -442,6 +442,7 @@ async function deleteCaseStudy(csId) {
 //  CHAT — Werkende chat met streaming
 // ═══════════════════════════════════════════════════════════════════
 var _chatSessionId = null;
+var _chatPendingAttachments = [];
 
 async function ensureChatSession() {
   if (_chatSessionId) return _chatSessionId;
@@ -469,17 +470,100 @@ async function ensureChatSession() {
 }
 
 function renderChat(main) {
-  main.innerHTML = renderSidebar() + '<div class="main-content"><div class="project-header"><div><h1>Chat — ' + escHtml(currentProject||'Agent OS') + '</h1></div><div class="actions"><button onclick="goHome()">Projecten</button></div></div><div class="chat-container"><div id="chat-messages" class="chat-messages"><div class="chat-msg assistant">Hallo! Ik ben je AI-assistent voor ' + escHtml(currentProject||'Agent OS') + '. Waar kan ik je mee helpen?</div></div><div class="chat-input"><input id="chat-input" placeholder="Typ je bericht..." onkeydown="if(event.key===\'Enter\')sendChat()"><button onclick="sendChat()">Verstuur</button></div></div></div>';
+  _chatPendingAttachments = [];
+  main.innerHTML = renderSidebar() + '<div class="main-content"><div class="project-header"><div><h1>Iris</h1><p class="meta">' + escHtml(currentProject||'') + '</p></div><div class="actions"><button onclick="goHome()">Projecten</button></div></div><div class="chat-container">' +
+    '<div id="chat-messages" class="chat-messages"><div id="chat-empty-state" class="chat-empty-state">Ik ben er klaar voor.</div></div>' +
+    '<div id="chat-attachments" class="chat-attachments" style="display:none"></div>' +
+    '<div class="chat-input-pill">' +
+      '<input type="file" id="chat-file-input" accept="image/*" multiple style="display:none" onchange="handleChatFileSelect(this)">' +
+      '<button type="button" onclick="document.getElementById(\'chat-file-input\').click()" title="Foto toevoegen" class="chat-icon-btn">+</button>' +
+      '<input id="chat-input" placeholder="Stel een vraag" onkeydown="if(event.key===\'Enter\')sendChat()">' +
+      '<button onclick="sendChat()" title="Verstuur" class="chat-send-btn">&#8593;</button>' +
+    '</div>' +
+  '</div></div>';
   ensureChatSession();
+}
+
+// ── Iris in de ik-vorm: rauwe tool-namen worden nooit getoond. ──────────────
+var _CHAT_TOOL_LABELS = {
+  calendar_create: { bezig: 'Ik zet dit in je agenda', klaar: 'Ik heb het in je agenda gezet.' },
+  fetch_financial_news: { bezig: 'Ik haal het laatste beursnieuws op', klaar: 'Ik heb het beursnieuws erbij.' },
+  get_market_data: { bezig: 'Ik haal de actuele koersen op', klaar: 'Ik heb de koersen erbij.' },
+  get_analytics: { bezig: 'Ik haal je websitecijfers op', klaar: 'Ik heb de cijfers erbij.' },
+  web_search: { bezig: 'Ik zoek dit voor je uit', klaar: 'Ik heb het uitgezocht.' },
+  obsidian_search: { bezig: 'Ik zoek dit op in wat we eerder hebben vastgelegd', klaar: 'Ik heb het gevonden.' },
+  obsidian_write: { bezig: 'Ik leg dit voor je vast', klaar: 'Ik heb het vastgelegd.' },
+  notebooklm_research: { bezig: 'Ik laat dit grondig uitzoeken', klaar: 'Het onderzoek is klaar.' },
+  create_task: { bezig: 'Ik maak hier een taak van', klaar: 'Ik heb de taak aangemaakt.' },
+  list_tasks: { bezig: 'Ik check je openstaande taken', klaar: 'Ik heb je taken erbij.' },
+  delegate: { bezig: 'Ik zet dit uit', klaar: 'Ik heb het uitgezet.' },
+  delegation_status: { bezig: 'Ik check hoe ver dat staat', klaar: 'Ik heb de status.' },
+};
+function _chatToolLabel(name, phase) {
+  var entry = _CHAT_TOOL_LABELS[name];
+  if (entry) return entry[phase];
+  return phase === 'klaar' ? 'Klaar.' : 'Ik ben hier even mee bezig';
+}
+
+async function handleChatFileSelect(input) {
+  var files = Array.prototype.slice.call(input.files || []);
+  input.value = '';
+  if (!files.length) return;
+  var box = document.getElementById('chat-attachments');
+  var uploadingId = 'chat-att-uploading-' + Date.now();
+  if (box) {
+    box.style.display = 'block';
+    box.innerHTML += '<span id="' + uploadingId + '" class="chat-attachment-chip">Uploaden…</span>';
+  }
+  try {
+    var form = new FormData();
+    files.forEach(function (f) { form.append('files', f); });
+    var resp = await fetch('/api/chat/upload', { method: 'POST', body: form });
+    if (!resp.ok) { var d = await resp.json().catch(function(){return {};}); throw new Error(d.detail || ('HTTP ' + resp.status)); }
+    var data = await resp.json();
+    (data.attachments || []).forEach(function (a) { _chatPendingAttachments.push(a); });
+  } catch (e) {
+    alert('Upload mislukt: ' + e.message);
+  }
+  renderChatAttachments();
+}
+
+function renderChatAttachments() {
+  var box = document.getElementById('chat-attachments');
+  if (!box) return;
+  if (!_chatPendingAttachments.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'block';
+  box.innerHTML = _chatPendingAttachments.map(function (a, i) {
+    return '<span class="chat-attachment-chip">' +
+      (a.content_type && a.content_type.indexOf('image/') === 0 ? '<img src="' + escAttr(a.url) + '" alt="">' : '') +
+      escHtml(a.filename) + ' <a href="#" onclick="removeChatAttachment(' + i + ');return false;">✕</a></span>';
+  }).join('');
+}
+
+function removeChatAttachment(idx) {
+  _chatPendingAttachments.splice(idx, 1);
+  renderChatAttachments();
 }
 
 async function sendChat() {
   var input = document.getElementById('chat-input');
   var msg = input.value.trim();
-  if (!msg) return;
+  var attachments = _chatPendingAttachments.slice();
+  if (!msg && !attachments.length) return;
   input.value = '';
+  _chatPendingAttachments = [];
+  renderChatAttachments();
   var container = document.getElementById('chat-messages');
-  container.innerHTML += '<div class="chat-msg user">' + escHtml(msg) + '</div><div class="chat-msg assistant" id="chat-pending"><em>Hermes denkt...</em></div>';
+  var empty = document.getElementById('chat-empty-state');
+  if (empty) empty.remove();
+  var userHtml = escHtml(msg);
+  attachments.forEach(function (a) {
+    if (a.content_type && a.content_type.indexOf('image/') === 0) {
+      userHtml += '<br><img src="' + escAttr(a.url) + '" alt="' + escAttr(a.filename) + '" style="max-width:220px;max-height:220px;border-radius:8px;margin-top:6px;display:block">';
+    }
+  });
+  container.innerHTML += '<div class="chat-msg user">' + userHtml + '</div>' +
+    '<div class="chat-msg status" id="chat-status"><span class="chat-status-dot"></span><span id="chat-status-text">Ik denk hierover na</span></div>';
   container.scrollTop = container.scrollHeight;
 
   var sid = _chatSessionId;
@@ -487,7 +571,7 @@ async function sendChat() {
     sid = await ensureChatSession();
   }
   if (!sid) {
-    document.getElementById('chat-pending').outerHTML = '<div class="chat-msg assistant" style="color:var(--red)">Kon geen chatsessie starten. Start eerst een sessie via Instellingen.</div>';
+    document.getElementById('chat-status').outerHTML = '<div class="chat-msg assistant" style="color:var(--red)">Ik kan nu geen gesprek starten. Probeer het via Instellingen opnieuw.</div>';
     return;
   }
 
@@ -496,25 +580,30 @@ async function sendChat() {
     var resp = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({session_id: sid, message: msg, agent: 'claude', use_obsidian: true}),
+      body: JSON.stringify({session_id: sid, message: msg, agent: 'claude', use_obsidian: true, attachments: attachments}),
     });
     if (!resp.ok) {
       var errText = await resp.text();
-      document.getElementById('chat-pending').outerHTML = '<div class="chat-msg assistant" style="color:var(--red)">Fout: ' + escHtml(errText.slice(0,200)) + '</div>';
+      document.getElementById('chat-status').outerHTML = '<div class="chat-msg assistant" style="color:var(--red)">Er ging iets mis: ' + escHtml(errText.slice(0,200)) + '</div>';
       return;
     }
 
-    var pending = document.getElementById('chat-pending');
-    if (!pending) return;
-    pending.outerHTML = '<div class="chat-msg assistant" id="chat-streaming"><em>Antwoord ontvangen...</em></div>';
-    var streamingEl = document.getElementById('chat-streaming');
-    if (!streamingEl) return;
+    var statusEl = document.getElementById('chat-status');
+    var statusTextEl = document.getElementById('chat-status-text');
+    var streamingEl = null;
+
+    function ensureStreamingEl() {
+      if (streamingEl) return streamingEl;
+      if (statusEl) statusEl.remove();
+      container.innerHTML += '<div class="chat-msg assistant" id="chat-streaming"></div>';
+      streamingEl = document.getElementById('chat-streaming');
+      return streamingEl;
+    }
 
     // Read the stream
     var reader = resp.body.getReader();
     var decoder = new TextDecoder();
     var fullText = '';
-    streamingEl.innerHTML = '';
 
     while (true) {
       var {done, value} = await reader.read();
@@ -525,7 +614,8 @@ async function sendChat() {
         var line = lines[li].trim();
         if (!line || line === ':' || line.startsWith(':keepalive')) continue;
         if (line === '[DONE]' || line === 'data: [DONE]') {
-          streamingEl.innerHTML = fullText ? mdToHtmlSimple(fullText) : '(geen antwoord)';
+          if (fullText) { ensureStreamingEl().innerHTML = mdToHtmlSimple(fullText); }
+          else if (statusTextEl) { statusTextEl.textContent = 'Ik heb hier geen antwoord op.'; }
           break;
         }
         if (line.startsWith('data: ')) {
@@ -533,14 +623,15 @@ async function sendChat() {
             var evt = JSON.parse(line.slice(6));
             if (evt.type === 'text' || evt.type === 'thought') {
               fullText += evt.text || '';
-              streamingEl.innerHTML = mdToHtmlSimple(fullText);
+              ensureStreamingEl().innerHTML = mdToHtmlSimple(fullText);
               container.scrollTop = container.scrollHeight;
             } else if (evt.type === 'error') {
-              streamingEl.innerHTML += '<div style="color:var(--red);margin-top:8px">Fout: ' + escHtml(evt.message||'') + '</div>';
+              var errEl = ensureStreamingEl();
+              errEl.innerHTML += '<div style="color:var(--red);margin-top:8px">Er ging iets mis: ' + escHtml(evt.message||'') + '</div>';
             } else if (evt.type === 'tool_start') {
-              streamingEl.innerHTML += '<div style="color:var(--text-dim);font-size:11px;margin:4px 0">Gebruik: ' + escHtml(evt.name||'') + '...</div>';
+              if (statusTextEl && !streamingEl) statusTextEl.textContent = _chatToolLabel(evt.name, 'bezig') + '…';
             } else if (evt.type === 'tool_result') {
-              streamingEl.innerHTML += '<div style="color:var(--text-muted);font-size:10px;margin:2px 0">' + escHtml(evt.name||'') + ' klaar</div>';
+              if (statusTextEl && !streamingEl) statusTextEl.textContent = _chatToolLabel(evt.name, 'klaar');
             }
           } catch(e) {
             // Non-JSON SSE line, skip
@@ -548,10 +639,10 @@ async function sendChat() {
         }
       }
     }
-    streamingEl.id = ''; // Remove id after done
+    if (streamingEl) streamingEl.id = ''; // Remove id after done
   } catch(e) {
-    var p = document.getElementById('chat-pending') || document.getElementById('chat-streaming');
-    if (p) p.outerHTML = '<div class="chat-msg assistant" style="color:var(--red)">Fout: ' + escHtml(e.message) + '</div>';
+    var p = document.getElementById('chat-status') || document.getElementById('chat-streaming');
+    if (p) p.outerHTML = '<div class="chat-msg assistant" style="color:var(--red)">Er ging iets mis: ' + escHtml(e.message) + '</div>';
   }
 }
 

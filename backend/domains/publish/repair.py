@@ -1,7 +1,7 @@
 """
 Reparaties op wat al live staat — de andere helft van de waarheidsaudit.
 
-Waarom deze module bestaat (4 aug 2026). Agent OS is opvallend goed in het
+Waarom deze module bestaat (4 aug 2026). Impact OS is opvallend goed in het
 vínden van stille storingen: `iris/integrity.py` telt inmiddels tientallen
 invarianten, elk met een echt incident eronder. Maar bij een meting over alle
 projecten stonden er 82 bevindingen open, waarvan 54 blokkerend of stil, en

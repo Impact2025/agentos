@@ -19,6 +19,7 @@ from .config import (
     AGNES_API_KEY, AGNES_BASE_URL, AGNES_MODEL,
     hermes_backend, HERMES_LOCAL_FALLBACK,
 )
+from .outcomes import llm_quota_backoff_active
 from ..tools import TOOLS, TOOL_MAP
 
 MAX_ITERATIONS = 8
@@ -39,6 +40,10 @@ def _cloud_backend_for_model(model_override: Optional[str]) -> Optional[str]:
     if model.startswith("openrouter/"):
         return "openrouter" if OPENROUTER_API_KEY else None
     # Bare OpenModel-modelnaam (claude-*, deepseek-*, gpt-*) → OpenModel-gateway.
+    # Skip deze backend als recent 403 quota-exceeded is gemarkeerd — laat de
+    # caller terugvallen op Ollama/local tier in plaats van hard te falen.
+    if llm_quota_backoff_active():
+        return None
     return "openmodel" if OPENMODEL_API_KEY else None
 
 
@@ -301,7 +306,7 @@ async def _openmodel_loop(
     """
     import anthropic as _sdk
     from ..tools import TOOLS, TOOL_MAP
-    from ..config import resolve_openmodel_model as _resolve_model
+    from .config import resolve_openmodel_model as _resolve_model
     model = model_override or _resolve_model()
     client = _sdk.AsyncAnthropic(
         api_key=OPENMODEL_API_KEY,
@@ -324,7 +329,7 @@ async def _openmodel_loop(
                 # (note_llm_quota_exhausted) — precies zoals in chat/hermes/mail —
                 # zodat autonome jobs én de backend-keuze zichzelf pauzeren in
                 # plaats van elke 15/45 min opnieuw op een dode quota te bonken.
-                # Zo verdwijnt de rode FOUT-kaart en pauzeert Agent OS netjes tot
+                # Zo verdwijnt de rode FOUT-kaart en pauzeert Impact OS netjes tot
                 # de reset, in plaats van eindeloos te falen.
                 status = getattr(exc, "status_code", None)
                 resp = getattr(exc, "response", None)
@@ -428,7 +433,7 @@ def _openai_headers_and_url(backend: str):
             "Content-Type": "application/json",
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "HTTP-Referer": "http://localhost:1250",
-            "X-Title": "Agent OS",
+            "X-Title": "Impact OS",
         },
         HERMES_MODEL,
     )

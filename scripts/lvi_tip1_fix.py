@@ -1,5 +1,5 @@
 import json, sys
-sys.path.insert(0, r"D:/APPS/agentos")
+sys.path.insert(0, r"D:/APPS/impactos")
 from backend.shared.database import get_conn
 
 pack_id = "sp_ae5b40c0b607"

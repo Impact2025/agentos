@@ -1,6 +1,6 @@
 """Knowledge Forge — de orchestrator.
 
-Pijplijn (de "/learn" van AgentOS, maar wereldklasse & privé):
+Pijplijn (de "/learn" van ImpactOS, maar wereldklasse & privé):
 
     source (.pdf/.docx/.md/.txt/url)
         │
@@ -17,7 +17,7 @@ cheat-sheet/glossary (gestructureerd). Dat is precies wat de Hermes-video
 belooft: de agent kijkt in de index, opent alleen de relevante sectie, en
 antwoordt vanuit die sectie — zónder het document opnieuw te lezen.
 
-Storage: SQLite in de bestaande agentos.db (geen nieuwe infra). Vectors als
+Storage: SQLite in de bestaande impactos.db (geen nieuwe infra). Vectors als
 JSON-blob per chunk. Voor een grote vault zou je naar pgvector/chroma
 migreren, maar het contract (embed + similarity) maakt dat later pijnloos.
 
@@ -41,7 +41,7 @@ from .brain_file import extract_brain_file, _extract_json
 
 logger = logging.getLogger(__name__)
 
-_VAULT_NOTE_DIR = "AgentOS/KnowledgeForge"
+_VAULT_NOTE_DIR = "ImpactOS/KnowledgeForge"
 
 
 def _now() -> str:
@@ -93,7 +93,7 @@ async def learn_document(source: str, llm_call, vault_path: str = "",
     """Leer een document. Retourneert een rapport.
 
     ``llm_call(system, prompt, max_tokens) -> Optional[str]`` — de centrale
-    AgentOS-LLM. ``vault_path`` — als gezet, schrijft de brain file als
+    ImpactOS-LLM. ``vault_path`` — als gezet, schrijft de brain file als
     vault-note (Vincent-leesbaar, SSOT).
     """
     own_conn = conn is None
@@ -223,7 +223,7 @@ def _write_vault_note(vault_path: str, title: str, source: str,
             lines.append(f"- **{g.get('term','')}**: {g.get('definition','')}")
         lines.append("")
         lines.append("---")
-        lines.append(f"_Automatisch gegenereerd door AgentOS Knowledge Forge. "
+        lines.append(f"_Automatisch gegenereerd door ImpactOS Knowledge Forge. "
                      f"{len(chunks)} chunks geïndexeerd._")
         path.write_text("\n".join(lines), encoding="utf-8")
         return str(path)
@@ -324,7 +324,7 @@ def compare(doc_a_id: str, doc_b_id: str, conn=None) -> Dict[str, Any]:
       - unieke inzichten: cheat-regels / secties die maar in één doc zitten
       - semantische overlap: cosine tussen de chunk-wolken van beide docs
 
-    Retourneert een gestructureerd vergelijkingsrapport. Dit is de AgentOS-
+    Retourneert een gestructureerd vergelijkingsrapport. Dit is de ImpactOS-
     tegenhanger van de Hermes-"compare two books"-belofte (die nog niet live
     was in de video).
     """

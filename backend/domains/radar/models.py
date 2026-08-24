@@ -17,8 +17,8 @@ CREATE TABLE IF NOT EXISTS radar_watchlist (
     id          TEXT PRIMARY KEY,
     project     TEXT NOT NULL DEFAULT '',
     label       TEXT NOT NULL,
-    type        TEXT NOT NULL DEFAULT 'keyword',  -- keyword | competitor | rss
-    value       TEXT NOT NULL,                    -- zoekwoord, domein of feed-url
+    type        TEXT NOT NULL DEFAULT 'keyword',  -- keyword | competitor | rss | youtube | reddit | brand_mention | linkedin_signal
+    value       TEXT NOT NULL,                    -- zoekwoord, domein of feed-url | LinkedIn-account (handle/URL)
     active      INTEGER NOT NULL DEFAULT 1,
     last_scanned_at TEXT DEFAULT '',
     created_at  TEXT NOT NULL
@@ -72,6 +72,25 @@ _MIGRATIES = {
         # dit zou zo'n herbeoordeling een bewust herstelde 'Toch oppakken'-rij
         # bij de eerstvolgende poort-verbetering alsnog terugzetten op
         # 'uitgefilterd' — de override zou dan nooit blijvend zijn.
+        # `signal_kind` onderscheidt de twee Radar-stromen: 'trend' (de gewone
+        # concurrentie/keyword-scan) en 'linkedin_signal' (een hand-raiser die
+        # een bepaalde account engageerde). De prospecting-brug kijkt op dit
+        # veld zodat hij alleen échte hand-raisers oppikt, niet trend-signalen.
+        ("signal_kind", "ALTER TABLE radar_signals ADD COLUMN signal_kind TEXT DEFAULT 'trend'"),
+        # Voor een hand-raiser: het LinkedIn-profiel waarop we hem vonden, en
+        # de account die hij engageerde (de 'watcher' waaruit hij kwam).
+        ("source_handle", "ALTER TABLE radar_signals ADD COLUMN source_handle TEXT DEFAULT ''"),
+        ("watcher_account", "ALTER TABLE radar_signals ADD COLUMN watcher_account TEXT DEFAULT ''"),
+        # Engagement-context: welk signaal hij gaf (liked / commented / posted).
+        # Bepaalt mede de prioriteit in de prospecting-brug (comment > like).
+        ("engagement", "ALTER TABLE radar_signals ADD COLUMN engagement TEXT DEFAULT ''"),
+        # Of de hand-raiser al gebridged is naar een prospecting-lead (idempotent).
+        ("bridged_lead_id", "ALTER TABLE radar_signals ADD COLUMN bridged_lead_id TEXT DEFAULT ''"),
+        # De vlag uit de toelichting hierboven bij filter_reason (9 aug 2026):
+        # onderscheidt "Toch oppakken" van "nog nooit door de huidige poort
+        # herbeoordeeld". Was hier alleen als commentaar gedocumenteerd, nooit
+        # als kolom aangemaakt — elke aanroep van quality_review_batch faalde
+        # daardoor hard op 'no such column'.
         ("quality_reviewed", "ALTER TABLE radar_signals ADD COLUMN quality_reviewed INTEGER DEFAULT 0"),
     ),
     "radar_watchlist": (

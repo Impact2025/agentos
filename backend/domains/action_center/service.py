@@ -10,13 +10,157 @@ bestaande endpoints. Het Actiecentrum voert zelf niets uit — het verzamelt.
 """
 import json
 import logging
+import re
 import sqlite3
 from datetime import date, datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ...shared.database import get_conn
 from ..mail.gsc_expert import is_gsc_mail as _is_gsc_mail
 from ..publish import content_pipeline
+
+
+# ── Project-normalisatie ────────────────────────────────────────────────────
+# De inbox mixt twee naamruimten: items dragen óf de vault-projectnaam
+# (goals, mail, social — bv. "Bewaard voor Jou"), óf de site-naam
+# (content_jobs — bv. "DatingAssistent 40+"), en errors/campagnes kunnen een
+# "goal:<id>"-sleutel dragen. Die twee lopen uiteen: een site "DatingAssistent
+# 40+" hoort bij project "DatingAssistent", en "Daar" bij "daarwebsite". Een
+# domme `item.project == P`-filter mist daardoor de content-wachtrijen van een
+# project. We normaliseren alles naar één canonieke sleutel (lowercase,
+# alleen alfanumeriek) en lossen site→project op via prefix-matching.
+def _norm_project_key(name: str) -> str:
+    """Canonieke sleutel voor een project-/site-naam: lowercase, geen
+    leestekens of spaties — zodat "Bewaard voor Jou" == "bewaardvoorjou"."""
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def _build_site_to_project(conn) -> Dict[str, Optional[str]]:
+    """Map elke site-naam naar de canonieke project-sleutel waartoe hij hoort.
+
+    Regel: de genormaliseerde site-naam is gelijk aan, of een prefix van, de
+    genormaliseerde project-naam (of omgekeerd). "DatingAssistent 40+" →
+    "datingassistent"; "Daar" → "daarwebsite". Bij meerdere kandidaten wint de
+    langste overlap. Project-sleutels komen uit goals.project + de vault
+    (via _scan_projects), zodat we alleen aan échte projecten koppelen.
+    """
+    project_keys: set = set()
+    for row in conn.execute("SELECT DISTINCT project FROM goals"):
+        p = row["project"]
+        if p and p not in ("all", "Globaal"):
+            project_keys.add(_norm_project_key(p))
+    try:
+        from ...domains.projects.router import _scan_projects
+        for p in _scan_projects():
+            name = (p.get("name") or "").strip()
+            if name and not name.startswith("_"):
+                project_keys.add(_norm_project_key(name))
+    except Exception:
+        pass
+
+    out: Dict[str, Optional[str]] = {}
+    for row in conn.execute("SELECT DISTINCT name FROM sites"):
+        site = row["name"] or ""
+        sn = _norm_project_key(site)
+        best: Optional[str] = None
+        best_score = 0
+        for pk in project_keys:
+            if sn == pk:
+                best = pk
+                best_score = 999
+                break
+            if sn.startswith(pk) or pk.startswith(sn):
+                score = min(len(sn), len(pk))
+                if score > best_score:
+                    best = pk
+                    best_score = score
+        out[site] = best
+    return out
+
+
+def _resolve_item_project(project_field: Optional[str]) -> Optional[str]:
+    """Canonieke project-sleutel achter een inbox-item zijn `project`-veld.
+
+    - "goal:<id>" → echte project uit goals.
+    - site-naam → project via de site→project-map.
+    - reeds een project-naam → die sleutel.
+    - iets anders (Agenda, Leads, Scheduler, …) → None (niet project-gebonden).
+
+    Gebruikt de module-global project-index (eigen connectie, gecached) zodat
+    deze functie nooit leunt op een outer connectie die al gesloten kan zijn.
+    """
+    global _PROJECT_INDEX
+    if _PROJECT_INDEX is None:
+        _PROJECT_INDEX = _build_project_index()
+    known, site_to_proj, goal_to_proj = _PROJECT_INDEX
+    if not project_field or project_field == "?":
+        return None
+    if project_field.startswith("goal:"):
+        return goal_to_proj.get(project_field)
+    n = _norm_project_key(project_field)
+    if n in known:
+        return n
+    return site_to_proj.get(project_field)
+
+
+
+# WeAreImpact is niet zomaar een klantproject maar Vincents eigen bedrijf —
+# de plek waar zijn agenda, leads en scheduler-fouten al horen. Items zónder
+# resolveerbaar project (Agenda, Leads, Scheduler, …) horen daarom bij WÉL
+# WeAreImpact's eigen dashboard, en bij geen enkel ander (klant)project.
+_WEAREIMPACT_KEY = "weareimpact"
+
+
+def _item_belongs_to_project(project_field: Optional[str], target_key: str) -> bool:
+    """Klopt dit item bij het gevraagde project (canonieke sleutel)?
+
+    Vóór 23 aug 2026 vielen niet-project-gebonden items (Agenda-voorstellen,
+    Leads, Scheduler-fouten — alle drie expliciet 'None' in
+    `_resolve_item_project`) uit ELKE per-project inbox, óók die van
+    WeAreImpact zelf: een WhatsApp-afspraakvoorstel voor 24 augustus stond
+    wél in de globale Control Room-inbox (project=None) maar toonde "0" op
+    het WeAreImpact-dashboard, waar Vincent 'm juist verwachtte af te
+    handelen. De Agenda-tab kende deze uitzondering al (zichtbaar op
+    WeAreImpact, verborgen op klantprojecten) — deze filter volgt nu
+    dezelfde regel."""
+    resolved = _resolve_item_project(project_field)
+    if resolved is None and target_key == _WEAREIMPACT_KEY:
+        return True
+    return resolved == target_key
+
+
+# Gecachte project-index (known-keys + site→project + goal→project). Eén keer
+# gebouwd per proces; bij herstart/redeploy vers. Projecten veranderen zelden,
+# dus een statische cache is hier veilig genoeg.
+_PROJECT_INDEX: Optional[tuple] = None
+
+
+def _build_project_index() -> tuple:
+    """Bouw (known_keys, site_to_proj, goal_to_proj) met een eigen connectie.
+
+    - known_keys: genormaliseerde namen van alle echte projecten (goals +
+      vault), zodat een item met project-veld == projectnaam direct matcht.
+    - site_to_proj: site-naam → genormaliseerde project-sleutel.
+    - goal_to_proj: "goal:<id>" → genormaliseerde project-sleutel.
+    """
+    from ...domains.projects.router import _scan_projects
+
+    with get_conn() as conn:
+        known: set = set()
+        for row in conn.execute("SELECT DISTINCT project FROM goals"):
+            p = row["project"]
+            if p and p not in ("all", "Globaal"):
+                known.add(_norm_project_key(p))
+        for p in _scan_projects():
+            name = (p.get("name") or "").strip()
+            if name and not name.startswith("_"):
+                known.add(_norm_project_key(name))
+        site_to_proj = _build_site_to_project(conn)
+        goal_to_proj = {}
+        for row in conn.execute("SELECT id, project FROM goals"):
+            if row["project"]:
+                goal_to_proj["goal:" + row["id"]] = _norm_project_key(row["project"])
+    return known, site_to_proj, goal_to_proj
 
 
 def _short_title(title: str) -> str:
@@ -318,7 +462,7 @@ def _goal_task_counts(conn, goal_id: str) -> Dict[str, int]:
 
 def _campagne_auto_channels(conn, project: str, kanalen: List[str],
                             image_brief_json: str = "") -> List[str]:
-    """Welke kanalen kan Agent OS voor dit pack ÉCHT automatisch plaatsen?
+    """Welke kanalen kan Impact OS voor dit pack ÉCHT automatisch plaatsen?
 
     Stuurt de zichtbaarheid van de 'Plaats op socials'-knop. Een kanaal komt
     alleen in deze lijst als de publish-chain hem daadwerkelijk kan doen —
@@ -366,7 +510,17 @@ def _campagne_auto_channels(conn, project: str, kanalen: List[str],
     return out
 
 
-def build_inbox() -> Dict[str, Any]:
+def build_inbox(project: Optional[str] = None) -> Dict[str, Any]:
+    """Verzamel alles wat op een menselijke beslissing wacht.
+
+    Met `project` (vault-projectnaam, bv. "Bewaard voor Jou") worden alleen de
+    items teruggegeven die bij dát project horen — inclusief de content-
+    wachtrijen die onder een site-naam (bv. "DatingAssistent 40+") hangen. Zonder
+    `project` blijft het de volledige inbox voor de Control Room.
+    """
+    # Canonnische sleutel van het gevraagde project, zodat we site- en
+    # project-namen door elkaar heen kunnen matchen (zie _norm_project_key).
+    target_key = _norm_project_key(project) if project else None
     items: List[Dict[str, Any]] = []
     with get_conn() as conn:
         skip = _dismissed(conn)
@@ -459,7 +613,7 @@ def build_inbox() -> Dict[str, Any]:
         # (oude data vóór de gate-fix, of een vastgelopen verbeter-loop) laten we
         # weg uit de inbox en rapporteren we als inconsistente-staat-logging, zodat
         # de content-verbeteraar (scheduler) ze oppakt i.p.v. de mens.
-        from ...shared.config import CONTENT_MIN_SCORE
+        from ...shared.config import content_min_score
         _seen_wachtrij_titles = set()
         for j in conn.execute(
             "SELECT j.id, j.title, j.seo_score, j.created_at, s.name AS site, "
@@ -477,10 +631,11 @@ def build_inbox() -> Dict[str, Any]:
                 continue
             _seen_wachtrij_titles.add(_dedup_key)
             score = int(j["seo_score"] or 0)
+            _gate = content_min_score(j["site"])
             ct = (j["content_type"] or "blog").strip().lower()
             is_outreach = ct == "linkedin_outreach"
             is_hook = ct in ("hook", "snippet", "social_snippet")
-            if score < CONTENT_MIN_SCORE:
+            if score < _gate:
                 # Inconsistent: onder grens maar wél in de goedkeuringsqueue.
                 # Niet aan Vincent tonen — de agent lost het op (zie
                 # content-pipeline improve-loop / scheduler verbeter-taak).
@@ -493,7 +648,7 @@ def build_inbox() -> Dict[str, Any]:
                         "[actiecentrum] Job %s (%s) staat op pending_review met score %s "
                         "< grens %s — weggelaten uit inbox, agent moet verbeteren. "
                         "(melding onderdrukt voor 1 uur)",
-                        j["id"], j["title"], score, CONTENT_MIN_SCORE,
+                        j["id"], j["title"], score, _gate,
                     )
                 continue
             # Eerlijke subtekst + knoppen per content-type. Een hook/snippet is
@@ -542,7 +697,7 @@ def build_inbox() -> Dict[str, Any]:
             })
 
         # ── 2a. Content onder de kwaliteitsgrens: verbeteren of afwijzen ─
-        from ...shared.config import CONTENT_MIN_SCORE
+        from ...shared.config import content_min_score
         for j in conn.execute(
             "SELECT j.id, j.title, j.seo_score, j.created_at, s.name AS site "
             "FROM content_jobs j LEFT JOIN sites s ON s.id = j.site_id "
@@ -558,12 +713,47 @@ def build_inbox() -> Dict[str, Any]:
                 "project": j["site"] or "?",
                 "created_at": j["created_at"],
                 "summary": (
-                    f"Score {j['seo_score']}/100 — onder de kwaliteitsgrens ({CONTENT_MIN_SCORE}). "
+                    f"Score {j['seo_score']}/100 — onder de kwaliteitsgrens ({content_min_score(j['site'])}). "
                     "Publiceren is geblokkeerd; laat de agent herschrijven of wijs af."
                 ),
                 "actions": [
                     {"label": "Verbeter met AI", "type": "content_regenerate", "id": j["id"]},
                     {"label": "Handmatig aanpassen", "type": "content_manual_edit", "id": j["id"]},
+                    {"label": "Wijs af", "type": "content_reject", "id": j["id"], "danger": True},
+                ],
+            })
+
+        # ── 2a1. Vastgelopen content: de agent probeerde het en gaf het op ──
+        # 'stuck' = content_improver + Orchestrator kwamen beide niet boven de
+        # grens (max_attempts bereikt). Een vroegere versie van dit dashboard
+        # droeg geen knop, waardoor Vincent handmatig moest zoeken. Nu: één
+        # 'Reset & opnieuw' die de pogingentellers cleart en de job terugzet
+        # naar 'needs_work' (zodat de content_improver en/of Orchestrator hem
+        # opnieuw kunnen pakken). Zonder dat handmatige stappen in de shell.
+        for j in conn.execute(
+            "SELECT j.id, j.title, j.seo_score, j.improve_attempts, j.orchestrator_attempts, "
+            "j.reviewed_at, s.name AS site "
+            "FROM content_jobs j LEFT JOIN sites s ON s.id = j.site_id "
+            "WHERE j.status='stuck' ORDER BY j.created_at DESC"
+        ):
+            if ("content", j["id"]) in skip:
+                continue
+            attempts = (j.get("improve_attempts") or 0) + (j.get("orchestrator_attempts") or 0)
+            items.append({
+                "kind": "content_stuck",
+                "dismiss_kind": "content",
+                "id": j["id"],
+                "title": j["title"],
+                "project": j["site"] or "?",
+                "created_at": j["reviewed_at"] or j["created_at"],
+                "summary": (
+                    f"Score {j['seo_score']}/100 — {attempts}x geprobeerd, blijvend onder de grens. "
+                    "De verbeteraar en de Orchestrator hebben hun pogingen opgebruikt. "
+                    "Reset de tellers om het opnieuw te laten proberen, of wijs af."
+                ),
+                "actions": [
+                    {"label": "Reset & opnieuw proberen", "type": "content_reset_stuck", "id": j["id"], "accent": True},
+                    {"label": "Verbeter met AI", "type": "content_regenerate", "id": j["id"]},
                     {"label": "Wijs af", "type": "content_reject", "id": j["id"], "danger": True},
                 ],
             })
@@ -669,6 +859,23 @@ def build_inbox() -> Dict[str, Any]:
                 job_id = (e["detail"] or "").split("|")[0].strip()
                 if job_id:
                     actions.insert(0, {"label": "Nu draaien", "type": "run_job", "id": job_id})
+            # 'afgekeurd maar live' droeg tot 18 aug 2026 alleen de instructie
+            # "haal dit offline in het CMS" — geen knop, en dus ook nooit een
+            # signaal dat het gebeurd was (zie confirm_depublished). Zoek de
+            # afgewezen job terug op titel+project en bied de knop aan die
+            # écht depubliceert en de kaart daarmee doet sluiten.
+            if e["action"] == "afgekeurd_maar_live":
+                m = re.search(r"'([^']{8,})'", e["detail"] or "")
+                if m:
+                    job_row = conn.execute(
+                        "SELECT cj.id FROM content_jobs cj JOIN sites s ON s.id=cj.site_id "
+                        "WHERE cj.title=? AND lower(s.name)=lower(?) AND cj.status='rejected' "
+                        "ORDER BY cj.reviewed_at DESC LIMIT 1",
+                        (m.group(1), e["project"] or ""),
+                    ).fetchone()
+                    if job_row:
+                        actions.insert(0, {"label": "Haal offline", "type": "confirm_depublished",
+                                            "id": job_row["id"], "accent": True})
             summary = (e["detail"] or "")[:220]
             # Werkt Iris hier al aan? Dan hoort de kaart dát te zeggen. Anders
             # kijkt Vincent naar een rood item terwijl er al iemand op zit — en
@@ -932,7 +1139,7 @@ def build_inbox() -> Dict[str, Any]:
             kanalen = sorted(_json_dict(r["copy_json"]).keys())
             gepland = (r["scheduled_for"] or "")
             te_laat = gepland[:10] < date.today().isoformat()
-            # Welke kanalen kan Agent OS ÉCHT automatisch plaatsen voor dit pack?
+            # Welke kanalen kan Impact OS ÉCHT automatisch plaatsen voor dit pack?
             # Alleen die krijgen de groene "Plaats op socials"-knop — de rest
             # kan toch niet (geen token / geen publieke image / LinkedIn is per
             # definitie handmatig). Zo liegt de UI nooit dat ze geplaatst wordt.
@@ -1007,7 +1214,10 @@ def build_inbox() -> Dict[str, Any]:
         from ...scheduler import get_scheduler_status
         for job in get_scheduler_status().get("jobs", []):
             last = job.get("last_run")
-            if last and last.get("status") == "error":
+            if not last:
+                continue
+            status = last.get("status")
+            if status == "error":
                 items.append({
                     "kind": "error",
                     "dismiss_kind": "scheduler",
@@ -1020,12 +1230,36 @@ def build_inbox() -> Dict[str, Any]:
                         {"label": "Bekijk in Technisch", "type": "open_tab", "tab": "Technisch"},
                     ],
                 })
+            elif status == "action_required":
+                # Integratie ontbreekt (bv. Outlook/Microsoft niet gekoppeld).
+                # Een mens moet iets doen — toon dat als 'actie van jou nodig',
+                # niet als een harde fout. Geen tracestack, één heldere kaart.
+                items.append({
+                    "kind": "attention",
+                    "dismiss_kind": "scheduler",
+                    "id": job["id"],
+                    "title": f"Actie vereist: {job['label']}",
+                    "project": "Scheduler",
+                    "created_at": last.get("time"),
+                    "summary": (last.get("error") or "")[:220],
+                    "actions": [
+                        {"label": "Koppel in Instellingen", "type": "open_tab", "tab": "Instellingen"},
+                    ],
+                })
     except Exception:
         pass
 
     errors = [i for i in items if i["kind"] == "error"]
+    # ── Project-scope: bij een gevraagd project houden we alleen de items die
+    # er écht bij horen. De check gebeurt vóórdat de tellingen worden gebouwd,
+    # zodat ook de counts (total/needs_you/errors) over het gefilterde lijstje
+    # gaan — de projectview toont dan exact "wat wacht er op mij" voor dát project.
+    if target_key:
+        items = [i for i in items if _item_belongs_to_project(i.get("project"), target_key)]
+        errors = [i for i in items if i["kind"] == "error"]
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "project": project,
         "counts": {
             "total": len(items),
             "needs_you": len(items) - len(errors),
@@ -1033,6 +1267,49 @@ def build_inbox() -> Dict[str, Any]:
         },
         "items": items,
     }
+
+
+def inbox_counts_by_project() -> Dict[str, int]:
+    """Telling per project van alle open actie-items.
+
+    Hertgebruikt dezelfde project-resolutie als build_inbox() (incl.
+    site→project-normalisatie) en groepeert op de leesbare project-naam,
+    zodat de Control-Room-kaken een badge krijgen met exact hetzelfde getal
+    als de bijbehorende projectview. Cross-cutting items (Agenda, Leads,
+    Scheduler, …) hebben geen project en worden niet meegeteld.
+    """
+    inbox = build_inbox()
+    counts: Dict[str, int] = {}
+    for it in inbox.get("items", []):
+        key = _resolve_item_project(it.get("project"))
+        if not key:
+            continue
+        # Map de genormaliseerde sleutel terug naar een leesbare naam via de
+        # gecachte project-index (known_keys bevat de genormaliseerde vormen,
+        # niet de originele namen — dus we herleiden de naam uit goals/vault).
+        name = _project_display_name(key) or key
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def _project_display_name(key: str) -> Optional[str]:
+    """Genormaliseerde project-sleutel → leesbare naam (vault-projectnaam)."""
+    global _PROJECT_INDEX
+    if _PROJECT_INDEX is None:
+        _PROJECT_INDEX = _build_project_index()
+    known, _site_to_proj, _goal_to_proj = _PROJECT_INDEX
+    # known bevat genormaliseerde namen; de originele naam halen we uit de
+    # vault/sites. Simpelste: doorzoek goals + sites op de genormaliseerde match.
+    with get_conn() as conn:
+        for row in conn.execute("SELECT DISTINCT project FROM goals"):
+            p = row["project"]
+            if p and p not in ("all", "Globaal") and _norm_project_key(p) == key:
+                return p
+        for row in conn.execute("SELECT DISTINCT name FROM sites"):
+            s = row["name"] or ""
+            if _norm_project_key(s) == key:
+                return s
+    return None
 
 
 def dismiss(kind: str, ref_id: str) -> None:

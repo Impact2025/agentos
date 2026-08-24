@@ -1,4 +1,4 @@
-# Agent OS — productie-image voor always-on hosting (Fly.io / VPS)
+# Impact OS — productie-image voor always-on hosting (Fly.io / VPS)
 # Frontend is statisch (geen build-stap) → we kopiëren frontend/ + backend/.
 FROM python:3.11-slim
 
@@ -30,5 +30,5 @@ RUN mkdir -p /app/data /app/data/uploads /app/data/workspace \
 EXPOSE 8080
 
 # Fly.io zet PORT; uvicorn bindt op 0.0.0.0 zodat de container bereikbaar is.
-# AGENTOS_DB_PATH wijst naar het volume (zie fly.toml [mounts]).
+# IMPACTOS_DB_PATH wijst naar het volume (zie fly.toml [mounts]).
 CMD uvicorn backend.main:app --host 0.0.0.0 --port "${PORT:-8080}"

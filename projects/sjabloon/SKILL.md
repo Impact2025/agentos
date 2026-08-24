@@ -1,6 +1,6 @@
 ---
 name: sjabloon
-description: "Template voor een nieuw Agent OS project"
+description: "Template voor een nieuw Impact OS project"
 version: 1.0.0
 tags: [template]
 ---

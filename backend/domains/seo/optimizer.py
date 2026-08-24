@@ -191,7 +191,7 @@ async def _fetch_pages(urls: List[str]) -> Dict[str, Dict]:
             except Exception as e:
                 logger.debug(f"[optimizer] Pagina ophalen mislukt {url}: {e}")
 
-    async with httpx.AsyncClient(headers={"User-Agent": "AgentOS-SEO-Optimizer/1.0"}) as client:
+    async with httpx.AsyncClient(headers={"User-Agent": "ImpactOS-SEO-Optimizer/1.0"}) as client:
         await asyncio.gather(*(_one(client, u) for u in urls))
     return results
 
@@ -687,6 +687,175 @@ async def refresh_article(sug: Dict, site: Dict) -> str:
     return job_id
 
 
+async def apply_ctr_variant(sid: str, variant_index: int) -> Dict[str, Any]:
+    """Zet een gekozen CTR title/meta-variant daadwerkelijk op de live pagina.
+
+    Aanleiding (22 aug 2026): `optimize_query`/`generate_ctr_variants` leverden
+    al 3 kant-en-klare varianten, maar niets zette ze live — Vincent moest de
+    gekozen tekst zelf in het CMS overtypen. Dat is precies het verschil tussen
+    "een agent kán dit" en "een agent dóét dit": de tekst kwam al van een LLM,
+    alleen het laatste stapje (live zetten) was niet gebouwd.
+
+    Zelfde twee regels als `repair.py` (repareren is publiceren): dit loopt via
+    `_publish_to_project_site` — dezelfde route en gates als elke andere
+    publicatie, nooit rechtstreekse HTTP naar het CMS — en het resultaat wordt
+    ná de push op de live pagina geverifieerd in plaats van aangenomen.
+    """
+    from ..publish import content_pipeline as cp
+    from ..iris.integrity import _live_url, _live_metatitel, _METATITEL_CACHE
+
+    sug = _get_suggestion(sid)
+    if not sug or sug["type"] != "ctr":
+        return {"ok": False, "reden": "suggestie-onbekend"}
+    variants = (sug["data"] or {}).get("variants") or []
+    if not (0 <= variant_index < len(variants)):
+        return {"ok": False, "reden": "variant-onbekend"}
+    variant = variants[variant_index]
+    gekozen_titel = (variant.get("title") or "").strip()
+    gekozen_meta = (variant.get("meta") or "").strip()
+    if not gekozen_titel:
+        return {"ok": False, "reden": "variant-zonder-titel"}
+
+    site = resolve_site(sug["site_id"])
+    if not site:
+        return {"ok": False, "reden": "site-onbekend"}
+
+    # Welke job hoort bij deze live pagina? Matchen op de URL die het systeem
+    # zelf ooit publiceerde, niet op de slug-kolom — die kan afwijken van wat
+    # er echt live staat (`slug_kolom_wijkt_af_van_url`, 16 aug 2026).
+    with get_conn() as conn:
+        rijen = conn.execute(
+            "SELECT id, title, keyword, slug, seo_score, blog_html, publish_result "
+            "FROM content_jobs WHERE site_id = ? AND status = 'published' "
+            "AND COALESCE(blog_html, '') != ''",
+            (sug["site_id"],),
+        ).fetchall()
+    doel = (sug["page"] or "").rstrip("/")
+    try:
+        pagina_slug = urlparse(doel).path.strip("/").split("/")[-1]
+    except Exception:
+        pagina_slug = ""
+    job = None
+    for r in rijen:
+        job_url = _live_url(r["publish_result"] or "").rstrip("/")
+        job_slug = (r["slug"] or "").strip("/").split("/")[-1]
+        if job_url == doel or (pagina_slug and job_slug == pagina_slug):
+            job = dict(r)
+            break
+
+    if job:
+        resultaat = await cp._publish_to_project_site(
+            site, job["title"] or gekozen_titel, job["blog_html"] or "",
+            job["keyword"] or "", job["slug"] or "",
+            int(job["seo_score"] or 0),
+            meta_title_override=gekozen_titel, meta_desc_override=gekozen_meta,
+        )
+    else:
+        # Pagina staat live maar NIET in content_jobs (handmatig / pre-ImpactOS
+        # gepubliceerd). Haal de huidige body van de live pagina op en upsert hem
+        # terug met de nieuwe meta-titel/meta-beschrijving. De site-publish route
+        # doet een upsert op slug -> UPDATE, dus verandert alleen title/meta en
+        # raakt de bestaande content niet.
+        if not doel:
+            return {"ok": False, "reden": "geen-doel-url",
+                    "detail": "suggestie heeft geen pagina-URL"}
+        if not pagina_slug:
+            return {"ok": False, "reden": "geen-slug",
+                    "detail": f"kon geen slug afleiden uit {doel}"}
+        import asyncio as _asyncio
+        import httpx as _httpx
+        from bs4 import BeautifulSoup as _BS
+        try:
+            async with _httpx.AsyncClient(
+                headers={"User-Agent": "ImpactOS-SEO-Optimizer/1.0"},
+                timeout=20, follow_redirects=True,
+            ) as client:
+                live = await client.get(doel)
+            if live.status_code != 200:
+                return {"ok": False, "reden": "live-pagina-403",
+                        "detail": f"{doel} gaf HTTP {live.status_code}"}
+            soup = _BS(live.text, "html.parser")
+            for tag in soup(["script", "style", "noscript"]):
+                tag.decompose()
+            for h1 in soup.find_all("h1"):
+                h1.decompose()
+            art = soup.find("article") or soup.find("main") or soup.body or soup
+            body_html = str(art)
+        except Exception as e:
+            return {"ok": False, "reden": "live-ophalen-mislukt",
+                    "detail": f"{type(e).__name__}: {str(e)[:120]}"}
+
+        import os as _os
+        env_prefix = re.sub(r"[^A-Z0-9]", "", site.get("name", "").upper())
+        publish_url = _os.getenv(f"{env_prefix}_PUBLISH_URL", "").strip()
+        publish_key = _os.getenv(f"{env_prefix}_PUBLISH_KEY", "").strip()
+        if not publish_url or not publish_key:
+            return {"ok": False, "reden": "geen-publish-config",
+                    "detail": f"Geen {env_prefix}_PUBLISH_URL/_PUBLISH_KEY"}
+        payload = {
+            "title": gekozen_titel,
+            "content": body_html,
+            "slug": pagina_slug,
+            "seoTitle": cp.meta_title_for(gekozen_titel),
+            "seoDescription": gekozen_meta,
+            "source": "agent-os-optimizer",
+            "socials": False,
+        }
+        try:
+            def _post_follow(purl, body, key):
+                headers = {"Authorization": f"Bearer {key}",
+                           "Content-Type": "application/json"}
+                cur, resp = purl, None
+                for _ in range(5):
+                    resp = _httpx.post(cur, json=body, headers=headers,
+                                       timeout=90, follow_redirects=False)
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        loc = resp.headers.get("location")
+                        if not loc:
+                            break
+                        cur = str(_httpx.URL(cur).join(loc))
+                        continue
+                    break
+                return resp
+            resp = await _asyncio.to_thread(_post_follow, publish_url, payload, publish_key)
+            if resp.status_code not in (200, 201):
+                return {"ok": False, "reden": "cms-upsert-mislukt",
+                        "detail": f"HTTP {resp.status_code}: {resp.text[:160]}"}
+            try:
+                _d = resp.json()
+            except Exception:
+                _d = {}
+            url = _d.get("url") or f"{site.get('base_url','').rstrip('/')}/blog/{pagina_slug}"
+            resultaat = {"success": True, "url": url, "status_code": resp.status_code}
+        except Exception as e:
+            return {"ok": False, "reden": "cms-upsert-exceptie",
+                    "detail": f"{type(e).__name__}: {str(e)[:120]}"}
+    if not resultaat.get("success"):
+        return {"ok": False, "reden": "publicatie-mislukt",
+                "detail": resultaat.get("error", "")}
+
+    # Bewijs, geen aanname — zelfde regel als `repareer_metatitel`.
+    url = resultaat.get("url") or sug["page"]
+    _METATITEL_CACHE.pop(url, None)
+    live = _live_metatitel(url)
+    verwacht = cp.meta_title_for(gekozen_titel)
+    kaal = live.split("|")[0].strip() if live and "|" in live else live
+    if live is not None and kaal != verwacht and live != verwacht:
+        return {"ok": False, "reden": "titel-onveranderd", "url": url,
+                "detail": f"live staat nog {(kaal or '')[:70]!r}, verwacht {verwacht[:70]!r}"}
+
+    _update_suggestion(sid, status="done")
+    from ...shared.outcomes import log_outcome
+    log_outcome(
+        site["name"], "ctr_variant_toegepast",
+        f"Titel/meta bijgewerkt op {url}: '{verwacht}'",
+        artifact=url,
+        next_step="Niets — check over ~28 dagen of de CTR is verbeterd.",
+        status="ok",
+    )
+    return {"ok": True, "url": url, "titel": verwacht, "meta": gekozen_meta}
+
+
 # ── API ──────────────────────────────────────────────────────────────────────
 
 class StatusPatch(BaseModel):
@@ -738,6 +907,16 @@ async def api_ctr_variants(sid: str):
         return {"variants": variants}
     except RuntimeError as e:
         raise HTTPException(502, str(e))
+
+
+@router.post("/suggestions/{sid}/apply-variant")
+async def api_apply_ctr_variant(sid: str, variant_index: int):
+    """Zet de gekozen title/meta-variant live — het stapje dat na de knop
+    "Title/meta-varianten" nog ontbrak: kiezen én meteen doorvoeren."""
+    result = await apply_ctr_variant(sid, variant_index)
+    if not result.get("ok"):
+        raise HTTPException(502, result.get("detail") or result.get("reden") or "onbekende fout")
+    return result
 
 
 @router.post("/{project}/optimize-query")

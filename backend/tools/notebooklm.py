@@ -1,12 +1,12 @@
-"""NotebookLM-client voor Agent OS.
+"""NotebookLM-client voor Impact OS.
 
 Spreekt de `notebooklm-mcp` MCP-server aan in Streamable-HTTP modus
-(standaard op poort 3137, gestart vanuit agentos_service.cmd). De server
+(standaard op poort 3137, gestart vanuit impactos_service.cmd). De server
 drijft een echte Chrome via Patchright en laat ons RAG- onderzoek doen
 tegen onze eigen NotebookLM-notebooks (met citations), bronnen injecteren
 en Audio Overviews genereren.
 
-Waarom HTTP i.p.v. stdio: Agent OS is een langlopende FastAPI-server.
+Waarom HTTP i.p.v. stdio: Impact OS is een langlopende FastAPI-server.
 Een stdio-subprocess per call betekent Chrome telkens opstarten (~10-30s);
 een warme HTTP-server antwoordt in milliseconden op het JSON-RPC-laagje.
 De client is bewust SYNC (requests) — de caller (researcher-service) doet
@@ -105,7 +105,7 @@ class NotebookLMClient:
             "params": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "agentos", "version": "1.0"},
+                "clientInfo": {"name": "impactos", "version": "1.0"},
             },
         }
         resp = self._session.post(

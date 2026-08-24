@@ -9,7 +9,7 @@ $body = @{
 try {
     $r = Invoke-RestMethod -Method POST -Uri "http://127.0.0.1:1250/api/tasks/triage" -ContentType 'application/json' -Body $body
 } catch {
-    Write-Host "FOUT: Kan Agent OS niet bereiken op http://127.0.0.1:1250" -ForegroundColor Red
+    Write-Host "FOUT: Kan Impact OS niet bereiken op http://127.0.0.1:1250" -ForegroundColor Red
     Write-Host $_.Exception.Message
     exit 1
 }

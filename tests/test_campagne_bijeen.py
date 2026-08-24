@@ -5,7 +5,7 @@ uitgeschreven plan stil kan sneuvelen:
 
   1. Het videoplan raakt los van het tekstplan. Zes van de achttien posts dragen
      een Veo-concept; verdwijnt dat bij het importeren, dan staat de tekst in
-     Agent OS en het beeldplan weer in een bestand — de splitsing die
+     Impact OS en het beeldplan weer in een bestand — de splitsing die
      social_campaign.py juist opheft.
   2. De kanaalregels verdwijnen. "Zet de link in de eerste reactie" is precies
      het soort afspraak dat in een document blijft liggen en het verschil maakt
@@ -28,7 +28,19 @@ from backend.domains.action_center import service as action_center
 from backend.domains.iris import integrity
 
 PROJECT = "bijeen"
-START = date(2026, 8, 17)          # een maandag
+# Bewust GEEN vaste kalenderdatum. Deze suite test het importeren van een
+# plan in het algemeen (niet de specifieke, al lang lopende Bijeen-campagne
+# in productie) en `action_center.build_inbox()` vergelijkt `scheduled_for`
+# tegen het échte `date.today()` (zie service.py: "de post die vandaag had
+# moeten staan"). Een vaste ankerdatum ("17 aug 2026") ligt op een gegeven
+# moment vanzelf weer in het (recente) verleden, en dan valt een latere post
+# uit het 18-posts-plan toevallig op de dag waarop de test draait — precies
+# wat hier op 19 aug 2026 gebeurde (post 1.2 verscheen ineens als "vandaag
+# gepland" naast de expliciet op vandaag gezette post 1.1). Een startmaandag
+# ver in de toekomst (90 dagen) garandeert dat geen enkele van de 18 posts
+# ooit toevallig samenvalt met de dag waarop de test draait.
+_MIN_VOORUIT = date.today() + timedelta(days=90)
+START = _MIN_VOORUIT + timedelta(days=(7 - _MIN_VOORUIT.weekday()) % 7)  # eerstvolgende maandag
 
 
 @pytest.fixture()
@@ -51,8 +63,9 @@ def test_alle_achttien_posts_met_het_juiste_ritme(campagne_geimporteerd):
     # Ma/wo/vr, zes weken: de eerste op de startmaandag, de laatste zes weken
     # later op vrijdag. Een campagne die halverwege de week begint verliest zijn
     # ritme, en het ritme is de helft van wat dit plan laat werken.
-    assert agenda[0]["gepland"][:10] == "2026-08-17"
-    assert agenda[-1]["gepland"][:10] == "2026-09-25"
+    assert agenda[0]["gepland"][:10] == START.isoformat()
+    # Vrijdag van week 6 = startmaandag + 5 volle weken + 4 dagen.
+    assert agenda[-1]["gepland"][:10] == (START + timedelta(days=39)).isoformat()
     dagen = {campagne.datetime.fromisoformat(a["gepland"]).weekday() for a in agenda}
     assert dagen == {0, 2, 4}
 

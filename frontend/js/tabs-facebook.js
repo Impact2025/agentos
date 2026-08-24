@@ -1,4 +1,4 @@
-// ── Agent OS — Facebook-tab: analyse (snapshot), instellingen, post-composer, comments
+// ── Impact OS — Facebook-tab: analyse (snapshot), instellingen, post-composer, comments
 // Wereldklasse Facebook-beheer via de Facebook Agent "Deluxe" (backend/domains/facebook).
 // Leest uit de opgeslagen snapshot (instant, geen live Graph API); acties (post/settings/
 // comments) raken de live Graph API alleen op expliciete gebruikershandeling.

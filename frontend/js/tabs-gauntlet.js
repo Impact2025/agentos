@@ -1,4 +1,4 @@
-// ── Agent OS — tab: Gauntlet Loop (matcher + parallelle blinde critici)
+// ── Impact OS — tab: Gauntlet Loop (matcher + parallelle blinde critici)
 // Onderdeel van de SPA: klassieke scripts, gedeelde globare scope.
 // Laadvolgorde staat in index.html — core.js eerst.
 //
@@ -22,10 +22,10 @@ async function renderGauntletTab(el) {
       '<p style="font-size:12px;color:#64748b;margin-bottom:10px">Eén herhaalbare opdracht + één scherpe benchmark. ' +
         'De matcher splitst hem op in parallelle deeltaken; elke deeltaak krijgt een blinde criticus die het hard meet tegen de benchmark.</p>' +
       '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Opdracht</label>' +
-      '<textarea id="g-objective" rows="2" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;margin-bottom:10px" placeholder="Bijv. schrijf een wereldklasse landingspagina voor X"></textarea>' +
+      '<textarea id="g-objective" rows="2" style="width:100%;padding:8px;border:1px solid var(--card-border);border-radius:8px;font-size:13px;margin-bottom:10px" placeholder="Bijv. schrijf een wereldklasse landingspagina voor X"></textarea>' +
       '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Benchmark (waar hard tegenaan gemeten wordt)</label>' +
-      '<textarea id="g-benchmark" rows="2" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;margin-bottom:6px" placeholder="Bijv. de beste landingspagina die je kunt vinden, of een scherpe beschrijving van het gewenste resultaat"></textarea>' +
-      '<select id="g-benchmark-preset" onchange="applyGauntletBenchmark(this.value)" style="width:100%;padding:6px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;margin-bottom:10px">' +
+      '<textarea id="g-benchmark" rows="2" style="width:100%;padding:8px;border:1px solid var(--card-border);border-radius:8px;font-size:13px;margin-bottom:6px" placeholder="Bijv. de beste landingspagina die je kunt vinden, of een scherpe beschrijving van het gewenste resultaat"></textarea>' +
+      '<select id="g-benchmark-preset" onchange="applyGauntletBenchmark(this.value)" style="width:100%;padding:6px;border:1px solid var(--card-border);border-radius:8px;font-size:12px;margin-bottom:10px">' +
         '<option value="">— kies een kant-en-klare WeAreImpact-benchmark —</option>' +
         '<option value="landingspagina">Landingspagina (gemeente)</option>' +
         '<option value="voorstel">Gemeente-voorstel / offerte</option>' +
@@ -35,18 +35,18 @@ async function renderGauntletTab(el) {
       '</select>' +
       '<div style="display:flex;gap:12px;margin-bottom:10px">' +
         '<div><label style="font-size:11px;color:#64748b;display:block">Drempel (0-100)</label>' +
-          '<input id="g-threshold" type="number" value="85" min="1" max="100" style="width:90px;padding:6px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px"></div>' +
+          '<input id="g-threshold" type="number" value="85" min="1" max="100" style="width:90px;padding:6px;border:1px solid var(--card-border);border-radius:8px;font-size:13px"></div>' +
         '<div><label style="font-size:11px;color:#64748b;display:block">Max rondes / deeltaak</label>' +
-          '<input id="g-maxiter" type="number" value="3" min="1" max="10" style="width:90px;padding:6px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px"></div>' +
+          '<input id="g-maxiter" type="number" value="3" min="1" max="10" style="width:90px;padding:6px;border:1px solid var(--card-border);border-radius:8px;font-size:13px"></div>' +
         '<div><label style="font-size:11px;color:#64748b;display:block">Model (opt.)</label>' +
-          '<input id="g-model" type="text" value="" placeholder="deepseek-v4-pro" style="width:140px;padding:6px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px"></div>' +
+          '<input id="g-model" type="text" value="" placeholder="deepseek-v4-pro" style="width:140px;padding:6px;border:1px solid var(--card-border);border-radius:8px;font-size:13px"></div>' +
       '</div>' +
-      '<button id="g-start" onclick="startGauntlet()" style="padding:8px 18px;background:#4f46e5;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Start Gauntlet</button>' +
+      '<button id="g-start" onclick="startGauntlet()" class="btn btn-primary">Start Gauntlet</button>' +
     '</div>' +
     '<div class="section-card">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
         '<h4 style="font-size:13px;font-weight:600">Live feed & runs</h4>' +
-        '<button onclick="loadGauntletRuns()" style="font-size:11px;color:#6366f1;background:none;border:none;cursor:pointer">Ververs</button>' +
+        '<button onclick="loadGauntletRuns()" class="btn btn-sm btn-ghost">Ververs</button>' +
       '</div>' +
       '<div id="g-feed" style="font-family:monospace;font-size:12px;background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px;max-height:240px;overflow:auto;white-space:pre-wrap"></div>' +
       '<div id="g-runs" style="margin-top:12px"></div>' +
@@ -218,30 +218,30 @@ async function loadGauntletRuns() {
   if (!runs.length) { box.innerHTML = '<div style="color:#64748b;font-size:12px;padding:8px">Nog geen runs.</div>'; return; }
 
   var html = '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
-    '<thead><tr style="text-align:left;color:#64748b;border-bottom:1px solid #e2e8f0">' +
+    '<thead><tr style="text-align:left;color:#64748b;border-bottom:1px solid var(--card-border)">' +
     '<th style="padding:6px">Opdracht</th><th style="padding:6px">Status</th><th style="padding:6px">Deeltaken</th><th style="padding:6px">Jury</th><th style="padding:6px"></th></tr></thead><tbody>';
   runs.forEach(function(r) {
-    var statusColor = r.status === 'running' ? '#3b82f6' : (r.status === 'passed' ? '#22c55e' : (r.status === 'stopped_by_user' ? '#f59e0b' : '#64748b'));
+    var statusPill = r.status === 'running' ? 'pill-info' : (r.status === 'passed' ? 'pill-ok' : (r.status === 'stopped_by_user' ? 'pill-warn' : 'pill-neutral'));
     var running = r.status === 'running';
     var verdictCell = r.human_verdict
       ? escHtml(r.human_verdict)
       : (running ? '' :
-        '<select id="g-verdict-' + r.id + '" style="padding:3px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px">' +
+        '<select id="g-verdict-' + r.id + '" style="padding:3px;border:1px solid var(--card-border);border-radius:6px;font-size:11px">' +
           '<option value="">— oordeel —</option><option value="goedgekeurd">goedgekeurd</option>' +
           '<option value="aangepast">aangepast</option><option value="afgekeurd">afgekeurd</option></select>' +
-        '<br><input id="g-verdict-note-' + r.id + '" placeholder="notitie" style="width:120px;margin-top:3px;padding:3px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px">' +
-        '<br><button onclick="submitGauntletVerdict(\'' + r.id + '\')" style="margin-top:3px;padding:3px 8px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Beoordeel</button>');
+        '<br><input id="g-verdict-note-' + r.id + '" placeholder="notitie" style="width:120px;margin-top:3px;padding:3px;border:1px solid var(--card-border);border-radius:6px;font-size:11px">' +
+        '<br><button onclick="submitGauntletVerdict(\'' + r.id + '\')" class="btn btn-sm btn-primary" style="margin-top:3px">Beoordeel</button>');
     html += '<tr style="border-bottom:1px solid #f1f5f9">' +
       '<td style="padding:6px">' + escHtml(short(r.objective, 50)) + '</td>' +
-      '<td style="padding:6px;color:' + statusColor + ';font-weight:600">' + escHtml(r.status) + '</td>' +
+      '<td style="padding:6px"><span class="pill ' + statusPill + '">' + escHtml(r.status) + '</span></td>' +
       '<td style="padding:6px">' + (r.subtask_count || 0) + '</td>' +
       '<td style="padding:6px">' + verdictCell + '</td>' +
       '<td style="padding:6px">' +
-        (running ? '<button onclick="stopGauntlet(\'' + r.id + '\')" style="padding:3px 10px;background:#ef4444;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Stop</button>' : '') +
+        (running ? '<button onclick="stopGauntlet(\'' + r.id + '\')" class="btn btn-sm btn-danger-outline">Stop</button>' : '') +
         (r.best_overall_score >= 0 ? ' <span style="font-size:11px;color:#64748b">top ' + r.best_overall_score + '</span>' : '') +
-        ((r.status === 'passed' || r.status === 'partial') && !r.published_job_id ? ' <button onclick="publishGauntlet(\'' + r.id + '\')" style="padding:3px 10px;background:#22c55e;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Publiceer → WeAreImpact</button>' : '') +
-        (r.published_job_id ? ' <span style="font-size:11px;color:#22c55e">✓ job ' + short(r.published_job_id, 12) + '</span>' : '') +
-        ' <button onclick="toggleGauntletDetail(\'' + r.id + '\')" style="padding:3px 10px;background:#475569;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Bekijk</button>' +
+        ((r.status === 'passed' || r.status === 'partial') && !r.published_job_id ? ' <button onclick="publishGauntlet(\'' + r.id + '\')" class="btn btn-sm btn-primary">Publiceer → WeAreImpact</button>' : '') +
+        (r.published_job_id ? ' <span class="pill pill-ok">job ' + short(r.published_job_id, 12) + '</span>' : '') +
+        ' <button onclick="toggleGauntletDetail(\'' + r.id + '\')" class="btn btn-sm btn-ghost">Bekijk</button>' +
       '</td></tr>';
   });
   html += '</tbody></table>';
@@ -256,18 +256,22 @@ async function toggleGauntletDetail(runId) {
   det.dataset.run = runId;
   det.innerHTML = '<div style="color:#64748b;font-size:12px;padding:8px">Laadt resultaten…</div>';
   try {
-    var resp = await fetch('/api/gauntlet/' + encodeURIComponent(runId), { headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('agentos_token') || '') } });
+    // Backward-compat: lees zowel de nieuwe impactos_token als een eventuele bestaande
+    // agentos_token (legacy browser localStorage) zodat gebruikers niet opnieuw moeten
+    // inloggen na de AgentOS -> Impact OS rename.
+    var _token = localStorage.getItem('impactos_token') || localStorage.getItem('agentos_token') || '';
+    var resp = await fetch('/api/gauntlet/' + encodeURIComponent(runId), { headers: { 'Authorization': 'Bearer ' + _token } });
     if (!resp.ok) { det.innerHTML = '<div class="empty-state">Kon run niet laden (' + resp.status + ').</div>'; return; }
     var d = await resp.json();
     var h = '<div class="section-card" style="margin-top:8px"><h4 style="font-size:13px;font-weight:600;margin-bottom:8px">Resultaat per deeltaak</h4>';
     (d.subtasks || []).forEach(function(s) {
-      var sc = s.best_score >= d.threshold ? '#22c55e' : '#64748b';
-      h += '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:8px;margin-bottom:8px">' +
+      var scPill = s.best_score >= d.threshold ? 'pill-ok' : 'pill-neutral';
+      h += '<div style="border:1px solid var(--card-border);border-radius:8px;padding:8px;margin-bottom:8px">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
           '<strong style="font-size:12px">' + escHtml(s.role) + '</strong>' +
-          '<span style="font-size:11px;color:' + sc + ';font-weight:600">' + escHtml(s.status) + ' · ' + s.best_score + '/' + d.threshold + '</span>' +
+          '<span class="pill ' + scPill + '">' + escHtml(s.status) + ' · ' + s.best_score + '/' + d.threshold + '</span>' +
         '</div>' +
-        '<pre style="white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;background:#f8fafc;border-radius:6px;padding:8px;max-height:280px;overflow:auto;margin:0">' + escHtml(s.best_output || '(geen output)') + '</pre>' +
+        '<pre style="white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;background:var(--neutral-bg);border-radius:6px;padding:8px;max-height:280px;overflow:auto;margin:0">' + escHtml(s.best_output || '(geen output)') + '</pre>' +
       '</div>';
     });
     h += '</div>';

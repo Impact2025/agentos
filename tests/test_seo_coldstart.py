@@ -61,6 +61,29 @@ def test_cold_start_zonder_profiel_doet_niets(conn, coldstart_clean, monkeypatch
     assert engine.cold_start_opportunities(_site("leeg")) == []
 
 
+def test_baseline_seed_gebruikt_de_volle_naam_niet_het_eerste_woord(conn, coldstart_clean):
+    """13 aug 2026, Bewaard voor Jou: `name.split()[0]` gaf onderwerp 'bewaard'
+    (een los werkwoord) en produceerde kansen als 'wat is bewaard precies' en
+    'waar vind je bewaard in Nederland'. Een meerwoordige merknaam moet heel
+    blijven — als merknaam lezen die templates wél als bruikbare vraag."""
+    from backend.domains.seo import engine
+
+    conn.execute(
+        "INSERT INTO sites (id, name, base_url, gsc_property, profile, "
+        "auto_content_enabled, content_batch_size, created_at) "
+        "VALUES ('bvj', 'Bewaard voor Jou', 'https://bewaardvoorjou.nl', "
+        "'sc-domain:bewaardvoorjou.nl', '', 1, 1, datetime('now'))"
+    )
+    conn.commit()
+
+    created = engine.seed_baseline_opportunities(_site("bvj"))
+    assert created, "baseline-seed had kansen moeten aanmaken"
+    queries = [c["query"] for c in created]
+    assert all("bewaard precies" not in q.lower() for q in queries)
+    assert all("bewaard in nederland" not in q.lower() for q in queries)
+    assert any("Bewaard voor Jou" in q for q in queries)
+
+
 def test_scan_site_valt_terug_op_cold_start(conn, coldstart_clean, monkeypatch):
     """GSC leeg + niets open → scan_site zwengelt de cold-start aan."""
     from backend.domains.seo import engine

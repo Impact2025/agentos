@@ -67,6 +67,31 @@ def get_site_social_config(site_name: str) -> Optional[dict]:
     return None
 
 
+# Hoelang een reeds gebruikt zoekwoord "bezet" blijft voor een nieuw idee.
+# Een GSC-topquery verandert dag op dag zelden — zonder dit blijft de #1-query
+# wekenlang dezelfde `werktitel` opleveren (`"liefde" — wat je écht wil weten`
+# stond zo op 19 én 21 aug 2026 letterlijk twee keer in de Wachtrij van Liefde-
+# VoorIedereen, met een bijna-identieke afbeelding erbij). 21 dagen = het GSC-
+# aggregatievenster dat `gather_signals` zelf gebruikt: binnen dat venster is
+# "opnieuw de topquery" geen nieuw signaal, het is dezelfde meting.
+_IDEA_DEDUPE_DAYS = 21
+
+
+def _recent_idea_queries(project: str, days: int = _IDEA_DEDUPE_DAYS) -> set:
+    """Zoekwoorden die dit project de afgelopen `days` dagen al als post-idee
+    kreeg (niet-afgewezen packs) — zodat een dominante GSC-topquery niet elke
+    dag hetzelfde thema oplevert."""
+    from .database import get_conn
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT idea_query FROM social_posts WHERE project = ? "
+            "AND idea_query != '' AND status != 'rejected' "
+            "AND created_at >= datetime('now', ?)",
+            (project, f"-{int(days)} days"),
+        ).fetchall()
+    return {(r["idea_query"] or "").strip().lower() for r in rows}
+
+
 def _pick_grounded_idea(project: str) -> Optional[Dict]:
     """Kies het beste datagedreven post-idee (GSC-topquery / Demand-kans /
     eerdere FB-engagement) i.p.v. te gokken uit een willekeurige vault-zin.
@@ -97,15 +122,22 @@ def _pick_grounded_idea(project: str) -> Optional[Dict]:
     if not ideas:
         return None
     # Voorkeur: een idee met een echt zoekwoord (GSC/Demand — al gesorteerd op
-    # impressies binnen build_ideas), want dat geeft de LLM een concreet
-    # onderwerp mét bewijs én een link-kans naar het live artikel. Een
-    # "herhaal wat scoorde"-idee uit fb_engagement is alleen een korte
-    # snippet van een oude post, geen volwaardig thema — bruikbaar als
-    # laatste redmiddel, niet als eerste keus.
+    # impressies binnen build_ideas) dat NIET al recent is gebruikt, want dat
+    # geeft de LLM een concreet onderwerp mét bewijs én een link-kans naar het
+    # live artikel. `_recent_idea_queries` voorkomt dat de dag-op-dag stabiele
+    # #1-GSC-query hetzelfde thema blijft opleveren.
+    used = _recent_idea_queries(project)
     for i in ideas:
-        if i.get("query"):
+        q = (i.get("query") or "").strip().lower()
+        if q and q not in used:
             return i
-    return ideas[0]
+    # Elk idee mét zoekwoord is al recent gebruikt (bv. één dominante topquery
+    # die weken #1 blijft) — dan liever een idee zónder query (fb_engagement/
+    # geen_data) dan letterlijk hetzelfde thema herhalen.
+    for i in ideas:
+        if not i.get("query"):
+            return i
+    return None
 
 
 def _pick_theme(project: str) -> str:
@@ -135,6 +167,28 @@ def _pick_theme(project: str) -> str:
     except Exception as e:
         logger.debug("Thema-keuze uit vault mislukt (projectnaam als fallback): %s", e)
     return f"verhaal van {project}"
+
+
+# Hoeveel dagen een pack met exact hetzelfde thema een nieuw pack blokkeert.
+# Onafhankelijke tweede rem naast `_recent_idea_queries` (die alleen het
+# GSC-idee-pad dekt) — precies de dubbele-detectie-aanpak van
+# `orchestrator_teller_teruggezet`: twee wegen naar hetzelfde thema (GSC-idee
+# vandaag, vault-gok morgen, een handmatige herrun) moeten allemaal tegen
+# dezelfde muur lopen, niet alleen de weg die toevallig als eerste gefixt werd.
+_DEDUPE_WINDOW_DAYS = 3
+
+
+def _existing_recent_pack(project: str, theme: str, days: int = _DEDUPE_WINDOW_DAYS) -> Optional[str]:
+    """Vind een niet-afgewezen pack met exact hetzelfde thema, recent aangemaakt."""
+    from .database import get_conn
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM social_posts WHERE project = ? AND theme = ? "
+            "AND status != 'rejected' AND created_at >= datetime('now', ?) "
+            "ORDER BY created_at DESC LIMIT 1",
+            (project, theme, f"-{int(days)} days"),
+        ).fetchone()
+    return row["id"] if row else None
 
 
 async def run_auto_social(project: str) -> Dict:
@@ -169,6 +223,16 @@ async def run_auto_social(project: str) -> Dict:
     result: Dict = {"project": project, "auto_post": auto_post, "theme": theme,
                     "idea_source": idea_source, "pack_id": None,
                     "published": {}, "manual": {}, "errors": []}
+
+    dup_id = _existing_recent_pack(project, theme)
+    if dup_id:
+        result["pack_id"] = dup_id
+        result["note"] = (f"Overgeslagen — thema '{theme}' bestaat al als pack {dup_id} "
+                          f"(binnen de laatste {_DEDUPE_WINDOW_DAYS} dagen). Geen nieuw pack aangemaakt.")
+        log_outcome(project=project, action="social_auto_duplicaat_overgeslagen",
+                    detail=f"Thema '{theme}' bestaat al als pack {dup_id} — geen nieuw pack aangemaakt.",
+                    next_step="Geen actie nodig.", status="ok")
+        return result
 
     try:
         pack = sc.generate_content_pack(

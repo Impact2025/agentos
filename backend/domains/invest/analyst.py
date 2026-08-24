@@ -2,7 +2,7 @@
 
 De ronde in vier stappen:
 
-  1. Agent OS bouwt een werkmap met de harde feiten: koershistorie als CSV,
+  1. Impact OS bouwt een werkmap met de harde feiten: koershistorie als CSV,
      de deterministische kenmerken, de open posities, de geleerde lessen en
      de eigen trefkans.
   2. Claude Code draait in die map. Hij mag Python schrijven en draaien, en de

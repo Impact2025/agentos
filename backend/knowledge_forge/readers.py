@@ -116,7 +116,7 @@ def _read_url(url: str) -> str:
         import httpx
         from bs4 import BeautifulSoup
         r = httpx.get(url, timeout=20,
-                     headers={"User-Agent": "AgentOS-KnowledgeForge/1.0"})
+                     headers={"User-Agent": "ImpactOS-KnowledgeForge/1.0"})
         if r.status_code != 200:
             return ""
         soup = BeautifulSoup(r.text, "html.parser")

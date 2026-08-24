@@ -3,7 +3,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 SITE = "sc-domain:bewaardvoorjou.nl"
-CRED = r"D:\APPS\agentos\google-credentials.json"
+CRED = r"D:\APPS\impactos\google-credentials.json"
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 
 creds = service_account.Credentials.from_service_account_file(CRED, scopes=SCOPES)

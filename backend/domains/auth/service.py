@@ -1,12 +1,12 @@
-"""Login-gate voor Agent OS.
+"""Login-gate voor Impact OS.
 
-Waarom: Agent OS kan echt mail versturen, publiceren en outreach doen. Zodra
+Waarom: Impact OS kan echt mail versturen, publiceren en outreach doen. Zodra
 de server open op internet staat (mobiel besturen vanaf elders), mag niemand
 behalve Vincent erbij kunnen. Deze module legt een sessie-gebaseerde slot over
 de hele app — backend-side, dus ook de gevaarlijke /api/*-routes zijn beschermd.
 
 Design:
-  - Wachtwoord komt uit env AGENTOS_PASSWORD (geen default → server weigert
+  - Wachtwoord komt uit env IMPACTOS_PASSWORD (geen default → server weigert
     elke aanvraag tot je hem zet). Bij deploy zet je die via de host-secrets.
   - Sessie = HMAC-ondertekend cookie (geen DB nodig, stateless, rotatie-proof).
   - Een middleware blokkeert alles behalve /api/auth/*, /api/status (health) en
@@ -28,29 +28,35 @@ from starlette.responses import JSONResponse
 # Sessie verloopt na 30 dagen inactiviteit — lang genoeg voor mobiel gebruik,
 # kort genoeg dat een gestolen cookie niet eeuwig werkt.
 SESSION_MAX_AGE = 30 * 24 * 3600
-COOKIE_NAME = "agentos_session"
+# Backward-compat: prefer the renamed cookie, but still honour an existing
+# agentos_session cookie so logged-in browsers aren't hard-logged-out mid-rename.
+_COOKIE_NAMES = ("impactos_session", "agentos_session")
+SESSION_COOKIE_NAME = os.environ.get("IMPACTOS_COOKIE_NAME", "impactos_session")
 
 # Routes die altijd open zijn: auth zelf, health-check, en de statische assets
-# (zodat het login-scherm kan laden). Alles in /api/* anders is beschermd.
+# (zodat het login-scherm kan laden). Alles in /api/* anders is beschermd — ook
+# /api/orchestrator/*: die triggert echte Gauntlet-LLM-runs en hoort dus achter
+# dezelfde sessie-gate als de rest, de cron/interne triggers lopen server-side
+# (binnen het proces) en gaan niet door deze middleware.
 PUBLIC_PREFIXES = ("/api/auth/", "/api/status", "/api/healthcheck")
 
 
 def _secret() -> bytes:
     # Server-only secret. Valt terug op een per-proces willekeurige waarde als
-    # AGENTOS_SESSION_SECRET ontbreekt — dan zijn bestaande sessies na een
+    # IMPACTOS_SESSION_SECRET ontbreekt — dan zijn bestaande sessies na een
     # restart ongeldig (gebruiker logt opnieuw in), wat veiliger is dan een
     # hardcoded geheim in de repo.
-    s = os.environ.get("AGENTOS_SESSION_SECRET")
+    s = os.environ.get("IMPACTOS_SESSION_SECRET", os.environ.get("AGENTOS_SESSION_SECRET"))
     if s:
         return s.encode()
-    s = os.environ.get("AGENTOS_PASSWORD")
+    s = os.environ.get("IMPACTOS_PASSWORD", os.environ.get("AGENTOS_PASSWORD"))
     if s:
         return s.encode()
     return b"__dev_only_insecure_rotate_on_restart__"
 
 
 def _password() -> Optional[str]:
-    pw = os.environ.get("AGENTOS_PASSWORD")
+    pw = os.environ.get("IMPACTOS_PASSWORD", os.environ.get("AGENTOS_PASSWORD"))
     return pw.strip() if pw else None
 
 
@@ -97,18 +103,19 @@ def try_login(password: str) -> Optional[str]:
 
 def set_session_cookie(resp: Response, token: str) -> None:
     resp.set_cookie(
-        COOKIE_NAME,
+        SESSION_COOKIE_NAME,
         token,
         max_age=SESSION_MAX_AGE,
         httponly=True,
         samesite="lax",
-        secure=os.environ.get("AGENTOS_SECURE_COOKIE", "0") == "1",
+        secure=os.environ.get("IMPACTOS_SECURE_COOKIE", "0") == "1",
         path="/",
     )
 
 
 def clear_session_cookie(resp: Response) -> None:
-    resp.delete_cookie(COOKIE_NAME, path="/")
+    for _name in _COOKIE_NAMES:
+        resp.delete_cookie(_name, path="/")
 
 
 async def auth_guard(request: Request, call_next):
@@ -137,7 +144,13 @@ async def auth_guard(request: Request, call_next):
         # Geen wachtwoord geconfigureerd → gate uit (lokale dev zonder slot).
         return await call_next(request)
 
-    token = request.cookies.get(COOKIE_NAME)
+    # Backward-compat: accept either the renamed or legacy cookie name so a
+    # rename doesn't invalidate every currently-logged-in browser.
+    token = None
+    for _name in _COOKIE_NAMES:
+        token = request.cookies.get(_name)
+        if token:
+            break
     if verify_session(token):
         return await call_next(request)
 

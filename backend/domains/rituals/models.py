@@ -4,7 +4,7 @@ wins, focus-sessies, persoonlijke doelen).
 
 Overgezet uit D:\\apps\\impactreis3\\mijn-ondernemers-os (Next.js/Neon), waar
 ritueel-*voltooiing* alleen in localStorage stond en dus onzichtbaar was voor
-Iris/AgentOS. Hier leeft alles in SQLite (single-user, geen user_id) zodat het
+Iris/ImpactOS. Hier leeft alles in SQLite (single-user, geen user_id) zodat het
 domein — zoals de rest van backend/domains/ — zelfstandig te verwijderen of
 verplaatsen is. `ensure_schema()` is idempotent, aangeroepen bij eerste gebruik.
 
@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS ritual_evening (
     tomorrow_top3   TEXT DEFAULT '[]',      -- JSON-array van 3 strings
     gratitude       TEXT DEFAULT '',
     adhd_scores     TEXT DEFAULT '{}',      -- JSON {symptoom: 0-3}, optioneel
+    focus_check     TEXT DEFAULT '[]',      -- JSON [{onderwerp, done}] — terugkoppeling op de focusblokken van dezelfde ochtend
     created_at      TEXT NOT NULL
 );
 
@@ -121,9 +122,14 @@ CREATE INDEX IF NOT EXISTS idx_ritual_goals_completed ON ritual_goals(completed,
 
 _schema_ready = False
 
-# Nog geen kolommen na de eerste versie — patroon staat klaar (zelfde idempotente
-# aanpak als radar/models.py) zodra er ooit een migratie nodig is.
-_MIGRATIES = {}
+# Idempotente ALTER TABLE's voor kolommen die na de eerste versie zijn toegevoegd
+# (zelfde aanpak als radar/models.py) — installaties van vóór de migratie missen
+# de kolom anders stilzwijgend en `get_evening` zou op een KeyError stuk lopen.
+_MIGRATIES = {
+    "ritual_evening": [
+        ("focus_check", "ALTER TABLE ritual_evening ADD COLUMN focus_check TEXT DEFAULT '[]'"),
+    ],
+}
 
 
 def _migrate(conn) -> None:

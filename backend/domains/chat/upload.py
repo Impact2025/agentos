@@ -4,10 +4,14 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from ...shared.config import OBSIDIAN_VAULT_PATH
 
-router = APIRouter()
+router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"}
 MAX_UPLOAD_SIZE = 20 * 1024 * 1024
+
+
+def upload_root() -> Path:
+    return Path(os.environ.get("IMPACTOS_UPLOAD_ROOT", "D:/APPS/impactos/data/uploads"))
 
 
 def _build_attachment_text(attachments: list[dict]) -> str:
@@ -23,8 +27,8 @@ def _build_attachment_text(attachments: list[dict]) -> str:
 async def upload_files(
     files: list[UploadFile] = File(...),
 ):
-    upload_root = Path(os.environ.get("AGENTOS_UPLOAD_ROOT", "D:/APPS/agentos/data/uploads"))
-    upload_root.mkdir(parents=True, exist_ok=True)
+    root = upload_root()
+    root.mkdir(parents=True, exist_ok=True)
 
     attachments = []
     try:
@@ -36,7 +40,7 @@ async def upload_files(
             if len(content) > MAX_UPLOAD_SIZE:
                 raise HTTPException(status_code=413, detail="Bestand te groot (max 20 MB)")
             name = f"{uuid.uuid4().hex}{ext}"
-            dest = upload_root / name
+            dest = root / name
             dest.write_bytes(content)
             attachments.append(
                 {

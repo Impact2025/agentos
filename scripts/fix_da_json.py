@@ -1,5 +1,5 @@
 import sqlite3, json
-c=sqlite3.connect('data/agentos.db')
+c=sqlite3.connect('data/impactos.db')
 fix={
  'sp_daDatingAssistent_01':'107835799327006_1068403385879851',
  'sp_da40_01':'174410412641281_1377727037897800',

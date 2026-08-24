@@ -1,4 +1,4 @@
--- Agent OS Remote — Neon-schema (eenmalig draaien in de Neon SQL-editor, of via
+-- Impact OS Remote — Neon-schema (eenmalig draaien in de Neon SQL-editor, of via
 -- `node migrate.mjs`). Gespiegelde wacht-op-mens-items, de besluiten-outbox
 -- vanaf je telefoon, briefings als leesvoer, losse notities, plus twee
 -- tabellen die de publieke voordeur bewaken: intrekbare sessies en een
@@ -21,11 +21,11 @@
 CREATE TABLE IF NOT EXISTS tenants (
   slug          TEXT PRIMARY KEY,        -- ook het subdomein: <slug>.<BASE_DOMAIN>
   name          TEXT NOT NULL,           -- weergavenaam ("WE SHAPE THE FUTURE")
-  token_hash    TEXT UNIQUE NOT NULL,    -- SHA-256 van BRIDGE_TOKEN (de lokale AgentOS-instance)
+  token_hash    TEXT UNIQUE NOT NULL,    -- SHA-256 van BRIDGE_TOKEN (de lokale ImpactOS-instance)
   password_hash TEXT NOT NULL,           -- scrypt van het inlogwachtwoord voor de telefoon/browser
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- Live agenda/GSC zonder AgentOS (12 aug 2026): per-tenant kopie van het
+-- Live agenda/GSC zonder ImpactOS (12 aug 2026): per-tenant kopie van het
 -- Google-service-account, meegestuurd door de lokale bridge_sync bij elke
 -- push (api/bridge.js:push) — één bron van waarheid (de lokale .env), geen
 -- los provisioneringsscript met een geplakte sleutel. calendar_private_key_enc
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS decisions (
   action     TEXT NOT NULL,               -- approve | reject | send | edit | dismiss
   payload    JSONB DEFAULT '{}',
   status     TEXT NOT NULL DEFAULT 'pending',   -- pending | applied | failed
-  result     TEXT,                        -- wat AgentOS terugmeldde
+  result     TEXT,                        -- wat ImpactOS terugmeldde
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   decided_at TIMESTAMPTZ
 );
@@ -152,7 +152,7 @@ CREATE INDEX IF NOT EXISTS idx_notes_tenant ON notes (tenant, status, created_at
 
 -- Impact Calculator-leads (weareimpact.nl/impact-calculator): de website pusht
 -- elke ontgrendeling hier rechtstreeks naartoe (op=impact-lead) — dit ontstaat
--- buiten AgentOS om, dus is er geen lokale rij om op te reageren totdat de
+-- buiten ImpactOS om, dus is er geen lokale rij om op te reageren totdat de
 -- bridge-sync 'm ophaalt (op=impact-leads), verrijkt en Iris er een verslag
 -- over laat schrijven. Zelfde pending/ack-vorm als notes, eigen tabel omdat de
 -- payload en verwerking niets met een vault-notitie te maken hebben.
@@ -353,7 +353,7 @@ CREATE INDEX IF NOT EXISTS idx_whatsapp_throttle_win ON whatsapp_throttle (windo
 -- Kostenrem voor klant-Iris (18 aug 2026): dit nummer staat open voor
 -- iedereen (bewust, zie CLAUDE.md 14f) en elk klantbericht kost een paar
 -- LLM-rondes. Zonder plafond kan één grap, bot, of eindeloze loop de rekening
--- laten oplopen — dezelfde reden waarom de rest van AgentOS overal
+-- laten oplopen — dezelfde reden waarom de rest van ImpactOS overal
 -- `DAILY_TOKEN_BUDGET`/`require_llm_budget` heeft. Telt per (tenant, wa_id,
 -- dag); simpel genoeg om atomisch bij te werken zonder een aparte lock.
 CREATE TABLE IF NOT EXISTS whatsapp_rate_limit (

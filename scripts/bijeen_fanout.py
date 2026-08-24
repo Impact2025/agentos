@@ -1,8 +1,8 @@
 """Bijeen content-fan-out: schrijf de 6 nieuwe GSC-kansen via de 5-fasen SEO-pipeline.
-Draait in de AgentOS venv. Logt elke job naar stdout (job_id, slug, woorden, score, vault-pad).
+Draait in de ImpactOS venv. Logt elke job naar stdout (job_id, slug, woorden, score, vault-pad).
 """
 import sys, json, time, sqlite3
-sys.path.insert(0, r"D:\APPS\agentos")
+sys.path.insert(0, r"D:\APPS\impactos")
 
 from backend.domains.projects.weareimpact import write_and_publish_status, _run_write_and_publish_job
 import backend.domains.projects.weareimpact as w

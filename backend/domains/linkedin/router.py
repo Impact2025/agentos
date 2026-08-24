@@ -1,5 +1,5 @@
 """
-LinkedIn API router — post content naar LinkedIn vanuit AgentOS.
+LinkedIn API router — post content naar LinkedIn vanuit ImpactOS.
 Ondersteunt per-project tokens via `site_name` parameter.
 """
 import logging

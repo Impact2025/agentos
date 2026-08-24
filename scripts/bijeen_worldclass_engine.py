@@ -1,4 +1,4 @@
-"""Wereldklasse-content-motor voor AgentOS (HTTP-API versie).
+"""Wereldklasse-content-motor voor ImpactOS (HTTP-API versie).
 
 Escaleert content_jobs die onder de kwaliteitsgrens blijven hangen naar de
 Gauntlet Loop, zodat er GEEN content beneden wereldklasse blijft liggen.
@@ -28,19 +28,22 @@ Gauntlet". Dit script kiest niet meer zélf, telt niet meer zélf en schrijft ni
 meer in `content_jobs`; het roept per ronde `POST /api/orchestrator/process-one`
 aan, dat de cap, de dedupe en `mark_superseded` in één beweging doet.
 
-Draait in de AgentOS venv. Gebruikt de logged-in sessie-cookie voor de API.
+Draait in de ImpactOS venv. Gebruikt de logged-in sessie-cookie voor de API.
 """
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.error
 import urllib.request
 
-sys.path.insert(0, r"D:\APPS\agentos")
+sys.path.insert(0, r"D:\APPS\impactos")
 
-COOKIE = r"D:\APPS\agentos\scripts\.agentos_cookie.txt"  # geschreven bij login
-API = "http://127.0.0.1:1250"
+COOKIE = r"D:\APPS\impactos\scripts\.agentos_cookie.txt"  # geschreven bij login
+# Poort komt uit de env (IMPACTOS_API) zodat het script ook draait als de server
+# tijdelijk op een andere poort staat (bv. 1251 i.p.v. 1250). Default = 1250.
+API = os.environ.get("IMPACTOS_API", "http://127.0.0.1:1250")
 THRESHOLD = 85
 # Hoeveel stukken per aanroep. `process-one` doet er bewust één per call (één
 # zware Gauntlet-ronde kost minuten en flink wat tokens); dit script herhaalt

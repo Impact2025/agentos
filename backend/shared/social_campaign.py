@@ -131,7 +131,7 @@ def _video_pack(post: Dict) -> Dict:
     Niet elk plan heeft bewegend beeld en niet elke post binnen een plan verdient
     een film — het Bijeen-videoplan levert er zes bij achttien posts. Zonder dit
     blok verdwijnen de Veo-prompts bij het importeren, en dan staat de tekst wél
-    in Agent OS en het beeldplan weer alleen in een bestand: precies de splitsing
+    in Impact OS en het beeldplan weer alleen in een bestand: precies de splitsing
     die deze module moest opheffen.
 
     De prompts gaan onbewerkt mee. Een generatieprompt is een recept waarvan één

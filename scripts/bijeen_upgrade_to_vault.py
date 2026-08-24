@@ -1,8 +1,8 @@
 """Schrijf de 6 ge-upgrade Gauntlet-content_jobs terug naar de vault als schone
 SEO-artikelen (HTML + YAML-frontmatter) zodat ze geseed kunnen worden naar de repo.
-Draait in de AgentOS venv."""
+Draait in de ImpactOS venv."""
 import sqlite3, os, sys, re
-sys.path.insert(0, r"D:\APPS\agentos")
+sys.path.insert(0, r"D:\APPS\impactos")
 
 VAULT = r"D:\APPS\Hermes Brein\Hermes Breind\10_Projects\Bijeen\content"
 
@@ -22,7 +22,7 @@ MAP = {
                                      "Van plan tot nazorg: een geslaagd evenement organiseer je zo"),
 }
 
-conn = sqlite3.connect(r"D:\APPS\agentos\data\agentos.db")
+conn = sqlite3.connect(r"D:\APPS\impactos\data\impactos.db")
 conn.row_factory = sqlite3.Row
 
 def slugify(s):

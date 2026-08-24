@@ -5,10 +5,32 @@ Spiegelt de echte flow:
   2. De lokale bridge haalt die op via apply_decision -> _cmd_calendar_add.
   3. Resultaat: een calendar_proposals-rij met correct geparste velden
      (incl. recur_weekday + recur_count voor een eindige reeks).
+
+'Nu' wordt bevroren op dinsdag 11 augustus 2026 — zelfde mechanisme en datum
+als tests/test_agenda_opdracht.py — zodat "dinsdag 18 augustus" niet
+date-flaky wordt zodra de kalender voorbij die datum schuift. `_cmd_calendar_
+add` importeert `nl_command` lazy binnen de functie, maar dat resolvet naar
+hetzelfde modulepad (backend.domains.calendar.nl_command) als hier gepatcht
+wordt, dus de monkeypatch werkt ook via de bridge-laag heen.
 """
 import asyncio
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import pytest
+
 from backend.domains.bridge import actions as bridge_actions
+from backend.domains.calendar import nl_command as nlc
 from backend.shared.database import get_conn
+
+TZ = ZoneInfo("Europe/Amsterdam")
+
+
+@pytest.fixture(autouse=True)
+def dinsdag(monkeypatch):
+    """Bevries 'nu' op dinsdag 11 augustus 2026, 11:00 (zomertijd)."""
+    monkeypatch.setattr(nlc, "_amsterdam_now",
+                        lambda: datetime(2026, 8, 11, 11, 0, tzinfo=TZ))
 
 
 def test_iris_tool_eindige_reeks_landt_als_voorstel():

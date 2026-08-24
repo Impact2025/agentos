@@ -11,7 +11,7 @@ Kanalen:
   facebook  — Graph API: comments + DM (conversations). Posten via facebook.py.
   instagram — Graph API: comments op eigen posts + DM (IG Messaging). Posten via instagram.py.
   linkedin  — UGC API posten (linkedin.py). Reacties/DM vereisen partner-toegang:
-              daarom een "plak-adapter" (manual=1): AgentOS toont het antwoord +
+              daarom een "plak-adapter" (manual=1): ImpactOS toont het antwoord +
               "kopieer"/"open LinkedIn", géén nep-API-call.
   tiktok    — Display/Content Posting API (eigen geregistreerde app). Code klaar;
               actief zodra TIKTOK_CLIENT_KEY/SECRET + goedgekeurde app aanwezig zijn.
@@ -27,7 +27,7 @@ from typing import List, Dict, Optional
 
 import httpx
 
-from .config import OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL
+from .config import OPENMODEL_API_KEY, OPENMODEL_BASE_URL, OPENMODEL_MODEL, OPENMODEL_VISION_MODEL
 from .database import get_conn
 from .failures import describe_exception as _describe
 
@@ -129,10 +129,137 @@ def _sync_openmodel(system: str, user: str) -> str:
             total_tokens=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
         )
     if "content" in data:
-        return "".join(p.get("text", "") for p in data["content"] if p.get("type") == "text")
+        return _clean_draft(
+            "".join(p.get("text", "") for p in data["content"] if p.get("type") == "text")
+        )
     if "choices" in data:
-        return data["choices"][0]["message"]["content"]
-    return data.get("text", "")
+        return _clean_draft(data["choices"][0]["message"]["content"])
+    return _clean_draft(data.get("text", ""))
+
+
+def _has_image_block(content) -> bool:
+    """Zit er een image-block in de Anthropic-content-array?"""
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(b, dict) and b.get("type") == "image" for b in content)
+
+
+def _sync_openmodel_vision(system: str, content: list) -> str:
+    """Zoals _sync_openmodel, maar voor berichten met een image-block. Kiest
+    OPENMODEL_VISION_MODEL (deepseek-v4-flash-vision-exp) — het enige model dat
+    hier beelddata ÉCHT leest op /v1/messages (flash/pro geven stil '[Unsupported
+    Image]', zie config.py). Bouwt de content-array zoals Anthropic die verwacht."""
+    if not OPENMODEL_VISION_MODEL:
+        raise RuntimeError("OPENMODEL_VISION_MODEL is leeg — vision uitgeschakeld")
+    url = (OPENMODEL_BASE_URL or "https://api.openmodel.ai").rstrip("/") + "/v1/messages"
+    payload = {
+        "model": OPENMODEL_VISION_MODEL,
+        "max_tokens": 800,
+        "system": system,
+        "messages": [{"role": "user", "content": content}],
+    }
+    with httpx.Client(timeout=120) as client:
+        resp = client.post(
+            url,
+            headers={
+                "x-api-key": OPENMODEL_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=payload,
+        )
+        if resp.status_code == 403 and "quota" in resp.text.lower():
+            from .outcomes import note_llm_quota_exhausted
+            note_llm_quota_exhausted(backend="openmodel", model=payload["model"], route="social-vision")
+            raise RuntimeError("OpenModel-quota op")
+        resp.raise_for_status()
+        data = resp.json()
+    usage = data.get("usage") or {}
+    if usage:
+        from .outcomes import log_llm_usage
+        log_llm_usage(
+            backend="openmodel", model=payload["model"], route="social-vision",
+            prompt_tokens=usage.get("input_tokens", 0),
+            completion_tokens=usage.get("output_tokens", 0),
+            total_tokens=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+        )
+    if "content" in data:
+        return _clean_draft(
+            "".join(p.get("text", "") for p in data["content"] if p.get("type") == "text")
+        )
+    return _clean_draft(data.get("text", ""))
+
+
+def draft_reply_with_image(
+    platform: str, brand_context: str, msg_text: str,
+    image_b64: str, image_media_type: str = "image/png",
+    author_name: str = "", thread: str = "",
+) -> str:
+    """Concept-antwoord op een sociale reactie mét bijgevoegd beeld (screenshot,
+    meme, productfoto). Het beeld gaat als image-block naar OPENMODEL_VISION_MODEL,
+    zodat de agent ziet wat de klant stuurde en er écht op reageert."""
+    brand = brand_context or "dit project"
+    tone = _PLATFORM_TONE.get(platform, _PLATFORM_TONE["facebook"])
+    system = SOCIAL_SYSTEM_TEMPLATE.format(brand=brand, tone=tone)
+    user_text = ""
+    if thread:
+        user_text += f"— THREAD (oms oud -> nieuw) —\n{thread}\n\n"
+    user_text += (
+        f"Van: {author_name or 'iemand'}\n\n{msg_text}\n\n"
+        "Schrijf ALLEEN het antwoord dat ik kan plaatsen. Geen uitleg, geen "
+        "herhaling van deze instructie. Alleen de tekst van de reactie zelf."
+    )
+    content = [
+        {"type": "image", "source": {
+            "type": "base64", "media_type": image_media_type, "data": image_b64}},
+        {"type": "text", "text": user_text},
+    ]
+    if not OPENMODEL_API_KEY:
+        return (
+            f"[Concept niet gegenereerd (geen LLM-backend). Beantwoord handmatig.]"
+            f"\n\nOrigineel: {msg_text}"
+        )
+    try:
+        return _sync_openmodel_vision(system, content).strip()
+    except Exception as e:
+        logger.warning("Social vision-draft mislukt: %s", e)
+        return f"[Concept niet gegenereerd: {e}. Beantwoord handmatig.]\n\nOrigineel: {msg_text}"
+
+
+# Bekende patronen waarmee een flash-model de eigen instructie terug echo't
+# in plaats van alleen het antwoord. Die lekken eruit — anders post "Plaats
+# antwoord" straks rommelige tekst ("We need to write a response as...") op
+# het sociale kanaal. Na het strippen moet er wél een echt antwoord overblijven.
+_INSTRUCTION_LEAKS = (
+    "we need to write", "we need to respond", "i need to write", "i need to respond",
+    "the user says", "the user gives", "the user writes", "as vincent van munster",
+    "owner of", "respond warmly", "need to interpret", "here is a", "here's a",
+    "sure, here", "certainly,", "here is the", "below is",
+)
+
+
+def _clean_draft(text: str) -> str:
+    if not text:
+        return ""
+    t = text.strip()
+    # Verwijder code-fences die het model er soms omheen zet.
+    if t.startswith("```"):
+        t = t.strip("`")
+        if t.lower().startswith("text"):
+            t = t[4:].strip()
+    # Als de eerste zin een instructie-lek bevat, kap dan alles vóór het
+    # daadwerkelijke antwoord af. Flash-modellen herhalen vaak de prompt en
+    # zetten het echte antwoord erna — snijd tot aan de eerste niet-lek-regel.
+    lowered = t.lower()
+    if any(leak in lowered[:120] for leak in _INSTRUCTION_LEAKS):
+        # Probeer het antwoord te isoleren: meestal volgt het na een lege regel
+        # of na de eerste alinea. Neem het laatste blok als dat zelf geen lek is.
+        blocks = [b.strip() for b in t.split("\n\n") if b.strip()]
+        for b in reversed(blocks):
+            if not any(leak in b.lower() for leak in _INSTRUCTION_LEAKS):
+                return b
+        # Alles lekte — geef de ruwe tekst terug; de review-gate vangt het op.
+    return t
 
 
 def draft_reply(platform: str, brand_context: str, msg_text: str,
@@ -145,7 +272,12 @@ def draft_reply(platform: str, brand_context: str, msg_text: str,
     user = ""
     if thread:
         user += f"— THREAD (oms oud -> nieuw) —\n{thread}\n\n"
-    user += f"Van: {author_name or 'iemand'}\n\n{msg_text}\n\nSchrijf alleen het antwoord."
+    user += (
+        f"Van: {author_name or 'iemand'}\n\n{msg_text}\n\n"
+        "Schrijf ALLEEN het antwoord dat ik kan plaatsen. Geen uitleg, geen "
+        "herhaling van deze instructie, geen aanhalingstekens eromheen. "
+        "Alleen de tekst van de reactie zelf."
+    )
     if not OPENMODEL_API_KEY:
         return (
             f"[Concept niet gegenereerd (geen LLM-backend). Beantwoord handmatig.]\n\n"
@@ -211,11 +343,17 @@ async def fb_fetch(inbox: dict) -> List[dict]:
     c = _creds(inbox)
     page_id = c.get("page_id")
     token = c.get("token")
+    from . import facebook as fb_svc
     if not page_id or not token:
         # Val terug op globale config
-        from . import facebook as fb_svc
         if fb_svc.is_configured():
             page_id, token = fb_svc._get_site_data(inbox.get("project"))
+    if page_id and not token:
+        # Pagina zonder eigen sites-rij (bv. DA-leeftijdspagina's, zie
+        # check_age_targeting): het token is bewust kortlevend, dus elke
+        # poll haalt een vers exemplaar op i.p.v. iets statisch te bewaren
+        # dat na ~1u toch weer stukgaat.
+        token = await fb_svc.resolve_page_token(page_id)
     if not page_id or not token:
         return []
     out: List[dict] = []
@@ -592,9 +730,13 @@ async def run_inbox(inbox_id: str) -> int:
         kind = classify(m.get("text", ""))
         draft = ""
         manual = 0
-        # Alleen echte vragen/klachten krijgen een concept; lof/spam/overig
-        # worden gelogd maar niet gedraft (geen token-verlies, geen ruis).
-        if kind in ("question", "complaint"):
+        # Vragen/klachten/lof/overige berichten krijgen een concept — die
+        # horen in de review-gate zodat de mens ze warm kan beantwoorden
+        # (voor een social-impact-org is een gedeeld verhaal juist de kern
+        # van het werk, en een compliment verdient een bedankje). Alleen
+        # spam blijft zonder concept (wordt afgewezen, geen antwoord nodig).
+        # Alles landt toch in pending_review: de mens keurt alsnog.
+        if kind in ("question", "complaint", "other", "praise"):
             draft = draft_reply(
                 inbox["platform"], inbox.get("brand_context", ""),
                 m.get("text", ""), m.get("author_name", ""), m.get("thread", ""),
@@ -621,6 +763,102 @@ async def run_inbox(inbox_id: str) -> int:
             )
     created = len(pending)
 
+    if created:
+        from .outcomes import log_outcome
+        log_outcome(
+            project=inbox.get("project", "Social"),
+            action="social_ontvangen",
+            detail=f"{created} nieuwe bericht(en) op {inbox['platform']} — "
+                   f"concepten klaar in de Social-inbox.",
+            next_step="Open de Social-tab en keur de antwoorden goed.",
+            status="ok",
+        )
+    return created
+
+
+def mark_answered_externally(project: str, platform: str, external_id: str,
+                             body: str = "") -> bool:
+    """Zet een social_inbox_msg op 'sent' omdat het antwoord BUITEN deze gated
+    inbox om is verstuurd (bijv. via de Facebook Deluxe-composer/comment-tools
+    in domains/facebook/agent.py). Zonder dit blijft een al beantwoorde
+    reactie voor altijd als 'pending_review' in de Social-inbox staan — een
+    dode taak die nooit verdwijnt, terwijl er allang gereageerd is.
+    Best-effort: retourneert True als er een rij is bijgewerkt, anders False
+    (geen matchende inbox/bericht — dan is er ook niets stil te verliezen).
+    """
+    with get_conn() as conn:
+        inbox = conn.execute(
+            "SELECT id FROM social_inboxes WHERE platform=? AND "
+            "replace(replace(replace(lower(project),' ',''),'-',''),'_','') = ?",
+            (platform, _norm(project)),
+        ).fetchone()
+        if not inbox:
+            return False
+        cur = conn.execute(
+            "UPDATE social_inbox_msg SET status='sent', sent_at=datetime('now'), "
+            "edited_body=CASE WHEN ?<>'' THEN ? ELSE edited_body END "
+            "WHERE inbox_id=? AND external_id=? AND status='pending_review'",
+            (body, body, inbox["id"], external_id),
+        )
+        return cur.rowcount > 0
+
+
+def ingest_messages(inbox_id: str, raw: List[dict]) -> int:
+    """Verwerk berichten die BUITEN de adapter-laag om zijn opgehaald (bv. door
+    de LinkedIn-browserautomatisering, die geen partner-API heeft en dus niet
+    via `fetch_new` kan lopen). Zelfde classify+draft+dedupe+insert als stap 3-4
+    van `run_inbox` — alleen stap 2 (netwerk-fetch via een geregistreerde
+    adapter) ontbreekt, want die deed de aanroeper al zelf.
+
+    `raw` heeft dezelfde vorm als een adapter teruggeeft: elk item minimaal
+    `external_id` + `text`, optioneel `author_name`/`author_handle`/
+    `parent_url`/`thread`. Retourneert het aantal nieuw ingevoerde berichten.
+    """
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM social_inboxes WHERE id=?", (inbox_id,)).fetchone()
+        if not row:
+            return 0
+        inbox = dict(row)
+        seen = {
+            r["external_id"]
+            for r in conn.execute(
+                "SELECT external_id FROM social_inbox_msg WHERE inbox_id=?", (inbox_id,)
+            )
+        }
+
+    pending: List[tuple] = []
+    for m in raw:
+        ext = m.get("external_id")
+        if not ext or ext in seen:
+            continue
+        text = m.get("text", "")
+        kind = classify(text)
+        draft = ""
+        if kind in ("question", "complaint", "other", "praise"):
+            draft = draft_reply(
+                inbox["platform"], inbox.get("brand_context", ""),
+                text, m.get("author_name", ""), m.get("thread", ""),
+            )
+        pending.append((
+            inbox_id, inbox["platform"], ext, m.get("author_name", ""),
+            m.get("author_handle", ""), text, kind,
+            m.get("parent_url", ""), m.get("thread", "") or "[]", draft, 0,
+        ))
+        seen.add(ext)
+
+    if not pending:
+        return 0
+
+    with get_conn() as conn:
+        for params in pending:
+            conn.execute(
+                "INSERT OR IGNORE INTO social_inbox_msg("
+                "inbox_id,platform,external_id,author_name,author_handle,text,kind,"
+                "parent_url,thread_json,draft_body,manual) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                params,
+            )
+    created = len(pending)
     if created:
         from .outcomes import log_outcome
         log_outcome(

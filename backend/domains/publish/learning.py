@@ -21,7 +21,7 @@ _LESSONS_REL = "10_Projects/_lessons/onder-85.md"
 
 
 def _vault_root() -> Optional[str]:
-    # De Agent OS vault-path komt uit de omgeving (zie ook article_writer.py,
+    # De Impact OS vault-path komt uit de omgeving (zie ook article_writer.py,
     # dat OBSIDIAN_VAULT_PATH gebruikt voor de url-register-sync).
     import os
     return os.getenv("OBSIDIAN_VAULT_PATH") or os.getenv("VAULT_ROOT") or None

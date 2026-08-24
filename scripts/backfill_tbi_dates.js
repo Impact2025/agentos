@@ -4,7 +4,7 @@ const fs = require("fs");
 const { PrismaClient } = require("@prisma/client");
 const p = new PrismaClient();
 
-const STATE = "D:/apps/agentos/scripts/.tbi_import_state.json";
+const STATE = "D:/apps/impactos/scripts/.tbi_import_state.json";
 const state = JSON.parse(fs.readFileSync(STATE, "utf-8"));
 const dates = state.dates || {};
 

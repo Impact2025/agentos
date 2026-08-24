@@ -206,7 +206,7 @@ async function helpdeskDeleteSelected(mbId, btn) {
   var ids = [];
   checks.forEach(function(c){ if (c.checked) ids.push(parseInt(c.getAttribute('data-id'), 10)); });
   if (!ids.length) { alert('Geen concepten geselecteerd.'); return; }
-  if (!confirm(ids.length + ' bericht' + (ids.length===1?'':'en') + ' DEFINITIEF verwijderen?\n\nHet concept én het bericht verdwijnen uit Agent OS en komen niet meer terug bij het ophalen. De mail op de server zelf blijft staan.')) return;
+  if (!confirm(ids.length + ' bericht' + (ids.length===1?'':'en') + ' DEFINITIEF verwijderen?\n\nHet concept én het bericht verdwijnen uit Impact OS en komen niet meer terug bij het ophalen. De mail op de server zelf blijft staan.')) return;
   btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Verwijderen...';
   try {
     var resp = await fetch('/api/mail/replies/delete-bulk', {
@@ -304,7 +304,7 @@ async function helpdeskToggle(mailboxId, enabled, btn) {
 }
 
 async function helpdeskDeleteMailbox(mailboxId, address, btn) {
-  if (!confirm('Mailbox ' + address + ' verwijderen?\n\nDe opgehaalde mails en concepten van deze mailbox verdwijnen ook uit Agent OS (de mail op de server zelf blijft staan).')) return;
+  if (!confirm('Mailbox ' + address + ' verwijderen?\n\nDe opgehaalde mails en concepten van deze mailbox verdwijnen ook uit Impact OS (de mail op de server zelf blijft staan).')) return;
   btn.disabled = true;
   try {
     var resp = await fetch('/api/mail/mailboxes/' + encodeURIComponent(mailboxId), { method:'DELETE' });
@@ -630,7 +630,17 @@ async function renderWachtrijTab(el) {
   catch(e) { el.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; return; }
   window._wachtrijJobs = jobs || [];
 
-  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">' +
+  // Gekoppelde social-accounts van dit project ophalen, zodat we bij het
+  // publiceren per artikel kunnen aanvinken welke kanalen het ook moeten
+  // krijgen. Opt-in: niets staat aan tenzij de gebruiker het aanvinkt.
+  var socialInboxes = [];
+  try {
+    socialInboxes = await (await fetch('/api/social-inbox/inboxes?project=' + encodeURIComponent(currentProject))).json();
+  } catch (e) { socialInboxes = []; }
+  if (!Array.isArray(socialInboxes)) socialInboxes = [];
+  window._wachtrijSocialInboxes = socialInboxes;
+
+  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
   '<div><h3 style="font-size:15px;font-weight:700">Content-wachtrij</h3>' +
   '<p style="font-size:11px;color:#64748b;margin-top:2px">2x/week (di + vr) zet de scheduler hier automatisch een concept klaar. Niets gaat live zonder jouw goedkeuring.</p></div>' +
   '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
@@ -687,12 +697,23 @@ async function renderWachtrijTab(el) {
       (job.image_path ? '<img src="data:image/png;base64,' + job.image_path + '" style="margin-top:8px;max-width:180px;border-radius:6px;border:1px solid #e2e8f0" />' : '') +
       (function() {
           if (job.status !== 'pending_review') return '';
-          var socPlatforms = Object.keys(wachtrijPlatformLabels).filter(function(p) { return (job.social_copy||{})[p]; });
-          if (!socPlatforms.length) return '';
+          if (isOutreach || isHook) return '';
+          if (job.publish_blocked) return '';
+          var inboxes = window._wachtrijSocialInboxes || [];
+          var connected = inboxes.filter(function(b) { return b.enabled !== 0; });
+          if (!connected.length) return '';
+          var socLabels = { linkedin:'LinkedIn', facebook:'Facebook', instagram:'Instagram', tiktok:'TikTok' };
+          var copy = job.social_copy || {};
           return '<div style="margin-top:10px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:11px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px">' +
-          '<span style="font-weight:600">Ook posten naar (optioneel, standaard uit):</span>' +
-          socPlatforms.map(function(p) {
-              return '<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="soc-toggle-' + job.id + '" value="' + p + '">' + wachtrijPlatformLabels[p] + '</label>';
+          '<span style="font-weight:600">Ook posten naar (gekoppeld aan ' + escHtml(currentProject) + ', standaard uit):</span>' +
+          connected.map(function(b) {
+              var p = b.platform;
+              var hasCopy = !!copy[p] && String(copy[p]).trim().length > 0;
+              var checked = hasCopy ? ' checked' : '';
+              var disabled = hasCopy ? '' : ' disabled title="Nog geen bericht voor dit artikel — genereer copy via Social Creatie"';
+              var lbl = (socLabels[p] || p) + (b.label ? ' (' + escHtml(b.label) + ')' : '');
+              if (!hasCopy) lbl += ' (geen bericht klaar)';
+              return '<label style="display:flex;align-items:center;gap:4px;' + (hasCopy ? 'cursor:pointer' : 'cursor:not-allowed;opacity:.6') + '"><input type="checkbox" class="soc-toggle-' + job.id + '" value="' + p + '"' + checked + disabled + '>' + lbl + '</label>';
           }).join('') + '</div>';
       })() +
       '<div class="opp-actions" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">' +
@@ -700,12 +721,16 @@ async function renderWachtrijTab(el) {
       (job.status==='pending_review' ?
         (isOutreach
           ? '<button onclick="markReadyForLinkedIn(this,\'' + job.id + '\')" class="btn btn-sm btn-primary">Klaar voor LinkedIn</button>'
-          : isHook
-          ? '<button onclick="rejectWachtrijJob(this,\'' + job.id + '\')" class="btn btn-sm" style="background:var(--warn-bg);color:var(--warn-fg);border-color:var(--warn-border)">Geen pagina — alleen afwijzen of herschrijven</button>'
-          : '<button onclick="approveWachtrijJob(this,\'' + job.id + '\')" class="btn btn-sm" style="background:var(--green)">Goedkeuren &amp; publiceren op site</button>') +
+          : (job.publish_blocked
+              ? '<button onclick="rejectWachtrijJob(this,\'' + job.id + '\')" class="btn btn-sm" style="background:var(--warn-bg);color:var(--warn-fg);border-color:var(--warn-border)">Werkbon — alleen afwijzen of herschrijven</button>'
+              : isHook
+              ? '<button onclick="rejectWachtrijJob(this,\'' + job.id + '\')" class="btn btn-sm" style="background:var(--warn-bg);color:var(--warn-fg);border-color:var(--warn-border)">Geen pagina — alleen afwijzen of herschrijven</button>'
+              : '<button onclick="approveWachtrijJob(this,\'' + job.id + '\')" class="btn btn-sm" style="background:var(--green)">Goedkeuren &amp; publiceren op site</button>')) +
         '<button onclick="regenerateWachtrijJob(this,\'' + job.id + '\')" class="btn btn-sm" style="background:var(--warn-bg);color:var(--warn-fg);border-color:var(--warn-border)">Opnieuw genereren</button>' +
         '<button onclick="rejectWachtrijJob(this,\'' + job.id + '\')" class="btn btn-sm btn-ghost">Afwijzen</button>' : '') +
       '</div>' +
+      (job.publish_blocked ? '<div style="margin-top:8px;font-size:11px;color:var(--warn-fg);background:var(--warn-bg);border:1px solid var(--warn-border);border-radius:6px;padding:8px 10px"><strong>Niet publiceerbaar.</strong> ' + escHtml(job.publish_block_reason || 'Dit is een interne werkbon/opdracht, geen artikel voor bezoekers. Wijs af of laat herschrijven.') + '</div>' : '') +
+      (job.status==='pending_review' ? renderPublishDatePicker(job.id) : '') +
       (job.video_path ? '<div style="margin-top:8px"><video src="/api/projects/' + encodeURIComponent(currentProject) + '/content-queue/' + job.id + '/video" controls style="max-width:240px;border-radius:8px;border:1px solid #e2e8f0"></video></div>' : '') +
       '<div id="video-' + job.id + '" style="margin-top:8px"></div>' +
       (job.status==='published' && job.publish_result ? '<div style="margin-top:8px;font-size:11px;color:#64748b">' + renderPublishResult(job.publish_result) + '</div>' : '') +
@@ -798,77 +823,6 @@ async function runDemandScan() {
 // ═══════════════════════════════════════════════════════════════════
 // WACHTRIJ TAB — auto-gegenereerde blog + social-copy, wacht op goedkeuring
 // (2x/week scheduler zet hier concepten klaar; NOOIT automatisch gepost)
-// ═══════════════════════════════════════════════════════════════════
-var wachtrijStatusFilter = 'pending_review';
-var wachtrijPlatformLabels = { linkedin: 'LinkedIn', facebook: 'Facebook', instagram: 'Instagram', twitter: 'X / Twitter' };
-
-async function renderWachtrijTab(el) {
-  el.innerHTML = '<div class="loading"><div class="spinner"></div><p>Wachtrij laden...</p></div>';
-  var jobs;
-  try { jobs = await (await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/content-queue' + (wachtrijStatusFilter ? '?status=' + wachtrijStatusFilter : ''))).json(); }
-  catch(e) { el.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; return; }
-  window._wachtrijJobs = jobs || [];
-
-  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">' +
-  '<div><h3 style="font-size:15px;font-weight:700">Content-wachtrij</h3>' +
-  '<p style="font-size:11px;color:#64748b;margin-top:2px">2x/week (di + vr) zet de scheduler hier automatisch een concept klaar. Niets gaat live zonder jouw goedkeuring.</p></div>' +
-  '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-  '<select id="wachtrij-filter" onchange="wachtrijStatusFilter=this.value;renderWachtrijTab(document.getElementById(\'tab-content\'))" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;background:#fff">' +
-  '<option value="pending_review"' + (wachtrijStatusFilter==='pending_review'?' selected':'') + '>Te reviewen</option>' +
-  '<option value="published"' + (wachtrijStatusFilter==='published'?' selected':'') + '>Gepubliceerd</option>' +
-  '<option value="rejected"' + (wachtrijStatusFilter==='rejected'?' selected':'') + '>Afgewezen</option>' +
-  '<option value=""' + (wachtrijStatusFilter===''?' selected':'') + '>Alle</option></select>' +
-  '<button onclick="runWachtrijNow(this)" class="btn btn-sm btn-primary">Genereer nu</button></div></div>';
-
-  if (!jobs || !jobs.length) {
-    el.innerHTML = html + '<div class="empty-state"><p style="font-size:14px;font-weight:600;color:#475569;margin-bottom:4px">Niets te reviewen</p><p style="color:#94a3b8">Wacht op de volgende scheduler-run (di/vr 09:00) of klik "Genereer nu"</p></div>';
-    return;
-  }
-
-  jobs.forEach(function(job, idx) {
-      var sc = ({pending_review:'pill-info',published:'pill-ok',rejected:'pill-danger'})[job.status]||'pill-neutral';
-      var st = ({pending_review:'Te reviewen',published:'Gepubliceerd',rejected:'Afgewezen'})[job.status]||job.status;
-      var score = typeof job.seo_score==='number'?job.seo_score.toFixed(0):job.seo_score;
-      html += '<div class="opp-card"><div class="opp-header"><div style="flex:1"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
-      '<p class="opp-query">' + escHtml(job.title) + '</p>' +
-      '<span class="pill ' + sc + '">' + st + '</span></div>' +
-      '<div class="opp-meta"><span>Zoekwoord: ' + escHtml(job.keyword||'-') + '</span><span style="font-weight:600">SEO-score ' + score + '/100</span></div></div></div>' +
-      '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11px;color:var(--accent);font-weight:600">Blog-voorbeeld</summary>' +
-      '<div class="prose-dark" style="margin-top:6px;padding:10px;background:#f8fafc;border-radius:6px;max-height:260px;overflow:auto;font-size:12px">' + (job.blog_html||'') + '</div></details>' +
-      '<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px">' +
-      Object.keys(wachtrijPlatformLabels).map(function(p) {
-          var copy = (job.social_copy||{})[p];
-          if (!copy) return '';
-          return '<details style="flex:1;min-width:200px;background:#f8fafc;border-radius:6px;padding:8px"><summary style="cursor:pointer;font-size:11px;font-weight:600;color:#475569">' + wachtrijPlatformLabels[p] + '</summary>' +
-          '<div style="white-space:pre-wrap;font-size:11px;color:#334155;margin-top:6px">' + escHtml(copy) + '</div></details>';
-      }).join('') + '</div>' +
-      (job.image_path ? '<img src="data:image/png;base64,' + job.image_path + '" style="margin-top:8px;max-width:180px;border-radius:6px;border:1px solid #e2e8f0" />' : '') +
-      (function() {
-          if (job.status !== 'pending_review') return '';
-          var socPlatforms = Object.keys(wachtrijPlatformLabels).filter(function(p) { return (job.social_copy||{})[p]; });
-          if (!socPlatforms.length) return '';
-          return '<div style="margin-top:10px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:11px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px">' +
-          '<span style="font-weight:600">Ook posten naar (optioneel, standaard uit):</span>' +
-          socPlatforms.map(function(p) {
-              // Bewust NIET default-checked: social is opt-in, nooit automatisch.
-              return '<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="soc-toggle-' + job.id + '" value="' + p + '">' + wachtrijPlatformLabels[p] + '</label>';
-          }).join('') + '</div>';
-      })() +
-      '<div class="opp-actions" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">' +
-      '<button onclick="makeWachtrijVideo(this,\'' + job.id + '\')" class="btn btn-sm btn-primary">Maak video</button>' +
-      (job.status==='pending_review' ? '<button onclick="approveWachtrijJob(this,\'' + job.id + '\')" class="btn btn-sm" style="background:var(--green)">Goedkeuren &amp; publiceren</button>' +
-        '<button onclick="regenerateWachtrijJob(this,\'' + job.id + '\')" class="btn btn-sm" style="background:var(--warn-bg);color:var(--warn-fg);border-color:var(--warn-border)">Opnieuw genereren</button>' +
-        '<button onclick="rejectWachtrijJob(this,\'' + job.id + '\')" class="btn btn-sm btn-ghost">Afwijzen</button>' : '') +
-      '</div>' +
-      (job.video_path ? '<div style="margin-top:8px"><video src="/api/projects/' + encodeURIComponent(currentProject) + '/content-queue/' + job.id + '/video" controls style="max-width:240px;border-radius:8px;border:1px solid #e2e8f0"></video></div>' : '') +
-      '<div id="video-' + job.id + '" style="margin-top:8px"></div>' +
-      (job.status==='published' && job.publish_result ? '<div style="margin-top:8px;font-size:11px;color:#64748b">' + renderPublishResult(job.publish_result) + '</div>' : '') +
-      '</div>';
-  });
-  el.innerHTML = html;
-}
-
-
 function copyToClipboard(btn, text) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(function() {
@@ -911,19 +865,61 @@ async function runWachtrijNow(btn) {
   if (btn) { btn.disabled = false; btn.textContent = 'Genereer nu'; }
 }
 
+function renderPublishDatePicker(jobId) {
+  var today = new Date();
+  var ymd = function(d) { return d.toISOString().slice(0, 10); };
+  var minus = function(months) {
+    var d = new Date(today);
+    d.setMonth(d.getMonth() - months);
+    return d;
+  };
+  var presetHtml = [1, 3, 6, 12].map(function(m) {
+    var label = m === 12 ? '1 jaar' : m + ' mnd';
+    return '<button type="button" class="publish-date-preset" data-job="' + jobId +
+      '" data-date="' + ymd(minus(m)) + '" style="font-size:10px;padding:2px 8px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;cursor:pointer">' +
+      label + ' terug</button>';
+  }).join('');
+  return '<div class="publish-date-picker" style="margin-top:8px;font-size:11px;color:#475569;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px">' +
+    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+    '<span style="font-weight:600">Publicatiedatum:</span>' +
+    '<input type="date" id="publish-date-' + jobId + '" max="' + ymd(today) + '" ' +
+    'value="' + ymd(today) + '" style="font-size:11px;padding:3px 6px;border:1px solid #e2e8f0;border-radius:6px">' +
+    '<span style="color:#94a3b8">(leeg = vandaag)</span></div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' + presetHtml + '</div>' +
+    '<div id="publish-date-note-' + jobId + '" style="margin-top:6px;color:#64748b;min-height:14px"></div>' +
+    '</div>';
+}
+
+document.addEventListener('click', function(e) {
+  var btn = e.target.closest && e.target.closest('.publish-date-preset');
+  if (!btn) return;
+  var jobId = btn.getAttribute('data-job');
+  var date = btn.getAttribute('data-date');
+  var input = document.getElementById('publish-date-' + jobId);
+  var note = document.getElementById('publish-date-note-' + jobId);
+  if (input) input.value = date;
+  if (note) {
+    var d = new Date(date + 'T09:00:00');
+    note.textContent = 'Wordt gepubliceerd alsof het op ' + d.toLocaleDateString('nl-NL', {day:'numeric', month:'long', year:'numeric'}) + ' online kwam.';
+  }
+});
+
 async function approveWachtrijJob(btn, jobId) {
   var boxes = document.querySelectorAll('.soc-toggle-' + jobId);
   var channels = [];
   Array.prototype.forEach.call(boxes, function(b) { if (b.checked) channels.push(b.value); });
+  var dateInput = document.getElementById('publish-date-' + jobId);
+  var publishDate = dateInput && dateInput.value ? dateInput.value : null;
   var socialMsg = channels.length
   ? '\nSocial-posts: ' + channels.map(function(p){return wachtrijPlatformLabels[p]||p;}).join(', ') + '.'
   : '\nGeen social-posts — alleen de website.';
-  if (!confirm('Artikel publiceren naar de website.' + socialMsg + '\nDoorgaan?')) return;
+  var dateMsg = publishDate ? '\nPublicatiedatum: ' + publishDate + ' (teruggedateerd).' : '\nPublicatiedatum: vandaag.';
+  if (!confirm('Artikel publiceren naar de website.' + socialMsg + dateMsg + '\nDoorgaan?')) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Publiceren...'; }
   try {
     // Altijd expliciet: het backend post alleen wat hier is aangevinkt.
     var opts = { method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ channels: channels }) };
+      body: JSON.stringify({ channels: channels, publish_date: publishDate }) };
     var resp = await fetch('/api/projects/' + encodeURIComponent(currentProject) + '/content-queue/' + jobId + '/approve', opts);
     var data = await resp.json();
     if (!resp.ok) { alert('Mislukt: ' + (data.detail || 'onbekende fout')); if (btn) btn.disabled = false; return; }
@@ -965,7 +961,7 @@ async function makeWachtrijVideo(btn, jobId) {
 // ═══════════════════════════════════════════════════════════════════
 // CONCURRENTIE TAB (Trends + PageSpeed)
 // ═══════════════════════════════════════════════════════════════════
-async function renderConcurrentieTab(el) {
+async function renderPrestatiesTab(el) {
   el.innerHTML = '<div class="loading"><div class="spinner"></div><p>Trends laden...</p></div>';
   try {
     var [trendResp, speedResp, gapResp] = await Promise.all([
@@ -976,7 +972,7 @@ async function renderConcurrentieTab(el) {
     var trends = await trendResp.json(), speed = await speedResp.json(), gaps = await gapResp.json();
   } catch(e) { el.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; return; }
 
-  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px"><h3 style="font-size:15px;font-weight:700">Concurrentie &amp; Analyse</h3></div>';
+  var html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px"><h3 style="font-size:15px;font-weight:700">Prestaties &amp; Analyse</h3></div>';
 
   // ── Trend grafieken ──
   html += '<div class="grid-2">';
@@ -1003,7 +999,7 @@ async function renderConcurrentieTab(el) {
       html += '<tr><td>' + mi[0] + '</td><td class="num">' + speed.metrics[mk] + '</td><td class="num" style="color:#94a3b8">' + mi[1] + '</td></tr>';
     }
     html += '</tbody></table>';
-    if (currentTab === 'Concurrentie') { // only show desktop toggle on this tab
+    if (currentTab === 'Prestaties') { // only show desktop toggle on this tab
       html += '<div style="margin-top:8px"><button onclick="loadDesktopSpeed()" class="btn btn-sm btn-primary">Desktop test</button></div>';
     }
     html += '</div>';
@@ -1452,7 +1448,7 @@ async function socialApprove(id, btn) {
     var d = await resp.json();
     if (d.success) {
       if (d.manual) {
-        alert('ℹ️ Dit kanaal staat geen API-antwoord toe (LinkedIn/TikTok zonder partner-toegang).\n\nHet antwoord is gemarkeerd als geplaatst — kopieer het hierboven en plaats het handmatig op het kanaal.');
+        alert('ℹ️ Dit kanaal staat geen API-antwoord toe (LinkedIn/TikTok zonder partner-toegang).\n\nHet antwoord staat klaar om geplaatst te worden — automatisch via de browserautomatisering, of kopieer het hierboven en plaats het zelf.');
       } else {
         alert('✅ Antwoord geplaatst' + (d.url ? ':\n' + d.url : '.'));
       }
@@ -1549,7 +1545,7 @@ async function socialToggle(inboxId, enabled, btn) {
 }
 
 async function socialDelete(inboxId, label, btn) {
-  if (!confirm('Kanaal ' + label + ' verwijderen? De opgehaalde berichten verdwijnen uit Agent OS.')) return;
+  if (!confirm('Kanaal ' + label + ' verwijderen? De opgehaalde berichten verdwijnen uit Impact OS.')) return;
   btn.disabled = true;
   try {
     var resp = await fetch('/api/social-inbox/inboxes/' + encodeURIComponent(inboxId), { method:'DELETE' });
@@ -1662,12 +1658,172 @@ async function renderSocialCreatieTab(el) {
       });
       html += '</div>';
     }
-    html += '<div id="sc-detail"></div>';
+    html += '<div id=\"sc-detail\"></div>';
+    // ── Campagne-agenda (een plan heeft een volgorde en een datum) ──
+    html += '<div id=\"sc-campagne\" style=\"margin-top:18px\"></div>';
+    // ── Auto-post sectie (per-project opt-in) ──
+    html += '<div id=\"sc-autopost\" style=\"margin-top:18px\"></div>';
     el.innerHTML = html;
+    scLoadCampagne();
+    scLoadAutoPost();
   } catch (e) {
-    el.innerHTML = '<div class="empty-state">Social Creatie fout: ' + escHtml(e.message) + '</div>';
+    el.innerHTML = '<div class=\"empty-state\">Social Creatie fout: ' + escHtml(e.message) + '</div>';
   }
 }
+
+// ── Campagne-agenda ─────────────────────────────────────────────────────────
+// De pack-lijst hierboven staat op aanmaakdatum, en dat is voor een campagne
+// betekenisloos: achttien posts die binnen één seconde zijn geïmporteerd staan
+// dan in willekeurige volgorde zonder datum. Juist de volgorde én het moment
+// zíjn het plan — een socialplan dat je niet als reeks kunt zien, is weer een
+// stapel losse posts, en dat is precies hoe het vorige plan zes weken stil lag.
+function _scDatum(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  if (isNaN(d)) return iso;
+  var dagen = ['zo', 'ma', 'di', 'wo', 'do', 'vr', 'za'];
+  var maanden = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+  return dagen[d.getDay()] + ' ' + d.getDate() + ' ' + maanden[d.getMonth()] + ' ' +
+    ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+}
+
+async function scLoadCampagne() {
+  var box = document.getElementById('sc-campagne'); if (!box) return;
+  var rijen = [];
+  try {
+    rijen = (await (await fetch('/api/social-content/campaign?project=' +
+      encodeURIComponent(currentProject))).json()) || [];
+  } catch (e) { box.innerHTML = ''; return; }
+  if (!rijen.length) { box.innerHTML = ''; return; }
+
+  var nu = new Date();
+  var wacht = rijen.filter(function (r) { return r.status === 'pending_review'; }).length;
+  var over = rijen.filter(function (r) { return r.over_datum; }).length;
+  var gedaan = rijen.filter(function (r) { return r.status === 'posted'; }).length;
+  // "Nu aan de beurt" = de eerstvolgende wachtende post. Dat is de enige regel
+  // waar een mens iets mee moet; de rest is context.
+  var nuAanDeBeurt = rijen.filter(function (r) { return r.status === 'pending_review'; })[0];
+
+  var html = '<div class="section-card" style="margin-top:0">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px">' +
+    '<h3 style="margin:0;font-size:14px;font-weight:700">📅 Campagne — ' + escHtml(rijen[0].campagne) + '</h3>' +
+    '<span style="font-size:11px;color:#64748b">' + gedaan + ' geplaatst · ' + wacht + ' klaar om te keuren' +
+    (over ? ' · <strong style="color:#b45309">' + over + ' over datum</strong>' : '') + '</span>' +
+    '</div>';
+
+  if (nuAanDeBeurt) {
+    html += '<p style="font-size:12px;color:#475569;margin:0 0 10px">Nu aan de beurt: ' +
+      '<strong>' + escHtml(nuAanDeBeurt.titel) + '</strong> — ' + escHtml(_scDatum(nuAanDeBeurt.gepland)) + '</p>';
+  }
+
+  html += '<div style="display:flex;flex-direction:column;gap:2px">';
+  rijen.forEach(function (r) {
+    var gepland = new Date(r.gepland);
+    var toekomst = !isNaN(gepland) && gepland > nu;
+    var kleur = r.status === 'posted' ? '#16a34a'
+      : r.over_datum ? '#b45309'
+        : toekomst ? '#94a3b8' : '#0f172a';
+    html += '<div style="display:flex;align-items:center;gap:10px;padding:5px 8px;border-radius:6px;' +
+      (r.over_datum ? 'background:#fffbeb' : '') + '">' +
+      '<span style="font-size:11px;color:#94a3b8;width:26px;flex:none">' + escHtml(r.post) + '</span>' +
+      '<span style="font-size:11px;color:' + kleur + ';width:112px;flex:none">' + escHtml(_scDatum(r.gepland)) + '</span>' +
+      '<span style="font-size:12px;color:#0f172a;flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+      escHtml(r.titel) + '</span>' +
+      '<span style="font-size:10px;color:#64748b;background:#f1f5f9;padding:1px 6px;border-radius:9px;flex:none">' +
+      escHtml(r.type) + '</span>' +
+      (r.over_datum ? '<span class="pill pill-warn" style="flex:none">over datum</span>' : '') +
+      '<button onclick="scOpenPack(\'' + escHtml(r.pack_id) + '\')" class="btn btn-sm btn-ghost" style="flex:none">Bekijk</button>' +
+      (r.status === 'pending_review'
+        ? '<button onclick="scApprove(\'' + escHtml(r.pack_id) + '\',this)" class="btn btn-sm" style="background:var(--green);flex:none">Goedkeuren</button>'
+        : '<span style="flex:none">' + _scBadge(r.status) + '</span>') +
+      '</div>';
+  });
+  html += '</div></div>';
+  box.innerHTML = html;
+}
+
+async function scLoadAutoPost() {
+  var box = document.getElementById('sc-autopost'); if (!box) return;
+  box.innerHTML = '<div class=\"section-card\" style=\"margin-top:0\"><div class=\"loading\" style=\"padding:14px\"><div class=\"spinner\"></div></div></div>';
+  try {
+    var d = await (await fetch('/api/social-auto/' + encodeURIComponent(currentProject) + '/status')).json();
+    var cfg = d.config || {};
+    var tok = d.token_configured || {};
+    var on = !!cfg.enabled;
+    var plats = cfg.platforms && cfg.platforms.length ? cfg.platforms : ['facebook','instagram'];
+    var platformChips = ['facebook','instagram'].map(function(p){
+      var ready = tok[p];
+      var sel = plats.indexOf(p) >= 0;
+      return '<label style=\"display:inline-flex;gap:5px;align-items:center;font-size:12px;padding:4px 10px;border:1px solid ' + (sel ? 'var(--accent)' : '#e2e8f0') + ';border-radius:20px;' + (sel ? 'background:#eef2ff' : '') + '\">' +
+        '<input type=\"checkbox\" data-ap=\"' + p + '\" ' + (sel ? 'checked' : '') + ' ' + (on ? '' : 'disabled') + ' style=\"accent-color:var(--accent)\">' + _socialPlatformLabel(p) +
+        (ready ? ' ✓' : ' ⚠ geen token') + '</label>';
+    }).join('');
+    var html = '<div class=\"section-card\" style=\"margin-top:0\">' +
+      '<div style=\"display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px\">' +
+        '<div><h3 style=\"margin:0;font-size:14px;font-weight:700\">⚡ Auto-posten op social</h3>' +
+        '<p style=\"font-size:11px;color:#64748b;margin:2px 0 0\">Plaatst elke dag automatisch een gegenereerde post op je kanalen. Staat UIT tenzij je het hier aanzet.</p></div>' +
+        (on
+          ? '<button onclick=\"scToggleAuto(false,this)\" class=\"btn btn-sm btn-danger-outline\">Uitzetten</button>'
+          : '<button onclick=\"scToggleAuto(true,this)\" class=\"btn btn-sm btn-primary\">Aanzetten</button>') +
+      '</div>' +
+      '<div style=\"display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px\">' + platformChips + '</div>';
+    if (on) {
+      html += '<div style=\"display:flex;gap:6px;flex-wrap:wrap\">' +
+        '<span class=\"pill pill-ok\">Aan — dagelijks 09:00</span>' +
+        '<button onclick=\"scRunAutoNow(this)\" class=\"btn btn-sm btn-ghost\">Nu één run</button></div>';
+    } else {
+      html += '<p style=\"font-size:11px;color:#94a3b8;margin:0\">Tip: zet aan om FB/IG dagelijks te voeden. Je content wordt eerst gegenereerd en — zodra auto-post aanstaat — automatisch geplaatst.</p>';
+    }
+    // Recente runs
+    if (d.recent_runs && d.recent_runs.length) {
+      html += '<div style=\"margin-top:10px;border-top:1px solid #e2e8f0;padding-top:8px\">' +
+        d.recent_runs.map(function(r){
+          return '<div style=\"font-size:11px;color:#64748b;padding:2px 0\">• ' + escHtml(r.detail || r.action) + ' <span style=\"color:#94a3b8\">(' + escHtml((r.created_at||'').slice(0,16).replace('T',' ')) + ')</span></div>';
+        }).join('') + '</div>';
+    }
+    html += '</div>';
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = '<div class=\"section-card\" style=\"margin-top:0\"><p style=\"font-size:12px;color:#94a3b8\">Auto-post status niet beschikbaar: ' + escHtml(e.message) + '</p></div>';
+  }
+}
+
+function _scSelectedPlatforms() {
+  var ch = document.querySelectorAll('#sc-autopost input[data-ap]');
+  var sel = [];
+  ch.forEach(function(c){ if (c.checked) sel.push(c.getAttribute('data-ap')); });
+  return sel.length ? sel : ['facebook','instagram'];
+}
+
+async function scToggleAuto(on, btn) {
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = '…';
+  try {
+    var body = on ? JSON.stringify({ platforms: _scSelectedPlatforms() }) : '{}';
+    var resp = await fetch('/api/social-auto/' + encodeURIComponent(currentProject) + (on ? '/enable' : '/disable'), {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: body,
+    });
+    var d = await resp.json();
+    if (d.success) { socialToast(on ? ' Auto-post AAN' : ' Auto-post UIT'); scLoadAutoPost(); renderSocialCreatieTab(document.getElementById('tab-content')); }
+    else { alert('❌ ' + (d.error || d.detail || 'onbekend')); btn.textContent = orig; btn.disabled = false; }
+  } catch (e) { alert('❌ ' + e.message); btn.textContent = orig; btn.disabled = false; }
+}
+
+async function scRunAutoNow(btn) {
+  if (!confirm('Eén auto-post run nu uitvoeren? Genereert een pack en plaatst het op je kanalen.')) return;
+  btn.disabled = true; btn.textContent = 'Plaatsen…';
+  try {
+    var d = await (await fetch('/api/social-auto/' + encodeURIComponent(currentProject) + '/run-now', { method:'POST' })).json();
+    var msg = 'Run klaar';
+    if (d.published && Object.keys(d.published).length) msg += ' — geplaatst op ' + Object.keys(d.published).join(', ');
+    if (d.manual && Object.keys(d.manual).length) msg += ' — ' + Object.keys(d.manual).join(', ') + ' handmatig (zie bestand)';
+    if (d.note) msg += ' — ' + d.note;
+    if ((d.errors||[]).length) msg += ' — fouten: ' + d.errors.join('; ');
+    socialToast(msg);
+    scLoadAutoPost();
+  } catch (e) { alert('❌ ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = 'Nu één run'; }
+}
+
 
 async function scGenerate(btn) {
   var theme = (document.getElementById('sc-theme') || {}).value || '';
@@ -1713,6 +1869,64 @@ async function scReject(id, btn) {
   } catch (e) { alert('❌ ' + e.message); btn.disabled = false; }
 }
 
+async function scUploadImage(id, input) {
+  var file = input.files && input.files[0];
+  if (!file) return;
+  var status = document.getElementById('sc-upload-status-' + id);
+  if (status) status.textContent = 'Verwerken…';
+  try {
+    var fd = new FormData();
+    fd.append('file', file);
+    var resp = await fetch('/api/social-content/packs/' + encodeURIComponent(id) + '/image', {
+      method: 'POST', body: fd,
+    });
+    var d = await resp.json();
+    if (!resp.ok || !d.success) throw new Error(d.detail || d.error || 'Upload mislukt');
+    socialToast('Beeld bijgewerkt (' + (d.source || 'upload') + ')');
+    scOpenPack(id);
+  } catch (e) {
+    if (status) status.textContent = '';
+    alert('❌ ' + e.message);
+  }
+}
+
+async function scLoadPhotoLibrary(id, project) {
+  var box = document.getElementById('sc-lib-' + id);
+  if (!box) return;
+  try {
+    var d = await (await fetch('/api/social-content/photos?project=' + encodeURIComponent(project))).json();
+    var photos = d.photos || [];
+    if (!photos.length) {
+      box.innerHTML = '<span style="font-size:11px;color:#94a3b8">Nog geen foto\'s in de bibliotheek van dit project.</span>';
+      return;
+    }
+    box.innerHTML = photos.map(function(ph) {
+      var url = '/api/social-content/photos/' + encodeURIComponent(project) + '/' + encodeURIComponent(ph.filename);
+      return '<img src="' + url + '" title="' + escHtml(ph.filename) + '" ' +
+        'onclick="scAssignLibraryPhoto(\'' + escHtml(id) + '\',\'' + escHtml(project) + '\',\'' + escHtml(ph.filename) + '\',this)" ' +
+        'style="width:64px;height:64px;object-fit:cover;border-radius:6px;cursor:pointer;border:2px solid transparent" ' +
+        'onmouseover="this.style.borderColor=\'var(--accent)\'" onmouseout="this.style.borderColor=\'transparent\'" />';
+    }).join('');
+  } catch (e) {
+    box.innerHTML = '<span style="font-size:11px;color:#94a3b8">Bibliotheek kon niet laden.</span>';
+  }
+}
+
+async function scAssignLibraryPhoto(id, project, filename, imgEl) {
+  if (imgEl) imgEl.style.opacity = '0.4';
+  try {
+    var resp = await fetch('/api/social-content/packs/' + encodeURIComponent(id) +
+      '/photos/' + encodeURIComponent(filename) + '?project=' + encodeURIComponent(project), { method: 'POST' });
+    var d = await resp.json();
+    if (!resp.ok || !d.success) throw new Error(d.detail || d.error || 'Koppelen mislukt');
+    socialToast('Beeld gekoppeld uit bibliotheek (' + filename + ')');
+    scOpenPack(id);
+  } catch (e) {
+    if (imgEl) imgEl.style.opacity = '1';
+    alert('❌ ' + e.message);
+  }
+}
+
 async function scPublish(id, btn) {
   if (!confirm('Content pack plaatsen? Goedgekeurde posts gaan naar de gekoppelde kanalen.')) return;
   btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Plaatsen…';
@@ -1755,6 +1969,10 @@ async function scOpenPack(id) {
       var ib = p.image_brief;
       html += '<h4 style="font-size:12px;font-weight:700;margin:14px 0 6px;color:#475569">Beeld-brief (Canva / Midjourney)</h4>' +
       '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px;font-size:12px;color:#475569">' +
+      (ib.image_url ?
+        '<div style="margin-bottom:8px"><img src="' + escHtml(ib.image_url) + '" style="max-width:220px;border-radius:6px;display:block" />' +
+        '<div style="font-size:10px;color:#94a3b8;margin-top:3px">bron: ' + escHtml(ib.image_source || 'onbekend') + '</div></div>'
+        : '') +
       '<div><strong>Kop:</strong> ' + escHtml(ib.headline || '') + '</div>' +
       (ib.subtext ? '<div><strong>Onderschrift:</strong> ' + escHtml(ib.subtext) + '</div>' : '') +
       '<div><strong>Formaat:</strong> ' + escHtml(ib.dimensions || '') + ' · <strong>Type:</strong> ' + escHtml(ib.template_type || '') + '</div>' +
@@ -1764,7 +1982,14 @@ async function scOpenPack(id) {
       (ib.canva_method ? '<div style="margin-top:6px;font-size:10px;color:#64748b">' + (ib.canva_method === 'autofill' ? ' Automatisch ingevuld uit template' : ib.canva_method === 'create' ? '️ Leeg design aangemaakt (geen template-id)' : '') + '</div>' : '') +
       '<div style="margin-top:6px"><strong>Midjourney-prompt:</strong></div>' +
       '<div style="font-size:11px;background:#fff;border:1px solid #fde68a;border-radius:6px;padding:6px;white-space:pre-wrap;color:#7c2d12">' + escHtml(ib.midjourney_prompt || '') + '</div>' +
-      '<div style="margin-top:6px;font-size:11px;color:#92400e">' + escHtml(ib.canva_note || '') + '</div></div>';
+      '<div style="margin-top:6px;font-size:11px;color:#92400e">' + escHtml(ib.canva_note || '') + '</div>' +
+      '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #fde68a">' +
+      '<label style="font-size:11px;font-weight:600;color:#475569;display:block;margin-bottom:4px">Uit fotobibliotheek kiezen (projects/' + escHtml(p.project) + '/photos)</label>' +
+      '<div id="sc-lib-' + escHtml(id) + '" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>' +
+      '<label style="font-size:11px;font-weight:600;color:#475569;display:block;margin-bottom:4px">Of eigen render uploaden (Midjourney/foto) — vervangt bovenstaand beeld met dezelfde merk-overlay</label>' +
+      '<input type="file" accept="image/*" id="sc-upload-' + escHtml(id) + '" style="font-size:11px" onchange="scUploadImage(\'' + escHtml(id) + '\',this)" />' +
+      '<span id="sc-upload-status-' + escHtml(id) + '" style="font-size:11px;color:#64748b;margin-left:8px"></span>' +
+      '</div></div>';
     }
     if (p.tiktok_pack) {
       var tp = p.tiktok_pack;
@@ -1801,6 +2026,7 @@ async function scOpenPack(id) {
     html += '<div style="margin-top:12px"><button onclick="document.getElementById(\'sc-detail\').innerHTML=\'\'" class="btn btn-sm btn-ghost">Sluiten</button></div></div>';
     box.innerHTML = html;
     box.scrollIntoView({ behavior:'smooth', block:'nearest' });
+    if (p.image_brief) scLoadPhotoLibrary(id, p.project);
   } catch (e) {
     box.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>';
   }

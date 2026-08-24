@@ -43,7 +43,7 @@ GOALS = [
             "konijn adopteren, wat kost een huisdier, vrijwilliger dierenasiel. Gebruik de "
             "bestaande 28 blog + 25 KB-artikelen + nieuwe AEO-content + hub-spoke interne "
             "link-graph om autoriteit op te bouwen. Rapporteer maandelijks positieverschil "
-            "via GSC (zodra pootgelukkig.nl aan GSC is gekoppeld in AgentOS)."
+            "via GSC (zodra pootgelukkig.nl aan GSC is gekoppeld in ImpactOS)."
         ),
     },
 ]

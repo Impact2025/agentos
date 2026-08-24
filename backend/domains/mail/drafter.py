@@ -97,6 +97,15 @@ def _sync_openmodel(system: str, user: str) -> str:
         "max_tokens": 800,
         "system": system,
         "messages": [{"role": "user", "content": user}],
+        # deepseek-v4-flash is een reasoning-model: zonder deze vlag stuurt
+        # het zijn hele redeneerspoor terug als gewoon 'text'-content (geen
+        # apart 'thinking'-blok), en met max_tokens=800 wordt dat spoor
+        # halverwege afgekapt — precies wat er als mailconcept in de UI
+        # belandde (24 aug 2026: Engelstalige interne overweging i.p.v. een
+        # antwoord aan Virginia van Münster). Zelfde vangnet als
+        # claude.py::_get_via_openmodel — thinking uit voor deterministische
+        # tekst-output i.p.v. een redeneerspoor.
+        "thinking": {"type": "disabled"},
     }
     with httpx.Client(timeout=120) as client:
         resp = client.post(
@@ -187,6 +196,7 @@ def draft_reply(
     knowledge: str,
     history: str = "",
     has_signature: bool = False,
+    known_customer: Optional[bool] = None,
 ) -> str:
     brand = brand_context or "dit project"
     lang = detect_language(subject + " " + body)
@@ -204,6 +214,23 @@ def draft_reply(
     ref_instr = referral_instruction(opp)
     if ref_instr:
         system += ref_instr
+    # Bekende afzender? Afgeleid uit eerdere correspondentie op dit adres
+    # (thread_history) — geen externe klantendatabase, maar wél de eerlijke
+    # eigen historie. Voorkomt dat een terugkerende klant een welkomstintro
+    # krijgt, en dat een écht nieuwe afzender een aanname over een bestaand
+    # account voorgeschoteld krijgt (bv. bij een "ik kan niet meer inloggen").
+    if known_customer is True:
+        system += (
+            "\n\nDeze afzender heeft al eerder gemaild op dit adres (zie de "
+            "eerdere correspondentie hieronder, indien meegegeven) — ga uit "
+            "van een bestaand account/lidmaatschap, geen welkomstintro."
+        )
+    elif known_customer is False:
+        system += (
+            "\n\nVoor zover bekend is dit de eerste keer dat dit adres mailt "
+            "— neem geen bestaand account/lidmaatschap aan, en verifieer dat "
+            "eerst als de vraag daarvan uitgaat (bv. 'kan niet inloggen')."
+        )
     if knowledge:
         # OpenModel (deepseek-v4-flash) geeft bij een te grote system-prompt
         # geregeld alleen een 'thinking'-blok terug en géén 'text' → lege draft.
@@ -270,6 +297,7 @@ def draft_reply_with_referral(
     knowledge: str,
     history: str = "",
     has_signature: bool = False,
+    known_customer: Optional[bool] = None,
 ) -> Tuple[str, Optional[dict]]:
     """Zelfde als draft_reply(), maar geeft ook de referral-kans terug.
 
@@ -287,5 +315,6 @@ def draft_reply_with_referral(
         knowledge=knowledge,
         history=history,
         has_signature=has_signature,
+        known_customer=known_customer,
     )
     return draft, opp

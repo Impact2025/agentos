@@ -1,4 +1,4 @@
-# Agent OS — Projecten
+# Impact OS — Projecten
 
 Elke klant of domein krijgt een eigen map onder `projects/`.  
 Een project is herkenbaar aan zijn **SKILL.md** — daarin staat alles wat Hermes moet weten om voor die klant te werken.

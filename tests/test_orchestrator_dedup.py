@@ -182,3 +182,28 @@ def test_benchmark_matcht_exact_en_niet_op_deelnaam():
     assert "WeAreImpact-stijl" in wai
     assert wai != tmi, "TeambuildingMetImpact mag niet de WeAreImpact-benchmark krijgen"
     assert "TeambuildingMetImpact" in tmi  # generieke terugval noemt het eigen project
+
+
+def test_alle_hardcoded_benchmarks_noemen_hun_project():
+    """Regressietest (19 aug 2026): alle vier hardcoded stijlgidsen in
+    `_PROJECT_BENCHMARKS` misten de frase "project 'X'". `_auto_queue_run`
+    in gauntlet/service.py leest die frase met een regex om te weten welke
+    site een geslaagde run mag ontvangen; zonder match gooit hij
+    `OnbekendProject` en verdwijnt een voltooide Gauntlet-herschrijving in een
+    foutkaart in plaats van de Wachtrij. Deze test toetst elke hardcoded
+    benchmark tegen exact dezelfde regex, zodat een nieuwe of gewijzigde
+    stijlgids die de frase vergeet een falende test geeft in plaats van een
+    stil weggegooide run."""
+    from backend.domains.orchestrator.service import _PROJECT_BENCHMARKS
+    from backend.domains.gauntlet.service import _PROJECT_IN_BENCHMARK_RE
+
+    for project, benchmark in _PROJECT_BENCHMARKS.items():
+        m = _PROJECT_IN_BENCHMARK_RE.search(benchmark)
+        assert m, (
+            f"benchmark voor '{project}' mist de frase \"project '{project}'\" — "
+            "een geslaagde Gauntlet-run zou hier niet automatisch gepubliceerd worden"
+        )
+        assert m.group(1).strip() == project, (
+            f"benchmark voor '{project}' noemt een ander project ({m.group(1)!r}) — "
+            "dat resolvet naar de verkeerde site"
+        )

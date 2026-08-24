@@ -2,5 +2,5 @@
 # Mission Radar — wekelijkse sky-scan wrapper (draait via Hermes cron).
 # Gebruikt de project-venv zodat dotenv/sqlite/deps beschikbaar zijn.
 set -e
-cd "/d/apps/agentos"
+cd "/d/apps/impactos"
 exec ".venv/Scripts/python" "scripts/radar_weekly_scan.py"

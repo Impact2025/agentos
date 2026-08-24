@@ -26,11 +26,29 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_AGENTOS_FOLDER = "AgentOS"
+_AGENTOS_FOLDER = "ImpactOS"
+# Legacy vault folder name (rename target: rename AgentOS/ -> ImpactOS/ in vault,
+# or rely on the _resolve_vault_folder() fallback to keep reading old folders).
+_AGENTOS_FOLDER_LEGACY = "AgentOS"
 _SESSIONS_FOLDER = f"{_AGENTOS_FOLDER}/Sessions"
 _GOALS_FOLDER = f"{_AGENTOS_FOLDER}/Goals"
 _TASKS_FOLDER = f"{_AGENTOS_FOLDER}/Tasks"
 _OMI_FOLDER = f"{_AGENTOS_FOLDER}/OMI"
+
+
+def _resolve_vault_folder(vault: Path, folder: str) -> Path | None:
+    """Read from the renamed ImpactOS/<folder> vault dir, fall back to the legacy
+    AgentOS/<folder> dir so existing vault content keeps working after the rename.
+    Returns the first path that exists, else the preferred (new) path.
+    """
+    preferred = vault / folder
+    legacy = vault / folder.replace(_AGENTOS_FOLDER, _AGENTOS_FOLDER_LEGACY, 1)
+    if preferred.exists():
+        return preferred
+    if legacy.exists():
+        return legacy
+    return preferred
+
 
 # ── OMI-connector (Open Memory Interface) ─────────────────────────────
 
@@ -44,7 +62,7 @@ class OmiConnector:
       OMI hardware/desktop → OMI cloud API → memories + conversations
       └→ Ook exporteerbaar naar Obsidian als Markdown
 
-    Deze connector geeft de AgentOS toegang tot OMI's API voor:
+    Deze connector geeft de ImpactOS toegang tot OMI's API voor:
     - READ:  memories ophalen (gestructureerde weetjes over de gebruiker)
     - READ:  conversations doorzoeken (real-time context)
     - WRITE: memories aanmaken (agent-resultaten terug naar OMI)
@@ -351,6 +369,24 @@ class InfiniteContextEngine:
                 daily_snippet = daily[:600] if len(daily) > 600 else daily
                 parts.append(f"## Vandaag (dagboek)\n{daily_snippet}")
 
+        # Pijler 4: Knowledge Forge — geleerde documenten (de "/learn" van
+        # ImpactOS). Semantische retrieval op de taak-titel + de meest relevante
+        # cheat-sheet/glossary erbij. Zo "weet" elke agent wat er in de
+        # geleerde boeken/PDF's/notes staat, zonder ze te herlezen.
+        try:
+            from ..knowledge_forge import ask as forge_ask
+            q = f"{title} {description} {project}".strip()
+            if q:
+                kf = forge_ask(q, top_k=3)
+                if kf.get("answer_context"):
+                    block = f"## Geleerde documenten (Knowledge Forge)\n{kf['answer_context']}"
+                    if kf.get("cheat_sheet"):
+                        block += "\n\n**Snelle regels uit deze bronnen:**\n"
+                        block += "\n".join(f"- {r}" for r in kf["cheat_sheet"][:6])
+                    parts.append(block)
+        except Exception as e:
+            logger.debug("[infinite-context] Knowledge Forge lookup mislukt: %s", e)
+
         return "\n\n".join(parts)
 
     def build_goal_context(self, objective: str, project: str = "") -> str:
@@ -380,7 +416,7 @@ class InfiniteContextEngine:
         """Haal de dagelijkse context op — wat is er vandaag al gebeurd.
 
         Leest:
-        - Vandaag's dagboek (AgentOS/Sessions/<datum>.md)
+        - Vandaag's dagboek (ImpactOS/Sessions/<datum>.md)
         - Alle doelen die vandaag actief waren
         - Recente brand context (Obsidian)
         - OMI-memories van vandaag (real-time)
@@ -426,8 +462,8 @@ class InfiniteContextEngine:
         """Schrijf een taak-resultaat naar Obsidian + OMI.
 
         Schrijft naar:
-          AgentOS/Tasks/JJJJ-WW/task-<short_id>.md  (per taak)
-          AgentOS/Sessions/<datum>.md                 (dagboek — append)
+          ImpactOS/Tasks/JJJJ-WW/task-<short_id>.md  (per taak)
+          ImpactOS/Sessions/<datum>.md                 (dagboek — append)
           OMI: create_memory()                        (OMI-memory)
 
         Retourneert het pad naar het taak-bestand, of None bij fout.
@@ -476,7 +512,7 @@ class InfiniteContextEngine:
             try:
                 category = _skill_to_omi_category(skill)
                 omi_content = (
-                    f"Agent OS taak voltooid: {title}\n"
+                    f"Impact OS taak voltooid: {title}\n"
                     f"Project: {project}\n"
                     f"Skill: {skill}\n"
                     f"Resultaat (verkort): {(result or '')[:500].strip()}"
@@ -494,14 +530,14 @@ class InfiniteContextEngine:
         """Schrijf een goal-summary naar Obsidian + OMI na afloop van de executie-loop.
 
         Schrijft naar:
-          AgentOS/Goals/goal-<short_id>.md
+          ImpactOS/Goals/goal-<short_id>.md
           OMI: create_memory()
         """
         if not self.is_configured:
             return None
 
         vault = self._vault_path
-        goals_folder = vault / _GOALS_FOLDER
+        goals_folder = _resolve_vault_folder(vault, _GOALS_FOLDER)
         goals_folder.mkdir(parents=True, exist_ok=True)
 
         safe_title = re.sub(r'[^a-zA-Z0-9\s-]', '', title).strip().replace(' ', '-')[:40]
@@ -585,7 +621,7 @@ class InfiniteContextEngine:
     def _get_todays_log(self) -> str:
         """Lees vandaag's dagboek (leeg als die niet bestaat)."""
         today = date.today().strftime("%Y-%m-%d")
-        log_path = self._vault_path / _SESSIONS_FOLDER / f"{today}.md"
+        log_path = _resolve_vault_folder(self._vault_path, _SESSIONS_FOLDER) / f"{today}.md"
         if log_path.exists():
             try:
                 return log_path.read_text(encoding="utf-8", errors="ignore")
@@ -612,7 +648,7 @@ class InfiniteContextEngine:
                 existing = ""
         else:
             existing = (
-                f"# AgentOS — {today}\n\n"
+                f"# ImpactOS — {today}\n\n"
                 f"Automatisch agent-activiteitenlogboek.\n\n"
                 f"---\n\n"
             )
@@ -657,7 +693,7 @@ class InfiniteContextEngine:
 
 
 def _skill_to_omi_category(skill: str) -> str:
-    """Vertaal een AgentOS skill naar een OMI memory category."""
+    """Vertaal een ImpactOS skill naar een OMI memory category."""
     mapping = {
         "research":       "learnings",
         "content-writer": "work",

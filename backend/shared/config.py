@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
@@ -51,6 +52,23 @@ OPENMODEL_MODEL: str = _no_claude(os.getenv("OPENMODEL_MODEL", "deepseek-v4-flas
 # krediet (incident 2026-07-11, $4,90 op één dag). Wil je alsnog het dure Claude-
 # pad, zet dan expliciet OPENMODEL_SMART_MODEL=claude-sonnet-4-6 in .env.
 OPENMODEL_SMART_MODEL: str = _no_claude(os.getenv("OPENMODEL_SMART_MODEL", "deepseek-v4-pro"))
+# Eenmalige, bewuste uitzondering op de _no_claude-garantie (Vincent, 21 aug 2026):
+# het social-/blogvideo-script mag wél op échte Claude schrijven — de rest van het
+# systeem blijft hard op DeepSeek. Geen _no_claude-sanitizer hierop, want dit ÍS
+# de ene plek waar Claude gewenst is; gebruik 'm dus nergens anders. Alleen actief
+# als er ook echt een sleutel is (ANTHROPIC_API_KEY of OPENMODEL_API_KEY) —
+# anders valt de caller terug op OPENMODEL_MODEL (DeepSeek).
+SCRIPT_WRITER_MODEL: str = os.getenv("SCRIPT_WRITER_MODEL", "claude-sonnet-4-6")
+# Vision (afbeeldingen in de chat, bv. een rooster) vergt een model dat écht
+# beelddata leest. Gemeten 20 aug 2026: noch deepseek-v4-flash noch -pro doen
+# dat op deze OpenModel.ai-gateway — de gateway accepteert een image-block
+# zonder fout, maar vervangt hem stil door "[Unsupported Image]" en het model
+# antwoordt dan beleefd dat het niets ziet (geen exception, dus onopgemerkt
+# zonder deze losse waarschuwing). Leeg = vision uitgeschakeld, met een
+# duidelijke melding aan de gebruiker i.p.v. een LLM die doet alsof.
+# Zet deze pas als je hebt geverifieerd dat het genoemde model dáádwerkelijk
+# beelddata leest (niet alleen accepteert) op /v1/messages.
+OPENMODEL_VISION_MODEL: str = _no_claude(os.getenv("OPENMODEL_VISION_MODEL", "deepseek-v4-flash-vision-exp"))
 HERMES_MODEL: str = os.getenv("HERMES_MODEL", "meta-llama/llama-3.1-8b-instruct")
 
 # ── Live model-swap (zonder herstart) ───────────────────────────────────────
@@ -136,6 +154,17 @@ GOOGLE_PSE_API_KEY: str = os.getenv("GOOGLE_PSE_API_KEY", "")
 GOOGLE_PSE_CX: str = os.getenv("GOOGLE_PSE_CX", "")
 HUNTER_API_KEY: str = os.getenv("HUNTER_API_KEY", "")
 
+# Waterfall-verrijking (ImpactOS "Marketing Agents" — Greg Isenberg / Cody
+# Schneider masterclass). Naast Hunter.io (primaire e-mailverrijking) bieden
+# we een goedkopere/nauwkeurigere fallback-keten voor als Hunter leeg is, plus
+# een telefoon-bron. Elke provider is KEY-GATED: zonder key springt de keten
+# netjes door naar de volgende, zonder crash of fake-data.
+#   E-mail-waterfall:  Hunter → GetLeads.io → Apollo
+#   Telefoon:          Lead Magic (aparte stap, na de e-mail-keten)
+GETLEADS_API_KEY: str = os.getenv("GETLEADS_API_KEY", "")
+APOLLO_API_KEY: str = os.getenv("APOLLO_API_KEY", "")
+LEAD_MAGIC_API_KEY: str = os.getenv("LEAD_MAGIC_API_KEY", "")
+
 # Netlify publisher — globale fallback-token (Personal Access Token). Per site kun
 # je een eigen token + site-ID zetten in de sites-tabel (publish_api_key / publish_api_url).
 NETLIFY_TOKEN: str = os.getenv("NETLIFY_TOKEN", "")
@@ -213,6 +242,17 @@ BRIDGE_REMOTE_URL: str = os.getenv("BRIDGE_REMOTE_URL", "")
 BRIDGE_TOKEN: str = os.getenv("BRIDGE_TOKEN", "")
 BRIDGE_SYNC_MINUTES: int = int(os.getenv("BRIDGE_SYNC_MINUTES", "3"))
 
+# ── Bewaard voor Jou: bestellingen + inkoop-signalering ─────────────────
+# Leest read-only bestellingen bij life-journey-backend (het "memories"-
+# project, D:\apps\memories) via een eigen, smal endpoint
+# (/api/v1/admin/orders/impactos-sync) — géén directe DB-koppeling, géén
+# schrijftoegang. BEWAARDVOORJOU_ORDERS_KEY moet gelijk zijn aan
+# ORDERS_API_KEY in de env van life-journey-backend. Leeg laten = uit (de
+# sync-job slaat dan stil over, zelfde off/partial/on-patroon als de bridge).
+BEWAARDVOORJOU_ORDERS_URL: str = os.getenv("BEWAARDVOORJOU_ORDERS_URL", "")
+BEWAARDVOORJOU_ORDERS_KEY: str = os.getenv("BEWAARDVOORJOU_ORDERS_KEY", "")
+BEWAARDVOORJOU_ORDERS_SYNC_MINUTES: int = int(os.getenv("BEWAARDVOORJOU_ORDERS_SYNC_MINUTES", "30"))
+
 # Kwaliteitsgate voor content (0-100): onder deze score komt een artikel niet
 # in de Wachtrij als publiceerbaar en weigert de publish-API. De pipeline
 # probeert eerst automatisch te verbeteren (max 3 rondes).
@@ -221,6 +261,35 @@ BRIDGE_SYNC_MINUTES: int = int(os.getenv("BRIDGE_SYNC_MINUTES", "3"))
 # 80 (niet 85) zodat de grens matcht met wat het dashboard toont ("onder de 80")
 # en de artikelen die de motor al structureel schrijft (82-84) wél doorgaan.
 CONTENT_MIN_SCORE: int = int(os.getenv("CONTENT_MIN_SCORE", "80"))
+
+# Per-project overrides op CONTENT_MIN_SCORE. Formaat: "Project A=80,Project B=75".
+# Matcht op de squash-vorm (zie shared/projects.py) zodat spelling/hoofdletters
+# niet uitmaken. 21 aug 2026: de globale .env-waarde staat op 85 (hoger dan de
+# hierboven gedocumenteerde bedoeling van 80), maar Bewaardvoorjou's motor
+# schrijft structureel 82-84 — precies de artikelen die de grens hoort door te
+# laten. Alleen dít project teruggezet naar 80, zonder de globale waarde voor
+# andere projecten aan te raken (die kan om een andere reden op 85 staan).
+CONTENT_MIN_SCORE_OVERRIDES: str = os.getenv("CONTENT_MIN_SCORE_OVERRIDES", "Bewaardvoorjou=80")
+
+
+def content_min_score(project: Optional[str] = None) -> int:
+    """CONTENT_MIN_SCORE, met een optionele per-project override.
+
+    Geen project meegegeven (of geen match) = de globale grens."""
+    if project:
+        from .projects import squash_project
+        target = squash_project(project)
+        for part in CONTENT_MIN_SCORE_OVERRIDES.split(","):
+            part = part.strip()
+            if not part or "=" not in part:
+                continue
+            name, _, value = part.partition("=")
+            if squash_project(name) == target:
+                try:
+                    return int(value)
+                except ValueError:
+                    break
+    return CONTENT_MIN_SCORE
 
 # Hoeveel verbeterrondes de agent mág doen voordat hij opgeeft. Dit is een
 # HARDE veiligheidslimiet (tegen eindeloze LLM-loops), geen streefwaarde: de
@@ -341,26 +410,26 @@ LINKBUILD_AUTO_APPROVE: bool = os.getenv("LINKBUILD_AUTO_APPROVE", "0") in ("1",
 
 BASE_DIR = Path(__file__).parent.parent.parent
 DATA_DIR = BASE_DIR / "data"
-# AGENTOS_DB_PATH override: tests draaien tegen een wegwerp-database, en elke
-# klant-instance (zie AGENTOS_ENABLED_DOMAINS hieronder) tegen zijn eigen bestand.
-DB_PATH = Path(os.getenv("AGENTOS_DB_PATH", str(DATA_DIR / "agentos.db")))
+# IMPACTOS_DB_PATH override: tests draaien tegen een wegwerp-database, en elke
+# klant-instance (zie IMPACTOS_ENABLED_DOMAINS hieronder) tegen zijn eigen bestand.
+DB_PATH = Path(os.getenv("IMPACTOS_DB_PATH", os.getenv("AGENTOS_DB_PATH", str(DATA_DIR / "impactos.db"))))
 
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # ── Domain-whitelist: welke onderdelen deze instance mag draaien ───────────
-# Agent OS is single-tenant (één DB, één vault, één .env). Een klant krijgt
+# Impact OS is single-tenant (één DB, één vault, één .env). Een klant krijgt
 # daarom een eigen proces (eigen poort, eigen .env-waarden via de launch-
-# script, eigen AGENTOS_DB_PATH/OBSIDIAN_VAULT_PATH) i.p.v. een gedeelde
+# script, eigen IMPACTOS_DB_PATH/OBSIDIAN_VAULT_PATH) i.p.v. een gedeelde
 # multi-tenant-laag — maar diezelfde instance monteert zonder deze knop nog
 # steeds ALLE domeinen, inclusief Beursmeester/Finance/Prospecting die een
-# klant nooit gevraagd heeft. AGENTOS_ENABLED_DOMAINS is de knop: een
+# klant nooit gevraagd heeft. IMPACTOS_ENABLED_DOMAINS is de knop: een
 # komma-gescheiden whitelist van domeinnamen. Leeg (de standaard, dus de
 # bestaande WeAreImpact-installatie) betekent "alles aan" — bestaand gedrag
 # blijft ongewijzigd. Routers/scheduler-jobs die geen expliciete domain-tag
 # dragen zijn kern-functionaliteit (auth, health, action-center, chat-UI) en
 # blijven altijd aan, ongeacht de whitelist.
-_ENABLED_DOMAINS_RAW: str = os.getenv("AGENTOS_ENABLED_DOMAINS", "")
+_ENABLED_DOMAINS_RAW: str = os.getenv("IMPACTOS_ENABLED_DOMAINS", os.getenv("AGENTOS_ENABLED_DOMAINS", ""))
 ENABLED_DOMAINS: set[str] = {
     d.strip() for d in _ENABLED_DOMAINS_RAW.split(",") if d.strip()
 }
@@ -383,15 +452,15 @@ def domain_enabled(domain: str) -> bool:
 
 # Weergavenaam van de instance (sidebar, browsertab, loginscherm). Default
 # ongewijzigd voor de hoofdinstallatie; een klant-instance zet dit op haar
-# eigen merknaam zodat het meteen haar eigen omgeving voelt, niet "Agent OS
+# eigen merknaam zodat het meteen haar eigen omgeving voelt, niet "Impact OS
 # met een paar uitgegrijsde tabs".
-AGENTOS_INSTANCE_NAME: str = os.getenv("AGENTOS_INSTANCE_NAME", "Agent OS")
+IMPACTOS_INSTANCE_NAME: str = os.getenv("IMPACTOS_INSTANCE_NAME", os.getenv("AGENTOS_INSTANCE_NAME", "Impact OS"))
 
 # Log-directory: een klant-instance draait vanuit dezelfde codebase-map als de
 # hoofdinstallatie (geen code-duplicatie) maar mag nooit in hetzelfde
-# logs/agentos.log schrijven — anders staan Nicole's mailfouten tussen
+# logs/impactos.log schrijven — anders staan Nicole's mailfouten tussen
 # WeAreImpact's linkbuilding-log. Default ongewijzigd (logs/ in de projectroot).
-AGENTOS_LOG_DIR: str = os.getenv("AGENTOS_LOG_DIR", "")
+IMPACTOS_LOG_DIR: str = os.getenv("IMPACTOS_LOG_DIR", os.getenv("AGENTOS_LOG_DIR", ""))
 
 
 def _is_real_key(value: str, prefix: str) -> bool:
