@@ -252,7 +252,7 @@ async function impactLeadsAck(req, res, tenant) {
 // kaart bij Vincent verschijnt (backend/domains/bridge/lsp_workshop.py).
 async function lspSubmissions(res, tenant) {
   const rows = await sql`
-    SELECT id, source, sender, contact_name, team_label, note_text,
+    SELECT id, source, sender, contact_name, team_label, note_text, agent_type,
            dashboard_summary, participant_report, status, error, created_at
     FROM lsp_submissions WHERE tenant = ${tenant} AND impactos_synced = false
     ORDER BY created_at ASC LIMIT 50`;

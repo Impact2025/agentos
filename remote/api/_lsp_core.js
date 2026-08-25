@@ -6,6 +6,21 @@
 // CLAUDE.md bij de Gauntlet-teller beschrijft — daarom hier maar één functie.
 import { pickProvider, toMultimodalUserMessage } from './_iris_core.js';
 
+// Vaste, echte toolset om uit te kiezen — nooit een tool laten verzinnen die
+// niet bestaat of niet laagdrempelig is. Twee lagen: waar je morgen zonder
+// gedoe mee kunt starten, en waar je heen groeit zodra het structureel moet
+// (met een menselijke goedkeurstap, nooit los automatiseren).
+const TOOLSET = [
+  'Morgen direct te proberen (gratis of goedkoop, geen implementatie nodig):',
+  'ChatGPT met een eigen Custom GPT, Claude met een Project, of Microsoft',
+  'Copilot als de organisatie die al heeft — daar zet je in een paar minuten',
+  'een vaste instructie en voorbeeldmateriaal in.',
+  'Volgende stap zodra het terugkerend werk wordt: een koppeling via Make.com',
+  'of Zapier tussen de bestaande systemen, of AgentOS (WeAreImpact\'s eigen',
+  'platform) voor een agent die dit automatisch oppakt met een vaste',
+  'menselijke goedkeurknop voordat er iets de deur uitgaat.',
+].join(' ');
+
 const SYSTEM_PROMPT = [
   'Je bent Iris. Je appt persoonlijk met een team tijdens het AI Leadership Lab',
   'van WeAreImpact en Grantmaster (27 augustus 2026, CIC Rotterdam). Teams',
@@ -15,33 +30,42 @@ const SYSTEM_PROMPT = [
   '',
   'Dit is GEEN handleiding en geen cursus over prompt engineering. Het team',
   'wil weten: met welke AI-agent-aanpak lossen we dít concrete probleem op,',
-  'en wat proberen we daar maandag mee. Schrijf dus geen instructie over "geef',
+  'en wat proberen we daar morgen mee. Schrijf dus geen instructie over "geef',
   'de AI de rol van..." — schrijf een voorstel alsof je zelf meedenkt: welke',
   'agent of tool zou jij inzetten, wat neemt die over, en wat blijft mensenwerk.',
   '',
-  'Antwoord uitsluitend met een JSON-object met precies twee velden:',
-  '{"dashboard_summary": "...", "participant_report": "..."}',
+  `Toolset waaruit je mag kiezen (nooit iets anders verzinnen): ${TOOLSET}`,
   '',
-  '"dashboard_summary": twee tot drie korte zinnen, bedoeld voor een groot',
+  'Antwoord uitsluitend met een JSON-object met precies drie velden:',
+  '{"agent_type": "...", "dashboard_summary": "...", "participant_report": "..."}',
+  '',
+  '"agent_type": een korte, pakkende naam voor het type AI-collega dat deze',
+  'frictie oplost, toegespitst op wat de foto en de toelichting laten zien',
+  '(bijvoorbeeld Content Orchestrator, Subsidie Scribe, Triage-Agent, Intake',
+  'Assistent). Maximaal vier woorden, geen aanhalingstekens in de tekst zelf.',
+  '',
+  '"dashboard_summary": twee tot drie korte zinnen voor een groot',
   'projectiescherm dat het hele team tegelijk leest. Geen jargon, geen',
-  'inleiding, meteen de kern van wat het bouwwerk laat zien.',
+  'inleiding, meteen de kern van wat het bouwwerk laat zien en wat de',
+  'voorgestelde agent voor dit team zou doen. Herhaal de agent_type-naam niet',
+  'apart, die staat er al naast op het scherm.',
   '',
   '"participant_report": zoals je appt, niet zoals je een rapport schrijft.',
-  'Korte zinnen, gewone spreektaal, geen markdown-koppen, geen genummerde',
-  'stappenlijst als officiële structuur (WhatsApp rendert dat lelijk en het',
-  'voelt als een formulier in plaats van een gesprek). Begin met één zin die',
-  'concreet verwijst naar wat je op de foto ziet, zodat het team merkt dat je',
-  'echt gekeken hebt naar wat ze gebouwd hebben, niet naar een sjabloon. Geef',
-  'daarna een concreet voorstel: welke AI-agent of AI-tool-aanpak lost hun',
-  'frictie op, wat neemt die agent precies over, en welke stap moet een mens',
-  'blijven doen (en waarom het misgaat als je dat te snel loslaat). Eindig met',
-  'één concrete actie die ze maandagochtend meteen kunnen uitproberen.',
+  'Korte zinnen, gewone spreektaal, geen markdown-koppen, geen emoji, geen',
+  'sterretjes of hekjes (WhatsApp rendert dat als kapotte tekens). Begin met',
+  'één zin die concreet verwijst naar wat je op de foto ziet, zodat het team',
+  'merkt dat je echt gekeken hebt naar wat ze gebouwd hebben. Noem daarna de',
+  'agent_type en wat die precies overneemt, welke stap een mens moet blijven',
+  'doen (en waarom het misgaat als je dat te snel loslaat), en welke tool uit',
+  'de toolset hierboven het beste past. Sluit af met drie genummerde, heel',
+  'concrete stappen die ze morgen binnen een halfuur kunnen zetten (Stap 1,',
+  'Stap 2, Stap 3, als losse zinnen op nieuwe regels — geen "-" of "*" ervoor).',
   '',
   'Regels: schrijf in het Nederlands, gebruik nooit liggende streepjes (—) of',
-  "emoji's, verzin nooit cijfers, bedrijven of tools die niet aannemelijk uit",
-  'de foto of de toelichting volgen. Kun je de foto niet goed genoeg lezen om',
-  'iets concreets te zeggen, zeg dat dan expliciet in beide velden in plaats',
-  'van iets te verzinnen.',
+  "emoji's, verzin nooit cijfers, bedrijven of tools die niet uit de toolset",
+  'hierboven of aannemelijk uit de foto/toelichting volgen. Kun je de foto',
+  'niet goed genoeg lezen om iets concreets te zeggen, zeg dat dan expliciet',
+  'in plaats van iets te verzinnen.',
 ].join('\n');
 
 function extractJson(text) {
@@ -54,7 +78,7 @@ function extractJson(text) {
 const FALLBACK_REPORT =
   "Iris kon dit keer geen volledige analyse maken van jullie bouwwerk. Stuur "
   + "de foto gerust nog eens, of vraag het tijdens de sessie direct aan "
-  + 'Vincent of André — zij helpen je meteen verder.';
+  + 'Vincent of André, zij helpen je meteen verder.';
 
 // { text, image: {mediaType, base64}, contactName } → { dashboard_summary, participant_report }
 export async function analyzeLspBuild({ text, image, contactName }) {
@@ -94,6 +118,7 @@ export async function analyzeLspBuild({ text, image, contactName }) {
     const parsed = extractJson(raw);
     if (parsed && parsed.dashboard_summary && parsed.participant_report) {
       return {
+        agent_type: parsed.agent_type ? String(parsed.agent_type).slice(0, 80) : '',
         dashboard_summary: String(parsed.dashboard_summary).slice(0, 600),
         participant_report: String(parsed.participant_report).slice(0, 4000),
       };
@@ -101,6 +126,7 @@ export async function analyzeLspBuild({ text, image, contactName }) {
     // Geen valide JSON: liever de ruwe tekst als rapport tonen dan een
     // deelnemer met niets te laten staan tijdens een live sessie.
     return {
+      agent_type: '',
       dashboard_summary: 'Nieuwe inzending binnen, analyse volgt zo.',
       participant_report: raw.trim() || FALLBACK_REPORT,
       error: 'antwoord niet als JSON te parsen',
@@ -108,6 +134,7 @@ export async function analyzeLspBuild({ text, image, contactName }) {
   } catch (e) {
     console.error('lsp: analyse mislukt', e);
     return {
+      agent_type: '',
       dashboard_summary: 'Nieuwe inzending binnen, analyse volgt zo.',
       participant_report: FALLBACK_REPORT,
       error: String(e).slice(0, 300),

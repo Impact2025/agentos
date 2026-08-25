@@ -5,16 +5,17 @@ import { sql } from './_lib.js';
 
 export async function insertSubmission({
   tenant, source, sender, contactName, teamLabel, noteText, imageDataUrl,
-  dashboardSummary, participantReport, error,
+  agentType, dashboardSummary, participantReport, error,
 }) {
   const rows = await sql`
     INSERT INTO lsp_submissions (
       tenant, source, sender, contact_name, team_label, note_text, image_data_url,
-      dashboard_summary, participant_report, status, error, processed_at
+      agent_type, dashboard_summary, participant_report, status, error, processed_at
     ) VALUES (
       ${tenant}, ${source}, ${sender}, ${contactName || null}, ${teamLabel || null},
-      ${noteText || null}, ${imageDataUrl || null}, ${dashboardSummary || null},
-      ${participantReport || null}, ${error ? 'fout' : 'verwerkt'}, ${error || null}, now()
+      ${noteText || null}, ${imageDataUrl || null}, ${agentType || null},
+      ${dashboardSummary || null}, ${participantReport || null},
+      ${error ? 'fout' : 'verwerkt'}, ${error || null}, now()
     )
     RETURNING id`;
   return rows[0]?.id || null;

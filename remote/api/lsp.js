@@ -19,7 +19,7 @@ export default async function handler(req, res) {
   const afterId = Number((req.query && req.query.after_id) || 0) || 0;
 
   const rows = await sql`
-    SELECT id, team_label, dashboard_summary, image_data_url, created_at
+    SELECT id, team_label, agent_type, dashboard_summary, image_data_url, created_at
     FROM lsp_submissions
     WHERE tenant = ${tenant} AND id > ${afterId}
     ORDER BY id ASC LIMIT 25`;

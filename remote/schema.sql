@@ -397,3 +397,8 @@ CREATE INDEX IF NOT EXISTS idx_lsp_submissions_tenant_created
   ON lsp_submissions (tenant, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_lsp_submissions_unsynced
   ON lsp_submissions (tenant, impactos_synced) WHERE impactos_synced = false;
+-- agent_type (25 aug 2026): een pakkende naam voor het voorgestelde AI-agent-
+-- type, apart van de vrije-tekst samenvatting zodat het dashboard 'm als
+-- eigen label kan tonen. Idempotente ALTER, want de tabel bestond al vóór
+-- deze kolom.
+ALTER TABLE lsp_submissions ADD COLUMN IF NOT EXISTS agent_type TEXT;

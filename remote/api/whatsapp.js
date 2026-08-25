@@ -259,6 +259,7 @@ async function handleWorkshopMessage(tenant, phoneNumberId, from, text, mediaId,
   insertSubmission({
     tenant, source: 'whatsapp', sender: from, contactName,
     noteText: text, imageDataUrl: `data:${image.mediaType};base64,${image.base64}`,
+    agentType: analysis.agent_type,
     dashboardSummary: analysis.dashboard_summary, participantReport: analysis.participant_report,
     error: analysis.error,
   }).catch((e) => console.error('lsp: submission opslaan mislukt', tenant, from, e));

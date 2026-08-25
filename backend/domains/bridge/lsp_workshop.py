@@ -39,9 +39,12 @@ def _log_one(row: Dict[str, Any]) -> None:
             status="error",
         )
         return
+    agent_type = row.get("agent_type")
+    detail = row.get("dashboard_summary") or row.get("participant_report") or "Geen samenvatting."
+    if agent_type:
+        detail = f"Voorgestelde agent: {agent_type}. {detail}"
     log_outcome(
-        "LSP Workshop", team,
-        row.get("dashboard_summary") or row.get("participant_report") or "Geen samenvatting.",
+        "LSP Workshop", team, detail,
         artifact=row.get("participant_report") or "",
         next_step="Bekijk het volledige rapport dat het team al ontvangen heeft.",
     )

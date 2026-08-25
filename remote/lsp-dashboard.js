@@ -40,13 +40,19 @@
     const team = document.createElement('p');
     team.className = 'team';
     team.textContent = sub.team_label || `Inzending #${sub.id}`;
+    body.appendChild(team);
+    if (sub.agent_type) {
+      const badge = document.createElement('span');
+      badge.className = 'agent-badge';
+      badge.textContent = sub.agent_type;
+      body.appendChild(badge);
+    }
     const summary = document.createElement('p');
     summary.className = 'summary';
     summary.textContent = sub.dashboard_summary || '';
     const time = document.createElement('p');
     time.className = 'time';
     time.textContent = fmtTime(sub.created_at);
-    body.appendChild(team);
     body.appendChild(summary);
     body.appendChild(time);
     card.appendChild(body);
