@@ -70,6 +70,7 @@ from .domains.strategist import router as strategist_router
 from .domains.seo import optimizer as seo_optimizer
 from .domains.radar import router as radar_router
 from .domains.rituals import router as rituals_router
+from .domains.decisions import router as decisions_router
 from .domains.action_center import router as action_center_router
 from .domains.iris import router as iris_router
 from .domains.researcher import router as researcher_router
@@ -267,6 +268,7 @@ if domain_enabled("radar"):
     app.include_router(radar_router.router)
 if domain_enabled("rituals"):
     app.include_router(rituals_router.router)
+    app.include_router(decisions_router.router)
 if domain_enabled("iris"):
     app.include_router(iris_router.router)
 if domain_enabled("researcher"):
@@ -274,6 +276,8 @@ if domain_enabled("researcher"):
 if domain_enabled("mail"):
     from .domains.mail import router as mail_router
     app.include_router(mail_router.router)
+    from .domains.postvak import router as postvak_router
+    app.include_router(postvak_router.router)
 if domain_enabled("calendar"):
     from .domains.calendar import router as calendar_router
     app.include_router(calendar_router.router)
@@ -283,6 +287,25 @@ if domain_enabled("bridge"):
 if domain_enabled("orders"):
     from .domains.orders import router as orders_router
     app.include_router(orders_router.router)
+if domain_enabled("agentctl"):
+    from .domains.agentctl import router as agentctl_router
+    app.include_router(agentctl_router.router)
+if domain_enabled("geo"):
+    from .domains.geo import router as geo_router
+    app.include_router(geo_router.router)
+if domain_enabled("facebook"):
+    from .domains.facebook import router as facebook_router
+    app.include_router(facebook_router.router)
+if domain_enabled("coach"):
+    # /api/coach-context/holding blijft gemonteerd (getest, token-gated, geen
+    # kwaad kan) maar coach_bridge_router.coach_router (de proxy naar mijn-
+    # ondernemers-os) NIET meer: De Sparringpartner leest nu native uit
+    # backend/domains/rituals in plaats van uit de verlaten Neon-database
+    # (zie coach/models.py-docstring, 25 aug 2026).
+    from .domains.coach_bridge import router as coach_bridge_router
+    app.include_router(coach_bridge_router.router)
+    from .domains.coach import router as coach_router
+    app.include_router(coach_router.router)
 
 
 # ── Status / health endpoints ──────────────────────────────────────────────
