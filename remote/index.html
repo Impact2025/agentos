@@ -4,7 +4,7 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport"/>
 <meta name="theme-color" content="#121118"/>
-<title>Iris Remote</title>
+<title>Impact OS Remote</title>
 <link rel="manifest" href="/manifest.json"/>
 <!-- iOS zet een screenshot van de pagina op het beginscherm zonder dit icoon, en
      Android Chrome bíedt installeren niet aan zonder de iconen in het manifest.
@@ -17,7 +17,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<meta name="apple-mobile-web-app-title" content="Iris"/>
+<meta name="apple-mobile-web-app-title" content="Impact OS"/>
 <!-- Alles lokaal: geen CDN-script dat Tailwind in de browser compileert en geen
      fonts van derden op de pagina waar publicaties worden goedgekeurd.
      Regenereren: `npm run assets` (zie tailwind.config.js + build-fonts.mjs).
@@ -32,22 +32,10 @@
 <!-- TopAppBar -->
 <header id="topbar" class="flex justify-between items-center w-full px-container-padding h-16 fixed top-0 z-50 bg-surface/80 backdrop-blur-xl border-b border-white/10">
   <div class="flex items-center gap-3 min-w-0 flex-1">
-    <!-- Iris' merkteken: een aperture (spaken + pupil) i.p.v. het generieke
-         Material-icoon 'hub' dat hier stond — zelfde motief als app.js:apertureMark(). -->
-    <span class="text-primary shrink-0" aria-hidden="true">
-      <svg class="aperture-mark spin" viewBox="0 0 24 24" width="22" height="22">
-        <g class="aperture-spokes">
-          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(0 12 12)"></line>
-          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(45 12 12)"></line>
-          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(90 12 12)"></line>
-          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(135 12 12)"></line>
-          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(180 12 12)"></line>
-          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(225 12 12)"></line>
-          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(270 12 12)"></line>
-          <line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(315 12 12)"></line>
-        </g>
-        <circle cx="12" cy="12" r="2.6" fill="currentColor"></circle>
-      </svg>
+    <!-- Impact OS-merkteken (het hart-netwerk-logo), i.p.v. de zelfgetekende
+         Iris-aperture die hier stond vóór de rename naar Impact OS Remote. -->
+    <span class="shrink-0" aria-hidden="true">
+      <img src="/logo.png" alt="" width="26" height="26" class="block"/>
     </span>
     <h1 id="topbar-greeting" class="font-headline-md text-headline-md font-bold text-on-surface truncate min-w-0">Goedemiddag</h1>
     <span id="sync-pill" class="recent shrink-0">
@@ -88,6 +76,10 @@
   <!-- Login -->
   <section id="view-login" hidden>
     <div class="glass-panel rounded-xl p-6 mt-10 space-y-4">
+      <div class="flex flex-col items-center gap-3 mb-2">
+        <img src="/logo.png" alt="Impact OS" width="64" height="64"/>
+        <p class="font-label-caps text-label-caps text-on-surface-variant tracking-wide">IMPACT OS REMOTE</p>
+      </div>
       <h2 class="font-display-lg-mobile text-display-lg-mobile">Inloggen</h2>
       <p class="font-body-md text-body-md text-on-surface-variant -mt-2">Alleen jij komt hier binnen.</p>
       <form id="login-form" class="space-y-4">

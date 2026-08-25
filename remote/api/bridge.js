@@ -117,7 +117,7 @@ async function push(req, res, tenant) {
     const body = newTitles.length === 1
       ? newTitles[0]
       : `${newTitles.length} nieuwe besluiten — o.a. ${newTitles[0]}`;
-    try { await pushToAll(tenant, { title: 'Iris Remote — nieuw besluit', body, url: '/' }); }
+    try { await pushToAll(tenant, { title: 'Impact OS Remote — nieuw besluit', body, url: '/' }); }
     catch (e) { console.error('push after push-op failed', e); }
   }
   return json(res, 200, { ok: true, upserted: items.length, nieuw: newTitles.length });
@@ -294,7 +294,7 @@ async function ack(req, res, tenant) {
   if (failed.length) {
     try {
       await pushToAll(tenant, {
-        title: 'Iris Remote — besluit mislukt',
+        title: 'Impact OS Remote — besluit mislukt',
         body: failed[0].slice(0, 160), url: '/',
       });
     } catch (e) { console.error('push after ack failed', e); }

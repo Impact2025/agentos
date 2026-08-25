@@ -1,4 +1,4 @@
-/* Iris Remote — service worker: web-push + een offline app-shell.
+/* Impact OS Remote — service worker: web-push + een offline app-shell.
  *
  * Bewust twee verschillende strategieën:
  *  - de schil (HTML/CSS/JS/fonts) komt uit de cache, want die verandert alleen
@@ -67,7 +67,7 @@ async function fetchAndStore(request) {
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch { /* leeg */ }
-  event.waitUntil(self.registration.showNotification(data.title || 'Iris Remote', {
+  event.waitUntil(self.registration.showNotification(data.title || 'Impact OS Remote', {
     body: data.body || '',
     data: { url: data.url || '/' },
     tag: 'iris-remote',

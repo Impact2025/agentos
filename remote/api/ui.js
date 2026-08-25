@@ -128,7 +128,7 @@ export default async function handler(req, res) {
     }
     // Zelfde reden en patroon als whatsapp-stats-bridge hierboven — Vincent
     // wil het volle Communicatie-overzicht (niet alleen de cijfers) ook op
-    // :1250 zien, niet alleen op zijn telefoon via Iris Remote. De
+    // :1250 zien, niet alleen op zijn telefoon via Impact OS Remote. De
     // handler-functies zelf zijn al tenant-parametrisch (geen sessie-state
     // erin), dus dit is puur een tweede, bearer-geauthenticeerde ingang naar
     // exact dezelfde logica — geen nieuwe waarheid, geen dubbele code.

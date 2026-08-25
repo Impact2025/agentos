@@ -1,4 +1,4 @@
-/* Designtokens voor Iris Remote. Stond eerst inline in index.html naast een
+/* Designtokens voor Impact OS Remote. Stond eerst inline in index.html naast een
  * cdn.tailwindcss.com-script dat de CSS in de browser compileerde; dat kost op
  * mobiel een flits ongestileerde pagina en zet een script van derden op de
  * pagina waar je publicaties goedkeurt. Nu bouwen we vooraf: `npm run build:css`.

@@ -6,7 +6,7 @@
 //   1. Afzender staat op `tenants.whatsapp_allowed_from` (Vincent zelf) →
 //      manager-Iris (_iris_core.js): dezelfde tool-lus als de app-chat.
 //      Commando's landen in `decisions` en wachten op de eerstvolgende
-//      bridge_sync, exact zoals vanuit Iris Remote.
+//      bridge_sync, exact zoals vanuit Impact OS Remote.
 //
 //   2. Elke andere afzender → klant-Iris (_customer_core.js): alleen de
 //      kennisbank van het project waarover het gesprek gaat, en precies één
@@ -300,7 +300,7 @@ async function handleCustomerMessage(tenant, phoneNumberId, from, text, managerN
       `technische fout: ${String(e.message || e).slice(0, 200)}`);
     if (escId) {
       notifyMe(phoneNumberId, managerNumber,
-        `Klant-Iris kon niet antwoorden (${project}, ${from}): "${text.slice(0, 150)}". Check Iris Remote.`)
+        `Klant-Iris kon niet antwoorden (${project}, ${from}): "${text.slice(0, 150)}". Check Impact OS Remote.`)
         .catch((err) => console.error('notifyMe mislukt', err));
     }
     return;
@@ -315,7 +315,7 @@ async function handleCustomerMessage(tenant, phoneNumberId, from, text, managerN
     const escId = await logEscalation(tenant, from, phoneNumberId, project, text, result.reason);
     if (escId) {
       notifyMe(phoneNumberId, managerNumber,
-        `Klantvraag wacht op jouw antwoord (${project}, ${from}): "${text.slice(0, 200)}". Reden: ${result.reason}. Beantwoord in Iris Remote.`)
+        `Klantvraag wacht op jouw antwoord (${project}, ${from}): "${text.slice(0, 200)}". Reden: ${result.reason}. Beantwoord in Impact OS Remote.`)
         .catch((err) => console.error('notifyMe mislukt', err));
     }
   } else if (result.proposed) {

@@ -1,4 +1,4 @@
-// Cloud-Iris — chat-endpoint voor de app (Iris Remote in de browser/PWA).
+// Cloud-Iris — chat-endpoint voor de app (Impact OS Remote in de browser/PWA).
 // De tool-lus zelf (TOOLS, runTool, de provider-laag, de systeemprompt) staat
 // in _iris_core.js, gedeeld met whatsapp.js — zie de uitleg daar.
 import { json, requireSession } from './_lib.js';

@@ -1,4 +1,4 @@
-/* Iris Remote — vanilla SPA in de glass/iris-blauw designtaal. Praat alleen met /api/ui.
+/* Impact OS Remote — vanilla SPA in de glass/iris-blauw designtaal. Praat alleen met /api/ui.
  * Upgrade: realtime polling, skeleton-loaders, toasts, pull-to-refresh, retry op fouten. */
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -218,7 +218,7 @@
   // Logout-icoon rechtsboven in de hoofdheader — snelle uitweg zonder naar
   // het Systeem-scherm te gaan. Bevestiging voorkomt een onbedoelde klik.
   $('logoutIconBtn').onclick = async () => {
-    if (!confirm('Uitloggen uit Iris Remote?')) return;
+    if (!confirm('Uitloggen uit Impact OS Remote?')) return;
     try {
       await api('logout', 'POST', {});
       toast('Uitgelogd', 'ok', 'logout');
@@ -1807,7 +1807,7 @@
       { n: 2, h: 'De Control Room',
         p: 'Elk project heeft daar een kaart: content, SEO-score, doelen en Iris\' laatste oordeel in één oogopslag. Zodra Iris begint te werken, vult die kaart zich vanzelf.' },
       { n: 3, h: 'Het Actiecentrum',
-        p: 'De inbox van alles wat op jóu wacht — een concept klaar om te versturen, een artikel om goed te keuren. Niets verdwijnt hier stil, en het staat ook hier in Iris Remote onder Vandaag/Inbox.' },
+        p: 'De inbox van alles wat op jóu wacht — een concept klaar om te versturen, een artikel om goed te keuren. Niets verdwijnt hier stil, en het staat ook hier in Impact OS Remote onder Vandaag/Inbox.' },
       { n: 4, h: 'Iris publiceert nooit zelf',
         p: 'Alles wat ze schrijft of voorstelt landt in de Wachtrij en wacht op jouw klik. Pas na jouw goedkeuring gaat er iets live of de deur uit.' },
       { n: 5, h: 'Morgen om 06:45 komt haar eerste briefing',
@@ -1878,7 +1878,7 @@
   };
 
   // ── Vandaag ──────────────────────────────────────────────────────────────
-  // Het scherm dat van Iris Remote een assistent maakt in plaats van een
+  // Het scherm dat van Impact OS Remote een assistent maakt in plaats van een
   // afstandsbediening: je dag, je mailbox en het oordeel over hoe het gaat —
   // vóórdat je iets hoeft te vragen.
   let contextCache = null;
@@ -2074,7 +2074,7 @@
   // Material-icoon 'hub' dat hier tot nu toe als logo fungeerde. Zelfde
   // geometrie-taal als de mascotte in de desktop-onboarding
   // (frontend/js/tabs-onboarding.js:_irisMascot) — hier als kale SVG-string
-  // omdat Iris Remote geen gedeelde JS-module met de hoofd-app heeft.
+  // omdat Impact OS Remote geen gedeelde JS-module met de hoofd-app heeft.
   // `currentColor` laat 'm meekleuren met de tekstkleur van zijn context
   // (topbar: text-primary, sync-pill: de fresh/recent/stale/dead-kleur).
   function apertureMark(size = 20, cls = '') {
@@ -2966,7 +2966,7 @@
   }
   // ── Agenda-opdracht (spraak/tekst -> calendar_add) ────────────────────────
   // Vrije zin of ingesproken commando -> parser in de backend -> agenda-voorstel
-  // (review-gate: boeken gebeurt pas als Vincent het in Iris Remote goedkeurt).
+  // (review-gate: boeken gebeurt pas als Vincent het in Impact OS Remote goedkeurt).
   $('agenda-form').onsubmit = async (e) => {
     e.preventDefault();
     const input = $('agenda-input');

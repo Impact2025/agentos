@@ -402,7 +402,7 @@ export async function callModel(provider, system, convo, tools) {
         'content-type': 'application/json',
         authorization: `Bearer ${provider.key}`,
         'HTTP-Referer': 'https://iris-remote.vercel.app',
-        'X-Title': 'Iris Remote',
+        'X-Title': 'Impact OS Remote',
       },
       body: JSON.stringify({
         model: provider.model,
@@ -475,14 +475,14 @@ function stalenessNote(snapshotAt) {
 // `channel` bepaalt alleen hoe ze zich uit, niet wat ze mag: dezelfde TOOLS,
 // dezelfde gates. WhatsApp is een chat-app zonder knoppen en zonder markdown-
 // rendering — een `stel_besluit_voor` levert daar dus geen knop op zoals in
-// Iris Remote, alleen tekst; de instructie hieronder zegt dat expliciet, anders
+// Impact OS Remote, alleen tekst; de instructie hieronder zegt dat expliciet, anders
 // belooft ze een knop die er op WhatsApp nooit komt.
 function systemPrompt(snapshotAt, pulse, openCount, channel) {
   const now = new Date().toLocaleString('nl-NL', { timeZone: 'Europe/Amsterdam' });
   const staleness = stalenessNote(snapshotAt);
   const kanaal = channel === 'whatsapp'
     ? 'Vincent appt je via WhatsApp — dit IS het gesprek, er is geen scherm eromheen.'
-    : 'Vincent spreekt je via Iris Remote op zijn telefoon.';
+    : 'Vincent spreekt je via Impact OS Remote op zijn telefoon.';
   const stijl = channel === 'whatsapp'
     ? [
       '- Dit is WhatsApp: schrijf zoals je appt. Korte berichten, geen markdown-koppen,',
@@ -492,7 +492,7 @@ function systemPrompt(snapshotAt, pulse, openCount, channel) {
       '- Geen liggende streepjes (—) en geen emoji\'s in je antwoord — Vincent leest dat',
       '  liever niet, in geen enkele tekst die je voor hem schrijft.',
       '- `stel_besluit_voor` levert hier GEEN knop op zoals in de app: zeg gewoon dat het',
-      '  klaarstaat in het Actiecentrum of Iris Remote, en dat hij het daar goedkeurt.',
+      '  klaarstaat in het Actiecentrum of Impact OS Remote, en dat hij het daar goedkeurt.',
     ]
     : [
       '- Antwoord in het Nederlands, kort en concreet. Geen inleidingen, geen excuses.',

@@ -1,6 +1,6 @@
 // Meta Cloud API — versturen. Gedeeld door whatsapp.js (de webhook, klant-
 // antwoorden en houd-vast-berichten) en ui.js (Vincent die een escalatie
-// vanuit Iris Remote beantwoordt) — één plek die weet hoe een WhatsApp-
+// vanuit Impact OS Remote beantwoordt) — één plek die weet hoe een WhatsApp-
 // bericht de deur uitgaat, met hetzelfde gedeelde WHATSAPP_TOKEN.
 const GRAPH_VERSION = 'v21.0';
 const SEND_CHUNK_LIMIT = 3800; // WhatsApp-limiet is 4096 tekens per bericht

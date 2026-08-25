@@ -1,4 +1,4 @@
-# Iris Remote — cloud-companion voor Impact OS
+# Impact OS Remote — cloud-companion voor Impact OS
 
 PWA-achtige assistent (Vercel + Neon) waarmee Vincent onderweg — of met de pc
 uit — zijn dag overziet én de review-gates bedient: agenda en mailbox in één
@@ -135,7 +135,7 @@ besluit alleen vóórstellen, nooit zelf goedkeuren. Het webhook-endpoint is
    antwoordt (`sites.profile` moet gevuld zijn — een site zonder profiel
    levert geen klantkennis) en bij twijfel of bij iets met gevolgen
    (offerte, afspraak, klacht, persoonsgegevens) niets verzint maar een
-   kaart voor je klaarzet op het Vandaag-scherm in Iris Remote, met een
+   kaart voor je klaarzet op het Vandaag-scherm in Impact OS Remote, met een
    tekstveld om zelf te reageren — dat antwoord gaat direct de deur uit,
    geen wachten op een sync. Zie CLAUDE.md 14f voor het ontwerp.
 
@@ -346,7 +346,7 @@ niet meer ziet.
 - `api/_lib.js` — Neon-client, wachtwoord- en sessiebeheer, brute-force-rem
 - `api/_google.js` — live agenda + GSC-trend rechtstreeks bij Google, zonder ImpactOS
 - `api/_crypto.js` — AES-256-GCM voor de per-tenant Google-sleutel in Neon
-- `index.html` + `app.js` + `style.css` — Iris Remote-frontend
+- `index.html` + `app.js` + `style.css` — Impact OS Remote-frontend
 - `tailwind.config.js` + `tailwind-src.css` + `build-fonts.mjs` — assets-build
 - `schema.sql` — het schema; `node migrate.mjs` past het toe op `DATABASE_URL`
 - `dev-server.mjs` — lokaal draaien: `npm run dev -- 8642`

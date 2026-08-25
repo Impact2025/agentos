@@ -1,5 +1,5 @@
 // Live-dashboardvoeding voor de LSP-workshop (lsp-dashboard.html/.js) —
-// géén sessie/login zoals de rest van Iris Remote: dit scherm gaat op een
+// géén sessie/login zoals de rest van Impact OS Remote: dit scherm gaat op een
 // projector zonder dat iemand hoeft in te loggen. In plaats daarvan een
 // simpele token-gate (LSP_DASHBOARD_TOKEN) zodat de Vercel-URL niet door een
 // willekeurige gast te raden is. `after_id` laat de pagina alleen nieuwe
