@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta name="theme-color" content="#0f2530"/>
+<title>AI Leadership Lab — Bouw je AI-assistent</title>
+<style>
+  :root {
+    --bg: #0f2530;
+    --bg-card: #163846;
+    --pink: #e6007e;
+    --pink-soft: #ff5aa8;
+    --text: #f4efe6;
+    --text-muted: #a9c2c9;
+    --border: rgba(244, 239, 230, 0.12);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    overflow-x: hidden;
+  }
+  header {
+    padding: 28px 40px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  header .eyebrow {
+    color: var(--pink-soft); font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; font-size: 0.95rem; margin: 0 0 6px;
+  }
+  header h1 {
+    margin: 0; font-size: 2.1rem; font-weight: 800; line-height: 1.15;
+  }
+  header p { margin: 8px 0 0; color: var(--text-muted); font-size: 1.05rem; }
+  main {
+    padding: 32px 40px 60px;
+  }
+  #empty {
+    text-align: center; color: var(--text-muted); font-size: 1.4rem;
+    padding: 100px 20px; opacity: 0.85;
+  }
+  #grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 24px;
+  }
+  .card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 18px; overflow: hidden; display: flex; flex-direction: column;
+    animation: fadein 0.5s ease-out;
+  }
+  .card img {
+    width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block;
+    background: #0a1a21;
+  }
+  .card .body { padding: 18px 20px 22px; }
+  .card .team {
+    color: var(--pink-soft); font-weight: 700; font-size: 1.05rem; margin: 0 0 8px;
+  }
+  .card .summary { margin: 0; font-size: 1.08rem; line-height: 1.45; }
+  .card .time { margin-top: 12px; color: var(--text-muted); font-size: 0.85rem; }
+  @keyframes fadein {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  #status {
+    position: fixed; bottom: 14px; right: 18px; font-size: 0.8rem;
+    color: var(--text-muted); opacity: 0.6;
+  }
+</style>
+</head>
+<body>
+<header>
+  <p class="eyebrow">AI Leadership Lab · WeAreImpact &amp; Grantmaster</p>
+  <h1>Bouw je AI-assistent — live resultaten</h1>
+  <p>Stuur je foto met <strong>LSP</strong> in het bijschrift of onderwerp naar Iris. Zodra ze klaar is, verschijnt jullie kaart hier.</p>
+</header>
+<main>
+  <div id="empty">Wachten op de eerste inzending&hellip;</div>
+  <div id="grid" style="display:none"></div>
+</main>
+<div id="status"></div>
+<script src="/lsp-dashboard.js"></script>
+</body>
+</html>

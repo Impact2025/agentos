@@ -23,6 +23,8 @@ export default async function handler(req, res) {
     if (op === 'impact-leads' && req.method === 'GET') return await impactLeads(res, tenant);
     if (op === 'impact-leads-ack' && req.method === 'POST') return await impactLeadsAck(req, res, tenant);
     if (op === 'customer-notify' && req.method === 'POST') return await customerNotify(req, res, tenant);
+    if (op === 'lsp-submissions' && req.method === 'GET') return await lspSubmissions(res, tenant);
+    if (op === 'lsp-submissions-ack' && req.method === 'POST') return await lspSubmissionsAck(req, res, tenant);
     return json(res, 400, { error: `onbekende op '${op}'` });
   } catch (e) {
     console.error('bridge error', e);
@@ -242,6 +244,28 @@ async function impactLeadsAck(req, res, tenant) {
       WHERE id = ${a.id} AND tenant = ${tenant} AND status = 'pending'`;
   }
   return json(res, 200, { ok: true, acked: acks.length });
+}
+
+// LSP-workshop (24 aug 2026): zelfde pull-vorm als impact_leads hierboven —
+// de rij bestaat al volledig gevuld (WhatsApp verstuurt het rapport al zelf,
+// zie whatsapp.js), dit haalt hem alleen op zodat er ook een Actiecentrum-
+// kaart bij Vincent verschijnt (backend/domains/bridge/lsp_workshop.py).
+async function lspSubmissions(res, tenant) {
+  const rows = await sql`
+    SELECT id, source, sender, contact_name, team_label, note_text,
+           dashboard_summary, participant_report, status, error, created_at
+    FROM lsp_submissions WHERE tenant = ${tenant} AND impactos_synced = false
+    ORDER BY created_at ASC LIMIT 50`;
+  return json(res, 200, { submissions: rows });
+}
+
+async function lspSubmissionsAck(req, res, tenant) {
+  const ids = ((req.body && req.body.ids) || []).map(Number).filter(Number.isFinite);
+  if (ids.length) {
+    await sql`UPDATE lsp_submissions SET impactos_synced = true
+              WHERE tenant = ${tenant} AND id = ANY(${ids})`;
+  }
+  return json(res, 200, { ok: true, acked: ids.length });
 }
 
 async function ack(req, res, tenant) {

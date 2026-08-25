@@ -328,7 +328,59 @@ def _headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {BRIDGE_TOKEN}"}
 
 
-# ── WhatsApp-overzicht proxy ──────────────────────────────────────────────
+# ── WhatsApp-proxy: falen is nooit stil ────────────────────────────────────
+# Vóór deze versie gaf elke whatsapp_*_proxy-functie een mislukking alleen
+# terug als {"ok": False, "detail": ...} aan de aanroeper — zichtbaar zolang
+# iemand toevallig naar het WhatsApp-scherm kijkt, en daarna spoorloos. Precies
+# de stilte die dit bestand elders (_note_sync_failed) al niet toestaat voor de
+# achtergrond-sync. Eigen faal-reeks (niet _FAIL_KEY): de achtergrond-sync en
+# de WhatsApp-proxy praten met dezelfde remote maar kunnen onafhankelijk breken
+# (bv. alleen remote/api/ui.js's whatsapp-*-bridge-tak crasht terwijl
+# /api/bridge?op=push gewoon werkt) — twee aparte kaarten die allebei zeggen
+# wélk stuk stuk is, in plaats van één kaart die de verkeerde plek aanwijst.
+_WA_FAIL_KEY = "bridge:whatsapp"
+
+
+def _note_whatsapp_ok() -> None:
+    had = failures.note_success(_WA_FAIL_KEY)
+    if had:
+        from ...shared.outcomes import log_outcome
+        log_outcome(
+            "Bridge", "whatsapp_hersteld",
+            f"WhatsApp-overzicht op :1250 werkt weer na {had} mislukte pogingen op rij.",
+            artifact=BRIDGE_REMOTE_URL,
+            next_step="Niets — het WhatsApp-scherm toont weer de actuele stand.",
+        )
+
+
+def _note_whatsapp_failed(op: str, exc: BaseException) -> str:
+    """Registreert een mislukte WhatsApp-proxycall en geeft de leesbare
+    detailtekst terug (voor in de UI-response). Zelfde classificatie/
+    escalatie-logica als _note_sync_failed hieronder."""
+    detail = failures.describe_exception(exc)
+    klass = failures.classify(exc)
+    failures.note_failure(_WA_FAIL_KEY, detail, klass)
+    if failures.should_escalate(_WA_FAIL_KEY, exc):
+        from ...shared.outcomes import log_outcome
+        steps = {
+            failures.CLASS_AUTH: "Controleer of BRIDGE_TOKEN in .env exact gelijk is aan "
+                                 "de BRIDGE_TOKEN-env-var in Vercel.",
+            failures.CLASS_CONFIG: f"Controleer BRIDGE_REMOTE_URL ({BRIDGE_REMOTE_URL or 'leeg'}) "
+                                   "— moet met http:// of https:// beginnen — en of de "
+                                   "Vercel-deploy nog leeft.",
+        }
+        log_outcome(
+            "Bridge", "whatsapp_proxy_failed",
+            f"WhatsApp-overzicht op :1250 ('{op}') mislukt ({klass}): {detail}",
+            artifact=BRIDGE_REMOTE_URL,
+            next_step=steps.get(klass, "Test met GET /api/bridge/whatsapp-stats en controleer "
+                                       "de Vercel-logs voor remote/api/ui.js."),
+            status="error",
+        )
+        failures.mark_escalated(_WA_FAIL_KEY)
+    return detail
+
+
 # Het :1250-dashboard draait op SQLite, maar de WhatsApp-agent leeft in het
 # remote-systeem (Neon-Postgres). In plaats van twee DB's te koppelen proxy't
 # dit endpoint naar remote/api/ui.js?op=whatsapp-stats-bridge, dat dezelfde
@@ -341,10 +393,11 @@ async def whatsapp_stats_proxy() -> Dict[str, Any]:
         async with httpx.AsyncClient(timeout=_TIMEOUT, headers=_headers()) as client:
             r = await client.get(f"{_base()}/api/ui?op=whatsapp-stats-bridge")
             r.raise_for_status()
+            _note_whatsapp_ok()
             return {"ok": True, **r.json()}
     except Exception as e:
-        logger.error("whatsapp_stats_proxy mislukt: %s", e)
-        return {"ok": False, "detail": f"Remote WhatsApp-stats onbereikbaar: {e}"}
+        detail = _note_whatsapp_failed("whatsapp-stats-bridge", e)
+        return {"ok": False, "detail": f"Remote WhatsApp-stats onbereikbaar: {detail}"}
 
 
 # ── Communicatie proxy — volledig overzicht, niet alleen de cijfers ────────
@@ -364,10 +417,11 @@ async def _bridge_get(op: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         async with httpx.AsyncClient(timeout=_TIMEOUT, headers=_headers()) as client:
             r = await client.get(f"{_base()}/api/ui", params={"op": op, **(params or {})})
             r.raise_for_status()
+            _note_whatsapp_ok()
             return {"ok": True, **r.json()}
     except Exception as e:
-        logger.error("bridge-proxy '%s' mislukt: %s", op, e)
-        return {"ok": False, "detail": f"Remote '{op}' onbereikbaar: {e}"}
+        detail = _note_whatsapp_failed(op, e)
+        return {"ok": False, "detail": f"Remote '{op}' onbereikbaar: {detail}"}
 
 
 async def _bridge_post(op: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -377,10 +431,11 @@ async def _bridge_post(op: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         async with httpx.AsyncClient(timeout=_TIMEOUT, headers=_headers()) as client:
             r = await client.post(f"{_base()}/api/ui?op={op}", json=payload)
             r.raise_for_status()
+            _note_whatsapp_ok()
             return {"ok": True, **r.json()}
     except Exception as e:
-        logger.error("bridge-proxy '%s' mislukt: %s", op, e)
-        return {"ok": False, "detail": f"Remote '{op}' onbereikbaar: {e}"}
+        detail = _note_whatsapp_failed(op, e)
+        return {"ok": False, "detail": f"Remote '{op}' onbereikbaar: {detail}"}
 
 
 async def whatsapp_list_proxy() -> Dict[str, Any]:
@@ -490,6 +545,12 @@ async def sync_once() -> Dict[str, Any]:
         # (die net geslaagd is) niet alsnog als 'failed' laten boeken.
         from . import impact_leads
         summary["impact_leads"] = await impact_leads.process_pending()
+
+        # LSP-workshop (24 aug 2026): zelfde eigen-try/except-redenering als
+        # impact_leads hierboven — de rij bestaat al volledig (WhatsApp heeft
+        # het rapport al verstuurd), dit logt alleen de Actiecentrum-kaart.
+        from . import lsp_workshop
+        summary["lsp_workshop"] = await lsp_workshop.process_pending()
     except Exception as e:
         logger.warning("Bridge-sync mislukt: %s", failures.describe_exception(e))
         summary = {"ok": False, "detail": failures.describe_exception(e)[:300],

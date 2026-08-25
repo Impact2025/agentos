@@ -363,3 +363,37 @@ CREATE TABLE IF NOT EXISTS whatsapp_rate_limit (
   count  INT NOT NULL DEFAULT 0,
   PRIMARY KEY (tenant, wa_id, day)
 );
+
+-- ── LSP-workshop "Bouw je AI-assistent" (24 aug 2026, AI Leadership Lab) ────
+-- Eenmalig evenement: teams sturen een foto van hun LEGO-bouwwerk (grootste
+-- administratieve frictie, of hun ideale AI-assistent) + één toelichtende
+-- regel naar Iris, via WhatsApp (LSP_WORKSHOP_KEYWORD in het bijschrift) of
+-- e-mail (zelfde woord in het onderwerp, via Vincents eigen postvak). Eén
+-- analysepad (_lsp_core.js) bedient beide kanalen. `image_data_url` staat als
+-- tekst in Neon i.p.v. losse blob-storage: bij ~10 teams en het bestaande
+-- 5MB-plafond (_whatsapp_media.js) is dat voor een eenmalig evenement geen
+-- probleem. `impactos_synced` is het bridge-pullvlag, zelfde vorm als
+-- impact_leads.status hierboven — de bridge (backend/domains/bridge/
+-- lsp_workshop.py) haalt nieuwe rijen op en logt er een Actiecentrum-kaart
+-- van via outcomes.log_outcome.
+CREATE TABLE IF NOT EXISTS lsp_submissions (
+  id                  SERIAL PRIMARY KEY,
+  tenant              TEXT NOT NULL,
+  source              TEXT NOT NULL,           -- whatsapp | email
+  sender              TEXT NOT NULL,           -- wa_id of e-mailadres
+  contact_name        TEXT,
+  team_label          TEXT,
+  note_text           TEXT,
+  image_data_url      TEXT,
+  dashboard_summary   TEXT,
+  participant_report  TEXT,
+  status              TEXT NOT NULL DEFAULT 'nieuw',  -- nieuw | verwerkt | fout
+  error               TEXT,
+  impactos_synced     BOOLEAN NOT NULL DEFAULT false,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  processed_at        TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_lsp_submissions_tenant_created
+  ON lsp_submissions (tenant, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lsp_submissions_unsynced
+  ON lsp_submissions (tenant, impactos_synced) WHERE impactos_synced = false;

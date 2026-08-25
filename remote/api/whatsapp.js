@@ -46,6 +46,8 @@ import { converse, MAX_TURNS } from './_iris_core.js';
 import { resolveOrAskProject, customerConverse, MAX_CUSTOMER_TURNS } from './_customer_core.js';
 import { sendText, markRead } from './_whatsapp_send.js';
 import { downloadWhatsappImage } from './_whatsapp_media.js';
+import { analyzeLspBuild } from './_lsp_core.js';
+import { insertSubmission } from './_lsp_store.js';
 
 // bodyParser:false is vereist om de exacte bytes te krijgen die Meta ook
 // hashte voor X-Hub-Signature-256 — een her-JSON.stringify van req.body kan
@@ -235,6 +237,35 @@ async function notifyMe(phoneNumberId, managerNumber, text) {
   await sendText(phoneNumberId, managerNumber, text);
 }
 
+// ── LSP-workshop "Bouw je AI-assistent" (24 aug 2026, AI Leadership Lab) ────
+// Eigen, additieve tak vóór de manager/klant-splitsing in handleMessage —
+// géén regel in die twee bestaande paden verandert. Herkenning via
+// LSP_WORKSHOP_KEYWORD in het bijschrift houdt dit uit ná het evenement (of
+// bij een ander tenant) uit met één env-var, zonder code te wijzigen. Beeld
+// en tekst gaan naar hetzelfde analysepad als een eventueel e-mailpad
+// (_lsp_core.js) — één promptversie, geen twee die uit elkaar kunnen lopen.
+async function handleWorkshopMessage(tenant, phoneNumberId, from, text, mediaId, contactName) {
+  let image;
+  try {
+    image = await downloadWhatsappImage(mediaId);
+  } catch (e) {
+    console.error('lsp: media-download mislukt', tenant, from, e);
+    await sendText(phoneNumberId, from,
+      'Kon de foto niet ophalen bij WhatsApp. Probeer hem nog eens te versturen, met LSP in het bijschrift.');
+    return;
+  }
+
+  const analysis = await analyzeLspBuild({ text, image, contactName });
+  insertSubmission({
+    tenant, source: 'whatsapp', sender: from, contactName,
+    noteText: text, imageDataUrl: `data:${image.mediaType};base64,${image.base64}`,
+    dashboardSummary: analysis.dashboard_summary, participantReport: analysis.participant_report,
+    error: analysis.error,
+  }).catch((e) => console.error('lsp: submission opslaan mislukt', tenant, from, e));
+
+  await sendText(phoneNumberId, from, analysis.participant_report);
+}
+
 async function handleCustomerMessage(tenant, phoneNumberId, from, text, managerNumber, contactName) {
   const thread = await loadThread(tenant, from);
   let project = thread.project;
@@ -335,7 +366,20 @@ async function handleMessage(phoneNumberId, msg, contactName) {
 
   markRead(phoneNumberId, msg.id);
 
-  if (allowed.includes(from)) {
+  // LSP-workshop: additief vóór de manager/klant-splitsing, alleen actief met
+  // LSP_WORKSHOP_ENABLED=true (na het evenement weer op false — schakelt dit
+  // hele pad uit zonder code te wijzigen), alleen voor het opgegeven tenant,
+  // en alleen bij een foto met het triggerwoord in het bijschrift. Buiten die
+  // voorwaarden verandert er niets aan het bestaande gedrag hieronder.
+  const workshopEnabled = String(process.env.LSP_WORKSHOP_ENABLED || '').toLowerCase() === 'true';
+  const workshopKeyword = (process.env.LSP_WORKSHOP_KEYWORD || 'LSP').toLowerCase();
+  const isWorkshopSubmission = workshopEnabled && isImage
+    && tenant.slug === (process.env.LSP_WORKSHOP_TENANT || 'weareimpact')
+    && text.toLowerCase().includes(workshopKeyword);
+
+  if (isWorkshopSubmission) {
+    await handleWorkshopMessage(tenant.slug, phoneNumberId, from, text, msg.image.id, contactName);
+  } else if (allowed.includes(from)) {
     // Vision is bewust alléén hier: het manager-nummer is Vincent zelf
     // (whitelist), dus geen kostenrisico van een publiek nummer dat foto's
     // spamt — klant-Iris (hieronder) blijft foto's negeren, precies zoals
