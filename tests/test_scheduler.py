@@ -467,12 +467,13 @@ def test_iedere_job_heeft_een_label_en_unieke_id():
 
 # ── Gemiste runs zijn pas een aandachtspunt als ze niet vanzelf herstellen ──
 
-def _job(status, next_run_over: dt.timedelta | None):
+def _job(status, next_run_over: dt.timedelta | None, gap_cost: bool = True):
     now = dt.datetime.now(S._TZ)
     return {
         "id": "x", "label": "X",
         "next_run": (now + next_run_over).isoformat() if next_run_over else None,
         "last_run": {"status": status, "time": now.isoformat(), "error": None},
+        "gap_cost": gap_cost,
     }
 
 
@@ -489,6 +490,18 @@ def test_gemiste_cron_job_die_pas_morgen_draait_blijft_zichtbaar():
 def test_gemiste_job_zonder_volgende_run_blijft_zichtbaar():
     from backend.domains.strategist.service import _job_needs_attention
     assert _job_needs_attention(_job("missed", None))
+
+
+def test_gemiste_job_zonder_gap_cost_is_nooit_een_aandachtspunt():
+    # Zoals dashboard_observer (elke 6u) en omni_sweep (elke 12u): een gemiste
+    # run heelt zichzelf bij de volgende tick en verliest geen dag die niet
+    # terugkomt. Zonder deze check meldt het projectdashboard hetzelfde gemiste
+    # vuurmoment als een rood aandachtspunt náást (of los van) een eventuele
+    # scheduler_gaps-kaart — precies de dubbele melding die 'stilstand_dubbel_
+    # gemeld' al voor het Actiecentrum voorkomt.
+    from backend.domains.strategist.service import _job_needs_attention
+    assert not _job_needs_attention(_job("missed", dt.timedelta(hours=20), gap_cost=False))
+    assert not _job_needs_attention(_job("missed", None, gap_cost=False))
 
 
 def test_echte_fout_blijft_altijd_een_aandachtspunt():

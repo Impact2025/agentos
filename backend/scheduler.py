@@ -222,7 +222,7 @@ async def _bridge_sync_job() -> None:
 async def _orders_sync_job() -> None:
     """Bewaard voor Jou: bestellingen ophalen bij life-journey-backend en de
     inkoopstaat herberekenen. Zelfde off/partial/on-patroon als de bridge."""
-    from .domains.orders import procurement, service as orders
+    from .domains.orders import fulfillment, inkoop, procurement, service as orders
     state = orders.config_state()
     if state == "partial":
         orders.report_misconfiguration()
@@ -232,6 +232,8 @@ async def _orders_sync_job() -> None:
     result = await orders.sync_once()
     if result.get("ok"):
         procurement.evaluate()
+        inkoop.evaluate()
+    fulfillment.check_fulfillment_backlog()
 
 
 async def _autoheal_job() -> None:
@@ -539,12 +541,15 @@ def _calendar_auth_action_required(job_id: str, detail: str) -> None:
 
 def calendar_sync_job() -> None:
     from .domains.calendar import service as calendar_service
+    from .shared import failures
     if not calendar_service.is_configured():
         # Geen integratie ingesteld: niets aan de hand, geen lawaai.
         return
+    key = "calendar_sync"
     try:
         asyncio.run(calendar_service.get_week_events())
         logger.info("Calendar-sync: week-cache bijgewerkt")
+        failures.note_success(key)
     except Exception as e:
         # De kale API-fout ('404 Not Found') vertelt niet dat de agenda met
         # het service-account gedeeld moet worden. Ontbrekende auth is echter
@@ -552,8 +557,27 @@ def calendar_sync_job() -> None:
         # een heldere status i.p.v. een tracestack.
         msg = calendar_service.explain_error(e)
         if "niet" in msg.lower() and ("ingelogd" in msg.lower() or "authentic" in msg.lower()):
-            _calendar_auth_action_required("calendar_sync", msg)
+            _calendar_auth_action_required(key, msg)
             return
+        # Deze job vuurt elke 15 min en is het eerste dat na een wake/koude
+        # start weer een externe host raakt — een DNS-hik vlak na het
+        # ontwaken (netwerkstack nog niet terug) is geen storing maar precies
+        # het moment dat `failures.py` voor bedoeld is: één blip is geen ramp,
+        # drie op rij wél. Zonder dit gooide elke transiente NameResolutionError
+        # de badge meteen op 'Degraded' — voor iets dat vanzelf de volgende
+        # 15-minuten-run alweer weg was (25 aug 2026, gemeten: DNS-fout terwijl
+        # andere hosts seconden ervoor gewoon resolveden — een burst van
+        # gelijktijdig vurende jobs bij het ontwaken, geen kapotte DNS).
+        klass = failures.classify(e)
+        count = failures.note_failure(key, msg, klass)
+        if not failures.should_escalate(key, e):
+            _record_run(key, "retry", f"{msg} (poging {count}/{failures.DEFAULT_ESCALATE_AFTER})")
+            logger.warning(
+                "Calendar-sync mislukt (poging %s/%s, nog geen escalatie): %s",
+                count, failures.DEFAULT_ESCALATE_AFTER, msg,
+            )
+            return
+        failures.mark_escalated(key)
         raise RuntimeError(msg) from e
 
 
@@ -577,6 +601,20 @@ def calendar_whatsapp_reminder_job() -> None:
             logger.info("Agenda-WhatsApp: %s herinnering(en) verstuurd", n)
     except Exception as e:  # noqa: BLE001
         logger.exception("Agenda-WhatsApp-herinnering mislukt: %s", e)
+
+
+def coach_whatsapp_check_job() -> None:
+    """De Sparringpartner: checkt native (backend/domains/coach, dezelfde
+    rituelen-tabellen als Iris ziet) of er een duidelijk energiepatroon is, en
+    appt Vincent zo ja proactief. Draait elke 2 uur — signalen zijn traag
+    bewegend, dagelijkse dedupe voorkomt spammen sowieso."""
+    from .domains.coach import service as coach_service
+    try:
+        sent = asyncio.run(coach_service.check_and_send_whatsapp())
+        if sent:
+            logger.info("Sparringpartner: proactief WhatsApp-bericht verstuurd")
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Sparringpartner-signaalcheck mislukt: %s", e)
 
 
 # ── Iris-herkanselaar ──────────────────────────────────────────────────────
@@ -814,6 +852,15 @@ _SPECS: list[JobSpec] = [
         "calendar_whatsapp_reminder", "Agenda-herinnering (1 uur van tevoren, per WhatsApp)",
         calendar_whatsapp_reminder_job, IntervalTrigger(minutes=10),
         misfire_grace_time=300, coalesce=True, domain="calendar",
+    ),
+    # De Sparringpartner: proactief patroon-signaal vanuit mijn-ondernemers-os.
+    # Interval, geen gap_cost — een gemist signaal van vanochtend is morgen
+    # weer even geldig (het patroon is niet weg), en de dagelijkse dedupe in
+    # coach_whatsapp_sent maakt inhalen sowieso overbodig.
+    JobSpec(
+        "coach_whatsapp_check", "Sparringpartner: proactief energiepatroon signaleren",
+        coach_whatsapp_check_job, IntervalTrigger(hours=2),
+        misfire_grace_time=1800, coalesce=True, domain="coach",
     ),
     JobSpec(
         "vacancy_scan", "Opdrachten-zoekagent (2x/week)",
@@ -2111,6 +2158,11 @@ def get_scheduler_status() -> dict:
                     "source": run["source"],
                 } if run else None,
                 "catch_up": bool(spec.catch_up) if spec else False,
+                # Alleen jobs met een gevulde gap_cost verliezen een dag die niet
+                # terugkomt; een job zonder gap_cost heelt zichzelf bij de
+                # volgende geplande run en hoort dus nooit als aandachtspunt op
+                # een dashboard te verschijnen (zie scheduler_gaps-filosofie).
+                "gap_cost": bool(spec.gap_cost) if spec else False,
             }
         )
     return {

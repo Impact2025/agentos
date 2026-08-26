@@ -297,6 +297,12 @@ def _job_needs_attention(job: Dict[str, Any]) -> bool:
         return True
     if status != "missed":
         return False
+    # Een job zonder gap_cost verliest geen dag die niet terugkomt — hij heelt
+    # zichzelf bij de volgende geplande run (dezelfde `scheduler_gaps`-regel
+    # als het Actiecentrum al hanteert). Die twee zouden anders hetzelfde gemiste
+    # vuurmoment via twee wegen melden: hier én als scheduler_gaps-kaart.
+    if not job.get("gap_cost"):
+        return False
     next_run = job.get("next_run")
     if not next_run:
         return True  # niets meer ingepland — dit heelt zichzelf níét
