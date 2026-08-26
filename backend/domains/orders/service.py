@@ -88,25 +88,39 @@ def _upsert_orders(orders: list) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with get_conn() as conn:
         for o in orders:
+            # dagbesteding_sent_at/shipped_at zitten bewust NIET in deze upsert:
+            # dat is lokale fulfillment-status die Impact OS zelf bijhoudt, geen
+            # upstream-waarheid (zie models.py bij _NEW_COLUMNS).
             conn.execute(
                 """INSERT INTO bvj_orders
                    (id, status, package_type, addons, price_paid, discount_cents,
-                    promo_code_used, recipient_name, created_at, paid_at,
+                    promo_code_used, recipient_name, recipient_relation,
+                    card_message, personal_message, shipping_address,
+                    gift_card_code, created_at, paid_at,
                     fulfilled_at, usb_burned_at, synced_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(id) DO UPDATE SET
                      status=excluded.status, package_type=excluded.package_type,
                      addons=excluded.addons, price_paid=excluded.price_paid,
                      discount_cents=excluded.discount_cents,
                      promo_code_used=excluded.promo_code_used,
                      recipient_name=excluded.recipient_name,
+                     recipient_relation=excluded.recipient_relation,
+                     card_message=excluded.card_message,
+                     personal_message=excluded.personal_message,
+                     shipping_address=excluded.shipping_address,
+                     gift_card_code=excluded.gift_card_code,
                      paid_at=excluded.paid_at, fulfilled_at=excluded.fulfilled_at,
                      usb_burned_at=excluded.usb_burned_at, synced_at=excluded.synced_at""",
                 (
                     o.get("id"), o.get("status") or "", o.get("package_type") or "",
                     json.dumps(o.get("addons") or []), o.get("price_paid") or 0,
                     o.get("discount_cents") or 0, o.get("promo_code_used") or "",
-                    o.get("recipient_name") or "", o.get("created_at") or "",
+                    o.get("recipient_name") or "", o.get("recipient_relation") or "",
+                    o.get("card_message") or "", o.get("personal_message") or "",
+                    json.dumps(o.get("shipping_address")) if o.get("shipping_address") else "",
+                    o.get("gift_card_code") or "",
+                    o.get("created_at") or "",
                     o.get("paid_at") or "", o.get("fulfilled_at") or "",
                     o.get("usb_burned_at") or "", now,
                 ),

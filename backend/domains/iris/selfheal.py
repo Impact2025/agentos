@@ -87,6 +87,13 @@ _MENSELIJK_BESLUIT = {
                                # publiceer de run handmatig met het juiste project, of laat
                                # 'm staan (19 aug 2026, zelfde les als content-stuck: wat je
                                # niet kunt oplossen door te herhalen, moet je niet claimen te proberen)
+    "inkoop_tekort",           # fysieke voorraad bestellen is een handeling in de echte wereld;
+    "inkoop_drempel",          # geen probe of LLM-triage kan een pakketje laten bezorgen. Zonder
+                               # deze uitsluiting viel dit terug op stap 6 (LLM-triage): elke 10
+                               # min opnieuw een gateway-call voor een diagnose die altijd op
+                               # "bestel dit bij de leverancier" uitkomt, plus drie ronden een
+                               # misleidende "Iris probeert dit zelf" banner op een kaart die
+                               # alleen Vincent kan sluiten (24 aug 2026, procurement.py).
 }
 
 

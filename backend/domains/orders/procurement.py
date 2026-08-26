@@ -66,11 +66,18 @@ def _requirements_for_order(package_type: str, addons: list) -> Dict[str, int]:
 
 def demand() -> Dict[str, int]:
     """Hoeveel van elk fysiek item er nog nodig is voor betaalde, nog niet
-    verwerkte orders."""
+    verwerkte orders.
+
+    Een item is verbruikt zodra óf life-journey-backend het meldt
+    (usb_burned_at/fulfilled_at — het admin-panel daar, mens-only) óf Vincent
+    de order via Impact OS naar de dagbesteding heeft gestuurd
+    (dagbesteding_sent_at — dat is waar de fysieke assemblage in de praktijk
+    wordt bijgehouden). Eén van beide is genoeg: het gaat om of het item
+    fysiek is gebruikt, niet om welk systeem dat het eerst wist."""
     totals: Dict[str, int] = {}
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT package_type, addons, usb_burned_at, fulfilled_at "
+            "SELECT package_type, addons, usb_burned_at, fulfilled_at, dagbesteding_sent_at "
             "FROM bvj_orders WHERE status = 'PAID'"
         ).fetchall()
     for r in rows:
@@ -79,6 +86,8 @@ def demand() -> Dict[str, int]:
         except (TypeError, ValueError):
             addons = []
         need = _requirements_for_order(r["package_type"], addons)
+        if r["dagbesteding_sent_at"]:
+            continue
         for item, qty in need.items():
             consumed_col = CONSUMED_WHEN.get(item)
             if consumed_col == "usb_burned_at" and r["usb_burned_at"]:
@@ -90,16 +99,23 @@ def demand() -> Dict[str, int]:
 
 
 def stock_state() -> List[dict]:
-    """Voorraadstaat per item: on_hand, drempel, openstaande vraag, status."""
+    """Voorraadstaat per item: on_hand, drempel, openstaande vraag, status,
+    plus leverancier-info (order_url/reorder_qty/unit_cost_cents) voor de
+    inkoopvoorstellen in inkoop.py."""
     need = demand()
     with get_conn() as conn:
-        stock_rows = {r["item"]: r["on_hand"] for r in conn.execute("SELECT item, on_hand FROM bvj_stock")}
+        stock_rows = {
+            r["item"]: r for r in conn.execute(
+                "SELECT item, on_hand, order_url, reorder_qty, unit_cost_cents FROM bvj_stock"
+            )
+        }
         threshold_rows = {r["item"]: r["min_qty"] for r in conn.execute("SELECT item, min_qty FROM bvj_stock_thresholds")}
 
     items = sorted(set(need) | set(stock_rows) | set(threshold_rows))
     out = []
     for item in items:
-        on_hand = stock_rows.get(item, 0)
+        stock_row = stock_rows.get(item)
+        on_hand = stock_row["on_hand"] if stock_row else 0
         min_qty = threshold_rows.get(item, 0)
         item_demand = need.get(item, 0)
         remaining = on_hand - item_demand
@@ -116,6 +132,9 @@ def stock_state() -> List[dict]:
             "min_qty": min_qty,
             "remaining_after_demand": remaining,
             "status": status,
+            "order_url": stock_row["order_url"] if stock_row else "",
+            "reorder_qty": stock_row["reorder_qty"] if stock_row else 0,
+            "unit_cost_cents": stock_row["unit_cost_cents"] if stock_row else 0,
         })
     return out
 

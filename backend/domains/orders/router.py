@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from ...shared.database import get_conn
-from . import procurement, service
+from . import fulfillment, inkoop, procurement, service
 from .models import ensure_schema
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,12 @@ class StockUpdate(BaseModel):
 
 class ThresholdUpdate(BaseModel):
     min_qty: int
+
+
+class LeverancierUpdate(BaseModel):
+    order_url: str = ""
+    reorder_qty: int = 0
+    unit_cost_cents: int = 0
 
 
 @router.get("/dashboard")
@@ -87,13 +93,151 @@ def list_orders(
     return {"orders": rows, "total": len(rows)}
 
 
+@router.get("/analytics")
+def get_analytics() -> Dict[str, Any]:
+    """Verkoop- en inkoopoverzicht in één call voor de Verkoop & Inkoop-pagina:
+    omzettrend, pakket-mix, fulfillment-doorlooptijd en promo-gebruik. Alles
+    deterministische SQL op de lokale `bvj_orders`-cache — geen LLM, dezelfde
+    afweging als `procurement.py`."""
+    ensure_schema()
+    with get_conn() as conn:
+        status_rows = conn.execute(
+            "SELECT status, COUNT(*) AS n, COALESCE(SUM(price_paid),0) AS omzet_cents "
+            "FROM bvj_orders GROUP BY status ORDER BY n DESC"
+        ).fetchall()
+        package_rows = conn.execute(
+            "SELECT package_type, COUNT(*) AS n, COALESCE(SUM(price_paid),0) AS omzet_cents "
+            "FROM bvj_orders WHERE status IN ('PAID','FULFILLED') "
+            "GROUP BY package_type ORDER BY omzet_cents DESC"
+        ).fetchall()
+        promo_rows = conn.execute(
+            "SELECT promo_code_used AS code, COUNT(*) AS n, COALESCE(SUM(discount_cents),0) AS korting_cents "
+            "FROM bvj_orders WHERE COALESCE(promo_code_used,'') != '' "
+            "GROUP BY promo_code_used ORDER BY n DESC LIMIT 10"
+        ).fetchall()
+        revenue_rows = conn.execute(
+            "SELECT date(CASE WHEN COALESCE(paid_at,'')!='' THEN paid_at ELSE created_at END) AS dag, "
+            "COALESCE(SUM(price_paid),0) AS omzet_cents, COUNT(*) AS n FROM bvj_orders "
+            "WHERE status IN ('PAID','FULFILLED') "
+            "AND COALESCE(CASE WHEN COALESCE(paid_at,'')!='' THEN paid_at ELSE created_at END,'') != '' "
+            "AND dag >= date('now','-30 days') GROUP BY dag ORDER BY dag"
+        ).fetchall()
+        fulfill_row = conn.execute(
+            "SELECT AVG(julianday(fulfilled_at) - julianday(paid_at)) AS gem_dagen, COUNT(*) AS n "
+            "FROM bvj_orders WHERE COALESCE(fulfilled_at,'') != '' AND COALESCE(paid_at,'') != ''"
+        ).fetchone()
+        totals = conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(price_paid),0) AS omzet, COALESCE(AVG(price_paid),0) AS gem "
+            "FROM bvj_orders WHERE status IN ('PAID','FULFILLED')"
+        ).fetchone()
+        pending_fulfillment = conn.execute(
+            "SELECT COUNT(*) AS n FROM bvj_orders WHERE status = 'PAID'"
+        ).fetchone()["n"]
+        last_sync = conn.execute(
+            "SELECT MAX(synced_at) AS t FROM bvj_orders"
+        ).fetchone()["t"]
+
+    return {
+        "config_state": service.config_state(),
+        "last_sync": last_sync,
+        "pending_fulfillment": pending_fulfillment,
+        "status_breakdown": [dict(r) for r in status_rows],
+        "package_breakdown": [dict(r) for r in package_rows],
+        "promo_usage": [dict(r) for r in promo_rows],
+        "omzet_by_day": [{"date": r["dag"], "omzet": r["omzet_cents"] / 100.0, "orders": r["n"]}
+                          for r in revenue_rows],
+        "fulfillment": {
+            "gemiddelde_dagen": round(fulfill_row["gem_dagen"], 1)
+                                if fulfill_row and fulfill_row["gem_dagen"] is not None else None,
+            "n": fulfill_row["n"] if fulfill_row else 0,
+        },
+        "gemiddelde_orderwaarde_cents": round(totals["gem"]) if totals else 0,
+        "orders_totaal": totals["n"] if totals else 0,
+        "omzet_totaal_cents": totals["omzet"] if totals else 0,
+        "voorraad": procurement.stock_state(),
+    }
+
+
 @router.post("/sync")
 async def trigger_sync() -> Dict[str, Any]:
     """Handmatige refresh: haalt bestellingen op en herberekent de inkoopstaat."""
     result = await service.sync_once()
     if result.get("ok"):
         procurement.evaluate()
+        inkoop.evaluate()
     return result
+
+
+@router.get("/{order_id}")
+def get_order(order_id: str) -> Dict[str, Any]:
+    order = fulfillment.get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order niet gevonden")
+    return {"order": order, "materiaal": fulfillment.materiaal(order)}
+
+
+@router.post("/{order_id}/dagbesteding/versturen")
+def send_to_dagbesteding(order_id: str) -> Dict[str, Any]:
+    """Order (incl. adressticker + kaartjestekst) naar de dagbesteding sturen
+    om gemaakt te worden. Verbruikt meteen usb/giftbox uit de voorraad."""
+    try:
+        result = fulfillment.send_to_dagbesteding(order_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    procurement.evaluate()
+    inkoop.evaluate()
+    return result
+
+
+@router.post("/{order_id}/dagbesteding/verzonden")
+def mark_shipped(order_id: str) -> Dict[str, Any]:
+    """De dagbesteding is klaar en het pakket is de deur uit."""
+    try:
+        return fulfillment.mark_shipped(order_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/inkoop/voorstellen")
+def list_inkoop_voorstellen() -> Dict[str, Any]:
+    return {"voorstellen": inkoop.list_open()}
+
+
+@router.post("/inkoop/voorstellen/{proposal_id}/bestel")
+def bestel_voorstel(proposal_id: str) -> Dict[str, Any]:
+    """Vincent heeft de bestelling zelf bij de leverancier geplaatst; dit
+    sluit alleen het voorstel af. Impact OS plaatst nooit zelf een order."""
+    try:
+        return inkoop.mark_ordered(proposal_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/inkoop/voorstellen/{proposal_id}/negeer")
+def negeer_voorstel(proposal_id: str) -> Dict[str, Any]:
+    try:
+        return inkoop.dismiss(proposal_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch("/stock/{item}/leverancier")
+def update_leverancier(item: str, body: LeverancierUpdate) -> Dict[str, Any]:
+    if body.reorder_qty < 0 or body.unit_cost_cents < 0:
+        raise HTTPException(status_code=400, detail="Aantal en kosten mogen niet negatief zijn")
+    ensure_schema()
+    from datetime import datetime, timezone
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO bvj_stock (item, on_hand, order_url, reorder_qty, unit_cost_cents, updated_at, updated_by)
+               VALUES (?, 0, ?, ?, ?, ?, 'vincent')
+               ON CONFLICT(item) DO UPDATE SET
+                 order_url=excluded.order_url, reorder_qty=excluded.reorder_qty,
+                 unit_cost_cents=excluded.unit_cost_cents, updated_at=excluded.updated_at""",
+            (item, body.order_url.strip(), body.reorder_qty, body.unit_cost_cents,
+             datetime.now(timezone.utc).isoformat()),
+        )
+    return {"item": item, "voorraad": procurement.stock_state()}
 
 
 @router.patch("/stock/{item}")
