@@ -202,14 +202,30 @@ def run(
 
     limiet = any(sig in (tekst + " " + fout_tekst).lower() for sig in _LIMIET_SIGNALEN)
 
-    log_llm_usage(
-        backend="claude_code", model="claude-code-cli", route=doel,
-        prompt_tokens=int(gebruik.get("input_tokens") or 0),
-        completion_tokens=int(gebruik.get("output_tokens") or 0),
-        total_tokens=int(gebruik.get("input_tokens") or 0) + int(gebruik.get("output_tokens") or 0),
-        status="error" if mislukt else "ok",
-        error=(fout_tekst or tekst)[:400] if mislukt else "",
-    )
+    # Abonnementslimiet (Claude Code Pro monthly spend limit): geen harde fout,
+    # maar een grens die om de reset-tijd wacht. Schrijf status='quota' zodat de
+    # healthcheck deze niet telt als LLM-fout én llm_quota_backoff_active() de
+    # route pauzeert tot de volgende run — precies als de OpenModel 403-quota
+    # handling in agent_runner.py. Behoudt wel de limiet-signalering voor
+    # analyst.py (via resultaat.limiet_bereikt) zodat de gateway-terugval blijft.
+    if mislukt and limiet:
+        log_llm_usage(
+            backend="claude_code", model="claude-code-cli", route=doel,
+            prompt_tokens=int(gebruik.get("input_tokens") or 0),
+            completion_tokens=int(gebruik.get("output_tokens") or 0),
+            total_tokens=int(gebruik.get("input_tokens") or 0) + int(gebruik.get("output_tokens") or 0),
+            status="quota",
+            error=(fout_tekst or tekst)[:400],
+        )
+    else:
+        log_llm_usage(
+            backend="claude_code", model="claude-code-cli", route=doel,
+            prompt_tokens=int(gebruik.get("input_tokens") or 0),
+            completion_tokens=int(gebruik.get("output_tokens") or 0),
+            total_tokens=int(gebruik.get("input_tokens") or 0) + int(gebruik.get("output_tokens") or 0),
+            status="error" if mislukt else "ok",
+            error=(fout_tekst or tekst)[:400] if mislukt else "",
+        )
 
     if mislukt:
         reden = fout_tekst or tekst or f"exit-code {proc.returncode} zonder uitleg"

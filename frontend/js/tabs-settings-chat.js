@@ -24,6 +24,7 @@ async function renderInstellingenTab(el) {
 
   html += await renderSitePublishSettings();
   html += await renderKennisbankSettings();
+  html += await renderHandtekeningSettings();
 
   // ── Agent Profielen tabel ──
   html += '<div class="section-card"><h4 style="font-size:13px;font-weight:600;margin-bottom:8px">Agent Profielen (' + (profiles||[]).length + ')</h4>' +
@@ -384,6 +385,34 @@ async function renderKennisbankSettings() {
     '<div style="display:flex;gap:6px"><input id="cs-tags" placeholder="Tags, komma-gescheiden (bv. seo, webshop, linkbuilding)" style="flex:1;padding:6px 8px;border:1px solid var(--card-border);border-radius:6px;font-size:12px" />' +
     '<button onclick="addCaseStudy(this)" class="btn btn-primary btn-sm" style="background:var(--green);flex-shrink:0">Toevoegen</button></div>' +
     '</div></div>';
+  return html;
+}
+
+// ── Handtekeningen — was alleen bereikbaar via een verstopt inklap-linkje
+// onder elke mailbox in de Helpdesk-tab; hier verzameld op één vindbare
+// plek. Hergebruikt helpdeskSaveSignature() uit tabs-content.js (dezelfde
+// PATCH /api/mail/mailboxes/{id}), dus twee plekken om te bewerken zonder
+// twee wegen om op te slaan.
+async function renderHandtekeningSettings() {
+  if (!currentProject) return '';
+  var mailboxes = [];
+  try {
+    var d = await (await fetch('/api/mail/mailboxes?project=' + encodeURIComponent(currentProject))).json();
+    mailboxes = d.mailboxes || [];
+  } catch(e) { return ''; }
+  if (!mailboxes.length) return '';
+
+  var html = '<div class="section-card" style="margin-bottom:16px">' +
+    '<h4 style="font-size:13px;font-weight:600;margin-bottom:4px">Handtekeningen — ' + escHtml(currentProject) + '</h4>' +
+    '<p style="font-size:11px;color:#94a3b8;margin-bottom:10px">Komt automatisch onder elk nieuw mailconcept van deze mailbox(en); de AI ondertekent dan niet meer zelf.</p>';
+  mailboxes.forEach(function(mb) {
+    html += '<div style="margin-bottom:12px">' +
+      '<div style="font-size:12px;font-weight:600;color:#334155;margin-bottom:4px">' + escHtml(mb.address) + (mb.signature ? '' : ' <span style="color:var(--amber);font-weight:400">(nog niet ingesteld)</span>') + '</div>' +
+      '<textarea id="hd-sig-' + escHtml(mb.id) + '" placeholder="Bijv.:\nHartelijke groet,\nVincent van Munster\n' + escHtml(mb.project) + ' · hello@' + escHtml(mb.project) + '.nl" style="width:100%;min-height:70px;font-size:12px;line-height:1.5;padding:8px;border:1px solid #e2e8f0;border-radius:6px;resize:vertical;font-family:inherit;background:#f8fafc;box-sizing:border-box">' + escHtml(mb.signature || '') + '</textarea>' +
+      '<button onclick="helpdeskSaveSignature(\'' + escHtml(mb.id) + '\',this)" style="margin-top:4px;padding:5px 14px;background:var(--green);color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Handtekening opslaan</button>' +
+      '</div>';
+  });
+  html += '</div>';
   return html;
 }
 

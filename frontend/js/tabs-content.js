@@ -61,10 +61,12 @@ async function renderHelpdeskTab(el) {
       '<button onclick="helpdeskToggle(\'' + escHtml(mb.id) + '\',' + (mb.enabled ? 0 : 1) + ',this)" class="btn btn-sm btn-ghost">' + (mb.enabled ? 'Pauzeer' : 'Activeer') + '</button>' +
       '<button onclick="helpdeskDeleteMailbox(\'' + escHtml(mb.id) + '\',\'' + escHtml(mb.address) + '\',this)" class="btn btn-sm btn-danger-outline">Verwijder</button>' +
       '</div></div>' +
-      // Kennis-paneel: maakt zichtbaar wat de helpdesk over dit project weet
-      '<details style="margin-bottom:8px" ontoggle="if(this.open)helpdeskLoadKnowledge(\'' + escHtml(mb.id) + '\')">' +
-      '<summary style="font-size:11px;font-weight:600;color:#64748b;cursor:pointer">Wat weet de helpdesk?</summary>' +
-      '<div id="hd-know-' + escHtml(mb.id) + '" style="font-size:11px;color:#475569;padding:8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;margin-top:4px">Laden...</div></details>' +
+      // Kennis-paneel: maakt zichtbaar wat de helpdesk over dit project weet.
+      // Standaard open (i.p.v. een klein tekstlinkje dat je moet vinden) —
+      // dit is precies de vraag die "waarom klopt dit antwoord niet" oproept.
+      '<div style="margin-bottom:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px">' +
+      '<div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:6px">Wat weet de helpdesk?</div>' +
+      '<div id="hd-know-' + escHtml(mb.id) + '" style="font-size:11px;color:#475569">Laden...</div></div>' +
       // Handtekening per project — WYSIWYG onder elk concept
       '<details style="margin-bottom:8px">' +
       '<summary style="font-size:11px;font-weight:600;color:#64748b;cursor:pointer">Handtekening' + (mb.signature ? '' : ' <span style="color:var(--amber)">(nog niet ingesteld)</span>') + '</summary>' +
@@ -110,6 +112,9 @@ async function renderHelpdeskTab(el) {
   // badge verversen
   var badge = document.getElementById('helpdesk-badge');
   if (badge) { if (pending.length>0) { badge.style.display='inline-block'; badge.textContent=pending.length; } else { badge.style.display='none'; } }
+  // Kennis-paneel staat nu altijd open (was een klik-om-te-tonen <details>),
+  // dus laden gebeurt hier meteen i.p.v. via een ontoggle-handler.
+  mailboxes.forEach(function(mb){ helpdeskLoadKnowledge(mb.id); });
 
   // ── Social Inbox sectie (LinkedIn/IG/FB/TikTok) ──
   renderSocialInboxSection(el);
@@ -265,10 +270,12 @@ async function helpdeskSaveSignature(mailboxId, btn) {
   finally { btn.disabled = false; }
 }
 
-var _hdKnowLoaded = {};
+// Was ooit een guard tegen herhaald laden bij het open/dicht klikken van een
+// <details> (ontoggle vuurt bij elke klik). Nu het paneel altijd open staat
+// en maar één keer per tab-render wordt aangeroepen, zou die guard een
+// volgend bezoek aan de tab juist blokkeren (nieuwe DOM-node, oude vlag
+// staat nog op true) en de box voorgoed op "Laden..." laten staan.
 async function helpdeskLoadKnowledge(mailboxId) {
-  if (_hdKnowLoaded[mailboxId]) return;
-  _hdKnowLoaded[mailboxId] = true;
   var box = document.getElementById('hd-know-' + mailboxId);
   if (!box) return;
   try {
@@ -287,7 +294,7 @@ async function helpdeskLoadKnowledge(mailboxId) {
       html += '<ul style="margin:6px 0 0 14px;padding:0;color:#b45309">' + c.hints.map(function(h){ return '<li style="margin-bottom:2px">' + escHtml(h) + '</li>'; }).join('') + '</ul>';
     }
     box.innerHTML = html;
-  } catch(e) { box.innerHTML = 'Fout: ' + escHtml(e.message); _hdKnowLoaded[mailboxId] = false; }
+  } catch(e) { box.innerHTML = 'Fout: ' + escHtml(e.message); }
 }
 
 async function helpdeskToggle(mailboxId, enabled, btn) {
@@ -1421,7 +1428,12 @@ async function renderSocialInboxSection(el) {
                 '</div>' +
                 (m.text ? '<div style="font-size:12px;color:#475569;white-space:pre-wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px;margin-bottom:8px;max-height:140px;overflow-y:auto">' + escHtml(m.text) + '</div>' : '') +
                 (m.parent_url ? '<div style="font-size:11px;margin-bottom:6px"><a href="' + escHtml(m.parent_url) + '" target="_blank" style="color:#2563eb">Bekijk originele post</a></div>' : '') +
-                '<textarea id="soc-body-' + m.id + '" style="width:100%;min-height:90px;font-size:12px;line-height:1.5;padding:8px;border:1px solid #e2e8f0;border-radius:6px;resize:vertical;font-family:inherit;background:' + (isEdited ? '#fffbeb' : '#f8fafc') + '">' + escHtml(body) + '</textarea>' +
+                // Spam krijgt bewust geen concept (social_inbox.py: "spam blijft
+                // zonder concept"), maar landt wél in deze lijst zodat een mens
+                // hem kan afwijzen. Zonder deze uitleg oogt de lege tekstbox als
+                // een kapotte generatie in plaats van een bewuste keuze.
+                (!body && m.kind === 'spam' ? '<div style="font-size:11px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 8px;margin-bottom:8px">Geen concept gegenereerd — dit is als spam herkend en heeft normaal geen antwoord nodig. Wijs af, of schrijf hieronder zelf iets.</div>' : '') +
+                '<textarea id="soc-body-' + m.id + '" placeholder="' + (!body && m.kind === 'spam' ? 'Optioneel: eigen antwoord' : 'Concept-antwoord') + '" style="width:100%;min-height:90px;font-size:12px;line-height:1.5;padding:8px;border:1px solid #e2e8f0;border-radius:6px;resize:vertical;font-family:inherit;background:' + (isEdited ? '#fffbeb' : '#f8fafc') + '">' + escHtml(body) + '</textarea>' +
                 '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' +
                 '<button onclick="socialApprove(' + m.id + ',this)" class="btn" style="background:var(--green)">Plaats antwoord</button>' +
                 '<button onclick="socialSave(' + m.id + ',this)" class="btn btn-ghost">Opslaan</button>' +

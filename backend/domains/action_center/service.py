@@ -522,6 +522,13 @@ def build_inbox(project: Optional[str] = None) -> Dict[str, Any]:
     # project-namen door elkaar heen kunnen matchen (zie _norm_project_key).
     target_key = _norm_project_key(project) if project else None
     items: List[Dict[str, Any]] = []
+    # Lazy schema's: op een verse installatie zijn deze tabellen er pas na de
+    # eerste aanroep van hun eigen domein — zonder dit crasht build_inbox op
+    # "no such table" vóórdat iemand de Facturatie-tab ooit geopend heeft.
+    from ..billing.models import ensure_schema as _ensure_billing_schema
+    from ..crm.models import ensure_schema as _ensure_crm_schema
+    _ensure_billing_schema()
+    _ensure_crm_schema()
     with get_conn() as conn:
         skip = _dismissed(conn)
 
@@ -738,7 +745,7 @@ def build_inbox(project: Optional[str] = None) -> Dict[str, Any]:
         ):
             if ("content", j["id"]) in skip:
                 continue
-            attempts = (j.get("improve_attempts") or 0) + (j.get("orchestrator_attempts") or 0)
+            attempts = (j["improve_attempts"] or 0) + (j["orchestrator_attempts"] or 0)
             items.append({
                 "kind": "content_stuck",
                 "dismiss_kind": "content",
@@ -972,6 +979,94 @@ def build_inbox(project: Optional[str] = None) -> Dict[str, Any]:
                     {"label": "Verstuur", "type": "linkbuilding_send", "id": p["id"]},
                     {"label": "Wijs af (kans vervalt)", "type": "linkbuilding_dismiss",
                      "id": p["id"], "danger": True},
+                ],
+            })
+
+        # ── 5d. Facturatie: bonnetjes die niet konden worden doorgestuurd ──
+        # Geen stille faalmodus (zie shared/failures.py-filosofie elders):
+        # een bonnetje dat blijft steken op 'mislukt' moet zichtbaar zijn,
+        # anders raakt een inkoopfactuur nooit in de boekhouding.
+        mislukte_bonnetjes = conn.execute(
+            "SELECT id, filename, forward_error, created_at FROM billing_receipts "
+            "WHERE status = 'mislukt' ORDER BY created_at DESC"
+        ).fetchall()
+        if mislukte_bonnetjes and ("billing_receipts", "open") not in skip:
+            items.append({
+                "kind": "billing_receipt_failed",
+                "dismiss_kind": "billing_receipts",
+                "id": "open",
+                "title": f"{len(mislukte_bonnetjes)} bonnetje(s) niet doorgestuurd naar DigiBoox",
+                "project": "WeAreImpact",
+                "created_at": mislukte_bonnetjes[0]["created_at"],
+                "summary": mislukte_bonnetjes[0]["forward_error"] or "Onbekende fout",
+                "actions": [
+                    {"label": "Open Facturatie", "type": "open_tab", "tab": "Facturatie"},
+                ],
+            })
+
+        # ── 5e. Facturatie: conceptfacturen die op controle wachten ────────
+        # Agenda-uren zijn een aanname (geblokkeerd ≠ gewerkt) — dit item
+        # herinnert eraan dat er een concept ligt, de controle zelf gebeurt
+        # in de Facturatie-tab (regels uitsluiten kan alleen daar).
+        for d in conn.execute(
+            "SELECT id, client_name, period_start, period_end, created_at "
+            "FROM billing_invoice_drafts WHERE status = 'concept' ORDER BY created_at DESC"
+        ).fetchall():
+            if ("billing_invoice", d["id"]) in skip:
+                continue
+            items.append({
+                "kind": "billing_invoice_review",
+                "dismiss_kind": "billing_invoice",
+                "id": d["id"],
+                "title": f"Conceptfactuur klaar: {d['client_name']}",
+                "project": "WeAreImpact",
+                "created_at": d["created_at"],
+                "summary": f"Periode {d['period_start']} t/m {d['period_end']} — controleer de "
+                           f"uren vóór goedkeuring.",
+                "actions": [
+                    {"label": "Open Facturatie", "type": "open_tab", "tab": "Facturatie"},
+                ],
+            })
+
+        # ── 5f. Facturatie: herinneringen die op jouw verzendklik wachten ──
+        for r in conn.execute(
+            "SELECT id, client_name, tone, days_overdue, subject, draft, created_at "
+            "FROM billing_reminders WHERE status = 'review' ORDER BY days_overdue DESC"
+        ).fetchall():
+            if ("billing_reminder", r["id"]) in skip:
+                continue
+            preview = (r["draft"] or "").replace("\n", " ")[:140]
+            items.append({
+                "kind": "billing_reminder_review",
+                "dismiss_kind": "billing_reminder",
+                "id": r["id"],
+                "title": f"Herinnering ({r['tone']}) klaar: {r['client_name']} "
+                         f"({r['days_overdue']} dagen te laat)",
+                "project": "WeAreImpact",
+                "created_at": r["created_at"],
+                "summary": f"'{r['subject']}' — {preview}",
+                "actions": [
+                    {"label": "Verstuur", "type": "billing_reminder_send", "id": r["id"]},
+                    {"label": "Sla over", "type": "billing_reminder_skip", "id": r["id"]},
+                ],
+            })
+
+        # ── 5g. CRM: taken over de streefdatum ──────────────────────────
+        overdue_tasks = conn.execute(
+            "SELECT COUNT(*) AS n FROM crm_tasks WHERE status = 'open' AND due_date != '' "
+            "AND due_date < date('now')"
+        ).fetchone()
+        if overdue_tasks["n"] and ("crm_tasks", "open") not in skip:
+            items.append({
+                "kind": "crm_tasks_overdue",
+                "dismiss_kind": "crm_tasks",
+                "id": "open",
+                "title": f"{overdue_tasks['n']} CRM-taak/taken over de streefdatum",
+                "project": "WeAreImpact",
+                "created_at": None,
+                "summary": "Follow-ups die blijven liggen kosten klanten, niet alleen tijd.",
+                "actions": [
+                    {"label": "Open Klanten", "type": "open_tab", "tab": "Klanten"},
                 ],
             })
 

@@ -53,12 +53,17 @@ def _probe_openmodel() -> dict:
     if not OPENMODEL_API_KEY:
         return {"configured": False, "live": None, "note": "geen OPENMODEL_API_KEY"}
     try:
-        # HEAD op de basis-URL is genoeg om te zien of de gateway bereikbaar is.
+        # OpenModel is Anthropic-compatabel (/v1/messages): alleen POST wordt
+        # geaccepteerd. Een GET levert 405 (allow: POST) — een valse fout in de
+        # indicator, niet een storing. Een minimale POST met 1 token levert een
+        # echte liveness-meter: 2xx = live + key ok, 401/403 = gateway leeft maar
+        # auth slecht, alleen 5xx = echt down.
         with httpx.Client(timeout=4.0) as c:
-            r = c.get(OPENMODEL_BASE_URL.rstrip("/") + "/v1/messages",
-                      headers={"Authorization": f"Bearer {OPENMODEL_API_KEY}"},
-                      # verwacht 400/401 zonder body, niet 5xx → gateway leeft
-                      )
+            r = c.post(OPENMODEL_BASE_URL.rstrip("/") + "/v1/messages",
+                       headers={"Authorization": f"Bearer {OPENMODEL_API_KEY}",
+                                "Content-Type": "application/json"},
+                       json={"model": OPENMODEL_MODEL, "max_tokens": 1,
+                             "messages": [{"role": "user", "content": ""}]})
         return {"configured": True, "live": r.status_code < 500,
                 "http_status": r.status_code}
     except Exception as e:
@@ -134,16 +139,22 @@ def _probe_calendar() -> dict:
         # (04-08-2026) en leert de gebruiker de statusbadge te negeren.
         # Alleen een echte 'error' is een storing.
         status = (last or {}).get("status")
+        # 'retry' is dezelfde soort genade als 'missed': een transiente fout
+        # (bv. DNS nog niet terug na een wake) die `failures.py` nog niet
+        # escaleerde. Pas als de reeks lang genoeg is wordt de job-status
+        # 'error' en springt de badge terecht op rood (25 aug 2026).
         return {
             "configured": True,
             # calendar_id rechtstreeks uit config (geen _cal_id()-call die
             # in de dispatcher-laag niet bestaat en de probe liet crashen).
             "calendar_id": CALENDAR_CALENDAR_ID or "primary",
             "last_sync": last,
-            "live": status in ("ok", "missed"),
+            "live": status in ("ok", "missed", "retry"),
             "note": ("laatste run overgeslagen (machine sliep of server lag stil) "
                      "— draait vanzelf bij de volgende geplande run"
-                     if status == "missed" else None),
+                     if status == "missed" else
+                     "tijdelijke hik, probeert het vanzelf opnieuw"
+                     if status == "retry" else None),
         }
     except Exception as e:
         return {"configured": True, "live": None, "error": str(e)[:160]}
@@ -557,6 +568,8 @@ def _summary_line(items: dict, status: str) -> str:
         cal_status = (cal.get("last_sync") or {}).get("status")
         if cal_status == "missed":
             parts.append("agenda-sync run overgeslagen (herstelt zichzelf)")
+        elif cal_status == "retry":
+            parts.append("agenda-sync tijdelijke hik (probeert vanzelf opnieuw)")
         else:
             parts.append("agenda-sync " + ("ok" if cal.get("live") else "FOUT"))
     t = items["llm"]["today"]
