@@ -242,6 +242,16 @@ def _needs_travel(location: str, is_remote: bool) -> bool:
     return not any(t in loc for t in _HOME_BASE_TOKENS)
 
 
+def _travel_buffer_minutes(location: str) -> int:
+    """Echte reistijd (enkele richting, wordt heen én terug toegepast) als
+    de Maps-integratie geconfigureerd is; anders de vaste buffer. Retourneert
+    altijd een bruikbaar getal, nooit None — de aanroeper hoeft zelf geen
+    fallback te kennen."""
+    from . import travel as travel_mod
+    minutes = travel_mod.travel_minutes_sync(location)
+    return minutes if minutes is not None else _TRAVEL_BUFFER_MIN
+
+
 def _free_busy_conflict(start: datetime, end: datetime) -> tuple:
     """Vraag Google Calendar free/busy (als gekoppeld).
 
@@ -324,9 +334,12 @@ def create_proposal(mailbox_id: str, inbox_id: int, subject: str, from_addr: str
     duration = appt["duration_min"] or _DEFAULT_DURATION_MIN
     end = start + timedelta(minutes=duration)
 
-    # Reistijd-buffer als onderweg.
+    # Reistijd-buffer als onderweg — echte route als Maps geconfigureerd is,
+    # anders de vaste 30 min. Sync HTTP-call: veilig hier, want create_proposal
+    # zelf draait al blokkerend in de mail-verwerking (die staat al in een
+    # threadpool, zie mail/service.py) — geen event loop om te blokkeren.
     travel = _needs_travel(appt["location"], appt["is_remote"])
-    travel_buffer = _TRAVEL_BUFFER_MIN if travel else 0
+    travel_buffer = _travel_buffer_minutes(appt["location"]) if travel else 0
     if travel:
         start = start - timedelta(minutes=travel_buffer)
         end = end + timedelta(minutes=travel_buffer)
@@ -601,6 +614,126 @@ def pending_proposals() -> List[Dict]:
 _WD_NAMEN = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"]
 _MAAND_NAMEN = ["januari", "februari", "maart", "april", "mei", "juni", "juli",
                 "augustus", "september", "oktober", "november", "december"]
+
+
+def _nl_datum(dt: datetime) -> str:
+    return f"{_WD_NAMEN[dt.weekday()]} {dt.day} {_MAAND_NAMEN[dt.month - 1]}"
+
+
+async def propose_from_text(text: str, customer_wa_id: Optional[str] = None) -> tuple:
+    """Vrije-tekst / spraak-opdracht → agenda-voorstel (review-gate) — zowel
+    voor Vincents eigen 'snel iets toevoegen' vanuit de Agenda-tab als voor
+    de WhatsApp-bridge en klant-Iris (die riepen tot 25 aug 2026 dezelfde
+    ~90 regels dubbel aan in bridge/actions.py:_cmd_calendar_add; dat is nu
+    een dunne wrapper om deze functie).
+
+    Parsed naar een afspraak, conflict-gecontroleerd, van een reistijd-buffer
+    voorzien (echte route als GOOGLE_MAPS_API_KEY/AGENDA_HOME_ADDRESS gezet
+    zijn, anders de vaste 30 min), en neergelegd als calendar_proposal
+    (status=pending_review) — boeken gebeurt pas bij goedkeuring, ook als
+    Vincent het zelf typte: NL-parsing is feilbaar genoeg (zie CLAUDE.md
+    §13a) dat één extra klik geen overbodige stap is.
+
+    Retourneert (ok: bool, message: str, proposal_id: int | None).
+    """
+    text = (text or "").strip()
+    if not text:
+        return False, "Geen opdracht meegegeven", None
+
+    from . import nl_command as nlc
+
+    cmd = nlc.parse_command(text)
+    if cmd.kind == "error":
+        return False, cmd.error or "Kon de opdracht niet lezen", None
+    cmd = nlc.check_conflict(cmd)
+
+    # Dezelfde opdracht twee keer indienen (dubbele tik, of een spraakopname
+    # die twee keer binnenkomt) mag geen twee voorstellen opleveren — gemeten
+    # 11 aug 2026: hetzelfde weekblok werd zo dubbel geboekt.
+    with get_conn() as conn:
+        dup = conn.execute(
+            "SELECT id, title, status FROM calendar_proposals "
+            "WHERE mailbox_id='iris-command' AND status IN ('pending_review','booked') "
+            "AND created_at >= datetime('now', '-15 minutes') "
+            "AND proposed_start = ? AND proposed_end = ? "
+            "AND COALESCE(recur_weekday, -1) = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (cmd.start.isoformat(), cmd.end.isoformat(),
+             cmd.recur_weekday if cmd.recur_weekday is not None else -1),
+        ).fetchone()
+    if dup:
+        stand = "al geboekt" if dup["status"] == "booked" else "wacht nog op jouw goedkeuring"
+        return False, (f"Dit voorstel bestaat al (#{dup['id']} '{dup['title']}', {stand}). "
+                        "Nog een keer indienen zou hetzelfde moment dubbel boeken — "
+                        "keur het bestaande voorstel goed/af in plaats van dit te herhalen."), None
+
+    # Reistijd-buffer als onderweg — zelfde logica als de mail-flow.
+    travel_buffer = 0
+    if _needs_travel(cmd.location or "", cmd.is_remote):
+        from . import travel as travel_mod
+        minutes = await travel_mod.travel_minutes(cmd.location or "")
+        travel_buffer = minutes if minutes is not None else _TRAVEL_BUFFER_MIN
+        cmd.start = cmd.start - timedelta(minutes=travel_buffer)
+        cmd.end = cmd.end + timedelta(minutes=travel_buffer)
+
+    conflict_txt = ""
+    if cmd.conflict:
+        st = cmd.conflict.get("status")
+        ov = cmd.conflict.get("overlaps") or []
+        if ov:
+            conflict_txt = ("LET OP: overlap met bestaande afspraak " +
+                            "; ".join(f"{c.get('start')}–{c.get('end')}" for c in ov[:2]) +
+                            ". Verplaats of kies een ander slot.")
+        elif st == "unavailable":
+            conflict_txt = "Niet op dubbele boeking gecontroleerd: geen agenda gekoppeld."
+        elif st == "error":
+            conflict_txt = "Niet op dubbele boeking gecontroleerd: agenda-check mislukte."
+
+    recur = cmd.recur_weekday
+    recur_count = cmd.recur_count
+    if cmd.all_day:
+        tijdvak = "hele dag (00:00-24:00)"
+    else:
+        tijdvak = f"{cmd.start.strftime('%H:%M')}-{cmd.end.strftime('%H:%M')} ({cmd.duration_min} min)"
+    reistijd_txt = f" Reistijd: {travel_buffer} min (enkele reis)." if travel_buffer else ""
+    rationale = (
+        f'Spraak/tekst-opdracht: "{cmd.raw}". '
+        f"Voorgesteld: {cmd.start.strftime('%a %d-%m')} {tijdvak} "
+        f"Locatie: {'Online' if cmd.is_remote else (cmd.location or 'niet genoemd')}."
+        + reistijd_txt
+        + (f" Terugkerend: elke {_WD_NAMEN[recur]}" + (f" ({recur_count} keer)" if recur_count else "") + "." if recur is not None else "")
+        + (f" {conflict_txt}" if conflict_txt else " Geen conflict gevonden.")
+    )
+    title = cmd.title
+    if recur is not None and not title.endswith("(wekelijks)"):
+        title = f"{title} (wekelijks)"
+
+    with get_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO calendar_proposals
+               (mailbox_id, inbox_id, from_addr, subject, title,
+                proposed_start, proposed_end, location, is_remote,
+                duration_min, travel_buffer_min, priority, conflict_note,
+                conflict_checked, rationale, recur_weekday, recur_count, all_day,
+                customer_wa_id, status, created_at)
+               VALUES ('iris-command', 0, 'iris-command', ?, ?, ?, ?, ?, ?,
+                       ?, ?, 'normal', ?, ?, ?, ?, ?, ?, ?, 'pending_review', datetime('now'))""",
+            (text[:120], title,
+             cmd.start.isoformat(), cmd.end.isoformat(),
+             "Online" if cmd.is_remote else (cmd.location or ""),
+             1 if cmd.is_remote else 0, cmd.duration_min, travel_buffer,
+             conflict_txt, cmd.conflict.get("status") if cmd.conflict else "ok",
+             rationale, recur if recur is not None else -1,
+             recur_count if recur_count is not None else -1,
+             1 if cmd.all_day else 0, customer_wa_id),
+        )
+        pid = cur.lastrowid
+
+    when = _nl_datum(cmd.start)
+    kind = "wekelijks terugkerend blok" if recur is not None else "afspraak"
+    conflict_flag = " ⚠️ CONFLICT" if (cmd.conflict and cmd.conflict.get("overlaps")) else ""
+    return True, (f"Voorstel {kind} aangemaakt: '{title}' op {when}.{conflict_flag} "
+                  "Keur goed om te boeken."), pid
 
 
 def _nl_datum_tijd(dt: datetime) -> str:

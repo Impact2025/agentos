@@ -519,9 +519,12 @@ async def _cmd_calendar_add(payload: Dict) -> Tuple[bool, str]:
 
     Payload: {'text': 'dinsdag 18 augustus om 12.15 naar de tandarts'} of
     {'text': 'blok alle dinsdagen tussen 09.00 en 10.00'}.
-    Parsed naar een afspraak, conflict-gecontroleerd, en neergelegd als
-    calendar_proposal (status=pending_review) — boeken gebeurt pas als Vincent
-    het voorstel in Iris Remote goedkeurt.
+
+    Dunne wrapper om calendar/agent.py:propose_from_text() — die functie
+    bevatte tot 25 aug 2026 een woordelijke kopie van deze ~90 regels (ontstaan
+    doordat de Agenda-tab in de webUI dezelfde parse-conflict-boek-keten nodig
+    kreeg), en twee kopieen van dezelfde logica is precies hoe zulke ketens uit
+    elkaar gaan lopen.
 
     Optioneel `customer_wa_id`: gezet door klant-Iris (_customer_core.js:
     stel_afspraak_voor) — het WhatsApp-nummer om de goedkeur/afwijs-
@@ -532,99 +535,10 @@ async def _cmd_calendar_add(payload: Dict) -> Tuple[bool, str]:
     if not text:
         return False, "Geen opdracht meegegeven (verwacht payload.text)"
     customer_wa_id = (payload.get("customer_wa_id") or "").strip() or None
-    from ...domains.calendar import nl_command as nlc
     from ...domains.calendar import agent as cal_agent
-    from ...shared.database import get_conn
 
-    cmd = nlc.parse_command(text)
-    if cmd.kind == "error":
-        return False, cmd.error or "Kon de opdracht niet lezen"
-    cmd = nlc.check_conflict(cmd)
-
-    # Dezelfde opdracht twee keer indienen (dubbele tik op de knop, of een
-    # spraakopname die twee keer binnenkomt) mag geen twee voorstellen
-    # opleveren. Gemeten 11 aug 2026: "blok alle dinsdagen tussen 09.00 en
-    # 10.00" werd 2 minuten na elkaar ingediend, allebei goedgekeurd 11
-    # seconden na elkaar — een wekelijkse dinsdagblokkade staat sindsdien
-    # dubbel geboekt. Zelfde doelvenster (start/eind/weekdag) binnen een
-    # kwartier = hetzelfde voorstel, ongeacht kleine tekstverschillen.
-    with get_conn() as conn:
-        dup = conn.execute(
-            "SELECT id, title, status FROM calendar_proposals "
-            "WHERE mailbox_id='iris-command' AND status IN ('pending_review','booked') "
-            "AND created_at >= datetime('now', '-15 minutes') "
-            "AND proposed_start = ? AND proposed_end = ? "
-            "AND COALESCE(recur_weekday, -1) = ? "
-            "ORDER BY created_at DESC LIMIT 1",
-            (cmd.start.isoformat(), cmd.end.isoformat(),
-             cmd.recur_weekday if cmd.recur_weekday is not None else -1),
-        ).fetchone()
-    if dup:
-        stand = "al geboekt" if dup["status"] == "booked" else "wacht nog op jouw goedkeuring"
-        return False, (f"Dit voorstel bestaat al (#{dup['id']} '{dup['title']}', {stand}). "
-                        "Nog een keer indienen zou hetzelfde moment dubbel boeken — "
-                        "keur het bestaande voorstel goed/af in plaats van dit te herhalen.")
-
-    # Bouw rationale (conflict-analyse voor de mens).
-    conflict_txt = ""
-    if cmd.conflict:
-        st = cmd.conflict.get("status")
-        ov = cmd.conflict.get("overlaps") or []
-        if ov:
-            conflict_txt = ("LET OP: overlap met bestaande afspraak " +
-                            "; ".join(f"{c.get('start')}–{c.get('end')}" for c in ov[:2]) +
-                            ". Verplaats of kies een ander slot.")
-            cmd.title = cmd.title  # conflict blijft zichtbaar in de titel-context
-        elif st == "unavailable":
-            conflict_txt = "Niet op dubbele boeking gecontroleerd: geen agenda gekoppeld."
-        elif st == "error":
-            conflict_txt = "Niet op dubbele boeking gecontroleerd: agenda-check mislukte."
-
-    recur = cmd.recur_weekday
-    recur_count = cmd.recur_count
-    if cmd.all_day:
-        tijdvak = "hele dag (00:00-24:00)"
-    else:
-        tijdvak = f"{cmd.start.strftime('%H:%M')}-{cmd.end.strftime('%H:%M')} ({cmd.duration_min} min)"
-    rationale = (
-        f'Spraak/tekst-opdracht: "{cmd.raw}". '
-        f"Voorgesteld: {cmd.start.strftime('%a %d-%m')} {tijdvak} "
-        f"Locatie: {'Online' if cmd.is_remote else (cmd.location or 'niet genoemd')}. "
-        + (f"Terugkerend: elke {_wd_nl(recur)}" + (f" ({recur_count} keer)" if recur_count else "") + "." if recur is not None else "")
-        + (f" {conflict_txt}" if conflict_txt else " Geen conflict gevonden.")
-    )
-    # Titel: parse_command levert al '(wekelijks)' bij recursief; niet nog een
-    # keer dubbel plakken.
-    title = cmd.title
-    if recur is not None and not title.endswith("(wekelijks)"):
-        title = f"{title} (wekelijks)"
-
-    with get_conn() as conn:
-        cur = conn.execute(
-            """INSERT INTO calendar_proposals
-               (mailbox_id, inbox_id, from_addr, subject, title,
-                proposed_start, proposed_end, location, is_remote,
-                duration_min, travel_buffer_min, priority, conflict_note,
-                conflict_checked, rationale, recur_weekday, recur_count, all_day,
-                customer_wa_id, status, created_at)
-               VALUES ('iris-command', 0, 'iris-command', ?, ?, ?, ?, ?, ?,
-                       ?, 0, 'normal', ?, ?, ?, ?, ?, ?, ?, 'pending_review', datetime('now'))""",
-            (text[:120], title,
-             cmd.start.isoformat(), cmd.end.isoformat(),
-             "Online" if cmd.is_remote else (cmd.location or ""),
-             1 if cmd.is_remote else 0, cmd.duration_min,
-             conflict_txt, cmd.conflict.get("status") if cmd.conflict else "ok",
-             rationale, recur if recur is not None else -1,
-             recur_count if recur_count is not None else -1,
-             1 if cmd.all_day else 0, customer_wa_id),
-        )
-        pid = cur.lastrowid
-
-    when = _nl_date(cmd.start)
-    kind = "wekelijks terugkerend blok" if recur is not None else "afspraak"
-    conflict_flag = " ⚠️ CONFLICT" if (cmd.conflict and cmd.conflict.get("overlaps")) else ""
-    return True, (f"Voorstel {kind} aangemaakt: '{title}' op {when}.{conflict_flag} "
-                  f"Keur goed in Iris Remote om te boeken.")
+    ok, message, _pid = await cal_agent.propose_from_text(text, customer_wa_id=customer_wa_id)
+    return ok, message
 
 
 async def _cmd_customer_email(payload: Dict) -> Tuple[bool, str]:

@@ -249,6 +249,27 @@ def _extract_attendees(text: str) -> List[str]:
     return out
 
 
+_LOCATION_RE = re.compile(
+    r"\bbij\s+(?:de\s+|het\s+)?([a-zA-Zà-öø-ÿÀ-ÖØ-ß0-9][\w\s'-]{1,40}?)"
+    r"(?=\s+(?:om|op|van|tot|tussen|met)\b|[,.;]|$)",
+    re.IGNORECASE,
+)
+
+
+def _extract_location(text: str) -> str:
+    """'dinsdag 14 uur bij de tandarts' -> 'Tandarts'. Bewust smal (alleen het
+    voorzetsel 'bij'): 'met' is al gereserveerd voor deelnemers (_extract_
+    attendees), en een breder patroon zou een aanwezige ('bij Thijs langs')
+    als locatie lezen i.p.v. als persoon. Nodig voor de reistijd-buffer in
+    agent.py:propose_from_text — zonder dit blijft `location` altijd leeg en
+    krijgt geen enkele getypte opdracht een reisbuffer, ook niet de vaste."""
+    m = _LOCATION_RE.search(text)
+    if not m:
+        return ""
+    loc = m.group(1).strip()
+    return loc.capitalize() if loc else ""
+
+
 def _is_remote(text: str) -> bool:
     return any(t in text.lower() for t in (
         "online", "teams", "zoom", "meet", "videocall", "videogesprek",
@@ -295,6 +316,7 @@ def parse_command(text: str) -> ParsedCommand:
 
     attendees = _extract_attendees(raw)
     is_remote = _is_remote(raw)
+    location = "" if is_remote else _extract_location(raw)
     tijd_span = _parse_time_span(low)
     duration = _duration_from_text(raw, tijd_span)
 
@@ -347,7 +369,7 @@ def parse_command(text: str) -> ParsedCommand:
                 start=start, end=end, recur_weekday=wd,
                 recur_count=recur_count,
                 duration_min=delta_min, is_remote=is_remote,
-                attendees=attendees, raw=raw,
+                attendees=attendees, raw=raw, location=location,
             )
 
     # ── Enkele afspraak ──
@@ -447,7 +469,7 @@ def parse_command(text: str) -> ParsedCommand:
     return ParsedCommand(
         kind="single", title=title, start=base, end=end,
         is_remote=is_remote, attendees=attendees,
-        duration_min=duration, raw=raw, all_day=all_day,
+        duration_min=duration, raw=raw, all_day=all_day, location=location,
     )
 
 

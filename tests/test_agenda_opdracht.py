@@ -137,3 +137,25 @@ def test_online_afspraak_wordt_herkend(dinsdag):
     """Relevant voor de reisbuffer: online betekent geen reistijd eromheen."""
     cmd = nlc.parse_command("morgen 10.00 teams met Marieke")
     assert cmd.is_remote is True
+
+
+# ── Locatie (voor de reistijd-buffer, 25 aug 2026) ─────────────────────────
+
+def test_bij_locatie_wordt_herkend(dinsdag):
+    cmd = nlc.parse_command("dinsdag 14 uur bij de tandarts")
+    assert cmd.location == "Tandarts"
+
+
+def test_bij_locatie_stopt_bij_volgend_voorzetsel(dinsdag):
+    cmd = nlc.parse_command("donderdag 15 uur bij de notaris om het contract te tekenen")
+    assert cmd.location == "Notaris"
+
+
+def test_online_afspraak_krijgt_geen_locatie(dinsdag):
+    cmd = nlc.parse_command("morgen 10.00 teams bij de klant")
+    assert cmd.location == ""
+
+
+def test_geen_bij_geeft_lege_locatie(dinsdag):
+    cmd = nlc.parse_command("dinsdag 14 uur teamoverleg")
+    assert cmd.location == ""

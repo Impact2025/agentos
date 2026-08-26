@@ -46,6 +46,23 @@ class AttendeeInfoRequest(BaseModel):
     force: bool = False
 
 
+class CommandRequest(BaseModel):
+    text: str
+
+
+@router.post("/command")
+async def command(body: CommandRequest):
+    """Vrije tekst -> agenda-voorstel (review-gate), voor de 'snel iets
+    toevoegen'-invoer in de Agenda-tab. Zelfde functie als de WhatsApp-
+    bridge/klant-Iris gebruiken (calendar/agent.py:propose_from_text) — één
+    parse-conflict-boek-keten voor alle drie de ingangen."""
+    from . import agent as agenda_agent
+    ok, message, proposal_id = await agenda_agent.propose_from_text(body.text)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    return {"ok": True, "message": message, "proposal_id": proposal_id}
+
+
 @router.get("/proposals")
 async def proposals():
     """Lijst open afspraak-voorstellen (uit mail gedetecteerd)."""
