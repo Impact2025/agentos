@@ -550,6 +550,11 @@ async def sync_once() -> Dict[str, Any]:
         from . import impact_leads
         summary["impact_leads"] = await impact_leads.process_pending()
 
+        # AI Leadership Lab-leads (26 aug 2026, weareimpact.nl/lab): zelfde
+        # eigen-try/except-redenering als impact_leads hierboven.
+        from . import workshop_leads
+        summary["workshop_leads"] = await workshop_leads.process_pending()
+
         # LSP-workshop (24 aug 2026): zelfde eigen-try/except-redenering als
         # impact_leads hierboven — de rij bestaat al volledig (WhatsApp heeft
         # het rapport al verstuurd), dit logt alleen de Actiecentrum-kaart.

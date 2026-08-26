@@ -820,6 +820,94 @@ Regels:
             f"## Notities\n- \n"
         )
 
+    def capture_workshop_lead(self, lead: Dict, verslag: str, enrichment: Dict) -> Dict:
+        """AI Leadership Lab-lead (weareimpact.nl/lab) vastleggen. Zelfde
+        dedupe-op-e-mail als capture_impact_calculator_lead hierboven —
+        een lead die al verder in de funnel staat wordt nooit teruggezet."""
+        email = (lead.get("email") or "").strip().lower()
+        if not email:
+            return {"id": None, "is_new": False, "reason": "geen e-mailadres"}
+        naam = (lead.get("naam") or "").strip()
+        organisatie = (lead.get("organisatie") or "").strip()
+        org_name = organisatie or naam or email
+
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM leads WHERE lower(email)=?", (email,)
+            ).fetchone()
+        if row:
+            existing = dict(row)
+            with get_conn() as conn:
+                conn.execute(
+                    "UPDATE leads SET summary = ?, updated_at = ? WHERE id = ?",
+                    (verslag, _now(), existing["id"]),
+                )
+            return {"id": existing["id"], "is_new": False,
+                    "org_name": existing["org_name"], "status": existing["status"]}
+
+        slug = self._lead_slug(org_name)
+        obs_path = f"Leads/{slug}.md"
+        contacts = [{"naam": naam, "email": email}] if naam else []
+        lead_row = {
+            "org_name": org_name,
+            "website": enrichment.get("website", ""),
+            "email": email,
+            "contacts": contacts,
+            "summary": verslag,
+            "relevance": "hoog",
+            "status": "valid",
+            "search_query": "ai-leadership-lab",
+            "obsidian_path": obs_path,
+            "lead_type": "workshop",
+            "score": 80,
+            "tags": ["ai-leadership-lab", "workshop", "inbound", "warm"],
+        }
+        saved = self.save_to_db(lead_row)
+
+        try:
+            from ..chat.obsidian import ObsidianService
+            from ...shared.config import OBSIDIAN_VAULT_PATH
+            obs = ObsidianService(OBSIDIAN_VAULT_PATH)
+            if obs.is_configured:
+                path = obs.vault_path / obs_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if not path.exists():
+                    md = self._workshop_lead_markdown(
+                        org_name, naam, email, saved["id"], lead.get("rol", ""),
+                        lead.get("page_views") or [], verslag)
+                    path.write_text(md, encoding="utf-8")
+        except Exception as e:
+            log.warning("[leads] vault-schrijf workshop-lead mislukt: %s", e)
+
+        log.info("[leads] AI Leadership Lab-lead vastgelegd: %s (%s)", org_name, saved["id"])
+        return {"id": saved["id"], "is_new": True, "org_name": org_name, "status": "valid"}
+
+    @staticmethod
+    def _workshop_lead_markdown(org_name: str, naam: str, email: str, lead_id: str,
+                                rol: str, page_views: list, verslag: str) -> str:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        bezocht = "\n".join(
+            f"- {p.get('path', '?')}" + (f" — {p.get('title')}" if p.get("title") else "")
+            for p in page_views[:20]
+        ) or "- Geen paginabezoeken geregistreerd\n"
+        return (
+            f"---\n"
+            f"tags: [lead, ai-leadership-lab, workshop, warm]\n"
+            f"lead_id: {lead_id}\n"
+            f"email: {email}\n"
+            f"status: valid\n"
+            f"created: {now}\n"
+            f"---\n\n"
+            f"# {org_name}\n\n"
+            f"**Contactpersoon:** {naam or 'onbekend'}\n"
+            f"**Rol:** {rol or 'onbekend'}\n"
+            f"**E-mail:** {email}\n\n"
+            f"## Bron\nAI Leadership Lab (weareimpact.nl/lab), 27 augustus 2026, CIC Rotterdam\n\n"
+            f"## Bezochte pagina's op weareimpact.nl (recent)\n{bezocht}\n\n"
+            f"## Iris' verslag\n{verslag}\n\n"
+            f"## Notities\n- \n"
+        )
+
     def enrich_lead(self, lead_id: str) -> Optional[Dict]:
         """
         Scrape website opnieuw + AI-analyse + automatische Hunter-verrijking.

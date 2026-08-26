@@ -171,6 +171,28 @@ CREATE TABLE IF NOT EXISTS impact_leads (
 );
 CREATE INDEX IF NOT EXISTS idx_impact_leads_tenant ON impact_leads (tenant, status, created_at);
 
+-- AI Leadership Lab-leads (weareimpact.nl/lab, 26 aug 2026): zelfde vorm als
+-- impact_leads hierboven — de website pusht rechtstreeks (op=workshop-lead)
+-- en de bridge-sync haalt op (op=workshop-leads), verrijkt en laat Iris er
+-- een verslag over schrijven. page_views draagt wat de bezoeker op de site
+-- deed vóór hij zijn e-mailadres achterliet (recente paginabezoeken uit
+-- weareimpact.nl's eigen page_views-tabel, meegegeven door de website zelf —
+-- deze bridge-database kent die tabel niet).
+CREATE TABLE IF NOT EXISTS workshop_leads (
+  id           SERIAL PRIMARY KEY,
+  tenant       TEXT NOT NULL,
+  email        TEXT NOT NULL,
+  naam         TEXT,
+  organisatie  TEXT,
+  rol          TEXT,
+  page_views   JSONB,
+  status       TEXT NOT NULL DEFAULT 'pending',   -- pending | processed | failed
+  error        TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  processed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_workshop_leads_tenant ON workshop_leads (tenant, status, created_at);
+
 -- ── Voordeur ───────────────────────────────────────────────────────────────
 -- Sessies staan in de database en niet in een afgeleide HMAC, want een sessie
 -- die je niet kunt intrekken is geen sessie maar een tweede wachtwoord: hij

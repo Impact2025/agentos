@@ -22,6 +22,9 @@ export default async function handler(req, res) {
     if (op === 'impact-lead' && req.method === 'POST') return await impactLead(req, res, tenant);
     if (op === 'impact-leads' && req.method === 'GET') return await impactLeads(res, tenant);
     if (op === 'impact-leads-ack' && req.method === 'POST') return await impactLeadsAck(req, res, tenant);
+    if (op === 'workshop-lead' && req.method === 'POST') return await workshopLead(req, res, tenant);
+    if (op === 'workshop-leads' && req.method === 'GET') return await workshopLeads(res, tenant);
+    if (op === 'workshop-leads-ack' && req.method === 'POST') return await workshopLeadsAck(req, res, tenant);
     if (op === 'customer-notify' && req.method === 'POST') return await customerNotify(req, res, tenant);
     if (op === 'lsp-submissions' && req.method === 'GET') return await lspSubmissions(res, tenant);
     if (op === 'lsp-submissions-ack' && req.method === 'POST') return await lspSubmissionsAck(req, res, tenant);
@@ -240,6 +243,41 @@ async function impactLeadsAck(req, res, tenant) {
     const status = a.status === 'processed' ? 'processed' : 'failed';
     await sql`
       UPDATE impact_leads SET status = ${status},
+             error = ${String(a.error || '').slice(0, 500) || null}, processed_at = now()
+      WHERE id = ${a.id} AND tenant = ${tenant} AND status = 'pending'`;
+  }
+  return json(res, 200, { ok: true, acked: acks.length });
+}
+
+// AI Leadership Lab-leads (weareimpact.nl/lab) — zelfde pending/ack-vorm als
+// impact_leads hierboven, zie schema.sql voor de motivatie.
+async function workshopLead(req, res, tenant) {
+  const body = req.body || {};
+  const email = String(body.email || '').trim();
+  if (!email || !email.includes('@')) {
+    return json(res, 400, { error: 'ongeldig e-mailadres' });
+  }
+  await sql`
+    INSERT INTO workshop_leads (tenant, email, naam, organisatie, rol, page_views)
+    VALUES (${tenant}, ${email}, ${body.naam || null}, ${body.organisatie || null},
+            ${body.rol || null}, ${JSON.stringify(body.pageViews || [])}::jsonb)`;
+  return json(res, 200, { ok: true });
+}
+
+async function workshopLeads(res, tenant) {
+  const rows = await sql`
+    SELECT id, email, naam, organisatie, rol, page_views, created_at
+    FROM workshop_leads WHERE tenant = ${tenant} AND status = 'pending'
+    ORDER BY created_at ASC LIMIT 20`;
+  return json(res, 200, { leads: rows });
+}
+
+async function workshopLeadsAck(req, res, tenant) {
+  const acks = (req.body && req.body.acks) || [];
+  for (const a of acks) {
+    const status = a.status === 'processed' ? 'processed' : 'failed';
+    await sql`
+      UPDATE workshop_leads SET status = ${status},
              error = ${String(a.error || '').slice(0, 500) || null}, processed_at = now()
       WHERE id = ${a.id} AND tenant = ${tenant} AND status = 'pending'`;
   }
