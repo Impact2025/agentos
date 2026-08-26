@@ -247,6 +247,8 @@ function showEveningForm(inGate) {
         '<div class="ritual-section">' +
           '<div class="ritual-section-label">Energie &amp; morgen</div>' +
           _ritualScaleField('rit-e-energy', 'Energie nu', d.energy_level, 5) +
+          _ritField('rit-e-energy-gains', 'Gaf energie (één per regel)', '', true) +
+          _ritField('rit-e-energy-costs', 'Kostte energie (één per regel)', '', true) +
           _ritualListField('rit-e-top', 'Top 3 voor morgen', top3, 'Prioriteit...') +
         '</div>' +
         '<div class="ritual-section">' +
@@ -284,7 +286,30 @@ function saveEveningForm() {
     gratitude: document.getElementById('rit-e-dankbaarheid').value,
     focusCheck: focusCheck,
   };
-  post('/api/rituals/evening', body).then(function (d) { loadRituelenSection(); afterRitualSaved(); return d; }).catch(function (e) { alert(e.message); });
+  post('/api/rituals/evening', body).then(function (d) {
+    _saveEnergyLogFromEveningForm();
+    loadRituelenSection();
+    afterRitualSaved();
+    return d;
+  }).catch(function (e) { alert(e.message); });
+}
+
+// De Sparringpartner leest dit terug via /api/coach — apart van het ritueel
+// zelf opgeslagen (backend/domains/coach/coach_energy_log) zodat één dag
+// meerdere activiteiten kan dragen i.p.v. één vrij tekstveld.
+function _saveEnergyLogFromEveningForm() {
+  var gainsEl = document.getElementById('rit-e-energy-gains');
+  var costsEl = document.getElementById('rit-e-energy-costs');
+  if (!gainsEl || !costsEl) return;
+  var gains = gainsEl.value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+  var costs = costsEl.value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+  var entries = gains.map(function (activity) { return { activity: activity, direction: 'gain' }; })
+    .concat(costs.map(function (activity) { return { activity: activity, direction: 'cost' }; }));
+  if (!entries.length) return;
+  var today = new Date().toISOString().slice(0, 10);
+  post('/api/coach/energy-log', { date: today, entries: entries }).catch(function (e) {
+    console.error('[coach energy-log]', e);
+  });
 }
 
 // ── Weekstart / Weekreview ──────────────────────────────────────────

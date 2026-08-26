@@ -220,6 +220,20 @@ REPORT_EMAIL_TO: str = os.getenv("REPORT_EMAIL_TO", "v.munster@weareimpact.nl")
 RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
 RESEND_FROM_EMAIL: str = os.getenv("RESEND_FROM_EMAIL", "")
 
+# ── Facturatie (DigiBoox) ────────────────────────────────────────────────
+# DigiBoox heeft geen publieke API (nagezocht 25 aug 2026: geen REST-API, geen
+# Zapier/Make-integratie — alleen een persoonlijk mailadres met eigen OCR
+# ('ScanPilot AI') en een Excel-importwizard). Bonnetjes/inkoopfacturen gaan
+# daarom automatisch per mail naar dat adres; verkoopfacturen en debiteuren
+# blijven één handmatige import-klik in DigiBoox zelf — leeg = die stap staat
+# uit (net als BRIDGE_REMOTE_URL/BEWAARDVOORJOU_ORDERS_URL: stil overslaan is
+# dan juist, geen gegokte default).
+DIGIBOOX_RECEIPT_EMAIL: str = os.getenv("DIGIBOOX_RECEIPT_EMAIL", "")
+# Boven hoeveel dagen een debiteuren-snapshot te oud is om een herinnering op
+# te baseren — een aanmaning op een oude stand kan een al betaalde factuur
+# aanmanen (invariant `debiteuren_snapshot_verouderd`).
+BILLING_DEBTOR_SNAPSHOT_STALE_DAYS: int = int(os.getenv("BILLING_DEBTOR_SNAPSHOT_STALE_DAYS", "14"))
+
 # Google Indexing API (urlNotifications.publish) voor directe indexering na
 # publicatie. Default uit: officieel alleen voor JobPosting/Livestream-content
 # en het service-account moet Owner zijn in Search Console. De nette route
@@ -241,6 +255,34 @@ CONTENT_MULTIPLIER_ENABLED: bool = os.getenv("CONTENT_MULTIPLIER_ENABLED", "1") 
 BRIDGE_REMOTE_URL: str = os.getenv("BRIDGE_REMOTE_URL", "")
 BRIDGE_TOKEN: str = os.getenv("BRIDGE_TOKEN", "")
 BRIDGE_SYNC_MINUTES: int = int(os.getenv("BRIDGE_SYNC_MINUTES", "3"))
+# Komma-gescheiden projectnamen die Iris Remote mag tonen (projectpaneel,
+# inboxkaarten, SEO-pulse). Leeg = alles, zoals voorheen. Matcht op
+# squash_project (spatie-/accentloos), dus 'WeAreImpact' en 'weareimpact' zijn
+# hetzelfde — zie shared/projects.py. Geldt bewust NIET voor WhatsApp-
+# klantgesprekken (Vincent bedient elke klant via hetzelfde nummer) en niet
+# voor de onboardingwizard (die moet een nieuw project juist kunnen tonen).
+BRIDGE_VISIBLE_PROJECTS: str = os.getenv("BRIDGE_VISIBLE_PROJECTS", "")
+
+# ── De Sparringpartner: brug naar mijn-ondernemers-os (los Next.js-project) ─
+# Eén gedeeld geheim, symmetrisch: ImpactOS controleert hem op inkomende
+# calls van mijn-ondernemers-os (GET /api/coach-context/holding), en
+# mijn-ondernemers-os controleert diezelfde waarde op inkomende calls vanuit
+# ImpactOS (GET /api/coach/signal). Beide zijn Vincents eigen systemen, dus
+# één geheim is genoeg — geen aparte richting-tokens nodig.
+# Leeg laten = uit; de context-route weigert dan hard (fail closed, dit
+# ontsluit interne bedrijfsdata) en de signaal-job slaat stil over (een niet-
+# geconfigureerd kanaal is geen storing, zelfde regel als de rest van dit domein).
+MIJN_ONDERNEMERS_OS_URL: str = os.getenv("MIJN_ONDERNEMERS_OS_URL", "")
+COACH_BRIDGE_TOKEN: str = os.getenv("COACH_BRIDGE_TOKEN", "")
+
+# ── Agenda: echte reistijd i.p.v. de vaste 30-minuten-buffer ────────────
+# Beide leeg = uit, en de agenda-agent valt terug op de vaste buffer
+# (_TRAVEL_BUFFER_MIN in calendar/agent.py) — geen crash, gewoon minder
+# precies. AGENDA_HOME_ADDRESS is het vertrekpunt voor de Distance Matrix-
+# call (Vincents huis/kantoor); GOOGLE_MAPS_API_KEY is een eigen, aparte key
+# (niet de service-account-credentials van de Calendar-koppeling zelf).
+GOOGLE_MAPS_API_KEY: str = os.getenv("GOOGLE_MAPS_API_KEY", "")
+AGENDA_HOME_ADDRESS: str = os.getenv("AGENDA_HOME_ADDRESS", "")
 
 # ── Bewaard voor Jou: bestellingen + inkoop-signalering ─────────────────
 # Leest read-only bestellingen bij life-journey-backend (het "memories"-

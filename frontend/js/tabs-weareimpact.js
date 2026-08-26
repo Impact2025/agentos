@@ -41,10 +41,25 @@ function renderWeAreImpactDashboard(el) {
       html += '<div id="wai-pulse-host"></div>';
       html += '<div id="wai-banner">' + (typeof renderAdviceBanner === 'function' ? renderAdviceBanner(advice) : '') + '</div>';
       html += waiIrisAnalysis(advice);
+      // De Sparringpartner — persoonlijke business- en welzijnscoach. Bewust
+      // alleen hier, niet op de generieke Control Room: dit ís voor Vincent
+      // de plek waar hij zijn dag begint, en de coach gaat over hem, niet
+      // over een willekeurig project.
+      html += '<div class="section-card" style="margin-bottom:16px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+        '<h4 style="font-size:13px;font-weight:700;color:var(--text)">De Sparringpartner — business- en welzijnscoach</h4>' +
+        '<button id="coach-ask-btn" onclick="askCoachReflection()" class="btn btn-primary btn-sm">Vraag reflectie</button>' +
+        '</div>' +
+        '<div id="coach-panel" style="font-size:12px"><div style="color:#64748b">Laden...</div></div></div>';
       html += '<div id="wai-news-host">' + waiNewsBlock(news) + '</div>';
       html += '<div id="wai-whatsapp-host">' + waiWhatsAppBlock(wa, waEsc, waConvos) + '</div>';
-      html += '<div class="section-card" style="margin-bottom:16px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><h3 style="font-size:14px;font-weight:700;color:var(--text)">Wacht op jou — WeAreImpact (' + (ac.items||[]).length + ')</h3><span style="font-size:11px;color:#94a3b8">klik = klaar</span></div>' +
-              '<div id="wai-ac"></div></div>';
+      // Gesplitst per soort (mail/helpdesk, fouten, overig) i.p.v. één
+      // gemengde lijst — zelfde indeling en volgorde als de generieke
+      // per-project Dashboard-tab (shell.js), en komt hier ook ná de
+      // management info + belangrijkste-taak-blokken hierboven.
+      html += '<div id="wai-ac-mail"></div>';
+      html += '<div id="wai-ac-errors"></div>';
+      html += '<div id="wai-ac-other"></div>';
       html += waiChatBlock();
       html += '<div class="section-card" style="margin-bottom:16px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><h3 style="font-size:13px;font-weight:700;color:var(--text)">Recente activiteit</h3><button onclick="waiLoadActivity()" class="btn btn-sm btn-ghost">Ververs</button></div>' +
               '<div id="wai-activity" style="background:#0f172a;border-radius:8px;padding:8px;font-family:monospace;font-size:11px;max-height:200px;overflow-y:auto"></div></div>';
@@ -55,6 +70,7 @@ function renderWeAreImpactDashboard(el) {
       waiStartWaPoll();
       waiLoadPulse();
       waiStartPulsePoll();
+      loadCoachPanel();
     }).catch(function(e){
       el.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>';
     });
@@ -526,15 +542,43 @@ async function waiSendChat() {
 }
 
 // ── Actiecentrum + activiteit (lokaal op dit scherm) ──────────────────────
+// Hertgebruikt _renderAcCategory + _PROJ_AC_MAIL_KINDS uit shell.js (laadt
+// vóór dit bestand, zie index.html) — dezelfde mail/fouten/overig-splitsing
+// en kaartopmaak als de generieke per-project Dashboard-tab, i.p.v. een
+// eigen tweede implementatie die geruisloos uit de pas zou kunnen lopen.
 function waiRenderActionCenter(data) {
-  var el = document.getElementById('wai-ac');
-  if (!el) return;
+  var mailEl = document.getElementById('wai-ac-mail');
+  var errEl = document.getElementById('wai-ac-errors');
+  var otherEl = document.getElementById('wai-ac-other');
+  if (!mailEl) return;
   var items = (data && data.items) || [];
   if (!items.length) {
-    el.innerHTML = '<div style="font-size:12px;color:var(--ok-fg);background:var(--ok-bg);border:1px solid var(--ok-border);padding:8px 10px;border-radius:8px">Niets wacht op jou voor WeAreImpact. Alles draait.</div>';
+    mailEl.innerHTML = '<div style="font-size:12px;color:var(--ok-fg);background:var(--ok-bg);border:1px solid var(--ok-border);padding:8px 10px;border-radius:8px;margin-bottom:16px">Niets wacht op jou voor WeAreImpact. Alles draait.</div>';
+    if (errEl) errEl.innerHTML = '';
+    if (otherEl) otherEl.innerHTML = '';
     return;
   }
-  el.innerHTML = items.slice(0, 12).map(function(it, idx){
+  var mailItems = [], errorItems = [], otherItems = [];
+  var mailKinds = (typeof _PROJ_AC_MAIL_KINDS !== 'undefined') ? _PROJ_AC_MAIL_KINDS : { mail_reply: 1, personal_mail: 1, social_msg: 1 };
+  items.forEach(function(it){
+    if (mailKinds[it.kind]) mailItems.push(it);
+    else if (it.kind === 'error') errorItems.push(it);
+    else otherItems.push(it);
+  });
+  if (typeof _renderAcCategory === 'function') {
+    var errorBar = '';
+    if (errorItems.length >= 1) {
+      errorBar = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--info-bg);border:1px solid var(--info-border);border-radius:var(--radius-sm)">' +
+        '<span style="font-size:11px;color:var(--info-fg);flex:1"><b>' + errorItems.length + ' foutkaart(en)</b> — laat Iris ze allemaal analyseren &amp; afhandelen:</span>' +
+        '<button onclick="acTriageAll(this)" class="btn btn-primary btn-sm">Analyseer alle fouten</button></div>';
+    }
+    _renderAcCategory('wai-ac-mail', 'Mail & helpdesk', mailItems, currentProject, '');
+    _renderAcCategory('wai-ac-errors', 'Fouten', errorItems, currentProject, errorBar);
+    _renderAcCategory('wai-ac-other', 'Overige acties', otherItems, currentProject, '');
+    return;
+  }
+  // Terugval als shell.js om wat voor reden dan ook niet geladen is.
+  mailEl.innerHTML = items.slice(0, 12).map(function(it){
     var meta = (_acKindMeta && _acKindMeta[it.kind]) || { pill: 'pill-neutral', label: it.kind };
     var border = (typeof _pillBorderColor === 'function') ? _pillBorderColor(meta.pill) : 'var(--card-border)';
     var actions = (it.actions || []).map(function(a){

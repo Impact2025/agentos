@@ -38,7 +38,13 @@ SESSION_COOKIE_NAME = os.environ.get("IMPACTOS_COOKIE_NAME", "impactos_session")
 # /api/orchestrator/*: die triggert echte Gauntlet-LLM-runs en hoort dus achter
 # dezelfde sessie-gate als de rest, de cron/interne triggers lopen server-side
 # (binnen het proces) en gaan niet door deze middleware.
-PUBLIC_PREFIXES = ("/api/auth/", "/api/status", "/api/healthcheck")
+# /api/coach-context/ is de uitzondering: geen browser-sessie (mijn-ondernemers-
+# os is een extern, los proces zonder cookie), maar wél een eigen gate — de
+# router zelf vergelijkt een Bearer-token met COACH_BRIDGE_TOKEN en weigert
+# fail-closed (503 zonder configuratie, 401 op een fout token). Zonder deze
+# uitzondering zou élke aanvraag hier stranden op de sessie-cookie-check vóórdat
+# die eigen token-check ooit wordt bereikt.
+PUBLIC_PREFIXES = ("/api/auth/", "/api/status", "/api/healthcheck", "/api/coach-context/")
 
 
 def _secret() -> bytes:
