@@ -2367,7 +2367,7 @@ async def run_biweekly_content_job(at: Optional[Tuple[str, int, int]] = None) ->
     results: Dict[str, str] = {}
     for site in sites_service.list_sites():
         full_site = sites_service.get_site(site["id"])
-        if not full_site or not full_site.get("auto_content_enabled"):
+        if not full_site or not full_site.get("auto_content_enabled") or full_site.get("paused"):
             continue
         if at is not None and not _site_scheduled_now(full_site, *at):
             continue
@@ -2481,6 +2481,15 @@ _INTERNAL_TITLE_PREFIXES = (
     "samenvatting:", "onderzoek:", "audit:", "evaluatie:", "checklist:",
     "todo", "to-do", "actieplan:", "stappenplan voor het team",
     "briefing:", "memo:", "verslag:", "logboek:", "backlog",
+    # 26 aug 2026: 'Interne link- en contentgap-analyse' glipte hierlangs — het
+    # opent met het woord 'interne', dat zichzelf al beschrijft als niet voor
+    # bezoekers bedoeld, maar stond niet op deze lijst (alleen "analyse:" met
+    # dubbele punt stond erop, en dit is "…link- en contentgap-analyse" zonder
+    # dubbele punt aan het begin). Het doel dat dit opleverde faalde daardoor 3x
+    # op de kwaliteitsgate/site-mismatch in plaats van in één keer hier te
+    # stoppen — verspilde LLM-rondes voor een stuk dat nooit publiceerbaar kon
+    # zijn.
+    "interne ", "intern ",
 )
 
 # Een agent-taaktitel is een opdracht ("Schrijf …", "Publiceer …"), geen

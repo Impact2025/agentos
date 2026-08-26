@@ -26,10 +26,14 @@ def _clamp(v: float, lo: float = 0, hi: float = 100) -> float:
 
 def _site_projects(conn) -> List[Dict[str, Any]]:
     # Testsites tellen niet mee: anders wordt "til TestSite omhoog" het
-    # topadvies terwijl het geen echt project is.
+    # topadvies terwijl het geen echt project is. Gepauzeerde sites (bv. voor
+    # een demo/workshop) tellen ook niet mee: geen cijfer, geen advies, geen
+    # actie — anders krijgt Iris een project te zien waar ze toch niets aan
+    # mag doen, en verschijnt het alsnog als "aandachtspunt" in de briefing.
     return [dict(r) for r in conn.execute(
         "SELECT id, name, base_url, gsc_property, auto_content_enabled, "
-        "content_batch_size FROM sites WHERE COALESCE(is_test, 0) = 0"
+        "content_batch_size FROM sites WHERE COALESCE(is_test, 0) = 0 "
+        "AND COALESCE(paused, 0) = 0"
     ).fetchall()]
 
 
@@ -195,6 +199,18 @@ def _execution_pillar(conn, project_names: List[str]) -> Dict[str, Any]:
     running = by_status.get("running", 0)
     partial = by_status.get("partial", 0)
 
+    # Alleen 'partial'-doelen zónder enig voltooid werk tellen mee als
+    # "vastgelopen" in het knelpunt hieronder — een partial doel dat al iets
+    # opleverde (bijv. een artikel in de Wachtrij) is een correcte, ontworpen
+    # uitkomst en geen storing die een klik op "Oplossen" nog kan verhelpen
+    # (zelfde correctie als health/router.py:_collect_bugs, 26 aug 2026).
+    stuck_partial = conn.execute(
+        f"SELECT COUNT(*) AS n FROM goals "
+        f"WHERE lower(project) IN ({ph}) AND updated_at > datetime('now', '-30 days') "
+        f"AND status='partial' AND COALESCE(completed_tasks, 0) = 0",
+        [p.lower() for p in project_names],
+    ).fetchone()["n"]
+
     # Volledige teller over alle tijden — een doel dat jaren geleden klaar is
     # mag niet eeuwig een 20 opleveren als er nu niets meer gebeurt.
     all_rows = conn.execute(
@@ -231,6 +247,7 @@ def _execution_pillar(conn, project_names: List[str]) -> Dict[str, Any]:
         "completed_30d": completed,
         "failed_30d": failed,
         "partial_30d": partial,
+        "stuck_partial_30d": stuck_partial,
         "running": running,
         "by_status": by_status,
         "active_total": active_total,
@@ -795,7 +812,7 @@ def bottlenecks(snap: Dict[str, Any]) -> List[Dict[str, Any]]:
     # die vastzitten en wachten op de Oplossen-knop in het Actiecentrum".
     def _n(p):
         u = p["pillars"].get("uitvoering") or {}
-        return u.get("failed_30d", 0) + u.get("partial_30d", 0)
+        return u.get("failed_30d", 0) + u.get("stuck_partial_30d", 0)
     stalled = [p for p in projects if _n(p) > 0]
     if stalled:
         stalled.sort(key=_n, reverse=True)

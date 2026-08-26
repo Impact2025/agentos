@@ -61,6 +61,29 @@ async def test_content_run_onbekende_site_doet_niets(conn, actions_clean):
 
 
 @pytest.mark.asyncio
+async def test_content_run_en_seo_refresh_slaan_gepauzeerde_site_over(conn, actions_clean, monkeypatch):
+    # Workshop/demo-modus (26 aug 2026): een gepauzeerde site mag geen
+    # autonome content- of SEO-actie meer krijgen, ook niet als een fix-
+    # suggestie van vóór de pauze nog openstaat.
+    from backend.domains.iris import actions
+
+    conn.execute(
+        "INSERT OR REPLACE INTO sites (id, name, base_url, gsc_property, "
+        "auto_content_enabled, content_batch_size, paused, created_at) "
+        "VALUES ('paused-site', 'GepauzeerdProject', 'https://x.nl', "
+        "'sc-domain:x.nl', 1, 2, 1, datetime('now'))"
+    )
+    conn.commit()
+
+    async def fail_if_called(*a, **kw):
+        raise AssertionError("mag niet aangeroepen worden voor een gepauzeerde site")
+    monkeypatch.setattr("backend.domains.publish.content_pipeline.run_content_batch", fail_if_called)
+
+    assert await actions.content_run("GepauzeerdProject", 1, "x") is None
+    assert await actions.seo_refresh("GepauzeerdProject", 1, "x") is None
+
+
+@pytest.mark.asyncio
 async def test_outreach_run_zet_concepten_klaar_zonder_te_versturen(conn, actions_clean, monkeypatch):
     from backend.domains.iris import actions
 

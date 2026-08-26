@@ -507,7 +507,9 @@ async def _ensure_goal_coverage(goal_created_this_run: bool) -> Optional[str]:
     from . import actions as iris_actions
 
     with get_conn() as conn:
-        sites = [dict(r) for r in conn.execute("SELECT id, name FROM sites").fetchall()]
+        sites = [dict(r) for r in conn.execute(
+            "SELECT id, name FROM sites WHERE COALESCE(paused, 0) = 0"
+        ).fetchall()]
 
     kansen: List[Dict[str, Any]] = []
     for site in sites:

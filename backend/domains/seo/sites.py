@@ -16,7 +16,8 @@ _FIELDS = ("name", "base_url", "gsc_property", "publish_api_url", "publish_api_k
            "facebook_page_id", "facebook_page_token", "instagram_business_id",
            "twitter_api_key", "twitter_api_secret", "twitter_access_token", "twitter_access_secret",
            "auto_content_enabled", "external_db_url", "ga4_property_id",
-           "profile", "ctas", "content_batch_size", "indexnow_key", "content_schedule")
+           "profile", "ctas", "content_batch_size", "indexnow_key", "content_schedule",
+           "paused")
 
 # Secret velden die nooit kaal naar de frontend mogen — elk krijgt i.p.v. de waarde
 # een "<veld>_set" boolean terug (zelfde patroon als publish_api_key/linkedin_token).

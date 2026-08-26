@@ -105,6 +105,9 @@ async def content_run(site_ref: str, count: Any, reason: str) -> Optional[str]:
     if not site:
         logger.warning("[iris] content_run: site '%s' niet gevonden", site_ref)
         return None
+    if site.get("paused"):
+        logger.info("[iris] content_run voor %s overgeslagen — site staat op pauze", site["name"])
+        return None
     n = _clamp(count, 1, _autonomy_max(site["name"], "content_run_max", _CONTENT_RUN_MAX), 1)
     # pillar_guard kijkt ook naar Agent Control (agentctl_deploys) — zonder die
     # cross-check kan '_execute_content' vlak na deze run alsnog een tweede,
@@ -285,6 +288,9 @@ async def seo_refresh(site_ref: str, count: Any, reason: str) -> Optional[str]:
     site = _resolve_site(site_ref)
     if not site:
         logger.warning("[iris] seo_refresh: site '%s' niet gevonden", site_ref)
+        return None
+    if site.get("paused"):
+        logger.info("[iris] seo_refresh voor %s overgeslagen — site staat op pauze", site["name"])
         return None
     if pillar_guard.pillar_handled_today(site["name"], "seo"):
         logger.info("[iris] seo_refresh voor %s vandaag al gedraaid — overgeslagen", site["name"])

@@ -39,6 +39,7 @@ class SiteUpdate(BaseModel):
     ctas: Optional[str] = None                # JSON-lijst als string
     content_batch_size: Optional[int] = None
     content_schedule: Optional[str] = None     # JSON-lijst [{"day":"tue","hour":8,"minute":0},...]
+    paused: Optional[bool] = None
 
 
 @router.get("")

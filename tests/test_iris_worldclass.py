@@ -13,12 +13,12 @@ import uuid
 import pytest
 
 
-def _seed_site(conn, site_id, name, *, gsc="sc-domain:x.nl", is_test=0, auto=1):
+def _seed_site(conn, site_id, name, *, gsc="sc-domain:x.nl", is_test=0, auto=1, paused=0):
     conn.execute(
         "INSERT OR REPLACE INTO sites (id, name, base_url, gsc_property, "
-        "auto_content_enabled, content_batch_size, is_test, created_at) "
-        "VALUES (?, ?, 'https://x.nl', ?, ?, 1, ?, datetime('now'))",
-        (site_id, name, gsc, auto, is_test),
+        "auto_content_enabled, content_batch_size, is_test, paused, created_at) "
+        "VALUES (?, ?, 'https://x.nl', ?, ?, 1, ?, ?, datetime('now'))",
+        (site_id, name, gsc, auto, is_test, paused),
     )
 
 
@@ -93,6 +93,19 @@ def test_testsites_tellen_niet_mee(conn, iris_clean):
     names = {p["name"] for p in metrics._site_projects(conn)}
     assert "WkEcht" in names
     assert "WkTestSite" not in names
+
+
+def test_gepauzeerde_sites_tellen_niet_mee(conn, iris_clean):
+    # Workshop/demo-modus (26 aug 2026): een gepauzeerd project krijgt geen
+    # cijfer en geen advies meer — anders blijft het als "aandachtspunt"
+    # terugkomen in de briefing terwijl Iris er toch niets aan mag doen.
+    from backend.domains.iris import metrics
+    _seed_site(conn, "wk-live", "WkLive")
+    _seed_site(conn, "wk-paused", "WkGepauzeerd", paused=1)
+    conn.commit()
+    names = {p["name"] for p in metrics._site_projects(conn)}
+    assert "WkLive" in names
+    assert "WkGepauzeerd" not in names
 
 
 # ── Knelpunt-prioritering ────────────────────────────────────────────────────

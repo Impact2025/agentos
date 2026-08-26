@@ -70,6 +70,10 @@ CREATE TABLE IF NOT EXISTS sites (
     twitter_access_token  TEXT DEFAULT '',
     twitter_access_secret TEXT DEFAULT '',
     auto_content_enabled  INTEGER DEFAULT 0,
+    -- Tijdelijk op pauze (bv. voor een demo/workshop): geen Iris-cijfer, geen
+    -- Iris-acties, geen autonome content-/linkbuilding-batch voor deze site
+    -- zolang dit op 1 staat. Zie sites_router.py voor de toggle.
+    paused                INTEGER DEFAULT 0,
     created_at       TEXT NOT NULL
 );
 
@@ -1062,6 +1066,7 @@ def _migrate(conn) -> None:
         ("twitter_access_token",  "ALTER TABLE sites ADD COLUMN twitter_access_token TEXT DEFAULT ''"),
         ("twitter_access_secret", "ALTER TABLE sites ADD COLUMN twitter_access_secret TEXT DEFAULT ''"),
         ("auto_content_enabled",  "ALTER TABLE sites ADD COLUMN auto_content_enabled INTEGER DEFAULT 0"),
+        ("paused",                "ALTER TABLE sites ADD COLUMN paused INTEGER DEFAULT 0"),
         ("external_db_url",       "ALTER TABLE sites ADD COLUMN external_db_url TEXT DEFAULT ''"),
         ("ga4_property_id",       "ALTER TABLE sites ADD COLUMN ga4_property_id TEXT DEFAULT ''"),
         # Kennisbank (information gain) + batch + directe indexering
@@ -1992,6 +1997,13 @@ def _migrate(conn) -> None:
         # Door de klant zelf gegeven, ná de bevestiging, via het
         # deel_emailadres-tool (nooit vooraf gevraagd — zie _customer_core.js).
         ("customer_email", "ALTER TABLE calendar_proposals ADD COLUMN customer_email TEXT"),
+        # Door Iris gevonden vrij alternatief zodra er een conflict is
+        # (agent.py:_find_alt_slot) — leeg als er geen conflict was of geen
+        # alternatief binnen de zoekhorizon paste. Draagt de knop "stuur
+        # alternatief voorstel per mail" (26 aug 2026).
+        ("alt_slot_start", "ALTER TABLE calendar_proposals ADD COLUMN alt_slot_start TEXT"),
+        ("alt_slot_end", "ALTER TABLE calendar_proposals ADD COLUMN alt_slot_end TEXT"),
+        ("alt_mail_sent", "ALTER TABLE calendar_proposals ADD COLUMN alt_mail_sent INTEGER DEFAULT 0"),
     ):
         if col not in cp_cols:
             conn.execute(ddl)

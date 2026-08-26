@@ -363,7 +363,7 @@ async def run_weekly_linkbuilding() -> None:
         for site_summary in list_sites():
             from ..seo.sites import get_site
             site = get_site(site_summary["id"])
-            if not site or not (site.get("base_url") or "").strip():
+            if not site or not (site.get("base_url") or "").strip() or site.get("paused"):
                 continue
             report = await run_prospecting_for_site(site)
             total_q += report["qualified"]

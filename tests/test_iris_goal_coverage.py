@@ -57,6 +57,30 @@ async def test_geen_doel_als_deze_ronde_er_al_een_is_gemaakt(conn, coverage_clea
 
 
 @pytest.mark.asyncio
+async def test_gepauzeerde_site_krijgt_geen_vloer_doel(conn, coverage_clean, monkeypatch):
+    # Workshop/demo-modus (26 aug 2026): een gepauzeerd project mag geen
+    # nieuw doel krijgen, ook niet als het de enige site met een bewezen
+    # kans is — anders start Iris iets op precies het project dat stil moet
+    # blijven staan.
+    from backend.domains.iris import service
+    from backend.domains.seo import engine as demand_engine
+
+    conn.execute(
+        "INSERT OR REPLACE INTO sites (id, name, base_url, gsc_property, "
+        "auto_content_enabled, content_batch_size, paused, created_at) "
+        "VALUES ('paused-site', 'GepauzeerdProject', 'https://x.nl', "
+        "'sc-domain:x.nl', 1, 2, 1, datetime('now'))"
+    )
+    conn.commit()
+    monkeypatch.setattr(
+        demand_engine, "list_opportunities_truth",
+        lambda **kw: (_ for _ in ()).throw(
+            AssertionError("mag niet aangeroepen worden voor een gepauzeerde site")))
+    result = await service._ensure_goal_coverage(goal_created_this_run=False)
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_geen_kans_geen_doel(conn, coverage_clean, monkeypatch):
     from backend.domains.iris import service
     from backend.domains.seo import engine as demand_engine
