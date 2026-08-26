@@ -25,6 +25,9 @@ export default async function handler(req, res) {
     if (op === 'workshop-lead' && req.method === 'POST') return await workshopLead(req, res, tenant);
     if (op === 'workshop-leads' && req.method === 'GET') return await workshopLeads(res, tenant);
     if (op === 'workshop-leads-ack' && req.method === 'POST') return await workshopLeadsAck(req, res, tenant);
+    if (op === 'booking-lead' && req.method === 'POST') return await bookingLead(req, res, tenant);
+    if (op === 'booking-leads' && req.method === 'GET') return await bookingLeads(res, tenant);
+    if (op === 'booking-leads-ack' && req.method === 'POST') return await bookingLeadsAck(req, res, tenant);
     if (op === 'customer-notify' && req.method === 'POST') return await customerNotify(req, res, tenant);
     if (op === 'lsp-submissions' && req.method === 'GET') return await lspSubmissions(res, tenant);
     if (op === 'lsp-submissions-ack' && req.method === 'POST') return await lspSubmissionsAck(req, res, tenant);
@@ -278,6 +281,61 @@ async function workshopLeadsAck(req, res, tenant) {
     const status = a.status === 'processed' ? 'processed' : 'failed';
     await sql`
       UPDATE workshop_leads SET status = ${status},
+             error = ${String(a.error || '').slice(0, 500) || null}, processed_at = now()
+      WHERE id = ${a.id} AND tenant = ${tenant} AND status = 'pending'`;
+  }
+  return json(res, 200, { ok: true, acked: acks.length });
+}
+
+// Boekingsaanvragen (26 aug 2026, weareimpact.nl) — anders dan impact_leads/
+// workshop_leads hierboven is dit geen eenmalig feit maar een levenscyclus
+// (pending -> approved/rejected). De website pusht daarom bij élke
+// statuswijziging opnieuw met hetzelfde bookingRequestId; de upsert zet
+// status terug op 'pending' zodat ImpactOS 'm opnieuw oppikt, ongeacht wat
+// de vorige sync ermee deed. Zie backend/domains/bridge/booking_leads.py.
+async function bookingLead(req, res, tenant) {
+  const body = req.body || {};
+  const bookingRequestId = String(body.bookingRequestId || '').trim();
+  const email = String(body.customerEmail || '').trim();
+  if (!bookingRequestId || !email || !email.includes('@')) {
+    return json(res, 400, { error: 'ongeldige boekingsgegevens' });
+  }
+  await sql`
+    INSERT INTO booking_leads (
+      tenant, booking_request_id, booking_type, start_time, duration_minutes,
+      customer_name, customer_email, customer_phone, customer_organization,
+      notes, booking_status
+    ) VALUES (
+      ${tenant}, ${bookingRequestId}, ${body.bookingType || null},
+      ${body.startTime || null}, ${body.durationMinutes || null},
+      ${body.customerName || null}, ${email}, ${body.customerPhone || null},
+      ${body.customerOrganization || null}, ${body.notes || null},
+      ${body.bookingStatus || 'pending'}
+    )
+    ON CONFLICT (tenant, booking_request_id) DO UPDATE SET
+      booking_status = EXCLUDED.booking_status,
+      status = 'pending',
+      error = null,
+      updated_at = now()`;
+  return json(res, 200, { ok: true });
+}
+
+async function bookingLeads(res, tenant) {
+  const rows = await sql`
+    SELECT id, booking_request_id, booking_type, start_time, duration_minutes,
+           customer_name, customer_email, customer_phone, customer_organization,
+           notes, booking_status, created_at, updated_at
+    FROM booking_leads WHERE tenant = ${tenant} AND status = 'pending'
+    ORDER BY created_at ASC LIMIT 20`;
+  return json(res, 200, { leads: rows });
+}
+
+async function bookingLeadsAck(req, res, tenant) {
+  const acks = (req.body && req.body.acks) || [];
+  for (const a of acks) {
+    const status = a.status === 'processed' ? 'processed' : 'failed';
+    await sql`
+      UPDATE booking_leads SET status = ${status},
              error = ${String(a.error || '').slice(0, 500) || null}, processed_at = now()
       WHERE id = ${a.id} AND tenant = ${tenant} AND status = 'pending'`;
   }

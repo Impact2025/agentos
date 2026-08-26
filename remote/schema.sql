@@ -193,6 +193,36 @@ CREATE TABLE IF NOT EXISTS workshop_leads (
 );
 CREATE INDEX IF NOT EXISTS idx_workshop_leads_tenant ON workshop_leads (tenant, status, created_at);
 
+-- Boekingsaanvragen (26 aug 2026, weareimpact.nl): anders dan impact_leads/
+-- workshop_leads hierboven is een boeking geen eenmalig feit maar een
+-- levenscyclus (pending -> approved/rejected, zie booking_status). De
+-- website (op=booking-lead) doet daarom een UPSERT op (tenant,
+-- booking_request_id) in plaats van een kale INSERT, en zet bij elke
+-- statuswijziging `status` terug op 'pending' zodat ImpactOS 'm opnieuw
+-- oppikt (backend/domains/bridge/booking_leads.py verwerkt elke aankomst
+-- opnieuw, met ander gedrag per booking_status).
+CREATE TABLE IF NOT EXISTS booking_leads (
+  id                     SERIAL PRIMARY KEY,
+  tenant                 TEXT NOT NULL,
+  booking_request_id     TEXT NOT NULL,
+  booking_type           TEXT,
+  start_time             TIMESTAMPTZ,
+  duration_minutes       INTEGER,
+  customer_name          TEXT,
+  customer_email         TEXT NOT NULL,
+  customer_phone         TEXT,
+  customer_organization  TEXT,
+  notes                  TEXT,
+  booking_status         TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected
+  status                 TEXT NOT NULL DEFAULT 'pending',  -- sync-status: pending | processed | failed
+  error                  TEXT,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  processed_at           TIMESTAMPTZ,
+  UNIQUE (tenant, booking_request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_booking_leads_tenant_status ON booking_leads (tenant, status, created_at);
+
 -- ── Voordeur ───────────────────────────────────────────────────────────────
 -- Sessies staan in de database en niet in een afgeleide HMAC, want een sessie
 -- die je niet kunt intrekken is geen sessie maar een tweede wachtwoord: hij

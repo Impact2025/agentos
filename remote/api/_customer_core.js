@@ -24,11 +24,18 @@ const ESCALATE_TOOL = {
     'bestaand account. (Een e-mailadres dat de klant uít zichzelf geeft voor een agenda-' +
     'uitnodiging is GEEN escalatiereden — gebruik daarvoor deel_emailadres.) Verzin NOOIT ' +
     'een prijs, garantie, levertijd of toezegging die niet letterlijk in de kennis staat — ' +
-    'escaleer in plaats daarvan. Jij stuurt daarna geen inhoudelijk antwoord meer; Vincent ' +
-    'neemt het over.',
+    'escaleer in plaats daarvan. Vraag, vóórdat je escaleert, kort van welke organisatie de ' +
+    'klant is als je dat nog niet weet — dat helpt Vincent bij het oppakken. Jij stuurt daarna ' +
+    'geen inhoudelijk antwoord meer; Vincent neemt het over.',
   input_schema: {
     type: 'object',
-    properties: { reden: { type: 'string', description: 'Kort: waarom kun jij dit niet afhandelen?' } },
+    properties: {
+      reden: { type: 'string', description: 'Kort: waarom kun jij dit niet afhandelen?' },
+      organisatie: {
+        type: 'string',
+        description: 'Organisatie van de klant, als bekend (leeg laten als onbekend).',
+      },
+    },
     required: ['reden'],
   },
 };
@@ -57,17 +64,17 @@ const PROPOSE_APPOINTMENT_TOOL = {
     "Zet een afspraakvoorstel klaar in Vincents goedkeur-wachtrij, nadat de klant een tijd " +
     "uit 'lees_vrije_momenten' heeft gekozen. Jij boekt NIETS — Vincent keurt het met één " +
     'tik goed of wijst het af. Zijn WhatsApp-nummer wordt automatisch aan het voorstel ' +
-    'gehangen, dat hoef je niet zelf te noemen. Vraag WEL naar de naam van de klant als je die ' +
-    'nog niet weet (vóór je deze tool aanroept, niet erna) en beschrijf waar het gesprek over ' +
-    'gaat — dat helpt Vincent zich voor te bereiden.',
+    'gehangen, dat hoef je niet zelf te noemen. Vraag WEL kort van welke organisatie de klant ' +
+    'is als je dat nog niet weet — dat helpt Vincent zich voor te bereiden — maar niet naar ' +
+    'zijn naam, die staat al bij Vincent bekend. Beschrijf waar het gesprek over gaat.',
   input_schema: {
     type: 'object',
     properties: {
       opdracht: {
         type: 'string',
         description:
-          'Volledige zin met datum, tijd en onderwerp, plus de naam van de klant als je die ' +
-          'weet, bv. "Belafspraak met Jan de Boer woensdag 20 augustus om 14:00 over een ' +
+          'Volledige zin met datum, tijd, onderwerp en organisatie als je die weet, bv. ' +
+          '"Belafspraak woensdag 20 augustus om 14:00 met iemand van Acme BV over een ' +
           'teambuildingdag".',
       },
     },
@@ -137,9 +144,27 @@ export function resolveProject(sites, text) {
   return null;
 }
 
+// Vincent (26 aug 2026): voor nu geen andere merken aanbieden of bespreken
+// via klant-Iris — alleen WeAreImpact. Tijdelijke inperking, geen ontwerp:
+// filtert vóór resolveProject zodat een klant het merk ook niet via een
+// letterlijke naam kan "activeren" zolang deze lijst leeg/beperkt is.
+// Terugdraaien = WHATSAPP_CUSTOMER_PROJECTS leeg laten (dan gelden weer alle
+// sites uit de helpdesk-snapshot).
+const CUSTOMER_PROJECT_ALLOWLIST = (process.env.WHATSAPP_CUSTOMER_PROJECTS ?? 'WeAreImpact')
+  .split(',').map((p) => squash(p)).filter(Boolean);
+
+function applyProjectAllowlist(sites) {
+  if (!CUSTOMER_PROJECT_ALLOWLIST.length) return sites;
+  return sites.filter((s) => CUSTOMER_PROJECT_ALLOWLIST.includes(squash(s.project)));
+}
+
 export async function resolveOrAskProject(tenant, text) {
   const rows = await sql`SELECT payload FROM context_snapshot WHERE tenant = ${tenant}`;
-  const sites = rows[0]?.payload?.helpdesk?.sites || [];
+  const sites = applyProjectAllowlist(rows[0]?.payload?.helpdesk?.sites || []);
+  // Precies één toegestaan merk: er valt niets te kiezen, dus niet vragen
+  // welk bedrijf het betreft — dat is dezelfde nodeloze frictie als de
+  // naam/bedrijf-vraag hierboven.
+  if (sites.length === 1) return { project: sites[0].project, ask: null };
   const project = resolveProject(sites, text);
   if (project) return { project, ask: null };
   const names = sites.map((s) => s.project).filter(Boolean);
@@ -184,6 +209,11 @@ function customerSystemPrompt(project, knowledge, isFirstMessage) {
       + "`lees_vrije_momenten` om te zien wanneer Vincent tijd heeft, stel dat voor, en zodra "
       + 'de klant een tijd kiest zet je het met `stel_afspraak_voor` klaar. Nooit zelf een '
       + 'tijd verzinnen of beloven dat het geboekt is — dat doet pas Vincents goedkeuring.',
+    "- Vraag NOOIT uit jezelf naar de naam van je gesprekspartner — die staat al bij Vincent "
+      + 'bekend via WhatsApp. Vraag wél, op het natuurlijke moment (bij `escaleer_naar_vincent` '
+      + 'of `stel_afspraak_voor`, niet vooraf), van welke organisatie iemand is als je dat nog '
+      + 'niet weet — dat is geen privacygevoelig gegeven zoals een e-mailadres, gewoon nuttige '
+      + 'context voor Vincent.',
     '- Vraag NOOIT uit jezelf om een e-mailadres. Noemt de klant er zelf een (bijvoorbeeld als '
       + 'antwoord op een afspraakbevestiging), gebruik dan `deel_emailadres` — dat is geen '
       + 'escalatiereden.',
@@ -280,10 +310,11 @@ export async function customerConverse(tenant, project, history, userText, waId,
     const escalateCall = step.toolCalls.find((c) => c.name === 'escaleer_naar_vincent');
     if (escalateCall) {
       const reden = (escalateCall.input && escalateCall.input.reden) || 'onduidelijke of gevoelige vraag';
+      const organisatie = (escalateCall.input && escalateCall.input.organisatie || '').toString().trim();
       return {
         reply: 'Bedankt voor je bericht! Ik geef dit door, je hoort snel iets van ons terug.',
         escalated: true,
-        reason: reden,
+        reason: organisatie ? `${reden} (organisatie: ${organisatie})` : reden,
       };
     }
 
