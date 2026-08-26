@@ -296,6 +296,11 @@ if domain_enabled("geo"):
 if domain_enabled("facebook"):
     from .domains.facebook import router as facebook_router
     app.include_router(facebook_router.router)
+if domain_enabled("learn"):
+    # Knowledge Forge: document leren (embeddings-retrieval + brain file in
+    # de vault). Compleet en getest, maar stond nergens gemount (25 aug 2026).
+    from .domains.learn import router as learn_router
+    app.include_router(learn_router.router)
 if domain_enabled("coach"):
     # /api/coach-context/holding blijft gemonteerd (getest, token-gated, geen
     # kwaad kan) maar coach_bridge_router.coach_router (de proxy naar mijn-

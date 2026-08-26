@@ -10,14 +10,14 @@ const DESCS = { WeAreImpact: 'AI en innovatie voor zorg, welzijn en gemeenten', 
 // is nu een sectie ónderaan Optimalisatie i.p.v. een los scherm, want beide
 // beantwoordden dezelfde vraag ("welke bestaande pagina verdient aandacht")
 // met een andere tijdshorizon. Zie renderOptimalisatieTab in tabs-memory.js.
-const TABS = ['Dashboard', 'Agenten', 'Postvak', 'Kansen', 'Optimalisatie', 'GEO', 'Wachtrij', 'Prestaties', 'Radar', 'Doelen', 'Geheugen', 'Leads', 'Links', 'Opdrachten', 'Technisch', 'Activiteit', 'Social Creatie', 'Omni', 'Gauntlet', 'Facebook', 'Helpdesk', 'WhatsApp', 'Agenda', 'Verkoop', 'Klanten', 'Facturatie', 'Besluiten', 'Instellingen'];
+const TABS = ['Dashboard', 'Agenten', 'Postvak', 'Kansen', 'Optimalisatie', 'GEO', 'Wachtrij', 'Prestaties', 'Radar', 'Doelen', 'Geheugen', 'Kennis', 'Leads', 'Links', 'Opdrachten', 'Technisch', 'Activiteit', 'Social Creatie', 'Omni', 'Gauntlet', 'Facebook', 'Helpdesk', 'WhatsApp', 'Agenda', 'Verkoop', 'Klanten', 'Facturatie', 'Besluiten', 'Instellingen'];
 // Menu-iconen. Bewust één monochrome familie (geometrische vormen + pijlen) en
 // géén emoji: emoji krijgen op Windows een eigen kleur en een eigen optische
 // maat, waardoor een menu van zeventien regels zeventien verschillende hoogtes
 // krijgt. Tot 10 aug 2026 stonden hier losse hoofdletters ('D', 'K', 'Q') —
 // leesbaar als afkorting náást het woord dat er al stond, dus ruis; en
 // 'Social Creatie' en 'Instellingen' deelden allebei de 'S'.
-const TAB_ICONS = { Dashboard: '▦', Agenten: '⌘', Postvak: '✉︎', Kansen: '◎', Optimalisatie: '↗', GEO: '◉', Wachtrij: '◷', Prestaties: '⧉', Radar: '✦', Doelen: '◉', Geheugen: '❖', Leads: '⊕', Links: '⇄', Opdrachten: '▤', Technisch: '◫', Activiteit: '⟳', 'Social Creatie': '◐', Omni: '⬡', Gauntlet: '⛓', Facebook: 'ⓕ', Agenda: '▤', Helpdesk: '↩', WhatsApp: '✆', Verkoop: '▣', Klanten: '◆', Facturatie: '⎘', Besluiten: '⚖', Instellingen: '⚙︎', Health: '♥' };
+const TAB_ICONS = { Dashboard: '▦', Agenten: '⌘', Postvak: '✉︎', Kansen: '◎', Optimalisatie: '↗', GEO: '◉', Wachtrij: '◷', Prestaties: '⧉', Radar: '✦', Doelen: '◉', Geheugen: '❖', Kennis: '⌬', Leads: '⊕', Links: '⇄', Opdrachten: '▤', Technisch: '◫', Activiteit: '⟳', 'Social Creatie': '◐', Omni: '⬡', Gauntlet: '⛓', Facebook: 'ⓕ', Agenda: '▤', Helpdesk: '↩', WhatsApp: '✆', Verkoop: '▣', Klanten: '◆', Facturatie: '⎘', Besluiten: '⚖', Instellingen: '⚙︎', Health: '♥' };
 // Projectnamen komen soms gespatieerd voor ("Bewaard voor Jou", de URL/vault-
 // vorm) en soms aaneen ("BewaardVoorJou", de interne site-sleutel) — zelfde
 // onderscheid als `shared/projects.py:squash_project`. Een exacte match tegen
@@ -58,7 +58,7 @@ const NAV_GROUPS = [
     { label: 'Verkenning', tabs: ['Radar', 'Omni'] },
   ] },
   { label: 'Groei', tabs: ['Doelen', 'Leads', 'Links', 'Opdrachten'] },
-  { label: 'Systeem', tabs: ['Agenten', 'Gauntlet', 'Geheugen', 'Activiteit', 'Health', 'Instellingen'] },
+  { label: 'Systeem', tabs: ['Agenten', 'Gauntlet', 'Geheugen', 'Kennis', 'Activiteit', 'Health', 'Instellingen'] },
 ];
 // Welk backend-domein een tab nodig heeft (zie shared/config.py:domain_enabled).
 // Geen entry = kerntab, altijd zichtbaar. Op de hoofdinstallatie is
@@ -66,7 +66,7 @@ const NAV_GROUPS = [
 // Postvak hoort bij 'outlook_legacy' (Graph/OAuth), niet bij 'mail' — dat laatste
 // is het generieke POP3-mailboxen-domein achter de Helpdesk-tab, een ander
 // systeem met een andere auth-vorm (zie domains/outlook/service.py-docstring).
-const TAB_DOMAIN = { Agenten: 'agentctl', Postvak: 'outlook_legacy', Kansen: 'seo', Optimalisatie: 'seo', Wachtrij: 'publish', Prestaties: 'seo', Radar: 'radar', Doelen: 'goal', Leads: 'prospecting', Links: 'linkbuilding', Opdrachten: 'vacancies', Technisch: 'seo', 'Social Creatie': 'social', Omni: 'seo', Gauntlet: 'pipeline', Helpdesk: 'mail', Klanten: 'crm', Facturatie: 'billing' };
+const TAB_DOMAIN = { Agenten: 'agentctl', Postvak: 'outlook_legacy', Kansen: 'seo', Optimalisatie: 'seo', Wachtrij: 'publish', Prestaties: 'seo', Radar: 'radar', Doelen: 'goal', Leads: 'prospecting', Links: 'linkbuilding', Opdrachten: 'vacancies', Technisch: 'seo', 'Social Creatie': 'social', Omni: 'seo', Gauntlet: 'pipeline', Helpdesk: 'mail', Klanten: 'crm', Facturatie: 'billing', Kennis: 'learn' };
 // Eén check voor "hoort dit domein bij deze instance" — gebruikt door de
 // tab-filter én door de Control Room-secties die verwijzen naar routes die op
 // een beperkte instance niet gemonteerd zijn (Linkbuilding, Strategist/Doelen).

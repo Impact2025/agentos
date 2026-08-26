@@ -23,7 +23,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from ...knowledge_forge import learn_document, ask, list_documents, delete_document
+from ...knowledge_forge import learn_document, ask, list_documents, delete_document, compare
 from ...shared.config import OBSIDIAN_VAULT_PATH
 
 logger = logging.getLogger(__name__)

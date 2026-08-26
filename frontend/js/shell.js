@@ -107,6 +107,7 @@ async function loadCurrentTab() {
     else if (currentTab === 'Radar') await renderRadarTab(el);
     else if (currentTab === 'Doelen') await renderDoelenTab(el);
     else if (currentTab === 'Geheugen') await renderGeheugenTab(el);
+    else if (currentTab === 'Kennis') await renderKennisTab(el);
     else if (currentTab === 'Leads') await renderLeadsTab(el);
     else if (currentTab === 'Links') await renderLinksTab(el);
     else if (currentTab === 'Opdrachten') await renderOpdrachtenTab(el);
