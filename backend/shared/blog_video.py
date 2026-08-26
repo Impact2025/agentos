@@ -179,6 +179,8 @@ def make_blog_video(job_id: str, project: str, title: str, blog_html: str,
     if register_pack:
         try:
             pack_id = f"blog_{job_id}"
+            from .projects import canonical_project
+            pack_project = canonical_project(project)
             with get_conn() as conn:
                 # Overschrijf nooit een bestaande pack.
                 exists = conn.execute(
@@ -192,8 +194,8 @@ def make_blog_video(job_id: str, project: str, title: str, blog_html: str,
                         "image_brief_json, tiktok_pack_json, status, concept, created_at) "
                         "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                         (
-                            pack_id, project, title, "Video gegenereerd uit blog",
-                            project, json.dumps({}, ensure_ascii=False),
+                            pack_id, pack_project, title, "Video gegenereerd uit blog",
+                            pack_project, json.dumps({}, ensure_ascii=False),
                             json.dumps({}, ensure_ascii=False),
                             json.dumps({}, ensure_ascii=False),
                             "pending", 0, now,

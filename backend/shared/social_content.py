@@ -523,6 +523,8 @@ def generate_content_pack(
     van het project onder de post komt. Leeg = de vaste platform-set, en zonder
     huisstijl-profiel helemaal geen hashtags (het oude gedrag).
     """
+    from .projects import canonical_project
+    project = canonical_project(project)
     platforms = [p for p in (platforms or list(PLATFORMS)) if p in PLATFORMS]
     if not platforms:
         platforms = list(PLATFORMS)
@@ -742,6 +744,8 @@ def record_external_post(project: str, platform: str, text: str,
     ding staat al live; hier is niets meer te keuren) en telt mee in dezelfde
     tabel als de gated packs, met `origin` als onderscheid.
     """
+    from .projects import canonical_project
+    project = canonical_project(project)
     pack = SocialPack(
         id=f"sp_{uuid.uuid4().hex[:12]}",
         project=project,

@@ -105,6 +105,30 @@ def merge_project_column(table: str, column: str = "project") -> int:
     return bijgewerkt
 
 
+def visible_projects_filter() -> Optional[set]:
+    """Squash-vormen uit BRIDGE_VISIBLE_PROJECTS, of None (= alles tonen).
+
+    Filtert wat Iris Remote toont (projectpaneel, inboxkaarten, SEO-pulse) —
+    bewust NIET voor WhatsApp-klantgesprekken (Vincent bedient elke klant via
+    hetzelfde nummer) en niet voor de onboardingwizard (die moet een nieuw
+    project juist kunnen tonen)."""
+    from .config import BRIDGE_VISIBLE_PROJECTS
+    ruw = [p.strip() for p in BRIDGE_VISIBLE_PROJECTS.split(",") if p.strip()]
+    return {squash_project(p) for p in ruw} if ruw else None
+
+
+def project_visible(name: Optional[str]) -> bool:
+    """True als `name` in BRIDGE_VISIBLE_PROJECTS staat (of die leeg is)."""
+    toegestaan = visible_projects_filter()
+    if toegestaan is None:
+        return True
+    if not name:
+        # Items zonder project (scheduler-fouten, systeembrede audits) zijn
+        # geen projectkeuze — die horen hoe dan ook in de inbox.
+        return True
+    return squash_project(name) in toegestaan
+
+
 def project_varianten(name: str) -> List[str]:
     """Alle spellingen waaronder dit project ooit is opgeslagen.
 

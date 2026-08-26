@@ -2255,34 +2255,64 @@ def _migrate_postvak(conn) -> None:
 
 
 def _migrate_projectnamen(conn) -> None:
-    """Trek `goals.project` recht naar de spelling uit `sites`.
+    """Trek de projectkolom van elke tabel in `_PROJECTNAAM_TABELLEN` recht naar
+    de spelling uit `sites`.
 
-    4 aug 2026: zeventien projectwaarden voor twaalf projecten. Zolang de
-    Doelen-tab álle doelen ophaalde viel dat niet op; met een werkende
+    4 aug 2026: `goals.project` had zeventien waarden voor twaalf projecten.
+    Zolang de Doelen-tab álle doelen ophaalde viel dat niet op; met een werkende
     projectfilter zou 'Bewaardvoorjou' (9 doelen) en 'Bewaard voor Jou' (11)
     twee gescheiden historieën worden. Zelfde opruiming als `radar/models.py`
-    voor de watchlist deed. Idempotent — een tweede run raakt niets meer aan.
+    voor de watchlist deed.
 
-    Inline i.p.v. via `shared/projects.merge_project_column`, omdat die functie
-    zijn eigen verbinding opent en dat hier op de migratie-lock zou wachten.
+    25 aug 2026: exact dezelfde storing zat in `social_posts.project` — vier
+    spellingen ('BewaardVoorJou', 'Bewaardvoorjou', 'bewaard voor jou',
+    'bewaardvoorjou'), geen daarvan de sites-spelling ('Bewaard voor Jou'), dus
+    toonde de Social Creatie-tab "niets gepland" terwijl er 31 packs lagen.
+    `list_packs()` canoniseert alleen de *inkomende* filterwaarde (22 aug) — dat
+    helpt niets als de opgeslagen rijen zelf nooit rechtgetrokken zijn. De
+    schrijvers (`generate_content_pack`, `record_external_post`,
+    `importeer_campagne`, `blog_video.make_blog_video`) canoniseren nu ook zelf
+    bij het schrijven, zodat dit voor nieuwe rijen niet terugkomt — deze
+    migratie ruimt alleen de bestaande historie op. Vandaar één generieke lijst
+    i.p.v. per tabel een kopie van dezelfde vijftien regels: een derde tabel met
+    dit euvel is een kwestie van tijd, geen aparte fix.
+
+    Idempotent — een tweede run raakt niets meer aan. Inline i.p.v. via
+    `shared/projects.merge_project_column`, omdat die functie zijn eigen
+    verbinding opent en dat hier op de migratie-lock zou wachten.
     """
     from .projects import squash_project
     try:
         namen = [r[0] for r in conn.execute(
             "SELECT name FROM sites WHERE COALESCE(name, '') != ''").fetchall()]
-        waarden = [r[0] for r in conn.execute(
-            "SELECT DISTINCT project FROM goals "
-            "WHERE COALESCE(project, '') != ''").fetchall()]
     except Exception:
         return  # verse installatie: de tabellen bestaan nog niet
     kaart = {squash_project(n): n for n in namen}
-    for waarde in waarden:
-        juist = kaart.get(squash_project(waarde))
-        if juist and juist != waarde:
-            cur = conn.execute(
-                "UPDATE goals SET project = ? WHERE project = ?", (juist, waarde))
-            logger.info("projectnaam rechtgetrokken in goals: %r → %r (%d doelen)",
-                        waarde, juist, cur.rowcount)
+    if not kaart:
+        return
+    for tabel, kolom in _PROJECTNAAM_TABELLEN:
+        try:
+            waarden = [r[0] for r in conn.execute(
+                f"SELECT DISTINCT {kolom} FROM {tabel} "
+                f"WHERE COALESCE({kolom}, '') != ''").fetchall()]
+        except Exception:
+            continue  # tabel bestaat nog niet op deze installatie
+        for waarde in waarden:
+            juist = kaart.get(squash_project(waarde))
+            if juist and juist != waarde:
+                cur = conn.execute(
+                    f"UPDATE {tabel} SET {kolom} = ? WHERE {kolom} = ?", (juist, waarde))
+                logger.info("projectnaam rechtgetrokken in %s: %r → %r (%d rijen)",
+                            tabel, waarde, juist, cur.rowcount)
+
+
+# Tabel/kolom-paren die een vrije-tekst projectnaam dragen en dus kunnen
+# uiteenlopen in spelling. Nieuwe schrijvers canoniseren zelf bij het
+# schrijven (zie `_migrate_projectnamen`); deze lijst dekt de historie ervóór.
+_PROJECTNAAM_TABELLEN = (
+    ("goals", "project"),
+    ("social_posts", "project"),
+)
 
 
 @contextmanager

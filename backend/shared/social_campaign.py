@@ -184,6 +184,8 @@ def importeer_campagne(project: str, *, start: Optional[date] = None,
     juist omdat de oorspronkelijke campagnedatums verstreken zijn — een plan dat
     alleen met absolute datums werkt, is na één gemiste periode onbruikbaar.
     """
+    from .projects import canonical_project
+    project = canonical_project(project)
     pad = _campagne_pad(project, bestand)
     if pad is None:
         return {"success": False, "error": f"Geen campagnebestand voor {project} ({bestand})"}
