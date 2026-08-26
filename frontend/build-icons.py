@@ -1,64 +1,62 @@
-"""Favicon voor Impact OS genereren — de Iris-aperture, lichte variant.
+"""Favicon voor Impact OS genereren — uit het WeAreImpact-hart-logo.
 
-Impact OS had tot 13 aug 2026 geen favicon (alleen het losse `logo.png` in de
-zijbalk, een generiek beeld zonder relatie tot de rest van het merk). Iris
-Remote (`remote/build-icons.py`) had al een bewust motief: acht spaken rond
-een pupil, het "oog" van de AI-manager. Dat motief hoort ook hier, niet een
-tweede logo ernaast — Impact OS en Iris Remote zijn hetzelfde product op twee
-schermen.
-
-Enige verschil met de Remote-versie: die is getekend voor een donkere
-achtergrond (`--surface-bg #121118`); de Impact OS-zijbalk is wit, dus dit
-script gebruikt Impact OS' eigen tokens (`--bg`/`--accent` uit app.css) i.p.v.
-de Remote-kleuren simpelweg te hergebruiken op een verkeerde ondergrond.
+Tot 24 aug 2026 gebruikte dit script een los getekende "Iris-aperture" (acht
+spaken rond een pupil) als favicon, terwijl de zijbalk zelf óók die aperture
+toonde in plaats van een echt logo. Vincent wil nu één herkenbaar beeldmerk
+door de hele app: het WeAreImpact-hart (`logo-hart.png`, de kleurovergang-
+lijntekening van hart naar netwerk) — hetzelfde merkteken dat ook op
+weareimpact.nl staat. Favicon/apple-touch-icon worden uit dát bronbestand
+gerenderd i.p.v. los getekend, zodat een toekomstige logo-wijziging maar op
+één plek hoeft (dit bestand overschrijven, dan opnieuw draaien).
 
 Draaien:  .venv/Scripts/python.exe frontend/build-icons.py
 """
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
 OUT = Path(__file__).parent
+SRC = OUT / "logo-hart.png"
 
-BG = (255, 255, 255)        # --card-bg #ffffff — favicons staan op een lichte tabblad-balk
-ACCENT = (79, 70, 229)      # --accent #4f46e5 — de pupil
-ACCENT_DIM = (129, 140, 248)  # indigo-400 — de spaken, iets lichter voor contrast t.o.v. de pupil
-
-SS = 4  # supersampling: 4× tekenen en terugschalen = gladde randen zonder AA-code
+BG = (255, 255, 255)  # --card-bg #ffffff — favicons staan op een lichte tabblad-balk
 
 
-def _draw_aperture(img: Image.Image, size: int, glyph_ratio: float) -> None:
-    d = ImageDraw.Draw(img)
-    c = size / 2
-    r = c * glyph_ratio
-    r_inner = r * 0.42
-    r_pupil = r * 0.24
-    line_w = max(1, int(r * 0.13))  # iets dikker dan de Remote-versie: leest beter op een licht vlak
-    for i in range(8):
-        a = math.radians(i * 45 - 90)
-        x0, y0 = c + r_inner * math.cos(a), c + r_inner * math.sin(a)
-        x1, y1 = c + r * math.cos(a), c + r * math.sin(a)
-        d.line([x0, y0, x1, y1], fill=ACCENT_DIM, width=line_w)
-    d.ellipse([c - r_pupil, c - r_pupil, c + r_pupil, c + r_pupil], fill=ACCENT)
-
-
-def render(size: int, glyph_ratio: float) -> Image.Image:
-    big = Image.new("RGB", (size * SS, size * SS), BG)
-    _draw_aperture(big, size * SS, glyph_ratio)
-    return big.resize((size, size), Image.LANCZOS)
+def _fit(src: Image.Image, size: int, pad_ratio: float, bg=None, alpha_boost: bool = False) -> Image.Image:
+    """Schaalt het logo (met transparantie behouden) binnen `size`x`size`,
+    met `pad_ratio` marge rondom. `bg=None` behoudt transparantie (favicon),
+    een kleur vult 'm op (apple-touch-icon — iOS accepteert geen alpha).
+    `alpha_boost`: het bronlogo is een fijne lijntekening — op een klein
+    canvas (32px) verdunt LANCZOS-resampling die lijnen tot bijna onzichtbaar.
+    Een gamma-curve op het alfakanaal trekt de halfdekkende randpixels weer
+    op naar zichtbaar, zónder de vorm te verzwaren (kleur blijft ongemoeid)."""
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0) if bg is None else bg + (255,))
+    inner = int(size * (1 - 2 * pad_ratio))
+    logo = src.copy()
+    logo.thumbnail((inner, inner), Image.LANCZOS)
+    if alpha_boost:
+        r, g, b, a = logo.split()
+        a = a.point(lambda v: int(255 * (v / 255) ** 0.45))
+        logo = Image.merge("RGBA", (r, g, b, a))
+    x = (size - logo.width) // 2
+    y = (size - logo.height) // 2
+    canvas.paste(logo, (x, y), logo)
+    return canvas if bg is None else canvas.convert("RGB")
 
 
 def main() -> None:
+    if not SRC.exists():
+        raise SystemExit(f"Bronlogo ontbreekt: {SRC}")
+    src = Image.open(SRC).convert("RGBA")
+
     jobs = [
-        ("favicon-32.png", 32, 0.72),
+        ("favicon-32.png", 32, 0.04, None, True),
         # iOS rondt apple-touch-icon zelf af en accepteert geen transparantie.
-        ("apple-touch-icon.png", 180, 0.62),
+        ("apple-touch-icon.png", 180, 0.14, BG, False),
     ]
-    for name, size, ratio in jobs:
-        render(size, ratio).save(OUT / name, "PNG", optimize=True)
+    for name, size, pad, bg, boost in jobs:
+        _fit(src, size, pad, bg, boost).save(OUT / name, "PNG", optimize=True)
         print(f"  {name}  ({size}×{size})")
     print(f"Klaar — {len(jobs)} iconen in {OUT}")
 

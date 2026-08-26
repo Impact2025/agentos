@@ -25,8 +25,8 @@ function renderSidebar() {
   var visibleSet = {};
   visible.forEach(function(t) { visibleSet[t] = true; });
   function navButton(t) {
-    var badge = '';
-    if (t === 'Helpdesk') badge = ' <span id="helpdesk-badge" class="nav-badge" style="display:none"></span>';
+    var badge = _SIDEBAR_BADGE_TABS[t]
+      ? ' <span id="' + _SIDEBAR_BADGE_TABS[t] + '-badge" class="nav-badge" style="display:none"></span>' : '';
     return '<button class="' + (t===currentTab?' active':'') + '" onclick="switchView(\''+t+'\')"><span class="icon">' + (TAB_ICONS[t]||'') + '</span>' + t + badge + '</button>';
   }
   var nav = NAV_GROUPS.map(function(g) {
@@ -43,7 +43,7 @@ function renderSidebar() {
     if (!tabs.length) return '';
     return '<div class="nav-group"><div class="nav-group-label">' + escHtml(g.label) + '</div>' + tabs.map(navButton).join('') + '</div>';
   }).join('');
-  return '<div class="sidebar"><div class="sidebar-logo">' + apertureMark(24, 'sidebar-logo-mark') + '<span>' + escHtml(window.__instanceName || 'Impact OS') + '</span></div><nav class="sidebar-nav">' + nav +
+  return '<div class="sidebar"><div class="sidebar-logo"><img class="sidebar-logo-mark" src="/logo-hart.png" alt="" width="24" height="24" /><span>' + escHtml(window.__instanceName || 'Impact OS') + '</span></div><nav class="sidebar-nav">' + nav +
     '<div class="sidebar-footer">' + (currentProject ? '<button onclick="switchView(\'chat\')"><span class="icon">✎</span>Chat</button>' : '') +
     (currentProject ? '<button onclick="switchView(\'voice\')"><span class="icon">🎙</span>Voice</button>' : '') +
     '<button onclick="goHome()"><span class="icon">←</span>Projecten</button>' +
@@ -119,6 +119,10 @@ async function loadCurrentTab() {
     else if (currentTab === 'Helpdesk') await renderHelpdeskTab(el);
     else if (currentTab === 'WhatsApp') await renderWhatsAppTab(el);
     else if (currentTab === 'Agenda') await renderAgendaTab(el);
+    else if (currentTab === 'Verkoop') await renderVerkoopTab(el);
+    else if (currentTab === 'Klanten') await renderKlantenTab(el);
+    else if (currentTab === 'Facturatie') await renderFacturatieTab(el);
+    else if (currentTab === 'Besluiten') await renderBesluitenTab(el);
     else if (currentTab === 'Health') await renderHealthTab(el);
     else if (currentTab === 'Instellingen') await renderInstellingenTab(el);
     else el.innerHTML = '<div class="empty-state">Tab niet gevonden</div>';
@@ -163,24 +167,66 @@ function startDashboardBannerPoll(project) {
 }
 function stopDashboardBannerPoll() { if (_dashBannerTimer) { clearInterval(_dashBannerTimer); _dashBannerTimer = null; } }
 
-// ── Helpdesk-badge: toont aantal open concept-antwoorden in de sidebar ──
-let _helpdeskBadgeTimer = null;
+// ── Sidebar-badges: hoeveel wacht er op jou, per menu-item ──────────────────
+// Eén generiek mechanisme i.p.v. per tab een eigen poller: elk badge-getal
+// betekent "dit vraagt een besluit", dezelfde belofte als de Helpdesk-badge
+// (24 aug 2026) al deed voor mailconcepten. Draait onafhankelijk van welke
+// tab open staat — een kans of lead moet zichtbaar zijn ook als je op
+// Dashboard staat, niet alleen wanneer je toevallig op Kansen/Leads klikt.
+// Tab-naam -> badge-element-prefix.
+var _SIDEBAR_BADGE_TABS = { Helpdesk: 'helpdesk', 'Social Creatie': 'social', Kansen: 'kansen', Leads: 'leads' };
+let _sidebarBadgeTimer = null;
 function startHelpdeskBadgePoll() {
   stopHelpdeskBadgePoll();
-  pollHelpdeskBadge();
-  _helpdeskBadgeTimer = setInterval(pollHelpdeskBadge, 20000);
+  pollSidebarBadges();
+  _sidebarBadgeTimer = setInterval(pollSidebarBadges, 20000);
 }
-function stopHelpdeskBadgePoll() { if (_helpdeskBadgeTimer) { clearInterval(_helpdeskBadgeTimer); _helpdeskBadgeTimer = null; } }
-function pollHelpdeskBadge() {
+function stopHelpdeskBadgePoll() { if (_sidebarBadgeTimer) { clearInterval(_sidebarBadgeTimer); _sidebarBadgeTimer = null; } }
+function _setNavBadge(prefix, n) {
+  var el = document.getElementById(prefix + '-badge');
+  if (!el) return;
+  if (n > 0) { el.style.display = 'inline-block'; el.textContent = n; }
+  else { el.style.display = 'none'; }
+}
+// Alias: tabs-content.js roept na een helpdesk-actie gericht deze naam aan
+// (ververs meteen, niet pas over 20s) — die belofte blijft overeind, ook al
+// ververst hij nu alle badges in één ronde in plaats van alleen Helpdesk.
+function pollHelpdeskBadge() { pollSidebarBadges(); }
+function pollSidebarBadges() {
   if (!currentProject) return;
-  // Badge telt alleen de concepten van dít project — elk project zijn eigen helpdesk.
-  fetch('/api/mail/pending?project=' + encodeURIComponent(currentProject)).then(function(r){return r.json();}).then(function(rows){
-    var el = document.getElementById('helpdesk-badge');
-    if (!el) return;
-    var n = (rows && rows.replies && rows.replies.length) ? rows.replies.length : 0;
-    if (n > 0) { el.style.display = 'inline-block'; el.textContent = n; }
-    else { el.style.display = 'none'; }
+  var project = currentProject;
+  // Helpdesk: mailconcepten van dít project.
+  fetch('/api/mail/pending?project=' + encodeURIComponent(project)).then(function(r){return r.json();}).then(function(rows){
+    if (currentProject !== project) return;
+    _setNavBadge('helpdesk', (rows && rows.replies && rows.replies.length) ? rows.replies.length : 0);
   }).catch(function(){});
+  // Social Creatie: campagneposts + social-berichten die op dít project wachten
+  // (dezelfde "Overige acties"-telling als op het Dashboard, project-gescoped).
+  if (domainOn('social')) {
+    fetch('/api/action-center?project=' + encodeURIComponent(project)).then(function(r){return r.json();}).then(function(data){
+      if (currentProject !== project) return;
+      var items = (data && data.items) || [];
+      var n = items.filter(function(it){ return it.kind === 'campagne_post' || it.kind === 'social_msg'; }).length;
+      _setNavBadge('social', n);
+    }).catch(function(){});
+  }
+  // Kansen: nieuwe, ongefilterde content-kansen van dít project (dezelfde
+  // deterministische gate als de Kansen-tab zelf — `counts.nieuw`).
+  if (domainOn('seo')) {
+    fetch('/api/projects/' + encodeURIComponent(project) + '/kansen?status=new').then(function(r){return r.json();}).then(function(data){
+      if (currentProject !== project) return;
+      var c = (data && data.counts) || {};
+      _setNavBadge('kansen', c.nieuw || 0);
+    }).catch(function(){});
+  }
+  // Leads: nieuwe, nog niet benaderde leads — dit is systeembreed (acquisitie
+  // voor WeAreImpact zelf), niet per klantproject, dus hetzelfde getal overal.
+  if (domainOn('prospecting')) {
+    fetch('/api/leads/funnel').then(function(r){return r.json();}).then(function(data){
+      var n = (data && data.by_status && data.by_status.new) || 0;
+      _setNavBadge('leads', n);
+    }).catch(function(){});
+  }
 }
 
 // ── Recente reeks onder een KPI-tegel ──────────────────────────────────────
@@ -227,6 +273,12 @@ async function renderDashboardTab(el) {
   } catch(e) { el.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>'; return; }
 
   // ── BUILD HTML ──────────────────────────────────────────────
+  // Volgorde is bewust: management info + de belangrijkste taak bovenaan —
+  // dát is waar je elke keer voor komt kijken — en de losse werk-queues
+  // (mail/helpdesk, fouten, overig) daaronder, niet ervoor. Vóór 24 aug 2026
+  // stond de gemengde mail+fouten-lijst boven de kerncijfers en de
+  // beste-volgende-stap-banner, dus opende het scherm met een willekeurige
+  // mail in plaats van met "hoe presteert dit project en wat moet er nu".
   var html = '';
 
   // ── 0. SYSTEEMGEZONDHEID ──
@@ -234,17 +286,6 @@ async function renderDashboardTab(el) {
 
   // ── 1. STATUS BANNER (live, herbouwd door startDashboardBannerPoll) ──
   html += '<div id="dash-banner-container">' + renderAdviceBanner(advice) + '</div>';
-
-  // ── 1. WACHT OP JOU — de focus-sectie van dit project ──────────
-  // Bovenaan, vóór de GSC-grafieken: alles wat hier op een beslissing van
-  // Vincent wacht (content ter review, fouten, mail, social, …), gescopeerd
-  // op dít project. Hertgebruikt dezelfde kaart-stijl als het Actiecentrum.
-  html += '<div id="proj-ac"></div>';
-
-  // ── Bestellingen + inkoop-signalering (alleen Bewaard voor Jou) ──
-  if (currentProject === 'BewaardVoorJou') {
-    html += '<div id="proj-bvj-orders"></div>';
-  }
 
   // ── 2. ALERTS (hele card klikbaar - tekst + knop) ──
   if (advice && advice.alerts && advice.alerts.length) {
@@ -278,7 +319,7 @@ async function renderDashboardTab(el) {
       '</div></div></div>';
   }
 
-  // ── 4. CHARTS (alleen als trends data heeft) ──
+  // ── 4. MANAGEMENT INFO — kerncijfers + grafieken ──
   // Elke meetreeks zijn eigen as: klikken en impressies verschillen 10-40x in
   // schaal — samen op één grafiek met dubbele y-as misleidt het oog.
   if (trend && trend.daily && trend.daily.length > 0) {
@@ -289,7 +330,6 @@ async function renderDashboardTab(el) {
       '</div>';
   }
 
-  // ── 5. KPI GRID ──
   if (gsc.error || !gsc.summary) {
     html += '<div class="empty-state"><p style="font-size:15px;font-weight:600;color:var(--neutral-fg);margin-bottom:4px">Nog geen data</p><p style="color:var(--text-muted)">' + escHtml(gsc.error||'Geen GSC-data') + '</p></div>';
   } else {
@@ -310,6 +350,15 @@ async function renderDashboardTab(el) {
       '<div class="section-card"><h3>Top zoekwoorden</h3>' + tbl(gsc.top_queries||[], ['zoekwoord','query'], ['Klikken','clicks'], ['Impressies','impressions'], ['CTR','ctr'], ['Positie','position']) + '</div></div>';
     if (gsc.page_comparison && gsc.page_comparison.length) html += '<div class="section-card"><h3>Week-op-week</h3>' + tbl(gsc.page_comparison.slice(0,10), ['pagina','page'], ['Klikken (deze)','clicks_current'], ['Verschil','clicks_change'], ['Positie','position_current'], ['Pos. verschil','position_change']) + '</div>';
   }
+
+  // ── 5. WACHT OP JOU — mail/helpdesk, fouten, overig ────────────
+  // Onder de management info: dit zijn losse werk-queues, geen kerncijfers.
+  // Gescopeerd op dít project, gesplitst per soort (loadProjectActionCenter
+  // partitioneert één /api/action-center-call in drie kaarten) zodat "6 mails"
+  // en "2 fouten" niet meer door elkaar in één ongesorteerde lijst staan.
+  html += '<div id="proj-ac-mail"></div>';
+  html += '<div id="proj-ac-errors"></div>';
+  html += '<div id="proj-ac-other"></div>';
 
   // ── 6. DOELEN op dashboard ──
   if (goals && goals.length) {
@@ -338,14 +387,10 @@ async function renderDashboardTab(el) {
     el.innerHTML = html;
 
   // ── PROJECT-ACTIECENTRUM ──
-  // "Wacht op jou" voor dít project, bovenaan de Dashboard-tab. Eigen poll
+  // "Wacht op jou" voor dít project, onder de management info. Eigen poll
   // (30s) die stopt zodra je het project of de tab verlaat.
   loadProjectActionCenter(currentProject);
   startProjectActionCenterRefresh(currentProject);
-  if (currentProject === 'BewaardVoorJou') {
-    var bvjEl = document.getElementById('proj-bvj-orders');
-    if (bvjEl) renderBewaardVoorJouOrders(bvjEl);
-  }
 
   // ── RENDER CHARTS ──
   if (trend && trend.daily && trend.daily.length) {
@@ -362,13 +407,17 @@ async function renderDashboardTab(el) {
 
 // ── Project-Actiecentrum ─────────────────────────────────────────────────
 // Dezelfde "wat wacht er op mij"-kaarten als het algemene Actiecentrum, maar
-// dan gescopeerd op één project (via GET /api/action-center?project=<naam>).
-// Staat bovenaan de per-project Dashboard-tab zodat je per project focust.
+// dan gescopeerd op één project (via GET /api/action-center?project=<naam>)
+// en gesplitst in drie kaarten — mail/helpdesk, fouten, overig — i.p.v. één
+// ongesorteerde lijst. Staat ónder de management info + belangrijkste-stap
+// op de per-project Dashboard-tab: dit zijn losse werk-queues, geen
+// kerncijfers, dus horen ze niet bovenaan het scherm te staan.
 var _projAcTimer = null;
+var _PROJ_AC_MAIL_KINDS = { mail_reply: 1, personal_mail: 1, social_msg: 1 };
 function startProjectActionCenterRefresh(project) {
   if (_projAcTimer) clearInterval(_projAcTimer);
   _projAcTimer = setInterval(function () {
-    var el = document.getElementById('proj-ac');
+    var el = document.getElementById('proj-ac-mail');
     if (!el || currentProject !== project || currentTab !== 'Dashboard') {
       clearInterval(_projAcTimer); _projAcTimer = null; return;
     }
@@ -376,59 +425,84 @@ function startProjectActionCenterRefresh(project) {
   }, 30000);
 }
 
+// Rendert één categorie-kaart (mail/fouten/overig) in zijn eigen container.
+// Lege lijst = lege container (geen kaart), zodat een project zonder mail
+// niet alsnog een "0 mails"-kaart toont naast de fouten-kaart eronder.
+function _renderAcCategory(containerId, title, items, project, extraBarHtml) {
+  var el = document.getElementById(containerId);
+  if (!el) return;
+  if (!items.length) { el.innerHTML = ''; return; }
+  var html = '<div class="section-card" style="margin-bottom:16px">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
+    '<h3 style="font-size:14px;font-weight:700;color:var(--text)">' + escHtml(title) + ' (' + items.length + ')</h3>' +
+    '<span style="font-size:11px;color:#94a3b8">klik = klaar</span></div>' +
+    (extraBarHtml || '');
+  items.forEach(function (it, idx) {
+    var meta = (_acKindMeta && _acKindMeta[it.kind]) || { pill: 'pill-neutral', label: it.kind };
+    if (it.kind === 'content_review') {
+      var ct = (it.content_type || 'blog').toLowerCase();
+      if (ct === 'linkedin_outreach') meta = { pill: 'pill-warn', label: 'LinkedIn · géén site-pagina' };
+      else if (ct === 'hook' || ct === 'snippet' || ct === 'social_snippet') meta = { pill: 'pill-warn', label: 'SEO-hook · géén artikel' };
+      else meta = { pill: 'pill-info', label: 'Artikel · wordt gepubliceerd' };
+    }
+    var when = it.created_at ? '<span style="color:#94a3b8;font-size:10px;flex-shrink:0">' + escHtml(_fmtNlDateTime(it.created_at)) + '</span>' : '';
+    html += '<div id="' + containerId + '-item-' + idx + '" style="padding:10px 4px 10px 12px;border-bottom:1px solid #f1f5f9;border-left:3px solid ' + _pillBorderColor(meta.pill) + '">' +
+      '<div style="flex:1;min-width:0">' +
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px">' +
+      '<span class="pill ' + meta.pill + '">' + ((_acKindMeta && _acKindMeta[it.kind]) ? _acKindMeta[it.kind].icon + ' ' : '') + escHtml(meta.label) + '</span>' +
+      (it.flag ? '<span style="font-size:10px;color:#065f46;background:#d1fae5;padding:1px 6px;border-radius:4px;font-weight:600">' + escHtml(it.flag) + '</span>' : '') + when + '</div>' +
+      '<p style="font-size:13px;font-weight:600;color:var(--text);margin:2px 0">' + escHtml(it.title) + '</p>' +
+      '<p style="font-size:11px;color:#64748b;margin-bottom:6px">' + escHtml(it.summary || '') + '</p>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+      it.actions.map(function (a) {
+        var cls = a.danger ? 'btn-danger-outline' : (a.accent ? 'btn-primary' : (a.type === 'open_tab' || a.type === 'dismiss') ? 'btn-ghost' : 'btn-primary');
+        return '<button onclick=\'acAction(this, ' + JSON.stringify(a).replace(/'/g, '&#39;') + ', ' + JSON.stringify(it.project || project) + ')\' class="btn btn-sm ' + cls + '">' + escHtml(a.label) + '</button>';
+      }).join('') +
+      (it.kind === 'mail_reply' && !it.sender_known ? '<button onclick="acMarkSenderKnown(this, ' + String(it.id) + ')" class="btn btn-sm btn-ghost">Markeer als bekend</button>' : '') +
+      '</div></div></div>';
+  });
+  html += '</div>';
+  el.innerHTML = html;
+}
+
 function loadProjectActionCenter(project, isRefresh) {
-  var el = document.getElementById('proj-ac');
-  if (!el || !project) return;
-  if (!isRefresh) el.innerHTML = '<div class="section-card" style="margin-bottom:16px"><div style="color:#64748b;font-size:12px;padding:8px 0">Wacht-op-jou laden...</div></div>';
+  var mailEl = document.getElementById('proj-ac-mail');
+  var errEl = document.getElementById('proj-ac-errors');
+  var otherEl = document.getElementById('proj-ac-other');
+  if (!mailEl || !project) return;
+  if (!isRefresh) {
+    mailEl.innerHTML = '<div class="section-card" style="margin-bottom:16px"><div style="color:#64748b;font-size:12px;padding:8px 0">Wacht-op-jou laden...</div></div>';
+    if (errEl) errEl.innerHTML = '';
+    if (otherEl) otherEl.innerHTML = '';
+  }
   fetch('/api/action-center?project=' + encodeURIComponent(project)).then(function (r) { return r.json(); }).then(function (data) {
-    if (!el || currentProject !== project) return;
+    if (!mailEl || currentProject !== project) return;
     var items = data.items || [];
     if (!items.length) {
-      el.innerHTML = '<div class="section-card" style="margin-bottom:16px;background:var(--ok-bg);border-color:var(--ok-border)">' +
+      mailEl.innerHTML = '<div class="section-card" style="margin-bottom:16px;background:var(--ok-bg);border-color:var(--ok-border)">' +
         '<span style="font-size:13px;color:var(--ok-fg);font-weight:600">Niets wacht op jou voor ' + escHtml(project) + '.</span> ' +
         '<span style="font-size:12px;color:var(--ok-fg)">Alles is aan het lopen.</span></div>';
+      if (errEl) errEl.innerHTML = '';
+      if (otherEl) otherEl.innerHTML = '';
       return;
     }
-    var errorCount = items.filter(function (i) { return i.kind === 'error'; }).length;
-    var bulkBar = '';
-    if (errorCount >= 1) {
-      bulkBar = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--info-bg);border:1px solid var(--info-border);border-radius:var(--radius-sm)">' +
-        '<span style="font-size:11px;color:var(--info-fg);flex:1"><b>' + errorCount + ' foutkaart(en)</b> — laat Iris ze allemaal analyseren &amp; afhandelen:</span>' +
+    var mailItems = [], errorItems = [], otherItems = [];
+    items.forEach(function (it) {
+      if (_PROJ_AC_MAIL_KINDS[it.kind]) mailItems.push(it);
+      else if (it.kind === 'error') errorItems.push(it);
+      else otherItems.push(it);
+    });
+    var errorBar = '';
+    if (errorItems.length >= 1) {
+      errorBar = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--info-bg);border:1px solid var(--info-border);border-radius:var(--radius-sm)">' +
+        '<span style="font-size:11px;color:var(--info-fg);flex:1"><b>' + errorItems.length + ' foutkaart(en)</b> — laat Iris ze allemaal analyseren &amp; afhandelen:</span>' +
         '<button onclick="acTriageAll(this)" class="btn btn-primary btn-sm">Analyseer alle fouten</button></div>';
     }
-    var html = '<div class="section-card" style="margin-bottom:16px">' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
-      '<h3 style="font-size:14px;font-weight:700;color:var(--text)">Wacht op jou — ' + escHtml(project) + ' (' + items.length + ')</h3>' +
-      '<span style="font-size:11px;color:#94a3b8">' + (data.counts && data.counts.errors ? data.counts.errors + ' fout(en) · ' : '') + 'klik = klaar</span></div>' +
-      bulkBar;
-    items.forEach(function (it, idx) {
-      var meta = (_acKindMeta && _acKindMeta[it.kind]) || { pill: 'pill-neutral', label: it.kind };
-      if (it.kind === 'content_review') {
-        var ct = (it.content_type || 'blog').toLowerCase();
-        if (ct === 'linkedin_outreach') meta = { pill: 'pill-warn', label: 'LinkedIn · géén site-pagina' };
-        else if (ct === 'hook' || ct === 'snippet' || ct === 'social_snippet') meta = { pill: 'pill-warn', label: 'SEO-hook · géén artikel' };
-        else meta = { pill: 'pill-info', label: 'Artikel · wordt gepubliceerd' };
-      }
-      var when = it.created_at ? '<span style="color:#94a3b8;font-size:10px;flex-shrink:0">' + escHtml(_fmtNlDateTime(it.created_at)) + '</span>' : '';
-      html += '<div id="proj-ac-item-' + idx + '" style="padding:10px 4px 10px 12px;border-bottom:1px solid #f1f5f9;border-left:3px solid ' + _pillBorderColor(meta.pill) + '">' +
-        '<div style="flex:1;min-width:0">' +
-        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px">' +
-        '<span class="pill ' + meta.pill + '">' + ((_acKindMeta && _acKindMeta[it.kind]) ? _acKindMeta[it.kind].icon + ' ' : '') + escHtml(meta.label) + '</span>' +
-        (it.flag ? '<span style="font-size:10px;color:#065f46;background:#d1fae5;padding:1px 6px;border-radius:4px;font-weight:600">' + escHtml(it.flag) + '</span>' : '') + when + '</div>' +
-        '<p style="font-size:13px;font-weight:600;color:var(--text);margin:2px 0">' + escHtml(it.title) + '</p>' +
-        '<p style="font-size:11px;color:#64748b;margin-bottom:6px">' + escHtml(it.summary || '') + '</p>' +
-        '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-        it.actions.map(function (a) {
-          var cls = a.danger ? 'btn-danger-outline' : (a.accent ? 'btn-primary' : (a.type === 'open_tab' || a.type === 'dismiss') ? 'btn-ghost' : 'btn-primary');
-          return '<button onclick=\'acAction(this, ' + JSON.stringify(a).replace(/'/g, '&#39;') + ', ' + JSON.stringify(it.project || project) + ')\' class="btn btn-sm ' + cls + '">' + escHtml(a.label) + '</button>';
-        }).join('') +
-        (it.kind === 'mail_reply' && !it.sender_known ? '<button onclick="acMarkSenderKnown(this, ' + String(it.id) + ')" class="btn btn-sm btn-ghost">Markeer als bekend</button>' : '') +
-        '</div></div></div>';
-    });
-    html += '</div>';
-    el.innerHTML = html;
+    _renderAcCategory('proj-ac-mail', 'Mail & helpdesk', mailItems, project, '');
+    _renderAcCategory('proj-ac-errors', 'Fouten', errorItems, project, errorBar);
+    _renderAcCategory('proj-ac-other', 'Overige acties', otherItems, project, '');
   }).catch(function (e) {
-    if (el) el.innerHTML = '<div class="section-card" style="margin-bottom:16px;background:var(--danger-bg);border-color:var(--danger-border)"><span style="font-size:12px;color:var(--danger-fg)">Project-actiecentrum laden mislukt: ' + escHtml(e.message) + '</span></div>';
+    if (mailEl) mailEl.innerHTML = '<div class="section-card" style="margin-bottom:16px;background:var(--danger-bg);border-color:var(--danger-border)"><span style="font-size:12px;color:var(--danger-fg)">Project-actiecentrum laden mislukt: ' + escHtml(e.message) + '</span></div>';
   });
 }
 

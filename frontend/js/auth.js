@@ -6,19 +6,19 @@
 function showLoginScreen(reason) {
   var main = document.getElementById('main-content');
   if (!main) return;
-  var note = reason ? '<p style="color:#dc2626;font-size:12px;margin-bottom:12px">' + reason + '</p>' : '';
+  var note = reason ? '<p class="login-note">' + escHtml(reason) + '</p>' : '';
   var name = window.__instanceName || 'Impact OS';
   main.innerHTML =
-    '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f172a">' +
-    '<div style="width:320px;max-width:90vw;background:#1e293b;border:1px solid #334155;border-radius:12px;padding:28px 24px;box-shadow:0 10px 40px rgba(0,0,0,.4)">' +
-    '<h1 style="font-size:18px;font-weight:700;color:#f8fafc;margin-bottom:4px">' + escHtml(name) + '</h1>' +
-    '<p style="font-size:12px;color:#94a3b8;margin-bottom:20px">Log in om je mission control te openen.</p>' +
+    '<div class="login-screen"><div class="login-card">' +
+    '<img class="login-mark" src="/logo-hart.png" alt="' + escAttr(name) + '" />' +
+    '<div class="login-badge">AI &amp; Innovatie in het Sociaal Domein</div>' +
+    '<h1>' + escHtml(name) + '</h1>' +
+    '<p class="login-sub">Log in om je mission control te openen.</p>' +
     note +
-    '<input id="login-pw" type="password" placeholder="Wachtwoord" autofocus ' +
-    'style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#f8fafc;font-size:14px;margin-bottom:12px" />' +
-    '<button id="login-btn" onclick="submitLogin()" ' +
-    'style="width:100%;padding:10px 12px;border-radius:8px;border:none;background:#4f46e5;color:#fff;font-size:14px;font-weight:600;cursor:pointer">Inloggen</button>' +
-    '<p id="login-err" style="color:#f87171;font-size:12px;margin-top:10px;min-height:16px"></p>' +
+    '<input id="login-pw" type="password" placeholder="Wachtwoord" autofocus autocomplete="current-password" />' +
+    '<button id="login-btn" class="login-submit" onclick="submitLogin()">Inloggen</button>' +
+    '<p id="login-err"></p>' +
+    '<div class="login-foot">Impact OS &middot; WeAreImpact</div>' +
     '</div></div>';
   var pw = document.getElementById('login-pw');
   if (pw) pw.addEventListener('keydown', function(e){ if (e.key === 'Enter') submitLogin(); });

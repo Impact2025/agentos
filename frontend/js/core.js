@@ -2,22 +2,6 @@
 // Onderdeel van de SPA: klassieke scripts, gedeelde globale scope.
 // Laadvolgorde staat in index.html — core.js eerst.
 
-// ── Iris-aperture — hetzelfde merkteken als Iris Remote (remote/app.js:
-// apertureMark()): acht spaken rond een pupil, het "oog" van de AI-manager.
-// `currentColor` i.p.v. een vast hexje: de zijbalk zet de kleur via CSS
-// (--accent), dus deze functie hoeft niet te weten of ze op een lichte of
-// donkere achtergrond staat. Vervangt het generieke logo.png (13 aug 2026). ──
-function apertureMark(size, cls) {
-  size = size || 20; cls = cls || '';
-  var spokes = '';
-  for (var i = 0; i < 8; i++) {
-    var a = i * 45;
-    spokes += '<line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="rotate(' + a + ' 12 12)"></line>';
-  }
-  return '<svg class="aperture-mark ' + cls + '" viewBox="0 0 24 24" width="' + size + '" height="' + size + '" aria-hidden="true">' +
-    '<g>' + spokes + '</g><circle cx="12" cy="12" r="2.6" fill="currentColor"></circle></svg>';
-}
-
 // ── Impact OS — Pro SEO Dashboard ──────────────────────────────────
 const PROJECTS = ['WeAreImpact', 'IctusGo', 'Pootgelukkig', 'BewaardVoorJou', 'Kappersassistent', 'DatingAssistent', 'Finance Expert', 'Bijeen', 'Brickme', 'Vrijwilligersmatch', 'Skillkaart', 'Steentjeapp', 'Zorgblik', 'Teambuildingmetimpact', 'Daar'];
 const COLORS = { WeAreImpact: ['from-indigo-500 to-indigo-600','indigo'], Pootgelukkig: ['from-emerald-500 to-emerald-600','emerald'], BewaardVoorJou: ['from-amber-500 to-amber-600','amber'], Kappersassistent: ['from-violet-500 to-violet-600','violet'], DatingAssistent: ['from-red-500 to-red-600','red'], 'Finance Expert': ['from-rose-500 to-rose-600','rose'], Bijeen: ['from-cyan-500 to-cyan-600','cyan'], Brickme: ['from-orange-500 to-orange-600','orange'], Vrijwilligersmatch: ['from-teal-500 to-teal-600','teal'], Skillkaart: ['from-pink-500 to-pink-600','pink'], Steentjeapp: ['from-sky-500 to-sky-600','sky'], Zorgblik: ['from-lime-500 to-lime-600','lime'], Teambuildingmetimpact: ['from-amber-500 to-amber-600','amber'], IctusGo: ['from-cyan-700 to-emerald-600','emerald'] };
@@ -26,14 +10,27 @@ const DESCS = { WeAreImpact: 'AI en innovatie voor zorg, welzijn en gemeenten', 
 // is nu een sectie ónderaan Optimalisatie i.p.v. een los scherm, want beide
 // beantwoordden dezelfde vraag ("welke bestaande pagina verdient aandacht")
 // met een andere tijdshorizon. Zie renderOptimalisatieTab in tabs-memory.js.
-const TABS = ['Dashboard', 'Agenten', 'Postvak', 'Kansen', 'Optimalisatie', 'GEO', 'Wachtrij', 'Prestaties', 'Radar', 'Doelen', 'Geheugen', 'Leads', 'Links', 'Opdrachten', 'Technisch', 'Activiteit', 'Social Creatie', 'Omni', 'Gauntlet', 'Facebook', 'Helpdesk', 'WhatsApp', 'Agenda', 'Instellingen'];
+const TABS = ['Dashboard', 'Agenten', 'Postvak', 'Kansen', 'Optimalisatie', 'GEO', 'Wachtrij', 'Prestaties', 'Radar', 'Doelen', 'Geheugen', 'Leads', 'Links', 'Opdrachten', 'Technisch', 'Activiteit', 'Social Creatie', 'Omni', 'Gauntlet', 'Facebook', 'Helpdesk', 'WhatsApp', 'Agenda', 'Verkoop', 'Klanten', 'Facturatie', 'Besluiten', 'Instellingen'];
 // Menu-iconen. Bewust één monochrome familie (geometrische vormen + pijlen) en
 // géén emoji: emoji krijgen op Windows een eigen kleur en een eigen optische
 // maat, waardoor een menu van zeventien regels zeventien verschillende hoogtes
 // krijgt. Tot 10 aug 2026 stonden hier losse hoofdletters ('D', 'K', 'Q') —
 // leesbaar als afkorting náást het woord dat er al stond, dus ruis; en
 // 'Social Creatie' en 'Instellingen' deelden allebei de 'S'.
-const TAB_ICONS = { Dashboard: '▦', Agenten: '⌘', Postvak: '✉︎', Kansen: '◎', Optimalisatie: '↗', GEO: '◉', Wachtrij: '◷', Prestaties: '⧉', Radar: '✦', Doelen: '◉', Geheugen: '❖', Leads: '⊕', Links: '⇄', Opdrachten: '▤', Technisch: '◫', Activiteit: '⟳', 'Social Creatie': '◐', Omni: '⬡', Gauntlet: '⛓', Facebook: 'ⓕ', Agenda: '▤', Helpdesk: '↩', WhatsApp: '✆', Instellingen: '⚙︎', Health: '♥' };
+const TAB_ICONS = { Dashboard: '▦', Agenten: '⌘', Postvak: '✉︎', Kansen: '◎', Optimalisatie: '↗', GEO: '◉', Wachtrij: '◷', Prestaties: '⧉', Radar: '✦', Doelen: '◉', Geheugen: '❖', Leads: '⊕', Links: '⇄', Opdrachten: '▤', Technisch: '◫', Activiteit: '⟳', 'Social Creatie': '◐', Omni: '⬡', Gauntlet: '⛓', Facebook: 'ⓕ', Agenda: '▤', Helpdesk: '↩', WhatsApp: '✆', Verkoop: '▣', Klanten: '◆', Facturatie: '⎘', Besluiten: '⚖', Instellingen: '⚙︎', Health: '♥' };
+// Projectnamen komen soms gespatieerd voor ("Bewaard voor Jou", de URL/vault-
+// vorm) en soms aaneen ("BewaardVoorJou", de interne site-sleutel) — zelfde
+// onderscheid als `shared/projects.py:squash_project`. Een exacte match tegen
+// één vorm laat de andere onzichtbaar; dat verborg tot 24 aug 2026 het hele
+// Bestellingen-blok op het Dashboard, want currentProject komt uit de URL-hash
+// (dus gespatieerd) terwijl de check op de aaneengeschreven vorm testte.
+var _DIACRITICS_RE = new RegExp('[̀-ͯ]', 'g');
+function squashProjectName(s) {
+  return (s || '').toString().toLowerCase().normalize('NFD').replace(_DIACRITICS_RE, '').replace(/[^a-z0-9]/g, '');
+}
+function isBewaardVoorJouProject(name) {
+  return squashProjectName(name) === 'bewaardvoorjou';
+}
 // Zijbalk-indeling voor desktop: dezelfde 19 tabs, geclusterd per categorie
 // i.p.v. als platte lijst — puur een presentatie-groepering, geen eigen
 // gating (die blijft volledig bij TAB_DOMAIN/visibleTabs()).
@@ -42,7 +39,7 @@ const TAB_ICONS = { Dashboard: '▦', Agenten: '⌘', Postvak: '✉︎', Kansen:
 // Creatie/Facebook over social, in plaats van alles onder één "Postvak"-label
 // te stoppen terwijl Social Creatie eigenlijk bij Content & SEO stond (22 aug 2026).
 const NAV_GROUPS = [
-  { label: 'Overzicht', tabs: ['Dashboard', 'Agenda'] },
+  { label: 'Overzicht', tabs: ['Dashboard', 'Agenda', 'Verkoop', 'Klanten', 'Facturatie', 'Besluiten'] },
   { label: 'Communicatie', subs: [
     { label: 'Mail', tabs: ['Postvak', 'Helpdesk'] },
     { label: 'Social Media', tabs: ['Social Creatie', 'Facebook'] },
@@ -69,7 +66,7 @@ const NAV_GROUPS = [
 // Postvak hoort bij 'outlook_legacy' (Graph/OAuth), niet bij 'mail' — dat laatste
 // is het generieke POP3-mailboxen-domein achter de Helpdesk-tab, een ander
 // systeem met een andere auth-vorm (zie domains/outlook/service.py-docstring).
-const TAB_DOMAIN = { Agenten: 'agentctl', Postvak: 'outlook_legacy', Kansen: 'seo', Optimalisatie: 'seo', Wachtrij: 'publish', Prestaties: 'seo', Radar: 'radar', Doelen: 'goal', Leads: 'prospecting', Links: 'linkbuilding', Opdrachten: 'vacancies', Technisch: 'seo', 'Social Creatie': 'social', Omni: 'seo', Gauntlet: 'pipeline', Helpdesk: 'mail' };
+const TAB_DOMAIN = { Agenten: 'agentctl', Postvak: 'outlook_legacy', Kansen: 'seo', Optimalisatie: 'seo', Wachtrij: 'publish', Prestaties: 'seo', Radar: 'radar', Doelen: 'goal', Leads: 'prospecting', Links: 'linkbuilding', Opdrachten: 'vacancies', Technisch: 'seo', 'Social Creatie': 'social', Omni: 'seo', Gauntlet: 'pipeline', Helpdesk: 'mail', Klanten: 'crm', Facturatie: 'billing' };
 // Eén check voor "hoort dit domein bij deze instance" — gebruikt door de
 // tab-filter én door de Control Room-secties die verwijzen naar routes die op
 // een beperkte instance niet gemonteerd zijn (Linkbuilding, Strategist/Doelen).
@@ -81,6 +78,16 @@ function visibleTabs() {
     if (!TAB_DOMAIN[t] || domainOn(TAB_DOMAIN[t])) {
       // Agenda is een WeAreImpact-only tab: verberg voor andere projecten.
       if (t === 'Agenda' && currentProject && currentProject !== 'WeAreImpact') return false;
+      // Besluiten idem — De Sparringpartner en dit besluitenlog horen bij
+      // Vincent zelf, niet bij een willekeurig klantproject.
+      if (t === 'Besluiten' && currentProject && currentProject !== 'WeAreImpact') return false;
+      // Klanten/Facturatie zijn Vincents eigen consultancy-administratie
+      // (WeAreImpact) — geen enkel ander project heeft eigen klanten/facturen.
+      if ((t === 'Klanten' || t === 'Facturatie') && currentProject && currentProject !== 'WeAreImpact') return false;
+      // Verkoop & inkoop bestaat alleen voor Bewaard voor Jou (bvj_orders/
+      // bvj_stock). Squash-vergelijking, want currentProject komt gespatieerd
+      // uit de URL-hash terwijl de interne sleutel aaneen is.
+      if (t === 'Verkoop' && !isBewaardVoorJouProject(currentProject)) return false;
       return true;
     }
     return false;
