@@ -63,6 +63,12 @@ body {
 }
 #ptr { top: env(safe-area-inset-top, 0px); }
 
+/* Tailwind's [hidden]-regel staat in :where(), dus specificiteit 0 — een
+   simpele klasse als .flex (#bottomnav) of .tap-target (sync/uitlog-knoppen)
+   wint daarvan en het element blijft zichtbaar ondanks het hidden-attribuut.
+   Precies zo lekten de sync/uitlog-iconen en de tabbalk het inlogscherm in. */
+[hidden] { display: none !important; }
+
 /* Tikdoelen: Apple houdt 44pt aan, Android 48dp. Icoonknoppen halen dat niet
    uit hun eigen inhoud, dus dwingen we het af zonder de glyph te vergroten. */
 .tap-target {
