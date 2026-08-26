@@ -19,7 +19,7 @@ from backend.shared import agent_runner as agent_runner_mod
 class _FakeStream:
     """Async-generator die `sleep` seconden 'werkt' en de start/eindtijd
     vastlegt zodat we echte parallelle overlap kunnen aantonen."""
-    def __init__(self, sleep: float = 0.2):
+    def __init__(self, sleep: float = 0.6):
         self._sleep = sleep
         self.runs: list[dict] = []
 
@@ -34,7 +34,15 @@ class _FakeStream:
 
 @pytest.fixture
 def fake_runner(monkeypatch):
-    fr = _FakeStream(sleep=0.2)
+    # 0,6s i.p.v. 0,2s: _execute_task doet vóór/na de sleep zelf sync werk
+    # (budgetcheck, set_task_status, workspace-write, kwaliteitscheck) dat via
+    # SQLite blokkeert en dus ook ONDER asyncio.gather niet overlapt — gemeten
+    # tot ~0,3s overhead onder belasting. Bij sleep=0,2s kon die overhead de
+    # marge alleen al opsouperen (0,488s/0,525s gemeten, was < 0,35s), zonder
+    # dat er iets sequentieel liep — de aparte overlap-assert bewees dat al.
+    # Een langere sleep laat 'm domineren over die overhead, zodat de
+    # wandklok-marge weer daadwerkelijk parallel van sequentieel onderscheidt.
+    fr = _FakeStream(sleep=0.6)
     monkeypatch.setattr(agent_runner_mod, "run_agent", fr)
     return fr
 
@@ -85,9 +93,13 @@ async def test_independent_tasks_run_in_parallel(fake_runner, conn):
         f"run1 start={runs[1]['start']:.3f}"
     )
 
-    # Totale wandklok mag niet near-sequentieel zijn (0.2s, marge 0.1s).
+    # Totale wandklok mag niet near-sequentieel zijn. Sequentieel zou ~2x de
+    # sleep + de sync-overhead van _execute_task kosten (>= 1.2s); parallel
+    # kost ~1x de sleep + diezelfde overhead. Drempel op 1,1s laat ruim marge
+    # voor gemeten overhead (~0,3-0,4s) zonder een echte sequentiële regressie
+    # te missen.
     total = max(r["end"] for r in runs) - min(r["start"] for r in runs)
-    assert total < 0.35, f"Totale tijd duidt op sequentieel: {total:.3f}s"
+    assert total < 1.1, f"Totale tijd duidt op sequentieel: {total:.3f}s"
 
 
 @pytest.mark.asyncio
