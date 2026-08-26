@@ -597,12 +597,15 @@ def build_analytics() -> Dict[str, Any]:
 def build_seo() -> Dict[str, Any]:
     """Per site: trend, stijgers en dalers uit `gsc_history`."""
     from ..seo import history as seo_history
+    from ...shared.projects import project_visible
 
     with get_conn() as conn:
         sites = conn.execute("SELECT id, name, base_url FROM sites").fetchall()
 
     out = []
     for site in sites:
+        if not project_visible(site["name"]):
+            continue
         try:
             movers = seo_history.page_movers(site["id"], limit=3)
             out.append({
@@ -821,19 +824,8 @@ def build_orchestrator() -> Dict[str, Any]:
 def _pulse_mail(mail: Dict, good: List, bad: List) -> None:
     if mail.get("status") != "ok":
         return
-    oldest = mail.get("oldest_open") or {}
-    days = oldest.get("days")
-    if days is not None and days >= 3:
-        bad.append({"area": "mail", "severity": "hoog" if days >= 7 else "midden",
-                    "what": f"Oudste onbeantwoorde mail is {days} dagen oud",
-                    "detail": f"{oldest.get('from', '?')}: {oldest.get('subject', '')}"[:160],
-                    "why": "Hoe langer een vraag ligt, hoe duurder het antwoord."})
     backlog = mail.get("backlog") or 0
-    if backlog >= 15:
-        bad.append({"area": "mail", "severity": "midden",
-                    "what": f"{backlog} onbeantwoorde mails in het postvak",
-                    "why": "Achterstand groeit sneller dan hij slinkt."})
-    elif backlog <= 3:
+    if backlog <= 3:
         good.append({"area": "mail", "what": f"Mailbox is bij ({backlog} open)"})
     rate = (mail.get("week") or {}).get("reply_rate")
     if rate is not None and rate >= 70:

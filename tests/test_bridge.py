@@ -220,15 +220,17 @@ async def test_context_section_falls_back_to_stale_cache(clean_tables, monkeypat
     assert out["waarde"] == 42 and out["stale"] is True
 
 
-def test_pulse_flags_stale_mail_backlog():
+def test_pulse_mail_backlog_no_longer_flagged():
+    # Mail-achterstand heeft een eigen scherm (Postvak, 14c/14d in CLAUDE.md);
+    # de pulse dupliceerde die twee cijfers als losse waarschuwingen zonder
+    # nieuwe informatie. Vincent liet ze op 25 aug 2026 expliciet verwijderen.
     from backend.domains.bridge import context
     pulse = context.build_pulse({
         "mail": {"status": "ok", "backlog": 20,
                  "oldest_open": {"days": 9, "from": "klant", "subject": "offerte"},
                  "week": {}},
     })
-    assert any("9 dagen" in b["what"] for b in pulse["bad"])
-    assert pulse["bad"][0]["severity"] == "hoog"
+    assert not any(b["area"] == "mail" for b in pulse["bad"])
 
 
 def test_pulse_marks_unavailable_sections():

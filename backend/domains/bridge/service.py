@@ -29,6 +29,7 @@ import httpx
 from ...shared import failures
 from ...shared.config import BRIDGE_REMOTE_URL, BRIDGE_TOKEN
 from ...shared.database import get_conn
+from ...shared.projects import project_visible
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,8 @@ def collect_items() -> List[Dict[str, Any]]:
 
     items = []
     for it in inbox.get("items", []) if isinstance(inbox, dict) else inbox:
+        if not project_visible(it.get("project")):
+            continue
         kind = it.get("dismiss_kind") or "error"
         item_id = str(it.get("id"))
         detail: Optional[Dict] = None
@@ -237,7 +240,8 @@ def collect_briefing() -> Dict[str, Any]:
             }
             snapshot = json.loads(r["metrics"] or "{}")
             briefing["projects"] = [_compact_project(p, grades)
-                                    for p in snapshot.get("projects") or []]
+                                    for p in snapshot.get("projects") or []
+                                    if project_visible(p.get("project"))]
             # Knelpunten zijn Iris' belangrijkste regel: het laagste cijfer is
             # zelden het echte probleem. Zonder deze meegestuurde lijst moet de
             # telefoon dat uit de markdown-lap zien te vissen.
