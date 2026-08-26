@@ -29,7 +29,7 @@ import httpx
 from ...shared import failures
 from ...shared.config import BRIDGE_REMOTE_URL, BRIDGE_TOKEN
 from ...shared.database import get_conn
-from ...shared.projects import project_visible
+from ...shared.projects import project_visible, filter_cross_project_mentions
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +236,7 @@ def collect_briefing() -> Dict[str, Any]:
                 "markdown": r["markdown"],
                 "grades": grades,
                 "llm_ok": bool(r["llm_ok"]),
-                "advice": json.loads(r["advice"] or "[]"),
+                "advice": filter_cross_project_mentions(json.loads(r["advice"] or "[]")),
             }
             snapshot = json.loads(r["metrics"] or "{}")
             briefing["projects"] = [_compact_project(p, grades)
@@ -244,10 +244,13 @@ def collect_briefing() -> Dict[str, Any]:
                                     if project_visible(p.get("project"))]
             # Knelpunten zijn Iris' belangrijkste regel: het laagste cijfer is
             # zelden het echte probleem. Zonder deze meegestuurde lijst moet de
-            # telefoon dat uit de markdown-lap zien te vissen.
+            # telefoon dat uit de markdown-lap zien te vissen. Gefilterd vóór
+            # het strippen naar (prio/issue/actie/waarom): de suggestion.scope
+            # die de filter nodig heeft staat alleen op de ongestripte rij.
+            filtered_bottlenecks = filter_cross_project_mentions(snapshot.get("bottlenecks") or [])
             briefing["bottlenecks"] = [
                 {k: b.get(k) for k in ("prio", "issue", "actie", "waarom")}
-                for b in (snapshot.get("bottlenecks") or [])[:5]
+                for b in filtered_bottlenecks[:5]
             ]
     except Exception:
         logger.exception("Bridge: Iris-briefing ophalen mislukt")
@@ -554,6 +557,13 @@ async def sync_once() -> Dict[str, Any]:
         # eigen-try/except-redenering als impact_leads hierboven.
         from . import workshop_leads
         summary["workshop_leads"] = await workshop_leads.process_pending()
+
+        # Boekingsaanvragen (26 aug 2026, weareimpact.nl): zelfde eigen-
+        # try/except-redenering als impact_leads hierboven. Pusht bij elke
+        # statuswijziging opnieuw (pending/approved/rejected), dus dit haalt
+        # ook op als er niets nieuws bij is — zie booking_leads.py.
+        from . import booking_leads
+        summary["booking_leads"] = await booking_leads.process_pending()
 
         # LSP-workshop (24 aug 2026): zelfde eigen-try/except-redenering als
         # impact_leads hierboven — de rij bestaat al volledig (WhatsApp heeft

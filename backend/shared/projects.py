@@ -129,6 +129,37 @@ def project_visible(name: Optional[str]) -> bool:
     return squash_project(name) in toegestaan
 
 
+def filter_cross_project_mentions(
+    items: Iterable[Dict], text_keys: Iterable[str] = ("actie", "waarom")
+) -> List[Dict]:
+    """Filtert Iris' knelpunten/advies (systeembreed berekend, over alle
+    projecten heen) op wat `BRIDGE_VISIBLE_PROJECTS` toestaat.
+
+    Deze items dragen zelf vaak geen `project`-veld (een scheduler-storing of
+    een lijst vastgelopen doelen noemt meerdere projecten in de tekst) — een
+    filter die alleen op een `project`-kolom let laat die dus door. Bij een
+    expliciete scope (`project` of `suggestion.scope`/`.target`) telt die;
+    anders wordt de tekst afgezet tegen de namen van de projecten die niet
+    zichtbaar mogen zijn, en sneuvelt het item zodra zo'n naam erin voorkomt."""
+    allowed = visible_projects_filter()
+    if allowed is None:
+        return list(items)
+    other_names = [n for n in _site_namen().values() if squash_project(n) not in allowed]
+    out: List[Dict] = []
+    for it in items:
+        suggestion = it.get("suggestion") or {}
+        scope = it.get("project") or suggestion.get("scope") or suggestion.get("target")
+        if scope:
+            if squash_project(str(scope)) in allowed:
+                out.append(it)
+            continue
+        text = " ".join(str(it.get(k) or "") for k in text_keys).lower()
+        if any(n and n.lower() in text for n in other_names):
+            continue
+        out.append(it)
+    return out
+
+
 def project_varianten(name: str) -> List[str]:
     """Alle spellingen waaronder dit project ooit is opgeslagen.
 

@@ -8,6 +8,7 @@ bolt
 calendar_month
 campaign
 center_focus_strong
+chat
 check
 check_circle
 check_small

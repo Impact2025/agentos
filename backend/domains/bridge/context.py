@@ -311,23 +311,27 @@ def build_social() -> Dict[str, Any]:
     `shared/social_inbox.py:run_inbox`). Geen inboxen = geen kaart: dit is een
     feature die per klant opt-in aangezet wordt, dus 'off' hier betekent 'nog
     niet ingesteld', niet 'kapot'."""
+    from ...shared.projects import project_visible
+
     with get_conn() as conn:
-        inboxes = conn.execute(
+        inboxes = [r for r in conn.execute(
             "SELECT id, project, platform, label, enabled FROM social_inboxes"
-        ).fetchall()
+        ).fetchall() if project_visible(r["project"])]
         if not inboxes:
             return {"status": "off", "reason": "Geen social-inboxen ingesteld"}
+        inbox_ids = [r["id"] for r in inboxes]
+        placeholders = ",".join("?" * len(inbox_ids))
         pending = conn.execute(
             "SELECT m.id, m.platform, m.author_name, m.author_handle, m.text, "
             "m.kind, m.draft_body, m.created_at, i.project "
             "FROM social_inbox_msg m JOIN social_inboxes i ON i.id=m.inbox_id "
-            "WHERE m.status IN ('pending_review','edited') "
-            "ORDER BY m.created_at DESC LIMIT 20"
+            f"WHERE m.status IN ('pending_review','edited') AND m.inbox_id IN ({placeholders}) "
+            "ORDER BY m.created_at DESC LIMIT 20", inbox_ids
         ).fetchall()
         oldest = conn.execute(
             "SELECT m.created_at FROM social_inbox_msg m "
-            "WHERE m.status IN ('pending_review','edited') "
-            "ORDER BY m.created_at ASC LIMIT 1"
+            f"WHERE m.status IN ('pending_review','edited') AND m.inbox_id IN ({placeholders}) "
+            "ORDER BY m.created_at ASC LIMIT 1", inbox_ids
         ).fetchone()
 
     oldest_days = None
@@ -798,9 +802,14 @@ def build_orchestrator() -> Dict[str, Any]:
     kostbaar genoeg, en de keuze "nog een poging vs. de benchmark aanpassen"
     is precies het oordeel dat bij Vincent hoort te blijven, niet bij een
     model dat autonoom mag 'starten'."""
+    from ...shared.projects import project_visible
+
     try:
         from ..orchestrator import service as orchestrator_service
-        jobs = orchestrator_service._find_under_threshold_jobs()
+        jobs = [
+            j for j in orchestrator_service._find_under_threshold_jobs()
+            if project_visible(orchestrator_service._project_for_job(j))
+        ]
     except Exception as e:  # noqa: BLE001
         logger.warning("Bridge-context: orchestrator-sectie mislukt: %s", e)
         return {"status": "error", "error": str(e)[:200]}
