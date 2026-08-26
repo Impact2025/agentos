@@ -258,6 +258,26 @@ def test_herstelde_schedulerjob_wordt_nooit_permanent_weggeklikt():
     assert gemeld and "zelf op" in gemeld["detail"]
 
 
+def test_inkoop_tekort_wordt_nooit_zelf_geprobeerd(monkeypatch):
+    """Voorraad bestellen is een handeling in de echte wereld — geen probe of
+    LLM-triage kan dat doen. Vóór deze uitsluiting viel dit terug op de
+    LLM-triage-stap: elke ronde opnieuw een gateway-call, plus een misleidende
+    'Iris probeert dit zelf' banner op een kaart die alleen Vincent kan sluiten
+    (24 aug 2026)."""
+    cid = _error_card("inkoop_tekort",
+                       "fotoboek_voucher: 4 nodig voor betaalde orders, maar 0 op voorraad "
+                       "— dit blokkeert fulfillment.")
+
+    def _mag_niet_aangeroepen(*a, **kw):
+        raise AssertionError("triage had niet aangeroepen mogen worden voor inkoop_tekort")
+
+    monkeypatch.setattr("backend.domains.iris.triage.analyze_and_fix", _mag_niet_aangeroepen)
+    report = asyncio.run(selfheal.run_selfheal(source="test"))
+    assert report["results"] == []  # de case is helemaal niet opgepakt
+    assert selfheal.heal_status("inkoop_tekort", "fotoboek_voucher: ...") is None
+    assert not _is_dismissed(cid)
+
+
 def test_ronde_valt_nooit_om_op_een_kapotte_probe(monkeypatch):
     _error_card("social_fetch", "Ophalen van instagram mislukt: netwerk weg")
 
