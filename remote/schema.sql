@@ -222,6 +222,10 @@ CREATE TABLE IF NOT EXISTS booking_leads (
   UNIQUE (tenant, booking_request_id)
 );
 CREATE INDEX IF NOT EXISTS idx_booking_leads_tenant_status ON booking_leads (tenant, status, created_at);
+-- Website (26 aug 2026): optioneel veld op de widget zodat AgentOS' verrijking
+-- een harde ankertekst heeft in plaats van te gokken uit e-maildomein of
+-- vrij-getypte organisatienaam (zie backend/domains/bridge/booking_leads.py).
+ALTER TABLE booking_leads ADD COLUMN IF NOT EXISTS customer_website TEXT;
 
 -- ── Voordeur ───────────────────────────────────────────────────────────────
 -- Sessies staan in de database en niet in een afgeleide HMAC, want een sessie

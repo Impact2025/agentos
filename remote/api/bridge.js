@@ -304,13 +304,13 @@ async function bookingLead(req, res, tenant) {
     INSERT INTO booking_leads (
       tenant, booking_request_id, booking_type, start_time, duration_minutes,
       customer_name, customer_email, customer_phone, customer_organization,
-      notes, booking_status
+      customer_website, notes, booking_status
     ) VALUES (
       ${tenant}, ${bookingRequestId}, ${body.bookingType || null},
       ${body.startTime || null}, ${body.durationMinutes || null},
       ${body.customerName || null}, ${email}, ${body.customerPhone || null},
-      ${body.customerOrganization || null}, ${body.notes || null},
-      ${body.bookingStatus || 'pending'}
+      ${body.customerOrganization || null}, ${body.customerWebsite || null},
+      ${body.notes || null}, ${body.bookingStatus || 'pending'}
     )
     ON CONFLICT (tenant, booking_request_id) DO UPDATE SET
       booking_status = EXCLUDED.booking_status,
@@ -324,7 +324,7 @@ async function bookingLeads(res, tenant) {
   const rows = await sql`
     SELECT id, booking_request_id, booking_type, start_time, duration_minutes,
            customer_name, customer_email, customer_phone, customer_organization,
-           notes, booking_status, created_at, updated_at
+           customer_website, notes, booking_status, created_at, updated_at
     FROM booking_leads WHERE tenant = ${tenant} AND status = 'pending'
     ORDER BY created_at ASC LIMIT 20`;
   return json(res, 200, { leads: rows });

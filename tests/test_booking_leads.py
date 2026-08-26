@@ -70,6 +70,89 @@ def test_dedupe_op_email_zet_verder_gevorderde_lead_niet_terug(_schone_leads):
     assert row["summary"] == "Tweede verslag (herhaalde push)."  # wel bijgewerkt
 
 
+# ── booking_leads._enrich_sync ──────────────────────────────────────────────
+
+def test_enrich_raadpleegt_organisatienaam_naast_afwijkend_maildomein(monkeypatch):
+    """26 aug 2026: 'Lspacademy.nl' als organisatie + mailadres op
+    'fellow-travellers.com' leverde vóór deze fix alleen een scrape van het
+    maildomein op — de organisatienaam werd nooit opgezocht."""
+    from backend.domains.bridge import booking_leads as bl
+
+    calls = []
+
+    class FakeSvc:
+        def scrape_and_enrich(self, url, org_name=""):
+            calls.append(("scrape", url))
+            return {"page_text": f"pagina voor {url}"}
+
+        def search_web(self, query, max_results=3):
+            calls.append(("search", query))
+            return [{"title": "x", "snippet": "y", "url": "z"}]
+
+    monkeypatch.setattr(
+        "backend.domains.prospecting.service.LeadsService", lambda: FakeSvc())
+
+    result = bl._enrich_sync("wim@fellow-travellers.com", "Lspacademy.nl")
+
+    assert result["website"] == "https://fellow-travellers.com"
+    assert result["org_website"] == "https://lspacademy.nl"
+    assert ("scrape", "https://fellow-travellers.com") in calls
+    assert ("scrape", "https://lspacademy.nl") in calls
+
+
+def test_enrich_scrapet_organisatie_niet_dubbel_als_gelijk_aan_maildomein(monkeypatch):
+    from backend.domains.bridge import booking_leads as bl
+
+    calls = []
+
+    class FakeSvc:
+        def scrape_and_enrich(self, url, org_name=""):
+            calls.append(url)
+            return {}
+
+        def search_web(self, query, max_results=3):
+            calls.append(query)
+            return []
+
+    monkeypatch.setattr(
+        "backend.domains.prospecting.service.LeadsService", lambda: FakeSvc())
+
+    result = bl._enrich_sync("marleen@voorbeeldstichting.nl", "voorbeeldstichting.nl")
+
+    assert calls == ["https://voorbeeldstichting.nl"]
+    assert result["org_website"] == ""
+
+
+def test_enrich_gebruikt_ingevulde_website_als_primaire_bron(monkeypatch):
+    """26 aug 2026: het Website-veld op de widget is de hardste ankertekst —
+    wint van het (mogelijk privé) e-maildomein."""
+    from backend.domains.bridge import booking_leads as bl
+
+    calls = []
+
+    class FakeSvc:
+        def scrape_and_enrich(self, url, org_name=""):
+            calls.append(url)
+            return {"page_text": f"pagina voor {url}"}
+
+        def search_web(self, query, max_results=3):
+            calls.append(query)
+            return []
+
+    monkeypatch.setattr(
+        "backend.domains.prospecting.service.LeadsService", lambda: FakeSvc())
+
+    result = bl._enrich_sync(
+        "david@gmail.com", "Lspacademy", "https://www.lspacademy.nl/contact")
+
+    assert result["website"] == "https://lspacademy.nl"
+    assert "https://lspacademy.nl" in calls
+    # organisatie 'Lspacademy' is geen domeintekst en levert dus geen tweede
+    # scrape op ('org_website' blijft leeg), wel een aparte cross-check-zoekopdracht.
+    assert result["org_website"] == ""
+    assert "Lspacademy" in calls
+
+
 # ── booking_leads._process_one ──────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -77,7 +160,7 @@ async def test_pending_doet_volledige_verrijking_en_verslag(_schone_leads, monke
     from backend.domains.bridge import booking_leads as bl
     from backend.shared.database import get_conn
 
-    monkeypatch.setattr(bl, "_enrich_sync", lambda email, org: {"website": "", "scraped": {}, "search_results": []})
+    monkeypatch.setattr(bl, "_enrich_sync", lambda email, org, website="": {"website": "", "scraped": {}, "search_results": []})
 
     async def fake_verslag(booking, enrichment):
         return "Iris' verslag: relevante inbound lead."
@@ -100,7 +183,7 @@ async def test_pending_llm_fout_valt_terug_op_ruwe_feiten(_schone_leads, monkeyp
     from backend.domains.bridge import booking_leads as bl
     from backend.shared.database import get_conn
 
-    monkeypatch.setattr(bl, "_enrich_sync", lambda email, org: {"website": "", "scraped": {}, "search_results": []})
+    monkeypatch.setattr(bl, "_enrich_sync", lambda email, org, website="": {"website": "", "scraped": {}, "search_results": []})
 
     async def falende_verslag(booking, enrichment):
         raise RuntimeError("gateway plat")
