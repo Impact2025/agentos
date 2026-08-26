@@ -130,13 +130,15 @@ if ($impactOsReady) {
     if (-not (Test-Path (Join-Path $ImpactRoot ".venv\Scripts\uvicorn.exe"))) {
         Write-Host "  [->] Venv aanmaken..." -ForegroundColor DarkGray
         $python = "python"
-        & $python -m venv (Join-Path $ImpactRoot ".venv") | Out-Null
-        & $venvPip install -q -r $reqFile | Out-Null
+        # Verborgen start: venv/pip zijn console-subsystem binaries; Start-Process
+        # met -WindowStyle Hidden + -RedirectStandard* voorkomt zwarte popups.
+        Start-Process -FilePath $python -ArgumentList "-m","venv","$(Join-Path $ImpactRoot '.venv')" -NoNewWindow -Wait -WindowStyle Hidden -RedirectStandardOutput NUL -RedirectStandardError NUL
+        Start-Process -FilePath $venvPip -ArgumentList "install","-q","-r",$reqFile -NoNewWindow -Wait -WindowStyle Hidden -RedirectStandardOutput NUL -RedirectStandardError NUL
         New-Item -ItemType File -Force $stamped | Out-Null
         Write-Host "  [OK] Venv klaar" -ForegroundColor Green
     } elseif ((-not (Test-Path $stamped)) -or ((Get-Item $reqFile).LastWriteTime -gt (Get-Item $stamped).LastWriteTime)) {
         Write-Host "  [->] Dependencies installeren..." -ForegroundColor DarkGray
-        & $venvPip install -q -r $reqFile | Out-Null
+        Start-Process -FilePath $venvPip -ArgumentList "install","-q","-r",$reqFile -NoNewWindow -Wait -WindowStyle Hidden -RedirectStandardOutput NUL -RedirectStandardError NUL
         New-Item -ItemType File -Force $stamped | Out-Null
         Write-Host "  [OK] Dependencies klaar" -ForegroundColor Green
     }

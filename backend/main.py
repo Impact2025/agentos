@@ -311,6 +311,18 @@ if domain_enabled("coach"):
     app.include_router(coach_bridge_router.router)
     from .domains.coach import router as coach_router
     app.include_router(coach_router.router)
+if domain_enabled("crm"):
+    from .domains.crm import router as crm_router
+    app.include_router(crm_router.router)
+if domain_enabled("billing"):
+    from .domains.billing import router as billing_router
+    app.include_router(billing_router.router)
+if domain_enabled("quotes"):
+    from .domains.quotes import router as quotes_router
+    app.include_router(quotes_router.router)
+if domain_enabled("notes"):
+    from .domains.notes import router as notes_router
+    app.include_router(notes_router.router)
 
 
 # ── Status / health endpoints ──────────────────────────────────────────────

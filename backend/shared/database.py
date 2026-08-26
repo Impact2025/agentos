@@ -858,6 +858,17 @@ def _migrate(conn) -> None:
         ("quality_score", "ALTER TABLE leads ADD COLUMN quality_score INTEGER DEFAULT 0"),
         ("quality_label", "ALTER TABLE leads ADD COLUMN quality_label TEXT DEFAULT ''"),
         ("quality_reason", "ALTER TABLE leads ADD COLUMN quality_reason TEXT DEFAULT ''"),
+        # Lead follow-up-cadans (26 aug 2026, prospecting/followup.py): een
+        # 'contacted' lead die niet reageert krijgt na een stilteperiode een
+        # zachte herinnering, hooguit twee keer. followup_count/sent_at tellen
+        # ELKE afgehandelde ronde mee (verstuurd én bewust overgeslagen) —
+        # anders zou een afgewezen concept de volgende dag gewoon opnieuw
+        # verschijnen, want de stilteperiode zelf is dan nog niet verstreken.
+        ("followup_count",      "ALTER TABLE leads ADD COLUMN followup_count INTEGER DEFAULT 0"),
+        ("followup_subject",    "ALTER TABLE leads ADD COLUMN followup_subject TEXT DEFAULT ''"),
+        ("followup_draft",      "ALTER TABLE leads ADD COLUMN followup_draft TEXT DEFAULT ''"),
+        ("followup_drafted_at", "ALTER TABLE leads ADD COLUMN followup_drafted_at TEXT DEFAULT ''"),
+        ("followup_sent_at",    "ALTER TABLE leads ADD COLUMN followup_sent_at TEXT DEFAULT ''"),
     ):
         if col not in lead_cols:
             conn.execute(ddl)

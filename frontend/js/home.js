@@ -486,6 +486,15 @@ var _acKindMeta = {
   social_msg:    { pill: 'pill-info', label: 'Social bericht', icon: '💬' },
   error:         { pill: 'pill-danger', label: 'Fout', icon: '⚠' }
 };
+// Kinds die al hun eigen tab hebben (Agenda, Postvak) — nogmaals als kaart in
+// een Actiecentrum-lijst tonen is dezelfde beslissing op twee plekken
+// aanbieden. Gedeeld door home.js (globale Control Room), shell.js (generiek
+// project-dashboard) en tabs-weareimpact.js — hier gedefinieerd omdat home.js
+// als eerste laadt (zie index.html). Ze blijven wél in build_inbox() zelf
+// staan: bridge/digest lezen daar rechtstreeks van, buiten deze schermen om.
+// 26 aug 2026: agenda-voorstellen en mail stonden dubbel, zowel bovenaan als
+// in "Overige acties" / de globale lijst.
+var _AC_HAS_OWN_TAB_KINDS = { calendar_proposal: 1, mail_reply: 1, personal_mail: 1 };
 // Pil-klasse → volle randkleur, voor de gekleurde linkerrand op elke
 // Actiecentrum-kaart (dezelfde betekenis-schaal als de pillen zelf).
 function _pillBorderColor(pillClass) {
@@ -514,8 +523,13 @@ function loadActionCenter() {
   if (!el) return;
   fetch('/api/action-center').then(function(r){return r.json();}).then(function(data){
     if (!el) return;
-    var items = data.items || [];
-    _acLastItems = items;
+    var rawItems = data.items || [];
+    _acLastItems = rawItems;
+    // calendar_proposal/mail_reply/personal_mail hebben al hun eigen tab
+    // (Agenda, Postvak) — hier nogmaals als kaart tonen is dezelfde beslissing
+    // op twee plekken aanbieden (26 aug 2026). De GSC-bulkactie hieronder telt
+    // wél nog op rawItems: dat is een cross-cutting actie, geen kaart.
+    var items = rawItems.filter(function(i){ return !_AC_HAS_OWN_TAB_KINDS[i.kind]; });
     updateTabBadge(items.length);
     if (!items.length) {
       el.innerHTML = '<div class="section-card" style="margin-bottom:16px;background:var(--ok-bg);border-color:var(--ok-border)">' +
@@ -541,7 +555,7 @@ function loadActionCenter() {
     }
     // GSC-expert bulk: alle wachtende Search Console-meldingen in één keer
     // door de agent laten analyseren (en veilig verzenden/oplossen).
-    var gscCount = items.filter(function(i){
+    var gscCount = rawItems.filter(function(i){
       return i.kind === 'mail_reply' && i.actions.some(function(a){ return a.type === 'mail_gsc_fix'; });
     }).length;
     if (gscCount >= 1) {
@@ -1507,6 +1521,16 @@ function acAction(btn, action, project) {
     post('/api/content-queue/' + encodeURIComponent(action.id) + '/regenerate').then(done).catch(fail);
   } else if (type === 'content_manual_edit') {
     acManualEdit(btn, action); return;
+  } else if (type === 'billing_reminder_send') {
+    if (!confirm('Deze herinnering wordt ECHT verstuurd naar de klant. Doorgaan?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
+    post('/api/billing/reminders/' + encodeURIComponent(action.id) + '/send').then(done).catch(fail);
+  } else if (type === 'billing_reminder_skip') {
+    post('/api/billing/reminders/' + encodeURIComponent(action.id) + '/skip').then(done).catch(fail);
+  } else if (type === 'followup_send') {
+    if (!confirm('Deze opvolgmail wordt ECHT verstuurd naar de lead. Doorgaan?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
+    post('/api/leads/' + encodeURIComponent(action.id) + '/followup-approve').then(done).catch(fail);
+  } else if (type === 'followup_skip') {
+    post('/api/leads/' + encodeURIComponent(action.id) + '/followup-dismiss').then(done).catch(fail);
   } else if (type === 'outreach_send') {
     if (!confirm('Deze outreach-mail wordt ECHT verstuurd naar de lead. Doorgaan?')) { if (btn) { btn.disabled = false; btn.textContent = action.label; } return; }
     post('/api/leads/' + encodeURIComponent(action.id) + '/outreach-approve').then(done).catch(fail);

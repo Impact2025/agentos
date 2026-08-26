@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -46,6 +47,19 @@ def _count_goals_by_status() -> Dict[str, int]:
     return counts
 
 
+# Control Room laadt bij ELKE inlog opnieuw, en `list_opportunities_truth`
+# doet per site een live sitemap-/GSC-vergelijking (een netwerkcall, tot 10s
+# per poging). Sequentieel over 10+ projecten was dat op een gezonde dag al
+# ~9s; op 26 aug 2026 stond de LLM-gateway degraded en liep dezelfde aanroep
+# op tot 90+ seconden — Vincent zag dat als "blijft hangen op Control Room
+# laden", niet als traag. Een kans-telling die 5 minuten oud is, is nog steeds
+# een betrouwbaar antwoord (de Kansen-tab zelf blijft live); alleen de badge
+# op de Control Room mag een beetje achterlopen in ruil voor niet meer vast
+# te lopen zodra een site of de gateway hapert.
+_OPP_CACHE_TTL = 300
+_opp_cache: Dict[str, tuple] = {}  # site_name -> (expires_at, counts)
+
+
 def _count_opportunities(site_name: str) -> Dict[str, int]:
     """Tel kansen per status voor een site.
 
@@ -55,6 +69,9 @@ def _count_opportunities(site_name: str) -> Dict[str, int]:
     toont, en dat is precies hoe twee antwoorden op dezelfde vraag uit elkaar
     lopen (9 aug 2026: WeAreImpact hield "23 kansen" op de Control Room terwijl
     de Kansen-tab er na de gate nog 12 toonde)."""
+    cached = _opp_cache.get(site_name)
+    if cached and cached[0] > time.monotonic():
+        return cached[1]
     counts: Dict[str, int] = {}
     try:
         site = _find_site(site_name)
@@ -81,6 +98,7 @@ def _count_opportunities(site_name: str) -> Dict[str, int]:
             )
     except Exception:
         pass
+    _opp_cache[site_name] = (time.monotonic() + _OPP_CACHE_TTL, counts)
     return counts
 
 

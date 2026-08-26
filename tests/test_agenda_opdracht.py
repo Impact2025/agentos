@@ -78,6 +78,53 @@ def test_datum_verderop_in_het_jaar(dinsdag):
     assert cmd.start.strftime("%d-%m %H:%M") == "18-08 12:15"
 
 
+@pytest.mark.parametrize("zin,verwacht_titel", [
+    ("vanavond 20.00 tennisen met Jeroen", "Tennisen met Jeroen"),
+    ("vandaag 15.00 bellen met Sanne", "Bellen met Sanne"),
+    ("vannacht 23.00 telefoontje", "Telefoontje"),
+])
+def test_vandaag_woorden_worden_herkend(dinsdag, zin, verwacht_titel):
+    """'Vanavond 20.00 tennisen met Jeroen' gaf tot 26 aug 2026 'Ik kon geen
+    datum herkennen' — alleen 'morgen'/'overmorgen'/een weekdag telden als
+    datum, 'vandaag' en zijn dagdeel-varianten niet, terwijl de tijd wél
+    expliciet in de zin stond. De datum-woorden mogen ook niet in de titel
+    lekken (net als 'morgen'/weekdagen al niet deden)."""
+    cmd = nlc.parse_command(zin)
+    assert cmd.kind == "single"
+    assert cmd.start.strftime("%d-%m") == "11-08"
+    assert cmd.title == verwacht_titel
+
+
+def test_vanmiddag_in_het_verleden_is_een_vraag_geen_verschuiving(dinsdag):
+    """'Vanmiddag'/'vanmorgen' zijn net zo expliciet als een genoemde datum —
+    is het tijdstip vandaag al voorbij, dan is stilzwijgend een week
+    opschuiven dezelfde fout als bij '5 augustus 14.00' (zie hierboven), niet
+    de +7-regel die bij een kale weekdag hoort."""
+    cmd = nlc.parse_command("vanmiddag 09.00 overleg")  # 'nu' is 11:00
+    assert cmd.kind == "error"
+    assert "al geweest" in cmd.error
+
+
+@pytest.mark.parametrize("zin,verwacht_dag,verwacht_titel", [
+    ("morgen 10.00 tandarts", "12-08", "Tandarts"),
+    ("morgenochtend 10.00 tandarts", "12-08", "Tandarts"),
+    ("morgenmiddag 14.00 bellen", "12-08", "Bellen"),
+    ("morgenavond 20.00 etentje", "12-08", "Etentje"),
+    ("overmorgen 09.00 kapper", "13-08", "Kapper"),
+])
+def test_morgen_samenstellingen_blijven_morgen(dinsdag, zin, verwacht_dag, verwacht_titel):
+    """Regressietoets op de fix hierboven: het onderscheid tussen 'vanmorgen'
+    (vandaag) en 'morgen'/'morgenochtend'/'morgenmiddag'/'morgenavond'
+    (morgen) mag niet ten koste gaan van de samengestelde vormen — die hebben
+    geen woordgrens vóór 'ochtend'/'middag'/'avond' en zouden bij een te
+    strikte \\bmorgen\\b-toets alsnog 'geen datum herkend' geven, en zonder de
+    strip in _zonder_tijdsinfo lekt 'Morgenmiddag'/'Morgenavond' als titel."""
+    cmd = nlc.parse_command(zin)
+    assert cmd.kind == "single"
+    assert cmd.start.strftime("%d-%m") == verwacht_dag
+    assert cmd.title == verwacht_titel
+
+
 # ── Terugkerend blok ───────────────────────────────────────────────────────
 
 def test_wekelijks_blok_landt_op_de_gevraagde_dag(dinsdag):

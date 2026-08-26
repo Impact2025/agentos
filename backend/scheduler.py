@@ -637,6 +637,46 @@ async def _iris_retry_job() -> None:
 # ── NotebookLM-onderzoek-agent ─────────────────────────────────────
 # Vaste "kennisronde" voor WeAreImpact: één diepte-vraag tegen
 # het standaard SEO-notebook. Het rapport landt in de vault
+# ── Lead-opvolging ───────────────────────────────────────────────────────
+# Veilig om dagelijks te herhalen: genereer_followups() maakt alleen een
+# concept aan als er nog geen openstaand concept is (zie leads_needing_
+# followup) en verstuurt zelf nooit iets — dat blijft achter de Wachtrij-gate.
+async def _followup_job() -> None:
+    from .domains.prospecting import followup as followup_service
+    gemaakt = await followup_service.genereer_followups()
+    if gemaakt:
+        logger.info("[followup] %d opvolgconcept(en) klaar voor review", len(gemaakt))
+
+
+# ── Facturatie ───────────────────────────────────────────────────────────
+# Bonnetjes doorsturen naar DigiBoox is veilig om automatisch te herhalen:
+# het is idempotent (een al doorgestuurd bonnetje wordt niet opnieuw gepakt)
+# en heeft geen ander neveneffect dan een mail met bijlage naar Vincents eigen
+# boekhoudpakket. Geen catch_up/gap_cost: een gemiste ronde haalt de volgende
+# ronde vanzelf in, want mislukte bonnetjes blijven gewoon op 'mislukt' staan.
+async def _billing_receipts_retry_job() -> None:
+    from .domains.billing import service as billing_service
+    n = billing_service.retry_failed_receipts()
+    if n:
+        logger.info("[billing] %d mislukt(e) bonnetje(s) opnieuw geprobeerd", n)
+
+
+# Herinneringsconcepten genereren is eveneens veilig om dagelijks te herhalen:
+# er wordt nooit iets verstuurd, alleen een 'review'-rij aangemaakt (en alleen
+# als er nog geen open/verstuurde herinnering voor die post bestaat). Ontbreekt
+# een verse debiteuren-snapshot, dan gooit de service een ValueError — dat is
+# hier geen storing (er is simpelweg niets om op te reageren) maar een reden
+# om niets te doen, dus wordt hij stil ingeslikt.
+async def _billing_reminders_job() -> None:
+    from .domains.billing import service as billing_service
+    try:
+        gemaakt = billing_service.genereer_herinneringen()
+    except ValueError:
+        return
+    if gemaakt:
+        logger.info("[billing] %d herinneringsconcept(en) klaar voor review", len(gemaakt))
+
+
 # (10_Projects/WeAreImpact/onderzoek/), blogs pikken hem automatisch
 # op via _researcher_context(). Achtergrond + defensief: een mislukte
 # run logt naar het Actiecentrum, hij kraakt nooit de scheduler.
@@ -1122,6 +1162,21 @@ _SPECS: list[JobSpec] = [
         _researcher_job, _cron(day_of_week="tue,thu", hour=10, minute=0),
         catch_up=True,
         priority=0, domain="researcher",
+    ),
+    JobSpec(
+        "lead_followup_daily", "Lead-opvolging: opvolgconcepten voor stilgevallen leads",
+        _followup_job, _cron(hour=7, minute=30), catch_up=True, domain="prospecting",
+        gap_cost="",
+    ),
+    JobSpec(
+        "billing_receipts_retry", "Facturatie: mislukte bonnetjes opnieuw doorsturen naar DigiBoox",
+        _billing_receipts_retry_job, IntervalTrigger(hours=2), misfire_grace_time=1800,
+        coalesce=True, domain="billing",
+    ),
+    JobSpec(
+        "billing_reminders_daily", "Facturatie: herinneringsconcepten genereren voor openstaande posten",
+        _billing_reminders_job, _cron(hour=8, minute=0), catch_up=True, domain="billing",
+        gap_cost="",
     ),
 ]
 

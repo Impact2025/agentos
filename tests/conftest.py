@@ -35,6 +35,17 @@ def database():
     """Init het schema één keer per testsessie; ruim het db-bestand op."""
     from backend.shared.database import init_db
     init_db()
+    # crm/billing hebben een eigen lazy ensure_schema() (zie hun models.py) —
+    # zonder dit hier al te draaien crasht clean_tables op "no such table" in
+    # een testrun die geen van beide domeinen aanraakt.
+    from backend.domains.crm.models import ensure_schema as _ensure_crm_schema
+    from backend.domains.billing.models import ensure_schema as _ensure_billing_schema
+    from backend.domains.quotes.models import ensure_schema as _ensure_quotes_schema
+    from backend.domains.notes.models import ensure_schema as _ensure_notes_schema
+    _ensure_crm_schema()
+    _ensure_billing_schema()
+    _ensure_quotes_schema()
+    _ensure_notes_schema()
     yield
     for suffix in ("", "-wal", "-shm"):
         try:
@@ -66,5 +77,9 @@ def clean_tables():
     with get_conn() as c:
         for t in ("activity_log", "inbox_dismissals", "goals", "goal_phases",
                   "goal_tasks", "content_jobs", "tasks", "vacancies", "leads",
-                  "agent_lessons", "agent_predictions"):
+                  "agent_lessons", "agent_predictions",
+                  "crm_companies", "crm_contacts", "crm_deals", "crm_activities", "crm_tasks",
+                  "billing_receipts", "billing_invoice_drafts", "billing_invoice_lines",
+                  "billing_debtor_snapshots", "billing_debtor_rows", "billing_reminders",
+                  "quotes", "meeting_notes"):
             c.execute(f"DELETE FROM {t}")

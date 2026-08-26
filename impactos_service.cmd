@@ -12,7 +12,7 @@ set "NOTEBOOKLM_PROFILE=full"
 
 if exist "%APPDATA%\notebooklm-mcp" (
     echo [impactos] Start NotebookLM MCP-server op poort 3137
-    start "" /b "C:\Users\v_mun\AppData\Roaming\npm\notebooklm-mcp.cmd"
+    start "" /b /min cmd /c "C:\Users\v_mun\AppData\Roaming\npm\notebooklm-mcp.cmd"
     timeout /t 4 >nul
 ) else (
     echo [impactos] notebooklm-mcp niet gevonden, onderzoek-agent overgeslagen

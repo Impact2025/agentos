@@ -23,8 +23,12 @@ def is_configured() -> bool:
 
 
 def send_html(subject: str, html: str, to: str = None, text: str = None,
-              from_email: str = None) -> bool:
-    """Verstuur kant-en-klare HTML (voor toekomstige klant-templates)."""
+              from_email: str = None, attachments: list = None) -> bool:
+    """Verstuur kant-en-klare HTML (voor toekomstige klant-templates).
+
+    attachments: lijst van {"filename": str, "content": bytes} — Resend wil
+    base64 in de payload, dat coderen gebeurt hier zodat bellers gewoon ruwe
+    bytes aanleveren (bijv. een bonnetje uit data/uploads)."""
     if not is_configured():
         return False
 
@@ -37,6 +41,12 @@ def send_html(subject: str, html: str, to: str = None, text: str = None,
     }
     if text:
         payload["text"] = text
+    if attachments:
+        import base64
+        payload["attachments"] = [
+            {"filename": a["filename"], "content": base64.b64encode(a["content"]).decode("ascii")}
+            for a in attachments
+        ]
 
     try:
         resp = httpx.post(

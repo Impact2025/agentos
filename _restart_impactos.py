@@ -30,8 +30,13 @@ def main():
     cmd = f'"{exe}" backend.main:app --host localhost --port {PORT}'
     print(f"[restart] starting: {cmd}", flush=True)
     with open(LOG, "a", encoding="utf-8") as f:
+        # CREATE_NO_WINDOW (0x00000008): voorkomt zichtbare console-popup's van
+        # python.exe/uvicorn.exe bij herstart door de watchdog. Geen console =
+        # geen zwarte popups op de desktop.
+        creationflags = 0x00000008 if os.name == "nt" else 0
         subprocess.Popen(cmd, shell=True, cwd=ROOT,
-                         stdout=f, stderr=subprocess.STDOUT)
+                         stdout=f, stderr=subprocess.STDOUT,
+                         creationflags=creationflags)
     # Wacht tot de health-endpoint antwoordt
     for i in range(30):
         time.sleep(1)

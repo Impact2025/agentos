@@ -414,7 +414,9 @@ async function renderDashboardTab(el) {
 // op de per-project Dashboard-tab: dit zijn losse werk-queues, geen
 // kerncijfers, dus horen ze niet bovenaan het scherm te staan.
 var _projAcTimer = null;
-var _PROJ_AC_MAIL_KINDS = { mail_reply: 1, personal_mail: 1, social_msg: 1 };
+var _PROJ_AC_MAIL_KINDS = { social_msg: 1 };
+// _AC_HAS_OWN_TAB_KINDS staat in home.js (laadt vóór dit bestand) — gedeeld
+// met de globale Control Room-lijst en de WeAreImpact-dashboard.
 function startProjectActionCenterRefresh(project) {
   if (_projAcTimer) clearInterval(_projAcTimer);
   _projAcTimer = setInterval(function () {
@@ -478,7 +480,7 @@ function loadProjectActionCenter(project, isRefresh) {
   }
   fetch('/api/action-center?project=' + encodeURIComponent(project)).then(function (r) { return r.json(); }).then(function (data) {
     if (!mailEl || currentProject !== project) return;
-    var items = data.items || [];
+    var items = (data.items || []).filter(function (it) { return !_AC_HAS_OWN_TAB_KINDS[it.kind]; });
     if (!items.length) {
       mailEl.innerHTML = '<div class="section-card" style="margin-bottom:16px;background:var(--ok-bg);border-color:var(--ok-border)">' +
         '<span style="font-size:13px;color:var(--ok-fg);font-weight:600">Niets wacht op jou voor ' + escHtml(project) + '.</span> ' +

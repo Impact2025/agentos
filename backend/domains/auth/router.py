@@ -17,7 +17,15 @@ class LoginBody(BaseModel):
 
 @router.get("/me")
 def me(request: Request):
-    token = request.cookies.get(service.COOKIE_NAME)
+    # Zelfde backward-compat als de auth_guard-middleware: accepteer zowel de
+    # hernoemde als de oude cookienaam, anders logt een rename iedereen stil
+    # uit (26 aug 2026: dit riep het niet-bestaande service.COOKIE_NAME aan,
+    # dus 500'de /me op elk bezoek en toonde de app altijd het loginscherm).
+    token = None
+    for _name in service._COOKIE_NAMES:
+        token = request.cookies.get(_name)
+        if token:
+            break
     return {"authenticated": service.verify_session(token)}
 
 

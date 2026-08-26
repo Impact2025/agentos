@@ -16,7 +16,7 @@ def client():
     return TestClient(app)
 
 
-def test_suggestions_endpoint_e2e(client):
+def test_suggestions_endpoint_e2e(client, monkeypatch):
     # 1) Lijst is leeg bij start.
     r = client.get("/api/iris/suggestions")
     assert r.status_code == 200
@@ -24,7 +24,22 @@ def test_suggestions_endpoint_e2e(client):
 
     # 2) Briefing-run genereert (onder de live-LLM) suggestions.
     #    Zonder LLM (offline) blijft de lijst leeg — dat is oké,
-    #    de unit-tests dekken de executor zelf.
+    #    de unit-tests dekken de executor zelf. `service._llm` mocken (i.p.v.
+    #    de echte gateway raken, zoals test_iris.py al doet): deze test riep
+    #    ongemockt de PRODUCTIE-OpenModel-gateway aan via run_morning_briefing.
+    #    Op 26 aug 2026 gaf de gateway daarbij een echte 403 quota-exceeded
+    #    terug; die schrijft via note_llm_quota_exhausted() een 'quota'-marker
+    #    in de (gedeelde) test-DB die 45 min actief blijft (LLM_QUOTA_BACKOFF_
+    #    MINUTES) en zo elke latere test in dezelfde pytest-sessie vergiftigde
+    #    — test_llm_budget.py faalde daardoor alleen in de volle testrun, nooit
+    #    geïsoleerd. Los van de kosten/flakiness van een echte netwerkcall in
+    #    een e2e-test hoort dat sowieso niet: tests mogen nooit de productie-
+    #    quota aanspreken.
+    from backend.domains.iris import service
+    async def offline_llm(system, prompt, max_tokens=3000):
+        return ""
+    monkeypatch.setattr(service, "_llm", offline_llm)
+
     r2 = client.post("/api/iris/run-now")
     assert r2.status_code == 200
     data = r2.json()

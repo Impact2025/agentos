@@ -37,8 +37,8 @@ async function submitLogin() {
     });
     var d = await resp.json();
     if (d.ok) {
-      // Sessie staat nu in de cookie → start de app.
-      route();
+      // Sessie staat nu in de cookie → workshop-intro eerst, dan de app.
+      playLoginIntro();
     } else {
       if (err) err.textContent = d.error || 'Inloggen mislukt.';
       if (btn) { btn.disabled = false; btn.textContent = 'Inloggen'; }
@@ -62,6 +62,48 @@ async function checkAuthAndStart() {
     if (d.authenticated) { route(); return; }
   } catch (e) { /* server weg of geen me-endpoint — val door naar login */ }
   showLoginScreen();
+}
+
+// ── Workshop-intro — speelt direct ná het inloggen, vervaagt zodra de video
+// afloopt en opent dan pas de Control Room (Vincent, 26 aug 2026). Alleen op
+// een verse login (submitLogin), niet bij checkAuthAndStart — een al geldige
+// sessie (tab heropend, pagina ververst) hoeft de intro niet elke keer te
+// herhalen, anders is het geen welkom meer maar een obstakel.
+function playLoginIntro() {
+  var main = document.getElementById('main-content');
+  if (!main) { route(); return; }
+  var done = false;
+  var finish = function () {
+    if (done) return;
+    done = true;
+    var wrap = document.getElementById('login-intro');
+    if (!wrap) { route(); return; }
+    wrap.style.opacity = '0';
+    setTimeout(route, 650); // wacht de fade-transitie af vóór de Control Room rendert
+  };
+  main.innerHTML =
+    '<div id="login-intro" style="position:fixed;inset:0;background:#000;display:flex;' +
+    'align-items:center;justify-content:center;z-index:9999;opacity:1;transition:opacity .6s ease">' +
+    '<video id="login-intro-video" src="/media/iris-workshop.mp4" autoplay playsinline ' +
+    'style="max-width:100%;max-height:100%"></video>' +
+    '<button onclick="playLoginIntroSkip()" style="position:absolute;top:20px;right:24px;' +
+    'background:rgba(255,255,255,.12);color:#fff;border:none;border-radius:999px;padding:8px 16px;' +
+    'font-size:12px;cursor:pointer">Overslaan &rarr;</button>' +
+    '</div>';
+  var vid = document.getElementById('login-intro-video');
+  vid.addEventListener('ended', finish);
+  vid.addEventListener('error', finish);
+  // Autoplay-met-geluid vergt een user-gesture; die is er (de inlog-klik),
+  // maar sommige browsers weigeren 'm alsnog — val dan terug op gedempt
+  // afspelen zodat de intro nooit muisstil vaststaat i.p.v. af te spelen.
+  var playPromise = vid.play();
+  if (playPromise && playPromise.catch) {
+    playPromise.catch(function () { vid.muted = true; vid.play().catch(finish); });
+  }
+  window._loginIntroFinish = finish;
+}
+function playLoginIntroSkip() {
+  if (window._loginIntroFinish) window._loginIntroFinish();
 }
 
 // Op een klant-instance (IMPACTOS_ENABLED_DOMAINS gezet) toont /api/status welke

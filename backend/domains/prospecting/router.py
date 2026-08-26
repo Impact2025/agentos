@@ -627,6 +627,63 @@ def dismiss_outreach(lead_id: str):
     return {"status": "dismissed", "lead_id": lead_id, "back_to": "lost"}
 
 
+# ── Follow-up (zachte herinnering na stilte) ──────────────────────────────
+
+@router.post("/{lead_id}/followup-approve")
+async def approve_followup(lead_id: str, body: OutreachApproveRequest = OutreachApproveRequest()):
+    """Verstuur het opvolgconcept — dezelfde guards als outreach-approve
+    (Outlook-token, opt-out-blocklist, geldig adres), want dit is nog steeds
+    ongevraagde commerciële mail en valt onder dezelfde wetgeving."""
+    from . import outreach, opt_out
+    from . import followup as followup_service
+    from ..outlook import service as outlook
+
+    lead = _svc.get_lead(lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead niet gevonden")
+
+    subject = (body.subject or lead.get("followup_subject") or "").strip()
+    mail_body = (body.body or lead.get("followup_draft") or "").strip()
+    if not subject or not mail_body:
+        raise HTTPException(status_code=422, detail="Geen opvolgconcept aanwezig.")
+
+    target = outreach.target_email_for(lead)
+    if not target:
+        raise HTTPException(status_code=422, detail="Geen e-mailadres bekend voor deze lead.")
+    ok, why = outreach.valid_target(lead)
+    if not ok:
+        raise HTTPException(status_code=422, detail=f"Dit adres ({target}) is geen serieus prospect-adres ({why}).")
+    if opt_out.is_opted_out(target):
+        raise HTTPException(status_code=422, detail=f"{target} staat op de opt-out-blocklist.")
+    if not outlook.get_valid_token():
+        raise HTTPException(
+            status_code=422,
+            detail="Outlook-sessie ongeldig of verlopen — log opnieuw in via Instellingen → Outlook.",
+        )
+
+    result = await outlook.send_new_email(
+        to=target, subject=subject, body_html=mail_body.replace("\n", "<br>"),
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=f"Versturen mislukt: {result.get('error', result)}")
+
+    followup_service.na_verzending(lead_id)
+    return {"status": "sent", "to": target, "subject": subject}
+
+
+@router.post("/{lead_id}/followup-dismiss")
+def dismiss_followup(lead_id: str):
+    """Bewust geen tweede poging deze ronde — telt mee als afgehandelde
+    poging, anders herverschijnt hetzelfde concept morgen weer (zie
+    prospecting/followup.py)."""
+    from . import followup as followup_service
+    lead = _svc.get_lead(lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead niet gevonden")
+    followup_service.sla_followup_over(lead_id)
+    return {"status": "dismissed", "lead_id": lead_id}
+
+
 # ── Opt-out (Telecommunicatiewet art. 11.7) ───────────────────────────────────
 
 class OptOutRequest(BaseModel):

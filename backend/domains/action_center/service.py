@@ -955,6 +955,29 @@ def build_inbox(project: Optional[str] = None) -> Dict[str, Any]:
                 ],
             })
 
+        # ── 5b-bis. Opvolgconcepten (leads die stil bleven na outreach) ──
+        for l in conn.execute(
+            "SELECT id, org_name, city, followup_subject, followup_draft, "
+            "followup_drafted_at, followup_count FROM leads WHERE followup_draft != '' "
+            "ORDER BY followup_drafted_at DESC"
+        ).fetchall():
+            if ("followup", l["id"]) in skip:
+                continue
+            preview = (l["followup_draft"] or "").replace("\n", " ")[:140]
+            items.append({
+                "kind": "followup_review",
+                "dismiss_kind": "followup",
+                "id": l["id"],
+                "title": f"Opvolging klaar: {l['org_name']}" + (f" ({l['city']})" if l["city"] else ""),
+                "project": "Leads",
+                "created_at": l["followup_drafted_at"] or None,
+                "summary": f"Poging {l['followup_count'] + 1} — '{l['followup_subject']}' — {preview}",
+                "actions": [
+                    {"label": "Verstuur", "type": "followup_send", "id": l["id"]},
+                    {"label": "Sla over", "type": "followup_skip", "id": l["id"]},
+                ],
+            })
+
         # ── 5c. Linkbuilding-concepten die op jouw verzendklik wachten ──
         # Zelfde gate als de acquisitie: de agent schreef het concept
         # (incl. concrete linksuggestie), alleen jij kunt versturen.

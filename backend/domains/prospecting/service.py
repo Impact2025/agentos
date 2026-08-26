@@ -908,6 +908,95 @@ Regels:
             f"## Notities\n- \n"
         )
 
+    def capture_booking_lead(self, booking: Dict, verslag: str, enrichment: Dict) -> Dict:
+        """Boekingsaanvraag via weareimpact.nl vastleggen (26 aug 2026). Zelfde
+        dedupe-op-e-mail als capture_workshop_lead hierboven — een lead die al
+        verder in de funnel staat wordt hier nooit teruggezet, want dit pad
+        draait ook opnieuw bij een goedkeuring/afwijzing, niet alleen bij de
+        oorspronkelijke aanvraag."""
+        email = (booking.get("customer_email") or "").strip().lower()
+        if not email:
+            return {"id": None, "is_new": False, "reason": "geen e-mailadres"}
+        naam = (booking.get("customer_name") or "").strip()
+        organisatie = (booking.get("customer_organization") or "").strip()
+        org_name = organisatie or naam or email
+
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM leads WHERE lower(email)=?", (email,)
+            ).fetchone()
+        if row:
+            existing = dict(row)
+            with get_conn() as conn:
+                conn.execute(
+                    "UPDATE leads SET summary = ?, phone = ?, updated_at = ? WHERE id = ?",
+                    (verslag, booking.get("customer_phone") or existing.get("phone", ""),
+                     _now(), existing["id"]),
+                )
+            return {"id": existing["id"], "is_new": False,
+                    "org_name": existing["org_name"], "status": existing["status"]}
+
+        slug = self._lead_slug(org_name)
+        obs_path = f"Leads/{slug}.md"
+        contacts = [{"naam": naam, "email": email}] if naam else []
+        lead_row = {
+            "org_name": org_name,
+            "website": enrichment.get("website", ""),
+            "email": email,
+            "phone": booking.get("customer_phone") or "",
+            "contacts": contacts,
+            "summary": verslag,
+            "relevance": "hoog",
+            "status": "valid",
+            "search_query": "weareimpact-booking",
+            "obsidian_path": obs_path,
+            "lead_type": "booking",
+            "score": 85,
+            "tags": ["booking", "inbound", "warm"],
+        }
+        saved = self.save_to_db(lead_row)
+
+        try:
+            from ..chat.obsidian import ObsidianService
+            from ...shared.config import OBSIDIAN_VAULT_PATH
+            obs = ObsidianService(OBSIDIAN_VAULT_PATH)
+            if obs.is_configured:
+                path = obs.vault_path / obs_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if not path.exists():
+                    md = self._booking_lead_markdown(org_name, naam, email, saved["id"], booking, verslag)
+                    path.write_text(md, encoding="utf-8")
+        except Exception as e:
+            log.warning("[leads] vault-schrijf booking-lead mislukt: %s", e)
+
+        log.info("[leads] Boekingsaanvraag vastgelegd als lead: %s (%s)", org_name, saved["id"])
+        return {"id": saved["id"], "is_new": True, "org_name": org_name, "status": "valid"}
+
+    @staticmethod
+    def _booking_lead_markdown(org_name: str, naam: str, email: str, lead_id: str,
+                               booking: Dict, verslag: str) -> str:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        return (
+            f"---\n"
+            f"tags: [lead, booking, inbound, warm]\n"
+            f"lead_id: {lead_id}\n"
+            f"email: {email}\n"
+            f"status: valid\n"
+            f"created: {now}\n"
+            f"---\n\n"
+            f"# {org_name}\n\n"
+            f"**Contactpersoon:** {naam or 'onbekend'}\n"
+            f"**E-mail:** {email}\n"
+            f"**Telefoon:** {booking.get('customer_phone') or 'onbekend'}\n\n"
+            f"## Aangevraagd gesprek\n"
+            f"- Type: {booking.get('booking_type') or 'onbekend'}\n"
+            f"- Moment: {booking.get('start_time') or 'onbekend'}\n"
+            f"- Bericht van de bezoeker: {booking.get('notes') or '(geen)'}\n\n"
+            f"## Bron\nBoekingswidget weareimpact.nl\n\n"
+            f"## Iris' verslag\n{verslag}\n\n"
+            f"## Notities\n- \n"
+        )
+
     def enrich_lead(self, lead_id: str) -> Optional[Dict]:
         """
         Scrape website opnieuw + AI-analyse + automatische Hunter-verrijking.

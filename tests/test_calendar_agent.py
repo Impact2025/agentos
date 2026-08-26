@@ -155,6 +155,23 @@ def test_teams_afspraak_krijgt_geen_reisbuffer(vrijdag, mailbox):
     assert r["travel_buffer_min"] == 0
 
 
+def test_klant_kantoor_krijgt_ook_reisbuffer(vrijdag, mailbox):
+    """'zijn kantoor' is de locatie van de klánt, niet Vincents eigen
+    thuisbasis — ook al bevat de tekst het woord 'kantoor' dat normaal
+    vrijstelt van reistijd (gemeten 26 aug 2026, David Witte-demo)."""
+    body = "Dinsdag 14:00 afspreken? Locatie: zijn kantoor in Amsterdam. Duurt 1 uur."
+    p = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak", "k@b.nl", body)
+    r = _proposal(p["id"])
+    assert r["travel_buffer_min"] == 30
+
+
+def test_eigen_kantoor_krijgt_geen_reisbuffer(vrijdag, mailbox):
+    body = "Dinsdag 14:00 afspreken? Locatie: kantoor. Duurt 1 uur."
+    p = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Afspraak", "k@b.nl", body)
+    r = _proposal(p["id"])
+    assert r["travel_buffer_min"] == 0
+
+
 def test_spoed_wordt_high_priority(vrijdag, mailbox):
     body = "Kun je me morgen om 09:30 terugbellen? Urgent."
     p = A.create_proposal(mailbox, _inbox_row(mailbox, body), "Spoed", "k@b.nl", body)

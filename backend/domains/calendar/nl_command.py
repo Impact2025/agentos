@@ -173,7 +173,9 @@ def _zonder_tijdsinfo(text: str) -> str:
     t = re.sub(rf"\b(?:{maanden})\b", " ", t, flags=re.IGNORECASE)
     dagen = "|".join(_NL_DAYS)
     t = re.sub(rf"\b(?:{dagen})(s|en|se)?\b", " ", t, flags=re.IGNORECASE)
-    t = re.sub(r"\b(morgen|overmorgen|vandaag|om|op|rond|vanaf|tussen|tot)\b", " ",
+    t = re.sub(r"\b(morgenochtend|morgenmiddag|morgenavond|overmorgen|morgen|"
+               r"vandaag|vanavond|vanmiddag|vanochtend|vanmorgen|vannacht|"
+               r"om|op|rond|vanaf|tussen|tot)\b", " ",
                t, flags=re.IGNORECASE)
     return re.sub(r"\s{2,}", " ", t).strip(" ,.-")
 
@@ -387,7 +389,26 @@ def parse_command(text: str) -> ParsedCommand:
                 target_date = target_date + timedelta(days=7)
         elif "overmorgen" in low:
             target_date = (now + timedelta(days=2)).replace(hour=0, minute=0, second=0, microsecond=0)
+        elif re.search(r"\b(vandaag|vanavond|vanmiddag|vanochtend|vanmorgen|vannacht)\b", low):
+            # "Vanavond 20.00 tennisen" gaf tot 26 aug 2026 "Ik kon geen datum
+            # herkennen" — alleen 'morgen'/'overmorgen'/weekdag telden als datum,
+            # terwijl de tijd wél expliciet in de zin stond. Deze tak moet vóór
+            # de kale 'morgen'-substring-check hieronder staan: anders vangt die
+            # ook 'vanmorgen' (bevat de letters 'morgen') en leest "vanmorgen
+            # 08.00" als "morgen 08.00" — een dag te laat.
+            target_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            # Telt als een expliciete datum (net als '5 augustus'), niet als een
+            # kale weekdag: "vanmorgen 08.00" om 14.00 ingesproken mag niet stil
+            # een week opschuiven (dezelfde val als bij een genoemde datum, zie
+            # de `base < now`-afhandeling verderop) — dat zou "vanmorgen" enkele
+            # dagen later een voorstel voor ver in de toekomst maken.
+            expliciete_datum = True
         elif "morgen" in low:
+            # Substring, bewust géén \bmorgen\b: dat zou 'morgenochtend',
+            # 'morgenmiddag' en 'morgenavond' (samengestelde woorden, geen
+            # woordgrens vóór 'ochtend'/'middag'/'avond') missen — regressie
+            # gemeten bij het toevoegen van de 'vanmorgen'-tak hierboven, die nu
+            # al is afgevangen vóórdat deze tak draait.
             target_date = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
     t = _parse_time(low)
@@ -505,11 +526,42 @@ def check_conflict(cmd: ParsedCommand) -> ParsedCommand:
             be = _parse_iso(b.get("end"))
             if bs and be and bs < cmd.end and be > cmd.start:
                 overlaps.append({"start": b.get("start"), "end": b.get("end")})
+        overlaps = _apply_focus_override(cal, overlaps, cmd.start, cmd.end)
         cmd.conflict = {"status": "ok", "overlaps": overlaps}
     except Exception as e:  # noqa: BLE001
         log.warning("[calendar-nl] conflict-check mislukt: %s", e)
         cmd.conflict = {"status": "error", "overlaps": []}
     return cmd
+
+
+def _apply_focus_override(cal, overlaps: List[dict], window_start: datetime,
+                          window_end: datetime) -> List[dict]:
+    """Zelfde regel als agent.py:_apply_focus_override (zie focus_rules.py) —
+    een Focusblok dat >=24u vooraf wijkt voor een klantafspraak is geen
+    blokkerend conflict. free/busy kent geen titels, dus best-effort lookup
+    via get_events_range; mislukt die, dan blijven de conflicten gewoon
+    staan (de veilige kant)."""
+    if not overlaps:
+        return overlaps
+    from . import focus_rules
+    try:
+        data = _run_async(cal.get_events_range(window_start, window_end))
+    except Exception as e:  # noqa: BLE001
+        log.warning("[calendar-nl] focusblok-titel-lookup mislukt: %s", e)
+        return overlaps
+    events = data.get("events") or []
+    now = _amsterdam_now()
+    remaining = []
+    for ov in overlaps:
+        os_, oe_ = _parse_iso(ov.get("start")), _parse_iso(ov.get("end"))
+        match = next((e for e in events
+                     if _parse_iso(e.get("start")) == os_
+                     and _parse_iso(e.get("end")) == oe_), None)
+        if match and focus_rules.is_focus_title(match.get("summary")) \
+                and focus_rules.overridable(os_, now):
+            continue
+        remaining.append(ov)
+    return remaining
 
 
 def _run_async(coro):

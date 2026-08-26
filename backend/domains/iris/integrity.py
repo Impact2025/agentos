@@ -3271,12 +3271,102 @@ def _check_campagnepost_over_datum() -> List[Bevinding]:
     ]
 
 
+def _check_offerte_zonder_beslissing() -> List[Bevinding]:
+    """Een verstuurde offerte waar na twee weken geen 'geaccepteerd'/
+    'afgewezen' op is gezet. Er is geen e-sign-koppeling (zie
+    quotes/models.py) — de beslissing komt alleen binnen als Vincent het
+    antwoord van de klant zelf verwerkt, en dat is precies het soort stap die
+    vergeten wordt zodra de offerte de deur uit is."""
+    from ..quotes import service as quotes_service
+
+    try:
+        offertes = quotes_service.list_quotes("verstuurd")
+    except sqlite3.OperationalError:
+        return []
+    grens = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    return [
+        Bevinding(
+            subject=f"quote:{o['id']}",
+            detail=f"Offerte '{o['title']}' aan {o['client_name']} staat sinds "
+                   f"{(o['sent_at'] or '')[:10]} op 'verstuurd' zonder beslissing.",
+            project="WeAreImpact",
+        )
+        for o in offertes
+        if o.get("sent_at") and o["sent_at"] < grens
+    ]
+
+
+def _check_debiteuren_snapshot_verouderd() -> List[Bevinding]:
+    """DigiBoox heeft geen API (nagezocht 25 aug 2026) — debiteurenbeheer
+    draait daarom op een periodieke export die Vincent zelf uit DigiBoox
+    haalt, niet op een live stand. `billing.service.genereer_herinneringen`
+    weigert al te draaien op een snapshot ouder dan
+    BILLING_DEBTOR_SNAPSHOT_STALE_DAYS (een herinnering op een verouderde
+    stand kan een al betaalde factuur aanmanen), maar die rem is pas zichtbaar
+    op het moment dat iemand op 'Genereer herinneringen' klikt. Deze toets
+    meldt het al eerder: een snapshot die stilletjes te oud wordt, is precies
+    het stille-mechanisme-patroon (STIL) dat de rest van dit bestand vangt.
+
+    Geen bevinding als er nog nooit een snapshot is geïmporteerd — dat is een
+    verse installatie/nog niet in gebruik, geen storing.
+    """
+    from ..billing import service as billing_service
+
+    try:
+        snap = billing_service.get_latest_snapshot()
+    except sqlite3.OperationalError:
+        return []
+    if not snap:
+        return []
+    dagen = billing_service.snapshot_stale_days()
+    if dagen is None or not billing_service.snapshot_is_stale():
+        return []
+    return [Bevinding(
+        subject="debiteuren_snapshot",
+        detail=(f"De laatste debiteuren-snapshot ({snap['filename']}) is {dagen} dagen oud. "
+                f"Herinneringen genereren is geblokkeerd totdat er een verse export uit "
+                f"DigiBoox is geïmporteerd."),
+        project="WeAreImpact",
+    )]
+
+
 # ── Het register ───────────────────────────────────────────────────────────
 #
 # Dit is de institutionele herinnering van het systeem: elke regel is een
 # storing die geld of vertrouwen heeft gekost, omgezet in een dagelijkse toets.
 
 INVARIANTEN: List[Invariant] = [
+    Invariant(
+        key="offerte_zonder_beslissing",
+        titel="Offerte staat zonder beslissing sinds meer dan twee weken",
+        incident="26 aug 2026: bij de bouw van de offerte-module bleek er "
+                 "geen e-sign-provider beschikbaar te zijn, dus wordt een "
+                 "offerte handmatig op 'geaccepteerd'/'afgewezen' gezet zodra "
+                 "de klant reageert. Zonder deze toets is dat precies de stap "
+                 "die vergeten wordt zodra de offerte de deur uit is — een "
+                 "offerte die stil op 'verstuurd' blijft staan levert geen "
+                 "signaal op dat er iets moet gebeuren (opvolgen of afboeken).",
+        severity=STIL,
+        stap="Bel of mail de klant om te horen waar de offerte staat, en zet "
+             "'m op geaccepteerd of afgewezen in de Klanten-tab.",
+        check=_check_offerte_zonder_beslissing,
+    ),
+    Invariant(
+        key="debiteuren_snapshot_verouderd",
+        titel="Debiteuren-snapshot is verouderd",
+        incident="25 aug 2026: bij de bouw van de facturatie-module bleek "
+                 "DigiBoox geen publieke API te hebben, dus draait "
+                 "debiteurenbeheer op een periodieke export die Vincent zelf "
+                 "uit DigiBoox haalt in plaats van op een live stand. Zonder "
+                 "deze toets zou een vergeten export stilletjes oud worden "
+                 "totdat iemand op 'Genereer herinneringen' klikt en daar "
+                 "pas de blokkade tegenkomt — te laat om als waarschuwing "
+                 "iets waard te zijn.",
+        severity=STIL,
+        stap="Exporteer de openstaande-postenlijst opnieuw uit DigiBoox en "
+             "importeer 'm in de Facturatie-tab.",
+        check=_check_debiteuren_snapshot_verouderd,
+    ),
     Invariant(
         key="besluit_onzichtbaar_op_eigen_dashboard",
         titel="Besluit onzichtbaar op WeAreImpact's eigen dashboard",

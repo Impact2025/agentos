@@ -28,6 +28,7 @@ from zoneinfo import ZoneInfo
 
 from ...shared.database import get_conn
 from ...shared.mail_text import strip_quoted_history
+from . import focus_rules
 
 log = logging.getLogger(__name__)
 
@@ -233,12 +234,24 @@ def _parse_datetime(text: str) -> Optional[datetime]:
     return target
 
 
+# "zijn kantoor"/"haar thuis" is iemand ánders' locatie — een klant op zíjn
+# eigen kantoor, niet Vincent op het zijne — ook al bevat de tekst het woord
+# 'kantoor'/'thuis' dat verder wél als thuisbasis-token telt. Zonder deze
+# uitzondering sloeg "bij hem op zijn kantoor" (26 aug 2026, David Witte-demo)
+# de reisbuffer stil over: precies het woord dat vrijstelt van reistijd stond
+# toevallig in de zin, maar wees niet naar Vincents eigen locatie.
+_DERDEN_LOCATIE_RE = re.compile(
+    r"\b(zijn|haar|hun|diens|z'n)\s+(kantoor|thuis)\b", re.IGNORECASE)
+
+
 def _needs_travel(location: str, is_remote: bool) -> bool:
     if is_remote:
         return False
     if not location:
         return False  # onbekend → geen risico nemen, geen buffer
     loc = location.lower()
+    if _DERDEN_LOCATIE_RE.search(loc):
+        return True
     return not any(t in loc for t in _HOME_BASE_TOKENS)
 
 
@@ -279,10 +292,44 @@ def _free_busy_conflict(start: datetime, end: datetime) -> tuple:
             be = _parse_iso(b.get("end"))
             if bs and be and bs < end and be > start:
                 overlaps.append({"start": b.get("start"), "end": b.get("end")})
+        overlaps = _apply_focus_override(overlaps, start, end)
         return "ok", overlaps
     except Exception as e:
         log.warning("[agenda-agent] free/busy check mislukt: %s", e)
         return "error", []
+
+
+def _apply_focus_override(overlaps: List[dict], window_start: datetime,
+                          window_end: datetime) -> List[dict]:
+    """Haal Focusblok-overlaps uit de conflictenlijst als ze ≥24u vooraf
+    worden vastgelegd (zie focus_rules.py). free/busy kent alleen tijden, geen
+    titels — dus een losse, best-effort lookup via get_events_range om te
+    weten wélk event er botst. Mislukt die lookup, dan blijft elk conflict
+    gewoon staan: zonder titel is er geen bewijs dat het om een focusblok gaat,
+    en de veilige kant is de blokkade laten staan."""
+    if not overlaps:
+        return overlaps
+    try:
+        from ...domains.calendar import service as cal
+        data = _run_async(cal.get_events_range(window_start, window_end))
+    except Exception as e:
+        log.warning("[agenda-agent] focusblok-titel-lookup mislukt: %s", e)
+        return overlaps
+    events = data.get("events") or []
+    now = _amsterdam_now()
+    remaining = []
+    for ov in overlaps:
+        os_, oe_ = _parse_iso(ov.get("start")), _parse_iso(ov.get("end"))
+        match = next((e for e in events
+                     if _parse_iso(e.get("start")) == os_
+                     and _parse_iso(e.get("end")) == oe_), None)
+        if match and focus_rules.is_focus_title(match.get("summary")) \
+                and focus_rules.overridable(os_, now):
+            log.info("[agenda-agent] focusblok '%s' vrijgegeven (>=24u vooraf)",
+                     match.get("summary"))
+            continue
+        remaining.append(ov)
+    return remaining
 
 
 def _run_async(coro):
@@ -428,6 +475,7 @@ def _lokale_overlap(conn, proposal_id: int, start: datetime, end: datetime,
         (proposal_id,),
     ).fetchall()
     cand_wd = recur_weekday if recur_weekday is not None and recur_weekday >= 0 else None
+    now = _amsterdam_now()
     conflicts = []
     for row in rows:
         rs, re_ = _parse_iso(row["proposed_start"]), _parse_iso(row["proposed_end"])
@@ -438,6 +486,7 @@ def _lokale_overlap(conn, proposal_id: int, start: datetime, end: datetime,
         except (TypeError, ValueError):
             row_wd = -1
         row_wd = row_wd if row_wd >= 0 else None
+        is_focus = focus_rules.is_focus_title(row["title"])
         if cand_wd is not None or row_wd is not None:
             # Eén (of beide) kant is terugkerend: alleen weekdag + tijdstip
             # tellen, de kalenderdatum van de opgeslagen rij is toeval (week 1).
@@ -446,8 +495,17 @@ def _lokale_overlap(conn, proposal_id: int, start: datetime, end: datetime,
             if eff_row_wd != eff_cand_wd:
                 continue
             if rs.time() < end.time() and start.time() < re_.time():
+                if is_focus:
+                    # De echte botsing valt op de datum van de kandidaat (de
+                    # opgeslagen rij is toeval-week 1), dus daar toetsen we de
+                    # 24u-voorwaarde tegen — niet tegen de opgeslagen `rs`.
+                    occ_start = datetime.combine(start.date(), rs.timetz())
+                    if focus_rules.overridable(occ_start, now):
+                        continue
                 conflicts.append(row)
         elif rs < end and start < re_:
+            if is_focus and focus_rules.overridable(rs, now):
+                continue
             conflicts.append(row)
     return conflicts
 

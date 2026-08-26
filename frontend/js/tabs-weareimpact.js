@@ -22,37 +22,18 @@ function renderWeAreImpactDashboard(el) {
     var proj = encodeURIComponent(currentProject);
     Promise.all([
       fetch('/api/projects/' + proj + '/advice?days=28').then(function(r){return r.json();}).catch(function(){return {};}),
-      fetch('/api/projects/' + proj + '/activity?limit=12').then(function(r){return r.json();}).catch(function(){return [];}),
       fetch('/api/action-center?project=' + proj).then(function(r){return r.json();}).catch(function(){return {items:[]};}),
-      fetch('/api/bridge/whatsapp-stats').then(function(r){return r.json();}).catch(function(){return {ok:false};}),
-      fetch('/api/bridge/whatsapp').then(function(r){return r.json();}).catch(function(){return {ok:false};}),
-      fetch('/api/bridge/whatsapp-conversations').then(function(r){return r.json();}).catch(function(){return {ok:false};}),
       fetch('/api/radar/news-briefing').then(function(r){return r.json();}).catch(function(){return {items:[]};}),
     ]).then(function(res){
       var advice = res[0] || {};
-      var activity = res[1] || [];
-      var ac = res[2] || { items: [] };
-      var wa = res[3] || { ok: false };
-      var waEsc = (res[4] && res[4].escalations) || [];
-      var waConvos = (res[5] && res[5].conversations) || [];
-      var news = res[6] || { items: [] };
+      var ac = res[1] || { items: [] };
+      var news = res[2] || { items: [] };
       var html = '';
       html += '<div id="wai-hero-host"></div>';
       html += '<div id="wai-pulse-host"></div>';
       html += '<div id="wai-banner">' + (typeof renderAdviceBanner === 'function' ? renderAdviceBanner(advice) : '') + '</div>';
       html += waiIrisAnalysis(advice);
-      // De Sparringpartner — persoonlijke business- en welzijnscoach. Bewust
-      // alleen hier, niet op de generieke Control Room: dit ís voor Vincent
-      // de plek waar hij zijn dag begint, en de coach gaat over hem, niet
-      // over een willekeurig project.
-      html += '<div class="section-card" style="margin-bottom:16px">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
-        '<h4 style="font-size:13px;font-weight:700;color:var(--text)">De Sparringpartner — business- en welzijnscoach</h4>' +
-        '<button id="coach-ask-btn" onclick="askCoachReflection()" class="btn btn-primary btn-sm">Vraag reflectie</button>' +
-        '</div>' +
-        '<div id="coach-panel" style="font-size:12px"><div style="color:#64748b">Laden...</div></div></div>';
       html += '<div id="wai-news-host">' + waiNewsBlock(news) + '</div>';
-      html += '<div id="wai-whatsapp-host">' + waiWhatsAppBlock(wa, waEsc, waConvos) + '</div>';
       // Gesplitst per soort (mail/helpdesk, fouten, overig) i.p.v. één
       // gemengde lijst — zelfde indeling en volgorde als de generieke
       // per-project Dashboard-tab (shell.js), en komt hier ook ná de
@@ -60,17 +41,11 @@ function renderWeAreImpactDashboard(el) {
       html += '<div id="wai-ac-mail"></div>';
       html += '<div id="wai-ac-errors"></div>';
       html += '<div id="wai-ac-other"></div>';
-      html += waiChatBlock();
-      html += '<div class="section-card" style="margin-bottom:16px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><h3 style="font-size:13px;font-weight:700;color:var(--text)">Recente activiteit</h3><button onclick="waiLoadActivity()" class="btn btn-sm btn-ghost">Ververs</button></div>' +
-              '<div id="wai-activity" style="background:#0f172a;border-radius:8px;padding:8px;font-family:monospace;font-size:11px;max-height:200px;overflow-y:auto"></div></div>';
       el.innerHTML = html;
-      waiRenderActivity(activity);
       waiRenderActionCenter(ac);
       waiStartAdvicePoll(proj);
-      waiStartWaPoll();
       waiLoadPulse();
       waiStartPulsePoll();
-      loadCoachPanel();
     }).catch(function(e){
       el.innerHTML = '<div class="empty-state">Fout: ' + escHtml(e.message) + '</div>';
     });
@@ -551,7 +526,12 @@ function waiRenderActionCenter(data) {
   var errEl = document.getElementById('wai-ac-errors');
   var otherEl = document.getElementById('wai-ac-other');
   if (!mailEl) return;
-  var items = (data && data.items) || [];
+  // calendar_proposal/mail_reply/personal_mail hebben al hun eigen tab
+  // (Agenda, Postvak) — hier nogmaals tonen is dezelfde beslissing op twee
+  // plekken aanbieden (26 aug 2026). Zie _AC_HAS_OWN_TAB_KINDS in shell.js.
+  var _skipKinds = (typeof _AC_HAS_OWN_TAB_KINDS !== 'undefined') ? _AC_HAS_OWN_TAB_KINDS
+    : { calendar_proposal: 1, mail_reply: 1, personal_mail: 1 };
+  var items = ((data && data.items) || []).filter(function (it) { return !_skipKinds[it.kind]; });
   if (!items.length) {
     mailEl.innerHTML = '<div style="font-size:12px;color:var(--ok-fg);background:var(--ok-bg);border:1px solid var(--ok-border);padding:8px 10px;border-radius:8px;margin-bottom:16px">Niets wacht op jou voor WeAreImpact. Alles draait.</div>';
     if (errEl) errEl.innerHTML = '';

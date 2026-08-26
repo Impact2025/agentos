@@ -64,6 +64,16 @@ def advance_lead(lead_id: str, new_status: str) -> Optional[Dict[str, Any]]:
         vals.append(lead_id)
         conn.execute(f"UPDATE leads SET {', '.join(sets)} WHERE id = ?", vals)
         row = conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone()
+    if new_status == "won":
+        # De CRM is de enige plek waar een gewonnen lead een bedrijf + deal
+        # wordt — nooit los aangeroepen, anders lopen funnel-status en CRM
+        # uit elkaar (zie crm/service.py:deal_uit_lead). Een kapotte CRM mag
+        # het funnel-besluit zelf nooit blokkeren.
+        try:
+            from ..crm.service import deal_uit_lead
+            deal_uit_lead(lead_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("[funnel] Kon geen CRM-deal aanmaken voor lead %s", lead_id)
     return dict(row)
 
 
