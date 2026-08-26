@@ -409,14 +409,16 @@ async function renderDashboardTab(el) {
 // ── Project-Actiecentrum ─────────────────────────────────────────────────
 // Dezelfde "wat wacht er op mij"-kaarten als het algemene Actiecentrum, maar
 // dan gescopeerd op één project (via GET /api/action-center?project=<naam>)
-// en gesplitst in drie kaarten — mail/helpdesk, fouten, overig — i.p.v. één
-// ongesorteerde lijst. Staat ónder de management info + belangrijkste-stap
-// op de per-project Dashboard-tab: dit zijn losse werk-queues, geen
-// kerncijfers, dus horen ze niet bovenaan het scherm te staan.
-var _projAcTimer = null;
-var _PROJ_AC_MAIL_KINDS = { social_msg: 1 };
+// en gesplitst in twee kaarten — fouten, overig — i.p.v. één ongesorteerde
+// lijst. Staat ónder de management info + belangrijkste-stap op de per-
+// project Dashboard-tab: dit zijn losse werk-queues, geen kerncijfers, dus
+// horen ze niet bovenaan het scherm te staan.
 // _AC_HAS_OWN_TAB_KINDS staat in home.js (laadt vóór dit bestand) — gedeeld
-// met de globale Control Room-lijst en de WeAreImpact-dashboard.
+// met de globale Control Room-lijst en de WeAreImpact-dashboard. Alles wat
+// daarin staat (mail, agenda, content-review, outreach, linkbuilding,
+// facturatie-herinneringen, social) heeft een eigen tab en wordt hier
+// helemaal niet meer gerenderd.
+var _projAcTimer = null;
 function startProjectActionCenterRefresh(project) {
   if (_projAcTimer) clearInterval(_projAcTimer);
   _projAcTimer = setInterval(function () {
@@ -489,10 +491,14 @@ function loadProjectActionCenter(project, isRefresh) {
       if (otherEl) otherEl.innerHTML = '';
       return;
     }
-    var mailItems = [], errorItems = [], otherItems = [];
+    // Geen mail-categorie meer: mail_reply/personal_mail/social_msg zijn al
+    // uit `items` gefilterd (_AC_HAS_OWN_TAB_KINDS) — ze horen bij Helpdesk/
+    // Postvak/Social Creatie. proj-ac-mail blijft alleen als anker voor de
+    // laad-/lege-status hierboven, en wordt hier leeggemaakt.
+    mailEl.innerHTML = '';
+    var errorItems = [], otherItems = [];
     items.forEach(function (it) {
-      if (_PROJ_AC_MAIL_KINDS[it.kind]) mailItems.push(it);
-      else if (it.kind === 'error') errorItems.push(it);
+      if (it.kind === 'error') errorItems.push(it);
       else otherItems.push(it);
     });
     var errorBar = '';
@@ -501,7 +507,6 @@ function loadProjectActionCenter(project, isRefresh) {
         '<span style="font-size:11px;color:var(--info-fg);flex:1"><b>' + errorItems.length + ' foutkaart(en)</b> — laat Iris ze allemaal analyseren &amp; afhandelen:</span>' +
         '<button onclick="acTriageAll(this)" class="btn btn-primary btn-sm">Analyseer alle fouten</button></div>';
     }
-    _renderAcCategory('proj-ac-mail', 'Mail & helpdesk', mailItems, project, '');
     _renderAcCategory('proj-ac-errors', 'Fouten', errorItems, project, errorBar);
     _renderAcCategory('proj-ac-other', 'Overige acties', otherItems, project, '');
   }).catch(function (e) {

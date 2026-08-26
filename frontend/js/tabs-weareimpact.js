@@ -517,20 +517,23 @@ async function waiSendChat() {
 }
 
 // ── Actiecentrum + activiteit (lokaal op dit scherm) ──────────────────────
-// Hertgebruikt _renderAcCategory + _PROJ_AC_MAIL_KINDS uit shell.js (laadt
-// vóór dit bestand, zie index.html) — dezelfde mail/fouten/overig-splitsing
-// en kaartopmaak als de generieke per-project Dashboard-tab, i.p.v. een
-// eigen tweede implementatie die geruisloos uit de pas zou kunnen lopen.
+// Hertgebruikt _renderAcCategory uit shell.js (laadt vóór dit bestand, zie
+// index.html) — dezelfde fouten/overig-splitsing en kaartopmaak als de
+// generieke per-project Dashboard-tab, i.p.v. een eigen tweede implementatie
+// die geruisloos uit de pas zou kunnen lopen.
 function waiRenderActionCenter(data) {
   var mailEl = document.getElementById('wai-ac-mail');
   var errEl = document.getElementById('wai-ac-errors');
   var otherEl = document.getElementById('wai-ac-other');
   if (!mailEl) return;
-  // calendar_proposal/mail_reply/personal_mail hebben al hun eigen tab
-  // (Agenda, Postvak) — hier nogmaals tonen is dezelfde beslissing op twee
-  // plekken aanbieden (26 aug 2026). Zie _AC_HAS_OWN_TAB_KINDS in shell.js.
+  // Kinds met een eigen tab (Agenda, Helpdesk, Postvak, Wachtrij, Leads,
+  // Links, Facturatie, Social Creatie) — hier nogmaals tonen is dezelfde
+  // beslissing op twee plekken aanbieden (26 aug 2026). Zie
+  // _AC_HAS_OWN_TAB_KINDS in home.js.
   var _skipKinds = (typeof _AC_HAS_OWN_TAB_KINDS !== 'undefined') ? _AC_HAS_OWN_TAB_KINDS
-    : { calendar_proposal: 1, mail_reply: 1, personal_mail: 1 };
+    : { calendar_proposal: 1, mail_reply: 1, personal_mail: 1, content_review: 1,
+        outreach_review: 1, followup_review: 1, linkbuilding_review: 1,
+        billing_reminder_review: 1, social_msg: 1 };
   var items = ((data && data.items) || []).filter(function (it) { return !_skipKinds[it.kind]; });
   if (!items.length) {
     mailEl.innerHTML = '<div style="font-size:12px;color:var(--ok-fg);background:var(--ok-bg);border:1px solid var(--ok-border);padding:8px 10px;border-radius:8px;margin-bottom:16px">Niets wacht op jou voor WeAreImpact. Alles draait.</div>';
@@ -538,21 +541,19 @@ function waiRenderActionCenter(data) {
     if (otherEl) otherEl.innerHTML = '';
     return;
   }
-  var mailItems = [], errorItems = [], otherItems = [];
-  var mailKinds = (typeof _PROJ_AC_MAIL_KINDS !== 'undefined') ? _PROJ_AC_MAIL_KINDS : { mail_reply: 1, personal_mail: 1, social_msg: 1 };
+  var errorItems = [], otherItems = [];
   items.forEach(function(it){
-    if (mailKinds[it.kind]) mailItems.push(it);
-    else if (it.kind === 'error') errorItems.push(it);
+    if (it.kind === 'error') errorItems.push(it);
     else otherItems.push(it);
   });
   if (typeof _renderAcCategory === 'function') {
+    mailEl.innerHTML = '';
     var errorBar = '';
     if (errorItems.length >= 1) {
       errorBar = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--info-bg);border:1px solid var(--info-border);border-radius:var(--radius-sm)">' +
         '<span style="font-size:11px;color:var(--info-fg);flex:1"><b>' + errorItems.length + ' foutkaart(en)</b> — laat Iris ze allemaal analyseren &amp; afhandelen:</span>' +
         '<button onclick="acTriageAll(this)" class="btn btn-primary btn-sm">Analyseer alle fouten</button></div>';
     }
-    _renderAcCategory('wai-ac-mail', 'Mail & helpdesk', mailItems, currentProject, '');
     _renderAcCategory('wai-ac-errors', 'Fouten', errorItems, currentProject, errorBar);
     _renderAcCategory('wai-ac-other', 'Overige acties', otherItems, currentProject, '');
     return;

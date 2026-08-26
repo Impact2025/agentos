@@ -486,15 +486,27 @@ var _acKindMeta = {
   social_msg:    { pill: 'pill-info', label: 'Social bericht', icon: '💬' },
   error:         { pill: 'pill-danger', label: 'Fout', icon: '⚠' }
 };
-// Kinds die al hun eigen tab hebben (Agenda, Postvak) — nogmaals als kaart in
-// een Actiecentrum-lijst tonen is dezelfde beslissing op twee plekken
-// aanbieden. Gedeeld door home.js (globale Control Room), shell.js (generiek
-// project-dashboard) en tabs-weareimpact.js — hier gedefinieerd omdat home.js
-// als eerste laadt (zie index.html). Ze blijven wél in build_inbox() zelf
-// staan: bridge/digest lezen daar rechtstreeks van, buiten deze schermen om.
+// Kinds die al hun eigen tab hebben — nogmaals als kaart in een Actiecentrum-
+// lijst tonen is dezelfde beslissing op twee plekken aanbieden. Gedeeld door
+// home.js (globale Control Room), shell.js (generiek project-dashboard) en
+// tabs-weareimpact.js — hier gedefinieerd omdat home.js als eerste laadt (zie
+// index.html). Ze blijven wél in build_inbox() zelf staan: bridge/digest
+// lezen daar rechtstreeks van, buiten deze schermen om.
 // 26 aug 2026: agenda-voorstellen en mail stonden dubbel, zowel bovenaan als
-// in "Overige acties" / de globale lijst.
-var _AC_HAS_OWN_TAB_KINDS = { calendar_proposal: 1, mail_reply: 1, personal_mail: 1 };
+// in "Overige acties" / de globale lijst. content_needs_work/content_stuck/
+// task_approval/vacancies/leads/billing_receipt_failed/billing_invoice_review/
+// crm_tasks_overdue/campagne_post/attention blijven bewust WEL hier: die
+// hebben geen eigen actie-scherm elders (alleen een "open tab"-verwijzing of
+// puur een cijfer) en zouden anders nergens meer zichtbaar zijn.
+var _AC_HAS_OWN_TAB_KINDS = {
+  calendar_proposal: 1, mail_reply: 1, personal_mail: 1,
+  content_review: 1,        // Wachtrij-tab: Publiceer/Wijs af
+  outreach_review: 1,       // Leads-tab: Verstuur/Wijs af
+  followup_review: 1,       // Leads-tab: Verstuur opvolging/Sla over
+  linkbuilding_review: 1,   // Links-tab: Verstuur/Wijs af
+  billing_reminder_review: 1, // Facturatie-tab: Verstuur/Sla over
+  social_msg: 1,            // Social Creatie-tab: Plaats antwoord/Afwijzen
+};
 // Pil-klasse → volle randkleur, voor de gekleurde linkerrand op elke
 // Actiecentrum-kaart (dezelfde betekenis-schaal als de pillen zelf).
 function _pillBorderColor(pillClass) {

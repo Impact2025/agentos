@@ -528,6 +528,11 @@ function renderLeadRows() {
     if (l.replied_at) lastStamp = 'Reactie ' + _leadRelTime(l.replied_at);
     else if (l.contacted_at) lastStamp = 'Benaderd ' + _leadRelTime(l.contacted_at);
     if (lastStamp) statusBadge += '<div style="font-size:9px;color:#94a3b8;margin-top:2px">' + escHtml(lastStamp) + '</div>';
+    // Opvolgconcept: los van de funnel-status (blijft bv. 'contacted'), dus
+    // een eigen badge i.p.v. te leunen op statusMap (26 aug 2026 — dit stond
+    // voorheen alleen in het Actiecentrum, followup_review had geen eigen
+    // scherm en verdween daar nu zonder vervanging als dat niet hier kwam).
+    if (l.followup_draft) statusBadge += '<div style="margin-top:2px"><span class="pill pill-warn" style="font-size:9px">Opvolging klaar</span></div>';
     var actionsHtml = '';
     if (l.status === 'new' || l.status === 'enriched') {
       actionsHtml += '<button onclick="enrichLead(\'' + l.id + '\')" class="btn btn-ghost btn-sm" style="margin-right:3px">Verrijk</button>';
@@ -565,6 +570,22 @@ function renderLeadRows() {
         '<pre style="white-space:pre-wrap;font-size:11px;line-height:1.5;background:#fff;border:1px solid #fde68a;border-radius:6px;padding:8px;margin:0">' + escHtml(draft) + '</pre>' +
         '</td></tr>';
     }
+    // Opvolgconcept (leads die na outreach stil bleven): eigen blok, want een
+    // lead kan tegelijk 'outreach_review' zijn afgerond (status verder) én een
+    // opvolgconcept hebben liggen — deze twee zijn onafhankelijk van elkaar.
+    var followupDetailsHtml = '';
+    if (l.followup_draft) {
+      var fuDetailId = 'lead-followup-' + l.id;
+      var fuSubject = l.followup_subject || '';
+      var fuDraft = l.followup_draft || '';
+      actionsHtml += '<button onclick="toggleLeadDetail(\'' + fuDetailId + '\')" class="btn btn-ghost btn-sm" style="margin-right:3px">Opvolging bekijken</button>';
+      actionsHtml += '<button onclick="approveLeadFollowup(\'' + l.id + '\')" class="btn btn-primary btn-sm" style="background:var(--green);margin-right:3px">Verstuur opvolging</button>';
+      actionsHtml += '<button onclick="skipLeadFollowup(\'' + l.id + '\')" class="btn btn-ghost btn-sm">Sla over</button>';
+      followupDetailsHtml = '<tr id="' + fuDetailId + '" style="display:none"><td colspan="7" style="background:#fffbeb;padding:10px 12px">' +
+        (fuSubject ? '<div style="font-size:12px;font-weight:600;color:#92400e;margin-bottom:4px">Onderwerp: ' + escHtml(fuSubject) + '</div>' : '') +
+        '<pre style="white-space:pre-wrap;font-size:11px;line-height:1.5;background:#fff;border:1px solid #fde68a;border-radius:6px;padding:8px;margin:0">' + escHtml(fuDraft) + '</pre>' +
+        '</td></tr>';
+    }
     h += '<tr><td style="font-weight:500">' + escHtml(l.org_name||'').slice(0,40) + '</td>' +
       '<td style="font-size:11px;color:#64748b">' + escHtml(l.city||'-') + '</td>' +
       '<td style="font-size:11px;color:#64748b">' + contactName + '</td>' +
@@ -572,7 +593,7 @@ function renderLeadRows() {
       '<td style="font-size:11px;font-weight:600;color:' + (l.score >= 70 ? 'var(--green)' : l.score >= 40 ? 'var(--amber)' : 'var(--text-muted)') + '">' + (l.score||'-') + '</td>' +
       '<td>' + statusBadge + '</td>' +
       '<td>' + actionsHtml + '</td></tr>' +
-      summaryHtml + detailsHtml;
+      summaryHtml + detailsHtml + followupDetailsHtml;
   });
   h += '</tbody></table>';
   listEl.innerHTML = h;
@@ -635,6 +656,27 @@ function dismissLeadOutreach(leadId) {
   if (!confirm('Concept afwijzen? De lead gaat naar "verloren".')) return;
   fetch('/api/leads/' + encodeURIComponent(leadId) + '/outreach-dismiss', {method: 'POST'})
     .then(function(){ showToast('Concept afgewezen — lead staat op verloren.', 'info'); loadLeadList(); })
+    .catch(function(e){ showToast('Fout: ' + e.message, 'error'); });
+}
+
+function approveLeadFollowup(leadId) {
+  if (!confirm('Deze opvolgmail wordt ECHT verstuurd. Doorgaan?')) return;
+  fetch('/api/leads/' + encodeURIComponent(leadId) + '/followup-approve', {method: 'POST'})
+    .then(function(r){return r.json();})
+    .then(function(result){
+      if (result.status === 'sent') {
+        showToast('Opvolging verstuurd naar ' + result.to + ' — ' + result.subject, 'ok');
+      } else {
+        showToast('Versturen mislukt: ' + (result.detail || 'onbekend'), 'error');
+      }
+      loadLeadList();
+    })
+    .catch(function(e){ showToast('Fout: ' + e.message, 'error'); });
+}
+
+function skipLeadFollowup(leadId) {
+  fetch('/api/leads/' + encodeURIComponent(leadId) + '/followup-dismiss', {method: 'POST'})
+    .then(function(){ showToast('Opvolging overgeslagen.', 'info'); loadLeadList(); })
     .catch(function(e){ showToast('Fout: ' + e.message, 'error'); });
 }
 
