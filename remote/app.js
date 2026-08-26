@@ -2983,10 +2983,15 @@
   };
 
   // Microfoon: gebruik de browser Web Speech API (geen API-key nodig). Bij
-  // geen ondersteuning blijft het veld gewoon typbaar.
-  (function setupMic() {
-    const mic = $('agenda-mic');
-    const icon = $('agenda-mic-icon');
+  // geen ondersteuning blijft het veld gewoon typbaar. Gedeeld door twee
+  // velden: het smalle agenda-veld (alleen calendar_add) en de hoofdchat
+  // (de volle Iris-tool-lus — start_werk/plan_agenda/stel_besluit_voor/
+  // ritueel_vastleggen) zodat een vrije, ingesproken zin als "Beerenschot
+  // leuk gesprek gehad, zet maandag een mail in mijn agenda" bij Iris'
+  // agents terechtkomt in plaats van alleen bij de agenda-parser.
+  function setupMic(micId, iconId, inputId) {
+    const mic = $(micId);
+    const icon = $(iconId);
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { mic.title = 'Spraak niet ondersteund in deze browser — typ je opdracht'; return; }
     const rec = new SR();
@@ -2996,7 +3001,7 @@
     let listening = false;
     rec.onresult = (ev) => {
       const txt = ev.results[0][0].transcript;
-      $('agenda-input').value = txt;
+      $(inputId).value = txt;
     };
     // `is-luistert` i.p.v. `bg-primary`: die Tailwind-klasse verloor het van
     // `.chat-composer button` in style.css, dus zag je niet dát hij opnam —
@@ -3019,7 +3024,9 @@
         mic.setAttribute('aria-label', 'Opname stoppen');
       } catch (_) { /* al actief — negeer */ }
     };
-  })();
+  }
+  setupMic('agenda-mic', 'agenda-mic-icon', 'agenda-input');
+  setupMic('chat-mic', 'chat-mic-icon', 'chat-input');
 
   $('chat-form').onsubmit = async (e) => {
     e.preventDefault();
