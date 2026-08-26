@@ -8,6 +8,7 @@
 """
 import json
 import asyncio
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -18,6 +19,8 @@ from . import service as agentctl_service
 from ..delegate import event_bus
 from . import suggest as suggest_service
 from ...agents import get_faces, CREW, ORCHESTRATOR
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agentctl", tags=["agentctl"])
 
@@ -69,8 +72,14 @@ def roster():
             simon_visible = bool(conn.execute(
                 "SELECT 1 FROM agent_profiles WHERE name LIKE '%Simon%' OR face_key='simon' LIMIT 1"
             ).fetchone())
-    except Exception:
-        pass
+    except sqlite3.OperationalError as e:
+        # agent_profiles wordt hierboven al ongemockt bevraagd (regel 52) — als
+        # de tabel niet zou bestaan was deze functie daar al gecrasht. Een fout
+        # hier is dus geen "verse installatie" maar een echt probleem; alleen
+        # de zichtbaarheid van één marketing-badge staat op het spel, dus
+        # loggen en fail-open (Simon onzichtbaar) i.p.v. de hele roster-call
+        # laten crashen.
+        logger.warning("Kon Simon-zichtbaarheid niet bepalen: %s", e)
     out = {"faces": faces, "crew": crew, "manager": "iris", "iris_team": iris_team}
     if "orchestrator" not in [f["layer"] for f in faces] and simon_visible:
         out["orchestrator"] = {k: ORCHESTRATOR[k] for k in

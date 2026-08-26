@@ -6,6 +6,7 @@ Dit domein is een controlelaag, geen nieuwe agent-engine.
 import asyncio
 import json
 import logging
+import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -173,8 +174,14 @@ def _active_workloads() -> Dict[str, List[str]]:
             for w in dw:
                 if w["profile"]:
                     _mark(str(w["profile"]), f"worker ({w['status']})")
-        except Exception:
-            pass
+        except sqlite3.OperationalError as e:
+            # "no such table" op een verse installatie: delegate_workers wordt
+            # lazy aangemaakt door het delegate-domein zelf, dus dit is geen
+            # storing. Elke ándere fout wél — een stil geslikte fout hier
+            # verbergt precies het soort probleem waar de agent-stal (Agent
+            # Control) voor bedoeld is om te bewaken.
+            if "no such table" not in str(e).lower():
+                logger.exception("Occupancy-check op delegate_workers mislukte")
         # Actieve goals
         goals = conn.execute(
             "SELECT title, project, status FROM goals WHERE status='running' "

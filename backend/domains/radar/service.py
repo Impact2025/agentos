@@ -103,8 +103,18 @@ class RadarService:
             try:
                 from tavily import TavilyClient
                 self._tavily = TavilyClient(api_key=TAVILY_API_KEY)
-            except Exception:
+            except ImportError:
+                # Het 'tavily'-package staat niet in deze omgeving — de
+                # provider-fallback in shared/websearch.py vangt dit al op
+                # (Brave/DDG), dus stil is hier terecht.
                 pass
+            except Exception as e:
+                # TAVILY_API_KEY is wél gezet, maar de client kon niet
+                # opgebouwd worden — dat is geen "geen key" maar een echte
+                # configuratiefout, en die mag niet stil de radar-provider
+                # laten verdwijnen (7d in CLAUDE.md: precies dit soort stille
+                # storing hield de trendbrug 10 dagen onzichtbaar droog).
+                log.warning("Tavily-client kon niet worden geïnitialiseerd: %s", e)
 
     # ── Watchlist CRUD ───────────────────────────────────────────────────────
 
