@@ -397,13 +397,22 @@ def _whatsapp_mark_sent(pattern_key: str) -> None:
 
 
 async def check_and_send_whatsapp() -> bool:
-    """Retourneert True als er een proactief bericht is verstuurd. In-process
-    (geen bridge meer nodig — de rituelen leven al lokaal), maar verzenden
-    loopt nog wel via de bestaande bridge naar Iris Remote (WhatsApp-token
-    leeft alleen daar, zie CLAUDE.md §14e-b)."""
+    """Retourneert True als er een proactief bericht is verstuurd.
+
+    Haalt het signaal op bij mijn-ondernemers-os (bron van waarheid sinds de
+    multi-tenant-migratie — Vincents rituelen leven daar in Neon, niet meer
+    lokaal in ImpactOS' eigen tabellen) via coach_bridge/whatsapp.py, in
+    plaats van de lokale detect_proactive_signal() hierboven te herberekenen
+    tegen mogelijk verouderde lokale data. ensure_schema() blijft nodig voor
+    de lokale dedupe-tabel (coach_whatsapp_sent) hieronder — dát blijft wél
+    lokaal, alleen de signaal-brón verhuist. Verzenden zelf loopt nog wel via
+    de bestaande bridge naar Iris Remote (WhatsApp-token leeft alleen daar,
+    zie CLAUDE.md §14e-b) — dat verandert niet."""
+    from ..coach_bridge.whatsapp import fetch_remote_signal
+
     ensure_schema()
-    result = detect_proactive_signal()
-    if not result["signal"]:
+    result = await fetch_remote_signal()
+    if not result or not result["signal"]:
         return False
     if _whatsapp_already_sent(result["pattern_key"]):
         return False

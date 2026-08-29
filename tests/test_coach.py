@@ -1,5 +1,11 @@
-"""Tests voor De Sparringpartner — native tegen backend/domains/rituals
-(single-user SQLite), geen bridge meer nodig voor de kernfunctie."""
+"""Tests voor De Sparringpartner — de reflectie zelf (run_analysis, lessons,
+energy-log) draait native tegen backend/domains/rituals (single-user SQLite).
+
+Uitzondering: check_and_send_whatsapp() haalt het proactieve signaal sinds
+29-08-2026 weer via de bridge op bij mijn-ondernemers-os (coach_bridge/
+whatsapp.py) — Vincents rituelen leven sinds de multi-tenant-migratie daar
+in Neon, niet meer lokaal, dus de eigen detect_proactive_signal() hieronder
+werkte tegen verouderde data. Zie test_check_and_send_whatsapp_gebruikt_bridge."""
 import asyncio
 
 import pytest
@@ -158,9 +164,52 @@ def test_router_gemonteerd():
     assert "/api/coach/energy-log" in paths
 
 
-def test_scheduler_job_gebruikt_native_service_niet_de_bridge():
+def test_scheduler_job_delegeert_aan_coach_service():
+    """De scheduler-job zelf kent coach_bridge niet — dat blijft een
+    implementatiedetail van check_and_send_whatsapp(), niet iets wat de job
+    zelf hoeft te weten. (Eerder heette deze test '...niet_de_bridge' en
+    beweerde dat er nérgens in het pad een bridge zat — dat klopt sinds
+    29-08-2026 niet meer, zie test_check_and_send_whatsapp_gebruikt_bridge.)"""
     import inspect
     from backend import scheduler as S
     src = inspect.getsource(S.coach_whatsapp_check_job)
-    assert "coach_bridge" not in src
     assert "from .domains.coach import service" in src
+
+
+def test_check_and_send_whatsapp_gebruikt_bridge(monkeypatch):
+    """Regressie voor de 29-08-2026-wijziging: het proactieve signaal moet uit
+    mijn-ondernemers-os komen (de echte rituelen-data), niet uit de lokale
+    detect_proactive_signal(). Zend zelf blijft gemockt — dit test alleen de
+    signaal-bron, geen echt WhatsApp-bericht."""
+    calls = {"remote": 0, "local": 0}
+
+    async def fake_remote_signal():
+        calls["remote"] += 1
+        return {"signal": True, "pattern_key": "test:vanaf-bridge", "message": "test"}
+
+    def fake_local_signal():
+        calls["local"] += 1
+        return {"signal": False, "pattern_key": "", "message": ""}
+
+    class FakeBridgeService:
+        @staticmethod
+        def enabled():
+            return True
+
+        @staticmethod
+        async def send_whatsapp_reminder(text):
+            return True
+
+    monkeypatch.setattr(
+        "backend.domains.coach_bridge.whatsapp.fetch_remote_signal", fake_remote_signal
+    )
+    monkeypatch.setattr(coach_service, "detect_proactive_signal", fake_local_signal)
+    monkeypatch.setitem(
+        __import__("sys").modules, "backend.domains.bridge.service", FakeBridgeService
+    )
+
+    sent = asyncio.run(coach_service.check_and_send_whatsapp())
+
+    assert sent is True
+    assert calls["remote"] == 1, "check_and_send_whatsapp moet het signaal via de bridge ophalen"
+    assert calls["local"] == 0, "de lokale detect_proactive_signal() mag niet meer aangeroepen worden"
