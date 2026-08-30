@@ -15,6 +15,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Header
 
 from ...shared import config
+from ...shared.database import get_conn
 from .context import build_holding_context
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,44 @@ def _require_token(authorization: str = Header(default="")) -> None:
 async def get_holding_context(authorization: str = Header(default="")) -> dict:
     _require_token(authorization)
     return await build_holding_context()
+
+
+# Vincents eigen postvak (Outlook/Graph), niet de helpdesk-projectmailboxen —
+# zelfde bron als action_center/service.py's "Postvak"-kaarten (2d hierboven,
+# outlook_emails-tabel), hier voor AipaCoach in plaats van het Actiecentrum.
+# Bewust read-heavy en action-thin: send/reject hergebruiken exact dezelfde
+# bridge_actions-functies als het Actiecentrum, geen aparte implementatie.
+@router.get("/mail/pending")
+async def get_pending_mail(authorization: str = Header(default="")) -> dict:
+    _require_token(authorization)
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, subject, from_name, from_email, ai_summary, suggested_reply, "
+            "priority, received_at "
+            "FROM outlook_emails "
+            "WHERE folder='inbox' AND is_replied=0 AND suggested_reply_dismissed=0 "
+            "AND suggested_reply IS NOT NULL AND suggested_reply != '' "
+            "ORDER BY priority DESC, received_at DESC"
+        ).fetchall()
+    return {"items": [dict(r) for r in rows]}
+
+
+@router.post("/mail/{item_id}/send")
+async def send_pending_mail(item_id: str, body: dict, authorization: str = Header(default="")) -> dict:
+    _require_token(authorization)
+    from ..bridge.actions import _personal_mail_send
+    ok, message = await _personal_mail_send(item_id, body)
+    if not ok:
+        raise HTTPException(status_code=502, detail=message)
+    return {"ok": True, "message": message}
+
+
+@router.post("/mail/{item_id}/reject")
+async def reject_pending_mail(item_id: str, authorization: str = Header(default="")) -> dict:
+    _require_token(authorization)
+    from ..bridge.actions import _personal_mail_reject
+    ok, message = await _personal_mail_reject(item_id, {})
+    return {"ok": ok, "message": message}
 
 
 def _bridge_configured() -> bool:
