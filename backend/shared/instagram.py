@@ -116,3 +116,53 @@ async def post_image(image_url: str, caption: str,
         error_body = publish_resp.text[:500]
         logger.error(f"❌ Instagram publish failed ({site_name}): {publish_resp.status_code}")
         return {"success": False, "error": f"HTTP {publish_resp.status_code}: {error_body}"}
+
+
+async def post_video(video_url: str, caption: str,
+                     site_name: Optional[str] = None) -> Dict[str, Any]:
+    """Publiceer een Reel/video naar Instagram (Content Publishing API).
+
+    `video_url` moet **publiek** bereikbaar zijn — Instagram fetched 'm zelf.
+    Twee stappen (metaal gelijk aan post_image, maar met media_type=REEL):
+      1. POST /{ig_user_id}/media  (video_url + caption + media_type=REEL) → creation_id
+      2. POST /{ig_user_id}/media_publish (creation_id) → media_id
+    """
+    ig_id, token = _get_site_data(site_name)
+    if not ig_id or not token:
+        return {"success": False, "error": f"Geen Instagram business-id/token voor {site_name or 'globale config'}"}
+    async with httpx.AsyncClient(timeout=90) as client:
+        # 1) Creatie-container aanmaken (media_type=REEL zorgt voor Reel-processing).
+        create_resp = await client.post(
+            f"{GRAPH_API}/{ig_id}/media",
+            data={"media_type": "REELS", "video_url": video_url,
+                  "caption": caption[:2200], "access_token": token},
+        )
+        if create_resp.status_code != 200:
+            error_body = create_resp.text[:500]
+            logger.error(f"❌ Instagram video-create failed ({site_name}): {create_resp.status_code}")
+            return {"success": False, "error": f"HTTP {create_resp.status_code}: {error_body}"}
+        creation_id = create_resp.json().get("id", "")
+        if not creation_id:
+            return {"success": False, "error": "Geen creation_id ontvangen van Instagram (video)"}
+        # 2) Publiceren. Meta kan even nodig hebben om de video te verwerken —
+        # poll de creation status kort (max 3x) zodat we niet te vroeg publiceren.
+        for _ in range(3):
+            status_resp = await client.get(
+                f"{GRAPH_API}/{creation_id}",
+                params={"fields": "status_code", "access_token": token}, timeout=15,
+            )
+            if status_resp.status_code == 200 and status_resp.json().get("status_code") == "SUCCESS":
+                break
+            await asyncio.sleep(5)
+        publish_resp = await client.post(
+            f"{GRAPH_API}/{ig_id}/media_publish",
+            data={"creation_id": creation_id, "access_token": token},
+        )
+    if publish_resp.status_code == 200:
+        media_id = publish_resp.json().get("id", "")
+        logger.info(f"✅ Instagram Reel geplaatst — site={site_name}, media_id={media_id}")
+        return {"success": True, "post_id": media_id, "site": site_name}
+    else:
+        error_body = publish_resp.text[:500]
+        logger.error(f"❌ Instagram Reel-publish failed ({site_name}): {publish_resp.status_code}")
+        return {"success": False, "error": f"HTTP {publish_resp.status_code}: {error_body}"}
