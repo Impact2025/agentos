@@ -40,6 +40,11 @@ if not os.path.exists(DB):
         if os.path.exists(cand):
             DB = cand; break
 MJ = "data/uploads/da_mj"
+# Alle DA-campagnes starten met 'da-' — gebruik prefix-match (da-week1,
+# da-week1-40plus, da-week1-50plus, da-doelgroepen-2026, etc.). 31‑aug:
+# harde tuples 'da-week1' matchten niet 'da-week1-50plus' packs → die
+# blijven pending_review maar worden nooit gepost (filter bug).
+CAMPAIGN_PREFIX = "da-"
 CAMPAIGNS = ("da-doelgroepen-2026", "da-week1", "da-week2", "da-week3", "da-week4")
 
 # Wereldklasse-fix 21 aug 2026: alle DA-campagnepacks staan in de DB met
@@ -159,14 +164,13 @@ async def main():
     # busy_timeout voor WAL lock contention met de AgentOS‑daemon
     c.execute("PRAGMA busy_timeout=60000")
     now = datetime.utcnow().isoformat()
-    ph = ",".join("?" * len(CAMPAIGNS))
-    # Alle due packs — image, video, link, text. Classificatie is data‑gedreven
-    # (video_path / image_brief / feed) in plaats van via post_type, want
-    # post_type is historisch leeg bij sommige da-weekN‑packs (Vincent 31‑8).
+    # Prefix-match: da-week1, da-week1-40plus, da-week1-50plus, da-doelgroepen-2026
+    # (harde tuples deden da-week1-50plus packs missen). 31-aug fix.
     due = c.execute(
-        f"SELECT id, project, campaign, post_type FROM social_posts "
-        f"WHERE campaign IN ({ph}) AND status='pending_review' AND scheduled_for <= ? "
-        f"ORDER BY scheduled_for", (*CAMPAIGNS, now)
+        "SELECT id, project, campaign, post_type FROM social_posts "
+        "WHERE campaign LIKE ? AND status='pending_review' AND scheduled_for <= ? "
+        "ORDER BY scheduled_for",
+        (f"{CAMPAIGN_PREFIX}%", now)
     ).fetchall()
     if not due:
         print("Geen posts die nu moeten (alles op schema of al gepost).", flush=True); c.close(); return
