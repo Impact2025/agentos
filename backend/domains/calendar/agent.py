@@ -359,6 +359,65 @@ def _parse_iso(s: Optional[str]) -> Optional[datetime]:
         return None
 
 
+# Hoeveel werkdagen vooruit Iris naar een vrij alternatief zoekt bij een
+# conflict. Verder dan twee weken vooruit is voor een mail-afspraak geen
+# alternatief meer maar uitstel, en kost bovendien een steeds bredere
+# free/busy-call.
+_ALT_SLOT_SEARCH_DAYS = 10
+_ALT_SLOT_STEP_MIN = 15
+
+
+def _find_alt_slot(after: datetime, duration_min: int) -> Optional[tuple]:
+    """Zoek het eerstvolgende vrije werkuren-slot van `duration_min` op of ná
+    `after`, over de eigen agenda (chat@weareimpact.nl e.d.). Géén reistijd-
+    logica hier — dat blijft aan de aanroeper, want een alternatief voor een
+    fysieke afspraak heeft dezelfde buffer nodig als het origineel.
+
+    Eén free/busy-call voor het hele zoekvenster (i.p.v. één per kandidaat-
+    slot): dat scheelt tientallen Google-calls per conflict. Retourneert
+    (start, end) of None als er geen agenda gekoppeld is, de check mislukt,
+    of er binnen het venster niets vrij is."""
+    try:
+        from ...domains.calendar import service as cal
+        if not cal.is_configured():
+            return None
+        search_start = after
+        search_end = after + timedelta(days=_ALT_SLOT_SEARCH_DAYS)
+        busy_raw = _run_async(cal.get_busy_times(search_start, search_end))
+    except Exception as e:
+        log.warning("[agenda-agent] alternatief-zoek mislukt: %s", e)
+        return None
+    busy = []
+    for b in busy_raw:
+        bs, be = _parse_iso(b.get("start")), _parse_iso(b.get("end"))
+        if bs and be:
+            busy.append((bs, be))
+
+    def _vrij(cand_start: datetime, cand_end: datetime) -> bool:
+        return not any(bs < cand_end and be > cand_start for bs, be in busy)
+
+    day = after.date()
+    for day_i in range(_ALT_SLOT_SEARCH_DAYS + 1):
+        d = day + timedelta(days=day_i)
+        if d.weekday() >= 5:  # weekend — geen werkdag-alternatief voorstellen
+            continue
+        day_start = datetime(d.year, d.month, d.day, _WORK_START_H, 0, tzinfo=_TZ)
+        day_end = datetime(d.year, d.month, d.day, _WORK_END_H, 0, tzinfo=_TZ)
+        cand = max(day_start, after) if d == after.date() else day_start
+        # Rond op naar het eerstvolgende kwartier — anders schuift elk
+        # alternatief steeds verder op een oneven starttijd (bv. 14:37).
+        minute_rest = cand.minute % _ALT_SLOT_STEP_MIN
+        if minute_rest or cand.second or cand.microsecond:
+            cand = (cand.replace(second=0, microsecond=0) +
+                    timedelta(minutes=_ALT_SLOT_STEP_MIN - minute_rest if minute_rest else 0))
+        while cand + timedelta(minutes=duration_min) <= day_end:
+            cand_end = cand + timedelta(minutes=duration_min)
+            if _vrij(cand, cand_end):
+                return (cand, cand_end)
+            cand = cand + timedelta(minutes=_ALT_SLOT_STEP_MIN)
+    return None
+
+
 def create_proposal(mailbox_id: str, inbox_id: int, subject: str, from_addr: str,
                     body: str, from_name: str = "") -> Optional[Dict]:
     """Bouw een afspraak-voorstel op basis van de mail en schrijf het als
@@ -394,10 +453,25 @@ def create_proposal(mailbox_id: str, inbox_id: int, subject: str, from_addr: str
     # Conflict-check tegen Google Calendar.
     fb_status, conflicts = _free_busy_conflict(start, end)
     conflict_note = ""
+    alt_start = alt_end = None
     if conflicts:
+        # Vincent wil bij een conflict niet alleen een waarschuwing maar ook
+        # een uitweg: Iris zoekt zelf het eerstvolgende vrije werkuren-slot en
+        # biedt aan dat per mail aan de afzender voor te stellen (26 aug 2026)
+        # — zie propose_alternative_by_mail(). Puur een suggestie: het
+        # origineel blijft gewoon in de wacht-op-goedkeuring-lijst staan tot
+        # Vincent hem afwijst of alsnog goedkeurt.
+        alt = _find_alt_slot(end, duration)
+        if alt:
+            alt_start, alt_end = alt
         conflict_note = ("LET OP: overlap met bestaande afspraak " +
                          "; ".join(f"{c['start']}–{c['end']}" for c in conflicts[:2]) +
                          ". Verplaats of kies een ander slot.")
+        if alt_start:
+            conflict_note += (f" Iris stelt in plaats daarvan voor: "
+                              f"{_nl_datum_tijd(alt_start)}–{alt_end.strftime('%H:%M')}. "
+                              f"Klik op 'Stuur alternatief voorstel' om dit per mail aan "
+                              f"{from_addr} aan te bieden.")
         appt["priority"] = "high"  # conflict moet opvallen in de review
     elif fb_status == "unavailable":
         conflict_note = ("Niet op dubbele boeking gecontroleerd: geen Google Agenda "
@@ -423,12 +497,15 @@ def create_proposal(mailbox_id: str, inbox_id: int, subject: str, from_addr: str
                    (mailbox_id, inbox_id, from_addr, subject, title,
                     proposed_start, proposed_end, location, is_remote,
                     duration_min, travel_buffer_min, priority, conflict_note,
-                    conflict_checked, rationale, status, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending_review', datetime('now'))""",
+                    conflict_checked, rationale, alt_slot_start, alt_slot_end,
+                    status, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending_review', datetime('now'))""",
                 (mailbox_id, inbox_id, from_addr, subject, title,
                  start.isoformat(), end.isoformat(), appt["location"],
                  1 if appt["is_remote"] else 0, duration, travel_buffer,
-                 appt["priority"], conflict_note, fb_status, rationale),
+                 appt["priority"], conflict_note, fb_status, rationale,
+                 alt_start.isoformat() if alt_start else None,
+                 alt_end.isoformat() if alt_end else None),
             )
             pid = cur.lastrowid
         log.info("[agenda-agent] voorstel %s aangemaakt voor %s", pid, from_addr)
@@ -832,3 +909,78 @@ async def notify_customer_outcome(proposal_id: int, outcome: str) -> None:
                         row["customer_wa_id"], proposal_id)
     except Exception:
         log.exception("[agenda-agent] notify_customer_outcome mislukt voor voorstel #%s", proposal_id)
+
+
+# ── Alternatief bij conflict per mail voorstellen (26 aug 2026) ────────────
+# Klikken is hier de goedkeuring — net als "Toch toelaten" en "Analyseer &
+# fix" elders in Impact OS: Vincent ziet het gevonden alternatief in
+# conflict_note vóórdat hij op de knop drukt, dus de mail gaat pas de deur uit
+# ná een menselijke blik. Alleen zinvol voor voorstellen met een echte
+# afzender (from_addr) — een WhatsApp-klantvoorstel heeft al zijn eigen
+# conversationele "past niet, ander moment?" via notify_customer_outcome, en
+# Vincents eigen tekst-commando's (mailbox_id='iris-command') hebben meestal
+# geen e-mailadres om naartoe te sturen.
+async def propose_alternative_by_mail(proposal_id: int) -> Dict:
+    with get_conn() as conn:
+        r = conn.execute(
+            "SELECT * FROM calendar_proposals WHERE id=?", (proposal_id,)
+        ).fetchone()
+    if not r:
+        return {"ok": False, "error": "voorstel niet gevonden"}
+    if r["status"] != "pending_review":
+        return {"ok": False, "error": f"status is '{r['status']}', niet pending"}
+    from_addr = r["from_addr"] or ""
+    if not from_addr or from_addr == "iris-command":
+        return {"ok": False, "error": "Geen e-mailadres bekend om een alternatief naartoe te sturen."}
+    alt_start = _parse_iso(r["alt_slot_start"]) if "alt_slot_start" in r.keys() else None
+    alt_end = _parse_iso(r["alt_slot_end"]) if "alt_slot_end" in r.keys() else None
+    if not alt_start or not alt_end:
+        return {"ok": False, "error": "Er is (nog) geen alternatief gevonden voor dit voorstel."}
+
+    orig_start = _parse_iso(r["proposed_start"])
+    subject = r["subject"] or r["title"] or "afspraak"
+    onderwerp = f"Ander voorstel: {subject}"[:120]
+    body_lines = [
+        f"Beste,",
+        "",
+        (f"Het voorgestelde moment"
+         + (f" ({_nl_datum_tijd(orig_start)})" if orig_start else "")
+         + " past helaas niet — daar staat al iets anders gepland."),
+        f"Zou {_nl_datum_tijd(alt_start)}–{alt_end.strftime('%H:%M')} uitkomen?",
+        "",
+        "Laat het gerust weten als een ander moment beter past.",
+        "",
+        "Met vriendelijke groet,",
+        "Vincent",
+    ]
+    body_text = "\n".join(body_lines)
+
+    try:
+        from ..outlook import service as outlook_service
+        body_html = outlook_service.text_to_html(body_text)
+        result = await outlook_service.send_new_email(from_addr, onderwerp, body_html)
+    except Exception as e:
+        log.exception("[agenda-agent] alternatief-mail naar %s mislukt", from_addr)
+        return {"ok": False, "error": str(e)}
+    if not result.get("success"):
+        return {"ok": False, "error": result.get("error", "versturen mislukt")}
+
+    # De mail is de nieuwe zet; het originele voorstel is daarmee achterhaald
+    # (het conflict blijft bestaan zolang het openstaat) — sluiten voorkomt
+    # dat Vincent hem later per ongeluk alsnog goedkeurt bovenop het conflict.
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE calendar_proposals SET status='rejected', alt_mail_sent=1, "
+            "decided_at=datetime('now') WHERE id=?", (proposal_id,))
+    try:
+        from ...shared.outcomes import log_outcome
+        log_outcome(
+            "WeAreImpact", "agenda_alternatief_voorgesteld",
+            f"Conflict bij '{subject}' — alternatief ({_nl_datum_tijd(alt_start)}) "
+            f"per mail voorgesteld aan {from_addr}.",
+            next_step=f"Wacht op reactie van {from_addr}.",
+            status="ok",
+        )
+    except Exception:
+        log.exception("[agenda-agent] outcome-log voor alternatief-mail mislukt")
+    return {"ok": True, "to": from_addr, "alt_start": alt_start.isoformat()}

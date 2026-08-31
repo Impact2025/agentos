@@ -3,9 +3,9 @@
 // Laadvolgorde staat in index.html — core.js eerst.
 
 // ── Impact OS — Pro SEO Dashboard ──────────────────────────────────
-const PROJECTS = ['WeAreImpact', 'IctusGo', 'Pootgelukkig', 'BewaardVoorJou', 'Kappersassistent', 'DatingAssistent', 'Finance Expert', 'Bijeen', 'Brickme', 'Vrijwilligersmatch', 'Skillkaart', 'Steentjeapp', 'Zorgblik', 'Teambuildingmetimpact', 'Daar'];
-const COLORS = { WeAreImpact: ['from-indigo-500 to-indigo-600','indigo'], Pootgelukkig: ['from-emerald-500 to-emerald-600','emerald'], BewaardVoorJou: ['from-amber-500 to-amber-600','amber'], Kappersassistent: ['from-violet-500 to-violet-600','violet'], DatingAssistent: ['from-red-500 to-red-600','red'], 'Finance Expert': ['from-rose-500 to-rose-600','rose'], Bijeen: ['from-cyan-500 to-cyan-600','cyan'], Brickme: ['from-orange-500 to-orange-600','orange'], Vrijwilligersmatch: ['from-teal-500 to-teal-600','teal'], Skillkaart: ['from-pink-500 to-pink-600','pink'], Steentjeapp: ['from-sky-500 to-sky-600','sky'], Zorgblik: ['from-lime-500 to-lime-600','lime'], Teambuildingmetimpact: ['from-amber-500 to-amber-600','amber'], IctusGo: ['from-cyan-700 to-emerald-600','emerald'] };
-const DESCS = { WeAreImpact: 'AI en innovatie voor zorg, welzijn en gemeenten', Pootgelukkig: 'Adoptieplatform voor asieldieren', BewaardVoorJou: 'Digitaal levensboek voor 65-plussers', Kappersassistent: 'Project kappersbranche (in opstart)', DatingAssistent: 'AI dating coach & datingadvies', 'Finance Expert': 'Financiele rapportage en analyse', Bijeen: 'Sociale verbinding & bijeenkomsten', Brickme: 'Bouw & constructie', Vrijwilligersmatch: 'Vrijwilligers matching platform', Skillkaart: 'Vaardigheden & competenties', Steentjeapp: 'Mobiele app Steentjebijsteentje', Zorgblik: 'Zorginnovatie & inzicht', Teambuildingmetimpact: 'Bedrijfsvrijwilligerswerk, impact days & LEGO Serious Play', IctusGo: 'GPS teambuilding met sociale impact (Hoofddorp/Schiphol)' };
+const PROJECTS = ['WeAreImpact', 'IctusGo', 'Pootgelukkig', 'BewaardVoorJou', 'Kappersassistent', 'DatingAssistent', 'Finance Expert', 'Bijeen', 'Brickme', 'Vrijwilligersmatch', 'Skillkaart', 'Steentjeapp', 'Zorgblik', 'Teambuildingmetimpact', 'Daar', 'LiefdeVoorIedereen'];
+const COLORS = { WeAreImpact: ['from-indigo-500 to-indigo-600','indigo'], Pootgelukkig: ['from-emerald-500 to-emerald-600','emerald'], BewaardVoorJou: ['from-amber-500 to-amber-600','amber'], Kappersassistent: ['from-violet-500 to-violet-600','violet'], DatingAssistent: ['from-red-500 to-red-600','red'], 'Finance Expert': ['from-rose-500 to-rose-600','rose'], Bijeen: ['from-cyan-500 to-cyan-600','cyan'], Brickme: ['from-orange-500 to-orange-600','orange'], Vrijwilligersmatch: ['from-teal-500 to-teal-600','teal'], Skillkaart: ['from-pink-500 to-pink-600','pink'], LiefdeVoorIedereen: ['from-rose-500 to-rose-600','rose'], Steentjeapp: ['from-sky-500 to-sky-600','sky'], Zorgblik: ['from-lime-500 to-lime-600','lime'], Teambuildingmetimpact: ['from-amber-500 to-amber-600','amber'], IctusGo: ['from-cyan-700 to-emerald-600','emerald'] };
+const DESCS = { WeAreImpact: 'AI en innovatie voor zorg, welzijn en gemeenten', Pootgelukkig: 'Adoptieplatform voor asieldieren', BewaardVoorJou: 'Digitaal levensboek voor 65-plussers', Kappersassistent: 'Project kappersbranche (in opstart)', DatingAssistent: 'AI dating coach & datingadvies', 'Finance Expert': 'Financiele rapportage en analyse', Bijeen: 'Sociale verbinding & bijeenkomsten', Brickme: 'Bouw & constructie', Vrijwilligersmatch: 'Vrijwilligers matching platform', Skillkaart: 'Vaardigheden & competenties', LiefdeVoorIedereen: 'Serieuze dating voor iedereen — inclusief mensen met beperkingen', Steentjeapp: 'Mobiele app Steentjebijsteentje', Zorgblik: 'Zorginnovatie & inzicht', Teambuildingmetimpact: 'Bedrijfsvrijwilligerswerk, impact days & LEGO Serious Play', IctusGo: 'GPS teambuilding met sociale impact (Hoofddorp/Schiphol)' };
 // 'SEO Loop' is geen eigen tab meer (22 aug 2026) — de maandelijkse KPI-loop
 // is nu een sectie ónderaan Optimalisatie i.p.v. een los scherm, want beide
 // beantwoordden dezelfde vraag ("welke bestaande pagina verdient aandacht")
@@ -84,6 +84,11 @@ function visibleTabs() {
       // Klanten/Facturatie zijn Vincents eigen consultancy-administratie
       // (WeAreImpact) — geen enkel ander project heeft eigen klanten/facturen.
       if ((t === 'Klanten' || t === 'Facturatie') && currentProject && currentProject !== 'WeAreImpact') return false;
+      // Leads is Vincents eigen acquisitiefunnel voor WeAreImpact-klanten,
+      // systeembreed en niet per project (zie shell.js:pollSidebarBadges) —
+      // op een klantproject als Bewaard voor Jou toont hij dus dezelfde 410
+      // leads als bij WeAreImpact, wat leest als een datalek tussen projecten.
+      if (t === 'Leads' && currentProject && currentProject !== 'WeAreImpact') return false;
       // Verkoop & inkoop bestaat alleen voor Bewaard voor Jou (bvj_orders/
       // bvj_stock). Squash-vergelijking, want currentProject komt gespatieerd
       // uit de URL-hash terwijl de interne sleutel aaneen is.
@@ -348,6 +353,16 @@ function showToast(message, tone, onClick) {
   setTimeout(function(){ el.remove(); }, onClick ? 9000 : 5000);
 }
 
+// Overschrijft de kale browser alert() ("localhost:1250 meldt het volgende")
+// met de toast hierboven, zodat elke melding — overal in de app, zonder alle
+// aanroepplekken te hoeven aanpassen — als een Iris-melding oogt in plaats van
+// een browser-chrome-dialoog. Blijft veilig: geen enkele aanroeper hier gebruikt
+// de (niet-bestaande) returnwaarde van alert(), dus niet-blokkerend tonen verandert
+// het gedrag niet.
+window.alert = function (message) {
+  showToast('Iris — ' + String(message), 'error');
+};
+
 // POST met JSON-body. De `detail` uit een FastAPI-HTTPException wordt de
 // foutmelding, zodat de gebruiker leest wat er stuk is ("Websearch niet
 // beschikbaar: quota op") in plaats van een kaal "HTTP 502".
@@ -485,5 +500,20 @@ function route() {
 function selectProject(name) { currentProject = name; currentTab = 'Dashboard'; weSuggestions = []; history.pushState(null, '', '#project=' + encodeURIComponent(name)); route(); }
 function goHome() { currentProject = null; currentTab = 'Dashboard'; weSuggestions = []; history.pushState(null, '', '#'); route(); }
 function switchView(view) { if (view === 'home') { goHome(); return; } if (view === 'chat') { currentTab = 'Chat'; route(); return; } if (view === 'voice') { currentTab = 'Voice'; route(); return; } currentTab = view; route(); }
+// Leest project=/tab= uit de hash in currentProject/currentTab. Gebruikt bij
+// boot (checkAuthAndStart) én bij een handmatige hash-wijziging terwijl de app
+// al open staat (adresbalk, bookmark) — zónder een hashchange-listener bleef
+// de app na zo'n wijziging stilzwijgend op het oude project staan: de hash in
+// de adresbalk klopte, maar dashboard, titel en elke API-call bleven het vorige
+// project tonen (gemeten 27 aug 2026, #project=BewaardVoorJou in een al open
+// tab bleef WeAreImpact renderen).
+function applyProjectHashState() {
+  var m = location.hash.match(/project=([^&]+)/);
+  if (m) currentProject = decodeURIComponent(m[1]);
+  else currentProject = null;
+  var t = location.hash.match(/tab=([^&]+)/);
+  if (t && TABS.indexOf(decodeURIComponent(t[1])) >= 0) currentTab = decodeURIComponent(t[1]);
+}
 window.addEventListener('popstate', route);
+window.addEventListener('hashchange', function () { applyProjectHashState(); route(); });
 

@@ -134,6 +134,14 @@ _MAX_READ_BYTES = 128 * 1024
 _graph_cache: Dict[str, Any] = {"built_at": 0.0, "data": None}
 _GRAPH_TTL_SECONDS = 120
 
+# De Galaxy-fysica is O(n²) per simulatiestap (galaxySimStep in tabs-memory.js) —
+# bij 6351 notities (aug 2026, ruim boven de ~500 waarop die aanname was gebaseerd)
+# vroor het tabblad minutenlang vast op "Sterrenkaart laden...". De backend zelf
+# is snel (~1s voor de hele vault); het knelpunt zit in de client-side simulatie.
+# Cap de weergegeven sterren op de meest verbonden + meest recente notities i.p.v.
+# de fysica O(n log n) te maken — de rest is toch niet leesbaar op één scherm.
+_MAX_GRAPH_NODES = 800
+
 
 def _vault_files(vault: Path) -> List[Path]:
     files = []
@@ -205,7 +213,29 @@ def _build_graph(vault: Path) -> Dict[str, Any]:
             nodes[src]["deg"] += 1
             nodes[tgt]["deg"] += 1
 
+    total_note_count = len(nodes)
+    sampled = total_note_count > _MAX_GRAPH_NODES
+    if sampled:
+        # Meest verbonden eerst (interessant voor de kaart), bij gelijke graad de
+        # meest recent bijgewerkte — dezelfde volgorde als de labeled-top-14 in de
+        # frontend, alleen toegepast op de hele set i.p.v. alleen de labels.
+        keep_order = sorted(range(total_note_count), key=lambda i: (-nodes[i]["deg"], nodes[i]["days"]))
+        keep_idx = set(keep_order[:_MAX_GRAPH_NODES])
+        remap: Dict[int, int] = {}
+        new_nodes: List[Dict[str, Any]] = []
+        for old_i in range(total_note_count):
+            if old_i not in keep_idx:
+                continue
+            remap[old_i] = len(new_nodes)
+            new_nodes.append(nodes[old_i])
+        new_links = []
+        for a, b in links:
+            if a in keep_idx and b in keep_idx:
+                new_links.append([remap[a], remap[b]])
+        nodes, links = new_nodes, new_links
+
     # Groepen gesorteerd op omvang, zodat de frontend kleuren stabiel toewijst
+    # (op de wérkelijk getoonde set — anders klopt de legenda niet met de sterren)
     group_counts: Dict[str, int] = {}
     for n in nodes:
         group_counts[n["group"]] = group_counts.get(n["group"], 0) + 1
@@ -216,6 +246,8 @@ def _build_graph(vault: Path) -> Dict[str, Any]:
         "links": links,
         "groups": groups,
         "note_count": len(nodes),
+        "total_note_count": total_note_count,
+        "sampled": sampled,
         "link_count": len(links),
         "built_at": now,
     }

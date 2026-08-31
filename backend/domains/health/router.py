@@ -249,10 +249,26 @@ def _collect_bugs() -> dict:
                 pass
 
             # 2. vastgelopen doelen + hun failed taken
+            #
+            # 26 aug 2026: een 'partial' doel is niet per definitie vastgelopen —
+            # het is de correcte, ontworpen uitkomst wanneer een deel van het werk
+            # wél lukte (zie 3a in CLAUDE.md: "activiteit is geen effect" faalt
+            # publisher-taken bewust hard i.p.v. ze als concept te 'voltooien').
+            # Gemeten: '[Iris] Schrijf over cadeau voor oma met herinneringen'
+            # (Bewaard voor Jou) had 113 van 116 taken voltooid en het artikel
+            # stond al in de Wachtrij — de enige 3 mislukte taken waren een
+            # losstaand intern SEO-document dat terecht nooit publiceerbaar was
+            # (kwaliteitsgate + verkeerde site). Er viel niets meer op te lossen,
+            # maar de badge herhaalde "1 vastgelopen doel(en)" élke dag opnieuw
+            # zonder dat een klik daar ooit iets aan zou veranderen. Een doel dat
+            # al effect had (completed_tasks > 0) is klaar, geen storing; alleen
+            # een doel zonder enig voltooid werk is écht vastgelopen.
             try:
                 goals = conn.execute(
                     "SELECT id, title, project, status, updated_at FROM goals "
-                    "WHERE status IN ('failed','partial') ORDER BY updated_at DESC LIMIT 8"
+                    "WHERE (status = 'failed' "
+                    "OR (status = 'partial' AND COALESCE(completed_tasks, 0) = 0)) "
+                    "ORDER BY updated_at DESC LIMIT 8"
                 ).fetchall()
                 for g in goals:
                     failed_tasks = conn.execute(

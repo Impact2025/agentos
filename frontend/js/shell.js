@@ -53,6 +53,7 @@ function renderHeader() {
   if (!currentProject) return '';
   return '<div class="project-header"><div><h1>' + escHtml(currentProject) + ' <span id="agent-status-indicator" style="margin-left:6px;vertical-align:middle"></span> <span id="resolve-failed-btn-container" style="vertical-align:middle"></span></h1><p class="meta">' + escHtml(currentTab) + ' &middot; ' + escHtml(DESCS[currentProject]||'') + '</p></div>' +
     '<div class="actions">' + (currentTab !== 'Dashboard' ? '<button onclick="switchView(\'Dashboard\')">Dashboard</button>' : '') +
+    (isBewaardVoorJouProject(currentProject) ? '<button onclick="startWorkshopTour(currentProject)" class="btn-primary no-print">Workshop-tour</button>' : '') +
     '<button onclick="switchView(\'chat\')">Chat</button><button onclick="switchView(\'voice\')">🎙 Voice</button><button onclick="togglePrint()" class="no-print">Export</button></div></div>';
 }
 
@@ -175,7 +176,7 @@ function stopDashboardBannerPoll() { if (_dashBannerTimer) { clearInterval(_dash
 // tab open staat — een kans of lead moet zichtbaar zijn ook als je op
 // Dashboard staat, niet alleen wanneer je toevallig op Kansen/Leads klikt.
 // Tab-naam -> badge-element-prefix.
-var _SIDEBAR_BADGE_TABS = { Helpdesk: 'helpdesk', 'Social Creatie': 'social', Kansen: 'kansen', Leads: 'leads' };
+var _SIDEBAR_BADGE_TABS = { Helpdesk: 'helpdesk', 'Social Creatie': 'social', Kansen: 'kansen', Leads: 'leads', Agenda: 'agenda' };
 let _sidebarBadgeTimer = null;
 function startHelpdeskBadgePoll() {
   stopHelpdeskBadgePoll();
@@ -228,6 +229,15 @@ function pollSidebarBadges() {
       _setNavBadge('leads', n);
     }).catch(function(){});
   }
+  // Agenda: open afspraak-voorstellen die op goedkeuring wachten. Agenda heeft
+  // geen entry in TAB_DOMAIN (WeAreImpact-only tab, zie visibleTabs()), dus
+  // geen domainOn-gate hier — dezelfde bron als de "Wacht op jouw goedkeuring"-
+  // kop op de Agenda-tab zelf (tabs-agenda.js:286), zodat badge en scherm
+  // nooit uit elkaar lopen.
+  fetch('/api/calendar/proposals').then(function(r){return r.json();}).then(function(data){
+    var n = (data && data.proposals && data.proposals.length) || 0;
+    _setNavBadge('agenda', n);
+  }).catch(function(){});
 }
 
 // ── Recente reeks onder een KPI-tegel ──────────────────────────────────────

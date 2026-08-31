@@ -298,21 +298,37 @@ function agendaProposalCard(p) {
   var when = start ? start.toLocaleString('nl-NL', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '?';
   var reistijd = p.travel_buffer_min ? '<span style="font-size:10px;color:#94a3b8;margin-left:6px">reistijd ' + p.travel_buffer_min + ' min (enkele reis)</span>' : '';
   var conflict = p.conflict_note ? '<p style="margin:4px 0 0;font-size:11px;color:#c2410c">' + escHtml(p.conflict_note) + '</p>' : '';
+  // Alleen tonen als Iris een vrij alternatief vond én er een echt e-mailadres
+  // is om naartoe te sturen (geen WhatsApp-klantvoorstel, geen eigen
+  // tekst-commando — die hebben mailbox_id='iris-command').
+  var canProposeAlt = p.alt_slot_start && p.from_addr && p.from_addr !== 'iris-command';
+  var altBtn = canProposeAlt
+    ? '<button class="btn btn-sm" onclick="agendaProposeAlternative(' + p.id + ')">Stuur alternatief voorstel</button>'
+    : '';
   return '<div style="border-top:1px solid #f1f5f9;padding:10px 0">' +
     '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">' +
     '<div><p style="margin:0;font-size:13px;font-weight:600;color:var(--text)">' + escHtml(p.title) + '</p>' +
     '<p style="margin:2px 0 0;font-size:12px;color:var(--text-dim)">' + escHtml(when) + ' · ' + escHtml(p.location || 'geen locatie') + reistijd + '</p></div>' +
-    '<div style="display:flex;gap:6px">' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
     '<button class="btn btn-sm btn-primary" onclick="agendaApproveProposal(' + p.id + ')">Goedkeuren</button>' +
     '<button class="btn btn-sm btn-ghost" onclick="agendaRejectProposal(' + p.id + ')">Afwijzen</button>' +
+    altBtn +
     '</div></div>' + conflict +
     '</div>';
+}
+
+function agendaProposeAlternative(id) {
+  post('/api/calendar/proposals/propose-alternative', { proposal_id: id }).then(function (res) {
+    if (!res.ok) { alert(res.error || 'Kon geen alternatief voorstellen.'); return; }
+    agendaLoadProposals();
+  }).catch(function (e) { alert(e.message); });
 }
 
 function agendaApproveProposal(id) {
   post('/api/calendar/proposals/approve', { proposal_id: id }).then(function (res) {
     if (!res.ok) { alert(res.error || 'Kon niet boeken.'); return; }
     agendaLoadProposals();
+    if (typeof pollHelpdeskBadge === 'function') pollHelpdeskBadge();
     var el = document.getElementById('tab-content');
     if (el) agendaLoad(el, _agendaWeekStart);
   }).catch(function (e) { alert(e.message); });
@@ -321,5 +337,6 @@ function agendaApproveProposal(id) {
 function agendaRejectProposal(id) {
   post('/api/calendar/proposals/reject', { proposal_id: id }).then(function () {
     agendaLoadProposals();
+    if (typeof pollHelpdeskBadge === 'function') pollHelpdeskBadge();
   }).catch(function (e) { alert(e.message); });
 }

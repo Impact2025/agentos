@@ -23,7 +23,7 @@ from .shared.logging_config import setup_logging
 setup_logging()
 
 from .shared.database import init_db
-from .shared.config import OBSIDIAN_VAULT_PATH, hermes_backend, domain_enabled, ENABLED_DOMAINS, IMPACTOS_INSTANCE_NAME
+from .shared.config import OBSIDIAN_VAULT_PATH, hermes_backend, domain_enabled, ENABLED_DOMAINS, IMPACTOS_INSTANCE_NAME, DATA_DIR
 from .domains.chat import hermes as hermes_service
 from .expert.team import ensure_expert_team
 
@@ -442,6 +442,13 @@ def config_models_swap(body: ModelSwapRequest):
         },
     }
 
+
+# Content-afbeeldingen (Wachtrij-covers/infographics) + andere lokale uploads.
+# Stond nergens gemount: social_image.py en chat/upload.py bouwen al langer
+# '/uploads/...'-URL's, en sinds 27 aug 2026 verwijst ook content_jobs.image_path
+# hierheen (voorheen base64 inline in de DB-kolom, 34MB over alle projecten).
+(DATA_DIR / "uploads").mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(DATA_DIR / "uploads")), name="uploads")
 
 # Frontend serveren — alles wat niet /api/ is gaat naar index.html
 app.mount("/", StaticFiles(directory=str(BASE_DIR / "frontend"), html=True), name="frontend")

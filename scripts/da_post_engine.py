@@ -154,7 +154,10 @@ async def main():
     print("  [STEP 1] Ververs page-tokens via fb.refresh_page_tokens() ...", flush=True)
     await fb.refresh_page_tokens()
     print("  [STEP 1] OK", flush=True)
-    c = sqlite3.connect(DB, timeout=60); c.row_factory = sqlite3.Row
+    c = sqlite3.connect(DB, timeout=60, isolation_level=None)  # autocommit: per‑statement commit
+    c.row_factory = sqlite3.Row
+    # busy_timeout voor WAL lock contention met de AgentOS‑daemon
+    c.execute("PRAGMA busy_timeout=60000")
     now = datetime.utcnow().isoformat()
     ph = ",".join("?" * len(CAMPAIGNS))
     # Alle due packs — image, video, link, text. Classificatie is data‑gedreven
@@ -175,12 +178,17 @@ async def main():
             doelgroep = _doelgroep_voor_campagne(r["campaign"])
             p = sc.get_pack(pid)
             if not p:
-                print(f"  [FOUT] {pid}: pack niet gevonden — sla over"); continue
-            age = AGE.get(doelgroep, "")
-            cta = (p.copy or {}).get("cta", "") or ""
-            page_id, tok = await _resolve_pagina(client, doelgroep, page_token_cache)
+                print(f"  [FOUT] {pid}: pack niet gevonden — sla over", flush=True); continue
+            try:
+                age = AGE.get(doelgroep, "")
+                cta = (p.copy or {}).get("cta", "") or ""
+                print(f"  [STEP resolve] pagina voor {pid} ({doelgroep}) ...", flush=True)
+                page_id, tok = await _resolve_pagina(client, doelgroep, page_token_cache)
+                print(f"  [STEP resolve] OK: has_page={page_id is not None} has_tok={tok is not None}", flush=True)
+            except Exception as e:
+                print(f"  [FOUT] {pid}: pagina resolve failed: {str(e)[:80]}", flush=True); continue
             if not page_id or not tok:
-                print(f"  [FOUT] {pid}: geen page-token voor doelgroep {doelgroep} — sla over"); continue
+                print(f"  [FOUT] {pid}: geen page-token voor doelgroep {doelgroep} — sla over", flush=True); continue
             if doelgroep == "main":
                 guard_err = fb.check_age_targeting("DatingAssistent", (p.copy or {}).get("facebook", ""))
                 if guard_err:
@@ -273,9 +281,6 @@ async def main():
     c.close(); print("\nKlaar.")
 
 
-async def _main():
-    # Overall timeout: FB upload (60s) + IG upload + auto-comment kunnen ruim
-    # onder de 4 minuten blijven. Een hangende FB call (zonder eigen timeout)
-    # maakt de cronjob niet haper onder broken — de engine crasht hard + logt.
+if __name__ == "__main__":
     asyncio.run(asyncio.wait_for(main(), timeout=240))
 

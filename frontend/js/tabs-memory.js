@@ -370,13 +370,17 @@ async function renderMemoryGalaxy(el) {
       // Titelblok
       '<div style="position:absolute;top:16px;left:18px;pointer-events:none;user-select:none">' +
         '<div style="font-size:11px;font-weight:700;letter-spacing:2px;color:#cbd5e1">MEMORY GALAXY</div>' +
-        '<div style="font-size:11px;color:#64748b;margin-top:3px">' + data.note_count + ' sterren \u{B7} ' + data.link_count + ' links</div>' +
+        '<div style="font-size:11px;color:#64748b;margin-top:3px">' +
+          (data.sampled
+            ? data.note_count + ' van ' + data.total_note_count + ' sterren getoond (meest verbonden + recent) \u{B7} ' + data.link_count + ' links'
+            : data.note_count + ' sterren \u{B7} ' + data.link_count + ' links') +
+        '</div>' +
         '<div style="font-size:10px;color:#475569;margin-top:2px">sleep om te draaien \u{B7} scroll om te zoomen \u{B7} klik een ster \u{B7} dubbelklik pauzeert de vlucht</div>' +
         '<div style="font-size:10px;color:#475569">feller &amp; witter = recenter bijgewerkt</div>' +
       '</div>' +
       // Zoekveld
       '<div style="position:absolute;top:14px;right:16px;width:260px">' +
-        '<input id="galaxy-search" type="text" placeholder="Zoek in ' + data.note_count + ' notities..." autocomplete="off" ' +
+        '<input id="galaxy-search" type="text" placeholder="Zoek in ' + (data.total_note_count || data.note_count) + ' notities..." autocomplete="off" ' +
           'style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid #1e293b;background:rgba(15,23,42,.85);color:#e2e8f0;font-size:12px;outline:none" />' +
         '<div id="galaxy-search-results" style="display:none;margin-top:6px;max-height:300px;overflow-y:auto;background:rgba(15,23,42,.95);border:1px solid #1e293b;border-radius:8px"></div>' +
       '</div>' +

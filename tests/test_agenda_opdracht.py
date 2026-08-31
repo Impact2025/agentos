@@ -186,6 +186,59 @@ def test_online_afspraak_wordt_herkend(dinsdag):
     assert cmd.is_remote is True
 
 
+# ── Ambigue "X uur" (26 aug 2026) ──────────────────────────────────────────
+
+@pytest.mark.parametrize("zin,verwacht_uur", [
+    ("aanstaande vrijdag om 1 uur naar de tandarts", 13),
+    ("volgende week woensdag om 3 uur heb ik een gesprek met gemeente", 15),
+])
+def test_ambigue_uur_wordt_middag_of_avond(dinsdag, zin, verwacht_uur):
+    """'1 uur'/'3 uur' zonder dagdeel werd letterlijk 01:00/03:00 gelezen —
+    twee voorstellen (tandarts, gemeente) werden zo geboekt midden in de
+    nacht. Een tandarts- of gemeenteafspraak om 01:00/03:00 's nachts komt in
+    de praktijk niet voor, dus schuiven uren 1–7 naar de middag/avond tenzij
+    er een expliciete nachtaanduiding bij staat."""
+    cmd = nlc.parse_command(zin)
+    assert cmd.kind == "single"
+    assert cmd.start.hour == verwacht_uur
+
+
+def test_vannacht_blijft_nacht():
+    """Een expliciete nachtaanduiding mag niet worden omgezet."""
+    assert nlc._resolveer_ambigue_uur(3, "vannacht om 3 uur telefoontje") == 3
+
+
+def test_tien_uur_blijft_ochtend(dinsdag):
+    """Regressie: uren boven 7 (ochtendafspraken zijn heel normaal) mogen niet
+    worden aangeraakt."""
+    cmd = nlc.parse_command("morgen om 10 uur tandarts")
+    assert cmd.start.hour == 10
+
+
+# ── Hele dag / vrij (26 aug 2026) ───────────────────────────────────────────
+
+def test_helemaal_vrij_zijn_is_een_hele_dag_blok(dinsdag):
+    """'Ik wil volgende week woensdag helemaal vrij zijn om te zeilen' leverde
+    een 30-minuten-afspraak 'Afspraak' om 10:00–10:30 op in plaats van de hele
+    dag geblokkeerd — precies het tegenovergestelde van de opdracht."""
+    cmd = nlc.parse_command(
+        "Ik wil volgende week woensdag helemaal vrij zijn om te zeilen")
+    assert cmd.kind == "single"
+    assert cmd.all_day is True
+    assert cmd.start.hour == 0 and cmd.end.hour == 0
+    assert (cmd.end - cmd.start).days == 1
+
+
+def test_vrijdag_als_weekdag_triggert_geen_hele_dag(dinsdag):
+    """Regressie op een aanpalende regex-fout: 'vrij\\s*dag' (nul-of-meer
+    spaties) matchte ook de aaneengeschreven weekdag 'vrijdag' zelf, dus zou
+    élke afspraak die de dag noemt zonder expliciete tijd all_day worden."""
+    cmd = nlc.parse_command("vrijdag bellen met Sanne")
+    assert cmd.kind == "single"
+    assert cmd.all_day is False
+    assert cmd.start.hour == 10  # default, geen hele dag
+
+
 # ── Locatie (voor de reistijd-buffer, 25 aug 2026) ─────────────────────────
 
 def test_bij_locatie_wordt_herkend(dinsdag):

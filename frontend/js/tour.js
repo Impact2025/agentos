@@ -204,6 +204,65 @@
     ];
   }
 
+  // ── Workshop-tour: vaste 4-stappen-rondleiding voor een klantdemo ────────
+  // Anders dan de Welkomstour hierboven (instance-adaptief, ok()-gates die
+  // stappen overslaan) is dit een vast script voor één bekend project tijdens
+  // een live workshop — Vincent en de deelnemers kijken samen mee terwijl hij
+  // klikt, dus de highlight + tekst moeten voor de hele zaal leesbaar zijn,
+  // niet alleen als hover-cue voor de presentator zelf.
+  function workshopSteps(project) {
+    return [
+      {
+        title: 'Workshop-tour: ' + project + '.nl',
+        center: true,
+        tool: 'Vier stappen, live in het systeem.',
+        effect: 'We lopen door wat er voor dit project autonoom draait: het dashboard, de helpdesk-triage, het posten op Facebook en het reageren op social media — steeds met een menselijk slot.',
+      },
+      {
+        title: 'Dashboard',
+        before: function () { selectProject(project); },
+        locate: function () { return visibleSel('#system-health-panel-proj') || visibleSel('.project-header h1'); },
+        tool: 'Projectstatus in één oogopslag.',
+        effect: 'Wat draait er nu autonoom voor dit project, en wat staat klaar en wacht op één klik van de klant.',
+      },
+      {
+        title: 'Helpdesk-triage',
+        tab: 'Helpdesk',
+        locate: function () { return visibleSel('#tab-content .section-card'); },
+        tool: 'Vragen automatisch getrieerd + conceptantwoord.',
+        effect: 'Een binnenkomende klantvraag wordt automatisch getrieerd en er staat al een conceptantwoord klaar — maar er gaat pas iets de deur uit ná een menselijke goedkeuring.',
+      },
+      {
+        title: 'Social posten op Facebook',
+        tab: 'Facebook',
+        locate: function () { return visibleSel('#fb-post-text'); },
+        tool: 'Een autonoom samengesteld post-pakket.',
+        effect: 'Het systeem stelt zelf een compleet bericht samen, en dit soort pakket gaat autonoom — zonder tussenstap — live op de Facebook-pagina.',
+      },
+      {
+        title: 'Reageren op social media, via diezelfde helpdesk',
+        tab: 'Facebook',
+        locate: function () { return visibleSel('#fb-comments-card'); },
+        tool: 'Reacties komen binnen als een gewone helpdeskvraag.',
+        effect: 'Een reactie onder een post komt voor het systeem gewoon weer binnen als een helpdeskvraag: dezelfde triage, dezelfde review-gate. Eén systeem, geen losse onderdelen.',
+      },
+      {
+        title: 'Klaar',
+        center: true,
+        tool: 'Dat waren de 4 stappen.',
+        effect: 'Zelfde Impact OS, nu gefilterd op dit project — precies wat er voor deze klant autonoom draait, met een mens aan het stuur bij elke publicatie.',
+      },
+    ];
+  }
+  function startWorkshopTour(project) {
+    buildTourDOM();
+    state.steps = workshopSteps(project || currentProject || 'BewaardVoorJou');
+    state.kind = 'workshop';
+    state.active = true;
+    overlay.style.display = 'block';
+    showStep(0);
+  }
+
   // ── DOM bouwen ──────────────────────────────────────────────────────────
   var overlay, spotlight, card, cardTitle, cardStep, cardTool, cardEffect, btnPrev, btnOutline, btnNext, btnSkip, outline;
 
@@ -389,6 +448,7 @@
   function startTour() {
     buildTourDOM();
     state.steps = defaultSteps();
+    state.kind = 'onboarding';
     // Vooraf filteren: stappen waarvan de hele context ontbreekt (bv. geen
     // projecten op een lege instance) — maar pas definitief beslissen bij het
     // tonen, want de DOM verandert tijdens de tour.
@@ -401,7 +461,11 @@
     state.active = false;
     if (overlay) overlay.style.display = 'none';
     if (spotlight) spotlight.style.display = 'none';
-    localStorage.setItem(STORAGE_DONE, '1');
+    // De workshop-tour (hieronder) is een presentatiehulpje voor een klantdemo,
+    // geen onboarding — hem afsluiten mag de "welkomstour al gezien"-vlag niet
+    // zetten, anders start de échte onboarding nooit meer voor een nieuwe user
+    // op dit profiel.
+    if (state.kind !== 'workshop') localStorage.setItem(STORAGE_DONE, '1');
   }
   function maybeAutoStartTour() {
     if (window.__tourAutoStarted) return;
@@ -465,6 +529,7 @@
 
   // Globaal beschikbaar maken voor de rest van de SPA.
   window.startTour = startTour;
+  window.startWorkshopTour = startWorkshopTour;
   window.setTourEnabled = setTourEnabled;
   window.renderTourSettings = renderTourSettings;
   window.initTour = initTour;

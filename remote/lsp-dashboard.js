@@ -26,6 +26,50 @@
     } catch { return ''; }
   }
 
+  // Robuust voor twee generaties tekst: oude inzendingen kregen één lopende
+  // alinea zonder enters met "Stap 1: ..." middenin, nieuwe krijgen \n\n tussen
+  // blokken en \n tussen de drie stappen (zie _lsp_core.js). Splitsen op het
+  // "Stap N:"-patroon werkt in beide gevallen, ongeacht of er al enters staan.
+  function renderPlan(container, text) {
+    const stepRe = /Stap\s*\d+\s*:\s*/gi;
+    const stepMatches = [...text.matchAll(stepRe)];
+    const introEnd = stepMatches.length ? stepMatches[0].index : text.length;
+    const intro = text.slice(0, introEnd).trim();
+
+    const introHeading = document.createElement('h4');
+    introHeading.className = 'plan-title';
+    introHeading.textContent = 'Advies van Iris';
+    container.appendChild(introHeading);
+
+    const paragraphs = intro.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+    for (const p of paragraphs.length ? paragraphs : [intro]) {
+      const el = document.createElement('p');
+      el.className = 'plan-text';
+      el.textContent = p;
+      container.appendChild(el);
+    }
+
+    if (stepMatches.length) {
+      const stepsHeading = document.createElement('h4');
+      stepsHeading.className = 'plan-title';
+      stepsHeading.textContent = 'Concrete stappen voor morgen';
+      container.appendChild(stepsHeading);
+
+      const ol = document.createElement('ol');
+      ol.className = 'plan-steps';
+      for (let i = 0; i < stepMatches.length; i += 1) {
+        const start = stepMatches[i].index + stepMatches[i][0].length;
+        const end = i + 1 < stepMatches.length ? stepMatches[i + 1].index : text.length;
+        const stepText = text.slice(start, end).trim();
+        if (!stepText) continue;
+        const li = document.createElement('li');
+        li.textContent = stepText;
+        ol.appendChild(li);
+      }
+      container.appendChild(ol);
+    }
+  }
+
   function addCard(sub) {
     empty.style.display = 'none';
     grid.style.display = 'grid';
@@ -55,6 +99,18 @@
     time.textContent = fmtTime(sub.created_at);
     body.appendChild(summary);
     body.appendChild(time);
+    if (sub.participant_report && sub.participant_report.trim()) {
+      const details = document.createElement('details');
+      details.className = 'plan';
+      const s = document.createElement('summary');
+      s.textContent = 'Volledig advies van Iris';
+      details.appendChild(s);
+      const planBody = document.createElement('div');
+      planBody.className = 'plan-body';
+      renderPlan(planBody, sub.participant_report.trim());
+      details.appendChild(planBody);
+      body.appendChild(details);
+    }
     card.appendChild(body);
     grid.appendChild(card);
   }

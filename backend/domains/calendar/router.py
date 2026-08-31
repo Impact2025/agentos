@@ -96,6 +96,18 @@ async def approve(body: ProposalAction):
     return res
 
 
+@router.post("/proposals/propose-alternative")
+async def propose_alternative(body: ProposalAction):
+    """Mens klikt "Stuur alternatief voorstel" op een conflict-kaart: Iris'
+    gevonden vrije slot gaat per mail naar de afzender, het originele
+    voorstel sluit als 'rejected' (achterhaald door de nieuwe zet)."""
+    from . import agent as agenda_agent
+    res = await agenda_agent.propose_alternative_by_mail(body.proposal_id)
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("error", "kon geen alternatief voorstellen"))
+    return res
+
+
 @router.post("/proposals/reject")
 async def reject(body: ProposalAction):
     """Mens wijst af (blijft gesloten)."""

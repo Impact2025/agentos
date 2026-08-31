@@ -2,7 +2,7 @@ import logging
 import sqlite3
 import datetime
 from contextlib import contextmanager
-from .config import DB_PATH
+from .config import DATA_DIR, DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -2228,6 +2228,49 @@ def _migrate(conn) -> None:
 
     _migrate_projectnamen(conn)
     _migrate_postvak(conn)
+    _migrate_content_images(conn)
+
+
+def _migrate_content_images(conn) -> None:
+    """Eénmalige omzetting van `content_jobs.image_path`/`infographic_path` van
+    inline base64 (de kolom heette al '_path' maar bevatte tot 27 aug 2026 de
+    volledige afbeelding zelf) naar een bestand onder data/uploads/content_images/
+    met de kolom als pad ernaartoe.
+
+    Aanleiding: de Wachtrij-lijst (`SELECT *`) sleepte zo voor élk artikel —
+    ook `superseded`/`rejected` — tot 1,9MB base64 per rij mee. Gemeten over
+    alle projecten: 18,4MB aan image_path + 15,7MB aan infographic_path, en één
+    enkele projectfilter op de Wachtrij woog daardoor 6-40MB en duurde
+    seconden. Idempotent: een waarde die al met '/uploads/' begint wordt met
+    rust gelaten, dus een herstart doet dit niet opnieuw."""
+    import base64 as _b64
+    upload_dir = DATA_DIR / "uploads" / "content_images"
+    rows = conn.execute(
+        "SELECT id, image_path, infographic_path FROM content_jobs "
+        "WHERE (image_path != '' AND image_path NOT LIKE '/uploads/%') "
+        "   OR (infographic_path != '' AND infographic_path NOT LIKE '/uploads/%')"
+    ).fetchall()
+    if not rows:
+        return
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    for row in rows:
+        updates = {}
+        for col, kind in (("image_path", "cover"), ("infographic_path", "infographic")):
+            val = row[col]
+            if not val or val.startswith("/uploads/"):
+                continue
+            try:
+                data = _b64.b64decode(val)
+            except Exception:
+                continue
+            name = f"{row['id']}-{kind}.png"
+            (upload_dir / name).write_bytes(data)
+            updates[col] = f"/uploads/content_images/{name}"
+        if updates:
+            cols = ", ".join(f"{k} = ?" for k in updates)
+            conn.execute(f"UPDATE content_jobs SET {cols} WHERE id = ?",
+                         (*updates.values(), row["id"]))
+    logger.info("[db-migratie] %s content_jobs-afbeelding(en) omgezet naar bestanden", len(rows))
 
 
 def _migrate_postvak(conn) -> None:

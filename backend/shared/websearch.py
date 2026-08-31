@@ -132,9 +132,19 @@ def _brave_search(query: str, max_results: int,
 def _ddg_search(query: str, max_results: int,
                 exclude_domains: Optional[List[str]]) -> List[Dict]:
     """Keyless laatste redmiddel. Geen key, geen quota — draait dus ook als
-    élk betaald abonnement op is."""
+    élk betaald abonnement op is.
+
+    `backend="duckduckgo"` is bewust vastgepind: zonder dat argument valt de
+    ddgs-library (sinds de 9.x-rename van duckduckgo_search) terug op
+    backend="auto" en probeert hij ~10 zoekmachines (Yandex, Grokipedia,
+    Mojeek, Brave, Startpage, Google, Yahoo, ...) na elkaar — elk met een
+    eigen timeout/429/403. Op 27 aug 2026 duurde één query daardoor 30+
+    seconden i.p.v. de bedoelde snelle keyless DuckDuckGo-call, en omdat deze
+    functie synchroon vanuit async code wordt aangeroepen (radar `_gather`)
+    legde dat de hele server plat."""
     from ddgs import DDGS
-    hits = DDGS().text(query, max_results=max_results + 6, region="nl-nl") or []
+    hits = DDGS().text(query, max_results=max_results + 6, region="nl-nl",
+                        backend="duckduckgo") or []
     excl = [d.lower() for d in (exclude_domains or [])]
     out = []
     for h in hits:

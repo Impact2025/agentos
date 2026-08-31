@@ -107,12 +107,21 @@ def llm_usage_summary(days: int = 7) -> dict:
     )
     days = max(1, min(int(days), 31))
     with get_conn() as conn:
+        # 'quota' is geen technische fout maar de zelf-uitlijnende quota-rem
+        # (config.py:note_llm_quota_exhausted) — een 403 die de gateway zelf al
+        # 45 minuten pauzeert. Die apart tellen van 'error'/'empty' voorkomt dat
+        # de gezondheidsbadge de rést van de dag op 'warning' blijft staan lang
+        # nadat de backoff alweer voorbij is: 26 aug 2026, 36 quota-hits tussen
+        # 14:33-15:06 lieten de badge om 19:00 nog "36 LLM-fouten vandaag" tonen
+        # terwijl er niets meer te verhelpen viel — hetzelfde patroon als de
+        # 'partial'-doelen die voor altijd als "vastgelopen" bleven gelden.
         route_rows = conn.execute(
             "SELECT backend, model, route, COUNT(*) AS calls, "
             "COALESCE(SUM(prompt_tokens),0) AS prompt, "
             "COALESCE(SUM(completion_tokens),0) AS completion, "
             "COALESCE(SUM(total_tokens),0) AS total, "
-            "SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END) AS errors "
+            "SUM(CASE WHEN status NOT IN ('ok','quota') THEN 1 ELSE 0 END) AS errors, "
+            "SUM(CASE WHEN status = 'quota' THEN 1 ELSE 0 END) AS quota_events "
             "FROM llm_usage WHERE date(created_at) = date('now') "
             "GROUP BY backend, model, route ORDER BY total DESC"
         ).fetchall()
@@ -140,6 +149,7 @@ def llm_usage_summary(days: int = 7) -> dict:
             "calls": r["calls"], "prompt_tokens": r["prompt"],
             "completion_tokens": r["completion"], "total_tokens": r["total"],
             "errors": r["errors"] or 0,
+            "quota_events": r["quota_events"] or 0,
             "cost": _cost(r["backend"], r["prompt"], r["completion"]) if prices_configured else None,
         })
     per_day = {r["d"]: r for r in day_rows}
@@ -162,6 +172,7 @@ def llm_usage_summary(days: int = 7) -> dict:
             "completion_tokens": sum(r["completion_tokens"] for r in by_route),
             "calls": sum(r["calls"] for r in by_route),
             "errors": sum(r["errors"] for r in by_route),
+            "quota_events": sum(r["quota_events"] for r in by_route),
             "cost": round(sum(r["cost"] or 0 for r in by_route), 4) if prices_configured else None,
             "budget_pct": round(100.0 * today_total / DAILY_TOKEN_BUDGET, 1) if DAILY_TOKEN_BUDGET else None,
         },

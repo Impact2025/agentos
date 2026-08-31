@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from ...shared.config import DATA_DIR
 from ...shared.database import get_conn
 from ...shared.hermes_context import build_hermes_context
 from ..chat import hermes as hermes_service
@@ -1588,6 +1589,41 @@ def publish_title_normalize(title: str, html_body: str = "",
     return out
 
 
+_CONTENT_IMAGE_DIR = DATA_DIR / "uploads" / "content_images"
+
+
+def _store_content_image(job_id: str, kind: str, data: Optional[bytes]) -> str:
+    """Schrijft coverbeeld/infographic als bestand i.p.v. base64 in de DB-kolom.
+
+    De kolom heette al `image_path`/`infographic_path` maar bevatte tot 27 aug
+    2026 de volledige afbeelding zelf — 34MB base64 over alle projecten samen,
+    en de reden dat een Wachtrij-fetch voor één project 6-40MB woog en
+    seconden duurde (`SELECT *` in list_jobs haalt elke rij mee, ook oude
+    superseded/rejected artikelen). Bestandsnaam bevat job_id + kind, dus een
+    regenerate overschrijft het oude bestand i.p.v. een wees achter te laten."""
+    if not data:
+        return ""
+    _CONTENT_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"{job_id}-{kind}.png"
+    (_CONTENT_IMAGE_DIR / name).write_bytes(data)
+    return f"/uploads/content_images/{name}"
+
+
+def _read_content_image(value: Optional[str]) -> Optional[bytes]:
+    """Leest een coverbeeld/infographic terug via zijn bestandspad. De
+    eenmalige migratie (`database.py:_migrate_content_images`) heeft alle
+    oude inline-base64-rijen al omgezet, dus dit hoeft geen base64-vorm meer
+    te kennen — een tweede leesvorm zou hier precies de shim zijn die deze fix
+    had moeten wegnemen."""
+    if not value:
+        return None
+    path = DATA_DIR / value.lstrip("/")
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        return None
+
+
 def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html: str,
                 seo_score: float, social_copy: Dict[str, str], image_bytes: Optional[bytes],
                 slug: str, status: str = "pending_review",
@@ -1614,7 +1650,6 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
     een kans op 'in_progress' en dekt daarmee alleen zijn eigen route af — Iris'
     content_run en de goal-publisher komen daar niet langs. create_job is de
     enige trechter die álle routes passeren, dus hoort de controle hier."""
-    import base64
     kw_key = _keyword_key(keyword)
     title_key = _title_key(title)
     # ── Werkbon-guard (de énige trechter, vóór DB-write) ───────────────────────
@@ -1717,8 +1752,8 @@ def create_job(site_id: str, title: str, keyword: str, rationale: str, blog_html
                 return existing["id"]
 
         job_id = str(uuid.uuid4())
-        image_path = base64.b64encode(image_bytes).decode("ascii") if image_bytes else ""
-        infographic_path = base64.b64encode(infographic_bytes).decode("ascii") if infographic_bytes else ""
+        image_path = _store_content_image(job_id, "cover", image_bytes)
+        infographic_path = _store_content_image(job_id, "infographic", infographic_bytes)
         conn.execute(
             """INSERT INTO content_jobs
                (id, site_id, title, keyword, rationale, status, blog_html, seo_score,
@@ -3327,10 +3362,8 @@ async def approve_and_publish(job_id: str,
     website_only = bool(site.get("website_only")) or bool(site.get("manual_publish"))
 
     social_copy = json.loads(job["social_copy"] or "{}")
-    import base64
-    image_bytes = base64.b64decode(job["image_path"]) if job.get("image_path") else None
-    infographic_bytes = (base64.b64decode(job["infographic_path"])
-                         if job.get("infographic_path") else None)
+    image_bytes = _read_content_image(job.get("image_path"))
+    infographic_bytes = _read_content_image(job.get("infographic_path"))
 
     result: Dict = {"netlify": None, "gsc": None, "social": {}}
     article_url = None
@@ -3744,18 +3777,16 @@ async def regenerate_job(job_id: str) -> str:
     slug = slugify_title(title)
     social_copy = await _generate_social_copy(site, title, job["keyword"], html_body)
     image_bytes = _generate_cover_image(site, title)
-    import base64
-    image_b64 = base64.b64encode(image_bytes).decode("ascii")
     infographic_bytes = (await _generate_article_infographic(site, title, job["keyword"], html_body)
                          if passed else None)
 
     updates = dict(
         title=title, blog_html=html_body, seo_score=review["score"],
-        social_copy=json.dumps(social_copy), image_path=image_b64, slug=slug,
+        social_copy=json.dumps(social_copy),
+        image_path=_store_content_image(job_id, "cover", image_bytes), slug=slug,
         status="pending_review" if passed else "needs_work",
         improve_attempts=new_attempts,
-        infographic_path=(base64.b64encode(infographic_bytes).decode("ascii")
-                          if infographic_bytes else ""),
+        infographic_path=_store_content_image(job_id, "infographic", infographic_bytes),
     )
     if qc_report or case_study_id:
         updates["qc_report"] = json.dumps(qc_report, ensure_ascii=False)

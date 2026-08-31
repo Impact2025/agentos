@@ -21,6 +21,7 @@ gepubliceerd — de taken leveren concepten.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -421,7 +422,14 @@ class RadarService:
                 break
             yield {"type": "watch_start", "label": watch["label"], "watch_type": watch["type"]}
             try:
-                results = self._gather(watch)
+                # `_gather` doet synchrone netwerkcalls (Tavily/Brave/DDG-
+                # fallback) die soms 30+ seconden duren — direct aanroepen
+                # vanuit deze async generator blokkeert de hele event loop en
+                # dus élk ander verzoek aan de server (gemeten 27 aug 2026:
+                # 64s voor een simpele /api/action-center-aanroep terwijl de
+                # scan liep). `to_thread` houdt de loop vrij tijdens het
+                # wachten op het netwerk.
+                results = await asyncio.to_thread(self._gather, watch)
             except Exception as e:
                 log.exception("[radar] Scan van '%s' mislukt", watch["label"])
                 self._note_scan(watch["id"], now, "error", fout=str(e)[:200])

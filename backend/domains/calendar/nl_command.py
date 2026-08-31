@@ -51,10 +51,18 @@ _RECUR_TOKENS = ("elke", "alle", "ieder", "iedere", "wekelijks", "om de week",
 # 30-minuten-afspraak om 10:00 (de default), terwijl de gebruiker expliciet om
 # een vrije dag vraagt. Gemeten 11 aug 2026: "aanstaande vrijdag niet
 # beschikbaar, blok hele dag" leverde 14 aug 10:00–10:30 op — volkomen fout.
+# "helemaal vrij zijn"/"volledig vrij" is dezelfde intentie in een andere
+# formulering — gemeten 26 aug 2026: "Ik wil volgende week woensdag helemaal
+# vrij zijn om te zeilen" leverde een 30-minuten-afspraak "Afspraak" om
+# 10:00–10:30 op in plaats van de hele dag geblokkeerd.
+# LET OP: "vrij\s*dag" met \s* (nul-of-meer spaties) zou ook de aaneengeschreven
+# weekdag "vrijdag" matchen — elke zin die de dag noemt ("aanstaande vrijdag
+# 14.00 tandarts") zou dan all_day=True krijgen. Vandaar hier bewust \s+ (wél
+# een spatie vereist) voor "vrij dag"/"vrije dag", los van de weekdag-naam.
 _WHOLE_DAY_RE = re.compile(
     r"\b(hele\s*dag|whole\s*day|de\s*hele\s*dag|volledige\s*dag|hele\s*dagen|"
     r"niet\s*beschikbaar|niet\s*beschikbaar\s*zijn|onbeschikbaar|vrij\s*houden|"
-    r"vrijhouden|vrij\s*dag|vrije\s*dag|vrijedag)\b",
+    r"vrijhouden|vrij\s+dag|vrije\s+dag|vrijedag|helemaal\s+vrij|volledig\s+vrij)\b",
     re.IGNORECASE)
 # "de komende 6 weken op maandag" / "de volgende 4 weken op vrijdag" is óók een
 # terugkerend blok, maar mét een einde. Zonder dit patroon las de parser alleen
@@ -105,6 +113,21 @@ def _parse_time(text: str) -> Optional[tuple]:
     return (gevonden[0], gevonden[1]) if gevonden else None
 
 
+# "1 uur"/"3 uur" zonder dagdeel is in spraak vrijwel altijd een middag- of
+# avondtijd — een tandarts- of gemeenteafspraak om 01:00/03:00 's nachts komt
+# in de praktijk niet voor. Gemeten 26 aug 2026: "aanstaande vrijdag om 1 uur
+# naar de tandarts" en "...om 3 uur heb ik een gesprek met gemeente" werden
+# allebei geboekt om 01:00/03:00 's nachts. Alleen omzetten als er geen
+# expliciete nachtaanduiding bij staat — "vannacht om 3 uur" moet 03:00 blijven.
+_NACHT_MARKERS = ("nacht", "middernacht")
+
+
+def _resolveer_ambigue_uur(hour: int, text: str) -> int:
+    if 1 <= hour <= 7 and not any(m in text for m in _NACHT_MARKERS):
+        return hour + 12
+    return hour
+
+
 def _parse_time_span(text: str) -> Optional[tuple]:
     """Als `_parse_time`, maar geeft ook terug wélk stuk tekst de tijd was:
     (uur, minuut, start_index, eind_index).
@@ -113,6 +136,9 @@ def _parse_time_span(text: str) -> Optional[tuple]:
     en las in "morgen om 10 uur tandarts" de kloktijd als duur — de afspraak
     werd 10:00–20:00 (gemeten, 11 aug 2026). De duur mag dus nooit hetzelfde
     stuk tekst gebruiken dat al als tijdstip is opgevat.
+
+    Alleen de "X uur"-vorm is ambigu (spraak); een getypte/gedicteerde "13.00"
+    of "01:00" is al ondubbelzinnig 24-uurs en wordt niet aangepast.
     """
     for tm in re.finditer(r"(\d{1,2})[:.](\d{2})", text):
         h, m = int(tm.group(1)), int(tm.group(2))
@@ -122,6 +148,7 @@ def _parse_time_span(text: str) -> Optional[tuple]:
     if m2:
         h = int(m2.group(1))
         if 0 <= h <= 23:
+            h = _resolveer_ambigue_uur(h, text)
             return h, 0, m2.start(), m2.end()
     return None
 

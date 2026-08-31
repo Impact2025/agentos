@@ -299,7 +299,6 @@ async def repareer_ontbrekende_afbeelding(job_id: str) -> Dict[str, Any]:
     bevestigd `imageBase64`-schema (zie `_publish_to_project_site`) — op een
     andere site doet dit niets schadelijks, maar ook niets nuttigs."""
     from . import content_pipeline as cp
-    import base64 as _b64
 
     with get_conn() as conn:
         job = conn.execute(
@@ -315,12 +314,13 @@ async def repareer_ontbrekende_afbeelding(job_id: str) -> Dict[str, Any]:
         return {"ok": False, "reden": "niet-live", "detail": f"status={job['status']}"}
     site = dict(site)
 
-    image_bytes = _b64.b64decode(job["image_path"]) if job["image_path"] else None
+    image_bytes = cp._read_content_image(job["image_path"])
     if not image_bytes:
         image_bytes = cp._generate_cover_image(site, job["title"])
+        new_path = cp._store_content_image(job_id, "cover", image_bytes)
         with get_conn() as conn:
             conn.execute("UPDATE content_jobs SET image_path=? WHERE id=?",
-                         (_b64.b64encode(image_bytes).decode("ascii"), job_id))
+                         (new_path, job_id))
 
     resultaat = await cp._publish_to_project_site(
         site, job["title"], job["blog_html"] or "",

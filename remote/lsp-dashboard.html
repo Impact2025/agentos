@@ -66,6 +66,29 @@
   }
   .card .summary { margin: 0; font-size: 1.08rem; line-height: 1.45; }
   .card .time { margin-top: 12px; color: var(--text-muted); font-size: 0.85rem; }
+  .card .plan { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
+  .card .plan summary {
+    cursor: pointer; color: var(--pink-soft); font-weight: 700; font-size: 0.95rem;
+    list-style: none;
+  }
+  .card .plan summary::-webkit-details-marker { display: none; }
+  .card .plan summary::before { content: "+ "; }
+  .card .plan[open] summary::before { content: "\2212 "; }
+  .card .plan-body { margin-top: 12px; }
+  .card .plan-title {
+    margin: 16px 0 6px; font-size: 0.82rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--pink-soft);
+  }
+  .card .plan-title:first-child { margin-top: 0; }
+  .card .plan-text {
+    margin: 0 0 10px; font-size: 0.98rem; line-height: 1.55; color: var(--text);
+  }
+  .card .plan-steps {
+    margin: 0; padding-left: 1.3em; display: flex; flex-direction: column; gap: 8px;
+  }
+  .card .plan-steps li {
+    font-size: 0.98rem; line-height: 1.5; color: var(--text); padding-left: 4px;
+  }
   @keyframes fadein {
     from { opacity: 0; transform: translateY(12px); }
     to { opacity: 1; transform: translateY(0); }

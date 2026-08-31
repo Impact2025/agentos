@@ -701,7 +701,7 @@ async function renderWachtrijTab(el) {
           '<button onclick="copyToClipboard(this,' + JSON.stringify(copy).replace(/'/g,"\\'") + ')" class="btn btn-sm btn-primary" style="margin-top:6px;padding:4px 10px;font-size:10px">Kopieer bericht</button>' +
           '</details>';
       }).join('') + '</div>' +
-      (job.image_path ? '<img src="data:image/png;base64,' + job.image_path + '" style="margin-top:8px;max-width:180px;border-radius:6px;border:1px solid #e2e8f0" />' : '') +
+      (job.image_path ? '<img src="' + escHtml(job.image_path) + '" style="margin-top:8px;max-width:180px;border-radius:6px;border:1px solid #e2e8f0" />' : '') +
       (function() {
           if (job.status !== 'pending_review') return '';
           if (isOutreach || isHook) return '';

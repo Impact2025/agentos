@@ -710,9 +710,6 @@ function renderFinanceExpert(el) {
 //  INIT
 // ═══════════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', function() {
-  var m = location.hash.match(/project=([^&]+)/);
-  if (m) currentProject = decodeURIComponent(m[1]);
-  var t = location.hash.match(/tab=([^&]+)/);
-  if (t && TABS.indexOf(decodeURIComponent(t[1])) >= 0) currentTab = decodeURIComponent(t[1]);
+  applyProjectHashState();
   checkAuthAndStart();
 });
