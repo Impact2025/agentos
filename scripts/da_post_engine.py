@@ -151,8 +151,10 @@ async def _post_to_ig(c, pid, p, fb_copy, proj, logger=print):
 
 
 async def main():
+    print("  [STEP 1] Ververs page-tokens via fb.refresh_page_tokens() ...", flush=True)
     await fb.refresh_page_tokens()
-    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
+    print("  [STEP 1] OK", flush=True)
+    c = sqlite3.connect(DB, timeout=60); c.row_factory = sqlite3.Row
     now = datetime.utcnow().isoformat()
     ph = ",".join("?" * len(CAMPAIGNS))
     # Alle due packs — image, video, link, text. Classificatie is data‑gedreven
@@ -164,8 +166,8 @@ async def main():
         f"ORDER BY scheduled_for", (*CAMPAIGNS, now)
     ).fetchall()
     if not due:
-        print("Geen posts die nu moeten (alles op schema of al gepost)."); c.close(); return
-    print(f"  [{len(due)} due pack(s) gevonden]")
+        print("Geen posts die nu moeten (alles op schema of al gepost).", flush=True); c.close(); return
+    print(f"  [{len(due)} due pack(s) gevonden]", flush=True)
     page_token_cache = {}
     async with httpx.AsyncClient() as client:
         for r in due:
@@ -194,6 +196,7 @@ async def main():
 
             if has_video:
                 # ── VIDEO / REEL ───────────────────────────────────────
+                print(f"  [STEP video] post {pid} ({proj}) naar FB videos/ ...", flush=True)
                 vp = (p.video_path or "").strip()
                 rr = await client.post(f"{fb.GRAPH_API}/{page_id}/videos",
                     data={"description": fb_copy[:63000], "access_token": tok},
@@ -224,6 +227,7 @@ async def main():
                 # ── IMAGE (MJ‑beeld van de pack, fallback, of remote URL) ─
                 sub = (p.angle or "").split(" - ")[0][:60]
                 out = f"data/uploads/pro_{pid}.png"
+                print(f"  [STEP image] post {pid} ({proj}) naar FB photos/ ({'remote' if is_remote else 'local'})...", flush=True)
                 if is_remote:
                     # FB fetched de image zelf via url param.
                     rr = await client.post(f"{fb.GRAPH_API}/{page_id}/photos",
@@ -240,6 +244,7 @@ async def main():
                 new_id = rr.json().get("id", "")
             else:
                 # ── TEKST / LINK (geen image, geen video) ────────────────
+                print(f"  [STEP text] post {pid} ({proj}) naar FB feed/ ...", flush=True)
                 rr = await client.post(f"{fb.GRAPH_API}/{page_id}/feed",
                     data={"message": fb_copy[:63000], "access_token": tok}, timeout=30)
                 if rr.status_code != 200:
@@ -255,10 +260,12 @@ async def main():
                 continue
 
             # Gemounte gedeelde epilog: auto-comment + IG‑image + persist.
+            print(f"  [STEP comment] auto-comment voor {pid} ...", flush=True)
             try:
                 await sac.auto_comment_after_post(new_id, proj, age, cta_text=cta, token_override=tok)
             except Exception as e:
                 print(f"  [COMMENT FOUT] {proj} {new_id}: {str(e)[:80]}")
+            print(f"  [STEP ig] IG-image post voor {pid} ...", flush=True)
             await _post_to_ig(c, pid, p, fb_copy, proj)
             ib_out = dict(p.image_brief or {}); ib_out.update({"image_path": f"data/uploads/pro_{pid}.png", "image_source": src_tag})
             _persist(c, pid, ib_out, new_id, proj)
@@ -266,4 +273,9 @@ async def main():
     c.close(); print("\nKlaar.")
 
 
-asyncio.run(main())
+async def _main():
+    # Overall timeout: FB upload (60s) + IG upload + auto-comment kunnen ruim
+    # onder de 4 minuten blijven. Een hangende FB call (zonder eigen timeout)
+    # maakt de cronjob niet haper onder broken — de engine crasht hard + logt.
+    asyncio.run(asyncio.wait_for(main(), timeout=240))
+

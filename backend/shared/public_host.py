@@ -58,37 +58,32 @@ async def _s3(path: str) -> str:
     raise RuntimeError("S3 upload failed")
 
 
-async def upload(local_path: str, attempts: int = 6) -> str:
+async def upload(local_path: str, attempts: int = 2, hard_timeout: float = 20.0) -> str:
     """Upload een lokaal bestand naar een publieke host, retourneer URL.
 
-    Probeert S3 (env) → Imgur → catbox. Retry met exponentials backoff bij
-    tijdelijke 5xx/timeouts. Als ALLE hosts falen, raise RuntimeError met de
-    laatste fout — IG‑posts zijn dan optioneel over te slaan (zie
-    da_post_engine.py: de except wordt gelogd, FB blijft doorgaan)."""
+    IG (Content Publishing) vereist een publiek bereikbare URL. Probeert
+    S3 (env) → Imgur → catbox. Anonieme hosts zijn rate‑limited / tijdelijk
+    down (Imgur 503, Catbox 404) → daarom per‑host max `hard_timeout` seconden
+    en totaal `attempts` pogingen, zodat één down host de engine niet
+    blokkeert. IG‑posts zijn non‑critical: een mislukte upload laat FB‑posting
+    intact (da_post_engine.py vangt de exception per pack)."""
     if not os.path.exists(local_path):
         raise FileNotFoundError(local_path)
-
-    # S3/R2 als primaire (publiek én controleerbaar)
     if os.getenv("S3_ENDPOINT"):
         try:
-            return await _s3(local_path)
+            return await asyncio.wait_for(_s3(local_path), timeout=hard_timeout)
         except Exception as e:
             last = e  # val verder door naar anonieme fallback
-
     b64 = base64.b64encode(open(local_path, "rb").read()).decode()
-    hosts = [_imgur, _catbox]
     last = RuntimeError("geen host geprobeerd")
     for attempt in range(attempts):
-        for i, fn in enumerate(hosts):
+        for fn, arg in ((_imgur, b64), (_catbox, local_path)):
             try:
                 if fn is _imgur:
-                    res = await asyncio.wait_for(_imgur(b64), timeout=75)
+                    return await asyncio.wait_for(_imgur(b64), timeout=hard_timeout)
                 else:
-                    res = await asyncio.wait_for(_catbox(local_path), timeout=105)
-                return res
+                    return await asyncio.wait_for(_catbox(local_path), timeout=hard_timeout)
             except Exception as e:
                 last = e
-                # Catbox faalt vaak door WAF — probeer meteen de volgende host,
-                # maar wacht even bij een volledige ciculemis.
         await asyncio.sleep(2 ** attempt * 1.5)
     raise RuntimeError(f"Alle hosts faalden na {attempts} pogingen: {last}")
