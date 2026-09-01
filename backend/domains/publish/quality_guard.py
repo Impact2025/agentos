@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import logging
+from typing import Optional, Dict
 
 # ── 1. Bekende corruptie-tokens (exact, hoofdletterongevoelig) ──────────────
 # Alleen woorden die in correct Nederlands nooit voorkomen en typisch zijn voor
@@ -130,6 +132,8 @@ def _to_text(html: str) -> str:
 
 
 def _tokens(text: str):
+    # Normalize Unicode (NFC) zodat "Één" → "één" en "ÉÉN" → "één" klopt in DUTCH_SAFE
+    text = unicodedata.normalize("NFC", text)
     return [t for t in re.split(r"[^a-z0-9à-ÿ]+", text.lower()) if t]
 
 
@@ -139,6 +143,24 @@ def _tokens(text: str):
 # structurele rot (hoog ratio) wel. DUTCH_SAFE voorkomt false-positives op
 # woorden die in het Nederlands geldig zijn ("er", "in", "die", "was"…).
 CONTAMINATION_THRESHOLD = 0.12
+
+# 19 sep 2026: Per-project contamination overrides. Globaal 12%, maar voor
+# Pootgelukkig verhogen naar 0.15 — de motor produceert structureel 1-2 lenenwoorden
+# ("play", "team", "tool") in technische titels. De globale 12% fagt dat onterecht.
+# DUTCH_SAFE heeft de meeste valse positieven al uitgesloten; deze override is een
+# extra marge. Globale artikelen blijven op 12% — daar zit geen leenwoorden in.
+CONTAMINATION_OVERRIDES: Dict[str, float] = {
+    "pootgelukkig": 0.15,
+}
+
+logger = logging.getLogger(__name__)
+
+
+def _threshold(project: Optional[str] = None) -> float:
+    """Geef de contamination-drempel voor een project (default: 12%)."""
+    if project and project.lower() in CONTAMINATION_OVERRIDES:
+        return CONTAMINATION_OVERRIDES[project.lower()]
+    return CONTAMINATION_THRESHOLD
 # Minimale aantal échte vreemde tokens voordat de percentage-drempel een rol
 # speelt. 19 aug 2026: één "die" in een 1147-token artikel (0.17%) maakte
 # eerdere versies van deze check faalden met een verkeerde false-positive,
@@ -147,7 +169,7 @@ CONTAMINATION_THRESHOLD = 0.12
 MIN_FOREIGN_TOKENS = 3
 
 
-def check(html: str):
+def check(html: str, project: Optional[str] = None):
     """Retourneert (ok, issues, suspicion_score).
 
     suspicion_score = 0..100: het percentage tokens dat een écht vreemd
@@ -158,18 +180,22 @@ def check(html: str):
     toks = _tokens(text)
     n = len(toks) or 1
 
-    foreign = {t for t in toks if t in CORRUPTION_TOKENS and t not in DUTCH_SAFE}
-    contamination = len(foreign) / n
+    foreign = [t for t in toks if t in CORRUPTION_TOKENS and t not in DUTCH_SAFE]
+    foreign_count = len(foreign)
+    contamination = foreign_count / n
 
     # 19 aug 2026: exige één minimale ABSOLUTE telling van vreemde tokens
     # naast het percentage. Zonder deze ondergrens falen korte artikelen
     # onterecht (één "die" = 0.17% < 12%, maar eerdere versies flagden elke hit).
     # Nu moet er echt structurele contaminatie zijn (>=3 woorden ÍN én >=12%).
-    if len(foreign) >= MIN_FOREIGN_TOKENS and contamination >= CONTAMINATION_THRESHOLD:
-        sample = sorted(foreign)[:8]
+    threshold = _threshold(project)
+    if foreign_count >= MIN_FOREIGN_TOKENS and contamination >= threshold:
+        logger.debug("[qg] project=%s ratio=%.4f threshold=%.2f foreign=%d/%d",
+                     project, contamination, threshold, len(foreign), n)
+        sample = sorted(set(foreign))[:8]
         issues.append(
             f"Mogelijke taalcorruptie (LLM-tokenrot) gedetecteerd: "
-            f"{', '.join(sample)}{' …' if len(foreign) > 8 else ''}. "
+            f"{', '.join(sample)}{' …' if foreign_count > 8 else ''}. "
             "Nederlandse tekst mag geen Engelse/Duitse/zakelijke vreemde woorden bevatten."
         )
 
@@ -221,7 +247,7 @@ _AUTO_REPAIR_PROMPT = (
 
 # Voorkom circulaire import: content_pipeline importeert ons, wij roepen pas
 # lazy aan.
-def auto_repair(html: str, llm_fn=None) -> str | None:
+def auto_repair(html: str, llm_fn=None, project: Optional[str] = None) -> str | None:
     """Probeer de content te herstellen via llm_fn(system, prompt) -> str.
     Retourneert de gecorrigeerde HTML of None bij mislukking."""
     if llm_fn is None:
@@ -229,7 +255,7 @@ def auto_repair(html: str, llm_fn=None) -> str | None:
     try:
         fixed = llm_fn(_AUTO_REPAIR_PROMPT, html)
         if fixed and fixed.strip() and fixed.strip() != html.strip():
-            ok, _, _ = check(fixed)
+            ok, _, _ = check(fixed, project=project)
             if ok:
                 return fixed
     except Exception:
