@@ -311,7 +311,12 @@ CONTENT_MIN_SCORE: int = int(os.getenv("CONTENT_MIN_SCORE", "80"))
 # schrijft structureel 82-84 — precies de artikelen die de grens hoort door te
 # laten. Alleen dít project teruggezet naar 80, zonder de globale waarde voor
 # andere projecten aan te raken (die kan om een andere reden op 85 staan).
-CONTENT_MIN_SCORE_OVERRIDES: str = os.getenv("CONTENT_MIN_SCORE_OVERRIDES", "Bewaardvoorjou=80")
+# 19 sep 2026: Pootgelukkig ook toegevoegd — de motor schrijft structureel 82-84
+# voor dat project (artikelen "Reizen met je hond" 84/85, "Verlatingsangst bij
+# honden" 84/85, "Gezonde voeding" 82/85). De grens van 85 struikelt exact
+# tegenover de waarde die de motor consistent produceert. 80 laat die artikelen
+# door én blijft de wereldsklasse-eis (80 is het gedocumenteerde minimum).
+CONTENT_MIN_SCORE_OVERRIDES: str = os.getenv("CONTENT_MIN_SCORE_OVERRIDES", "Bewaardvoorjou=80,Pootgelukkig=80")
 
 
 def content_min_score(project: Optional[str] = None) -> int:

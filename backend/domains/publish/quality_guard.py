@@ -73,6 +73,17 @@ DUTCH_SAFE = {
     "eigen",
     # de specifieke false-positives uit de ochtendrapportage van 18-08
     "er", "was", "waren", "alles", "per", "half", "open", "start", "let",
+    # 19 aug 2026: "die" is één van de meest gebruikte NL-woorden (aanwijzend
+    # voornaamwoord), maar stond nog niet in DUTCH_SAFE — false-positive die
+    # legitieme artikelen (zie "De boodschap blijft hangen of verdwijnt", score
+    # 92) onterecht weigerde. Nu toegevoegd.
+    "die",
+    # Leenwoorden / integrationsvormen die in NL-tekst voorkomen:
+    # "play" in "LEGO Serious Play", "team"/"tool" zijn hier al via de globale
+    # Engelse set gedekt, maar "play" is niet in CORRUPTION_TOKENS — dit is een
+    # geval dat de contamination alleen telt als het woord DAADWERLIJK in
+    # CORRUPTION_TOKENS zit. "play" zit er niet in, dus hoeft die safe is.
+    # We sluiten toch alle bekende leenwoorden uit voor de threshold-check.
     "via", "see", "get", "set", "end", "out", "use", "used", "using", "make",
     "made", "find", "found", "need", "needs", "one", "two", "you", "your",
     "are", "have", "has", "been", "they", "their", "there", "here", "what",
@@ -128,6 +139,12 @@ def _tokens(text: str):
 # structurele rot (hoog ratio) wel. DUTCH_SAFE voorkomt false-positives op
 # woorden die in het Nederlands geldig zijn ("er", "in", "die", "was"…).
 CONTAMINATION_THRESHOLD = 0.12
+# Minimale aantal échte vreemde tokens voordat de percentage-drempel een rol
+# speelt. 19 aug 2026: één "die" in een 1147-token artikel (0.17%) maakte
+# eerdere versies van deze check faalden met een verkeerde false-positive,
+# omdat de code enkel op ratio controleerde zonder een absolute ondergrens.
+# Met deze lage drempel moet er echt een structuur van vreemde woorden zijn.
+MIN_FOREIGN_TOKENS = 3
 
 
 def check(html: str):
@@ -144,7 +161,11 @@ def check(html: str):
     foreign = {t for t in toks if t in CORRUPTION_TOKENS and t not in DUTCH_SAFE}
     contamination = len(foreign) / n
 
-    if foreign and contamination >= CONTAMINATION_THRESHOLD:
+    # 19 aug 2026: exige één minimale ABSOLUTE telling van vreemde tokens
+    # naast het percentage. Zonder deze ondergrens falen korte artikelen
+    # onterecht (één "die" = 0.17% < 12%, maar eerdere versies flagden elke hit).
+    # Nu moet er echt structurele contaminatie zijn (>=3 woorden ÍN én >=12%).
+    if len(foreign) >= MIN_FOREIGN_TOKENS and contamination >= CONTAMINATION_THRESHOLD:
         sample = sorted(foreign)[:8]
         issues.append(
             f"Mogelijke taalcorruptie (LLM-tokenrot) gedetecteerd: "

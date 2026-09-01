@@ -5,7 +5,7 @@ from backend.domains.publish.quality_guard import check
 cases = {
   # De 4 vanmorgen geweigerde (moeten NU passen)
   "Ictusgo 'boodschap blijft hangen'": "<p>Er is een situatie waarin de boodschap niet altijd even duidelijk overkomt. Alles hangt ervan af hoe je het brengt.</p>",
-  "levensverhaal gids": "<p>Alles over je levensverhaal vastleggen is een mooie manier om herinneringen te bewaren. Open het document en start met de eerste pagina.</p>",
+  "levensverhaal gids": "<p>Alles over je levensverhaar vastleggen is een mooie manier om herinneringen te bewaren. Open het document en start met de eerste pagina.</p>",
   "cadeaus koppels": "<p>De 10 beste cadeaus voor koppels die echt verbinding willen. Was je op zoek naar inspiratie? Die vind je hier.</p>",
   "buurtinitiatieven": "<p>Buurtinitiatieven meten impact: zo doe je dat in 3 stappen. Per wijk werkt het anders, maar het halfjaarlijkse overzicht helpt.</p>",
   # Echte rot (moet FAILEN)
@@ -20,12 +20,14 @@ cases = {
   # korte NL zin met was/er/in (moet PASSEN)
   "korte NL": "<p>Het was een mooie dag. Er was veel te doen in de stad.</p>",
 }
+# Cases die verwachten TE FAILEN (moet FAILEN)
+fail_expected = {"tokenrot EN", "tokenrot DE", "CJK", "placeholder"}
 fail = 0
 for name, html in cases.items():
     ok, issues, susp = check(html)
+    want_pass = name not in fail_expected
     verdict = "PASS" if ok else "FAIL"
-    want = "PASS"
-    mark = "OK " if (ok == (want == "PASS")) else "BAD"
+    mark = "OK " if (ok == want_pass) else "BAD"
     if mark == "BAD":
         fail += 1
     print(f"[{mark}] {verdict} susp={susp:>3}  {name}")

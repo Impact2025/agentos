@@ -94,7 +94,16 @@ _MENSELIJK_BESLUIT = {
                                # "bestel dit bij de leverancier" uitkomt, plus drie ronden een
                                # misleidende "Iris probeert dit zelf" banner op een kaart die
                                # alleen Vincent kan sluiten (24 aug 2026, procurement.py).
-}
+                               # 19 sep 2026: Dagbesteding-orderfouten zijn fysieke logistiek — Iris kan
+                               # geen pakket verzenden of bestellingen sturen naar een externe partij. De
+                               # selfheal-scanner liep hier in een 1-of-3 probeur-loop en schaarde
+                               # 'geen remedie bekend' op als de fout blijvend onopgelost bleef. Nu in
+                               # _MENSELIJK_BESLUIT: de kaart toont precies de stap die Vincent moet doen
+                               # ('Stuur ze naar de dagbesteding' / 'Check bij de dagbesteding') en Iris
+                               # schiet geen onechte 'poging' meer over.
+                               "dagbesteding_wachtrij",
+                               "dagbesteding_verzending_achterstand",
+                               }
 
 
 def _now_iso() -> str:
