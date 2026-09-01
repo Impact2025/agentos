@@ -11,10 +11,10 @@ from __future__ import annotations
 import logging
 import secrets
 
-import httpx
 from fastapi import APIRouter, HTTPException, Header
 
 from ...shared import config
+from ...shared.bridge_client import call_mijn_ondernemers_os
 from ...shared.database import get_conn
 from .context import build_holding_context
 
@@ -86,42 +86,11 @@ async def reject_pending_mail(item_id: str, authorization: str = Header(default=
     return {"ok": ok, "message": message}
 
 
-def _bridge_configured() -> bool:
-    return bool(config.MIJN_ONDERNEMERS_OS_URL and config.COACH_BRIDGE_TOKEN)
-
-
-async def _call_mijn_ondernemers_os(method: str, path: str) -> dict:
-    if not _bridge_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="De Sparringpartner is niet geconfigureerd (MIJN_ONDERNEMERS_OS_URL/COACH_BRIDGE_TOKEN leeg).",
-        )
-    url = config.MIJN_ONDERNEMERS_OS_URL.rstrip("/") + path
-    headers = {"Authorization": f"Bearer {config.COACH_BRIDGE_TOKEN}"}
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.request(method, url, headers=headers)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[coach] mijn-ondernemers-os onbereikbaar (%s %s): %s", method, path, e)
-        raise HTTPException(status_code=502, detail="mijn-ondernemers-os is nu niet bereikbaar.") from e
-
-    try:
-        body = resp.json()
-    except Exception:  # noqa: BLE001
-        body = {"error": resp.text[:300]}
-
-    if resp.status_code >= 400:
-        # Geeft de échte reden door (bv. "nog geen ochtendritueel van vandaag")
-        # i.p.v. die te verdrinken in een generieke ImpactOS-foutmelding.
-        raise HTTPException(status_code=resp.status_code, detail=body.get("error", "Onbekende fout"))
-    return body
-
-
 @coach_router.post("/reflection")
 async def trigger_reflection() -> dict:
-    return await _call_mijn_ondernemers_os("POST", "/api/coach/bridge/analyse")
+    return await call_mijn_ondernemers_os("POST", "/api/coach/bridge/analyse")
 
 
 @coach_router.get("/lessons")
 async def get_lessons() -> dict:
-    return await _call_mijn_ondernemers_os("GET", "/api/coach/bridge/lessons")
+    return await call_mijn_ondernemers_os("GET", "/api/coach/bridge/lessons")

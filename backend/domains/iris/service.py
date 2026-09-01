@@ -799,7 +799,7 @@ async def gather_context(snapshot: Optional[Dict[str, Any]] = None,
     rituals_context = None
     try:
         from ...domains.rituals import service as rituals_service
-        rituals_context = rituals_service.get_service().get_briefing_context()
+        rituals_context = await rituals_service.get_service().get_briefing_context()
     except Exception:
         logger.warning("[iris] rituelen-context ophalen mislukt", exc_info=True)
     return {

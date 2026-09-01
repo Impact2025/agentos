@@ -64,9 +64,9 @@ async def load_context() -> Dict[str, Any]:
     """Alles wat de coach nodig heeft, uit de échte tabellen — nooit een aanname."""
     ensure_schema()
     rit = get_rituals_service()
-    today_m = rit.get_morning(_today())
-    yesterday_m = rit.get_morning(_yesterday())
-    streaks = rit.get_streaks()
+    today_m = await rit.get_morning(_today())
+    yesterday_m = await rit.get_morning(_yesterday())
+    streaks = await rit.get_streaks()
 
     energy_log = list_energy_log(days=30)
     lessons = list_lessons()
@@ -88,12 +88,12 @@ async def load_context() -> Dict[str, Any]:
     }
 
 
-def recent_morning_energy(days: int = 5) -> List[int]:
+async def recent_morning_energy(days: int = 5) -> List[int]:
     rit = get_rituals_service()
     out: List[int] = []
     d = datetime.now()
     for _ in range(days):
-        m = rit.get_morning(d.strftime("%Y-%m-%d"))
+        m = await rit.get_morning(d.strftime("%Y-%m-%d"))
         if m and m.get("energy_level") is not None:
             out.append(int(m["energy_level"]))
         d -= timedelta(days=1)
@@ -355,28 +355,11 @@ async def run_analysis() -> Dict[str, Any]:
 
 
 # ── Proactief signaal (deterministisch, gebruikt door de scheduler-job) ──
-
-def detect_proactive_signal() -> Dict[str, Any]:
-    energy = recent_morning_energy(days=5)
-    energy_log = list_energy_log(days=14)
-
-    if len(energy) >= 3 and all(e <= 4 for e in energy[:3]):
-        return {
-            "signal": True,
-            "pattern_key": "cgt:energie-drie-dagen-laag",
-            "message": "Je energie staat nu drie dagen op rij laag. Niets om nu meteen op te lossen — maar wat zou vandaag al iets makkelijker maken?",
-        }
-
-    cost_count = sum(1 for e in energy_log if e["direction"] == "cost")
-    gain_count = sum(1 for e in energy_log if e["direction"] == "gain")
-    if cost_count >= 4 and cost_count - gain_count >= 3:
-        return {
-            "signal": True,
-            "pattern_key": "mi:energie-kost-meer-dan-geeft",
-            "message": f"De laatste tijd noteer je vaker wat energie kost dan wat het geeft ({cost_count} tegen {gain_count}). Wat zou dat evenwicht al een klein beetje terugbrengen?",
-        }
-
-    return {"signal": False, "pattern_key": "", "message": ""}
+#
+# De eigen lokale herberekening (detect_proactive_signal, tegen ImpactOS' eigen
+# rituelen-tabellen) is verwijderd — die tabellen bestaan niet meer als bron.
+# check_and_send_whatsapp() hieronder haalt het signaal nu uitsluitend op bij
+# mijn-ondernemers-os via coach_bridge/whatsapp.py:fetch_remote_signal().
 
 
 def _whatsapp_already_sent(pattern_key: str) -> bool:
@@ -399,11 +382,9 @@ def _whatsapp_mark_sent(pattern_key: str) -> None:
 async def check_and_send_whatsapp() -> bool:
     """Retourneert True als er een proactief bericht is verstuurd.
 
-    Haalt het signaal op bij mijn-ondernemers-os (bron van waarheid sinds de
-    multi-tenant-migratie — Vincents rituelen leven daar in Neon, niet meer
-    lokaal in ImpactOS' eigen tabellen) via coach_bridge/whatsapp.py, in
-    plaats van de lokale detect_proactive_signal() hierboven te herberekenen
-    tegen mogelijk verouderde lokale data. ensure_schema() blijft nodig voor
+    Haalt het signaal op bij mijn-ondernemers-os (de bron van waarheid voor
+    Vincents rituelen, in Neon) via coach_bridge/whatsapp.py. ensure_schema()
+    blijft nodig voor
     de lokale dedupe-tabel (coach_whatsapp_sent) hieronder — dát blijft wél
     lokaal, alleen de signaal-brón verhuist. Verzenden zelf loopt nog wel via
     de bestaande bridge naar Iris Remote (WhatsApp-token leeft alleen daar,

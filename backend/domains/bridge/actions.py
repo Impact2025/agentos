@@ -328,7 +328,7 @@ async def _cmd_ritual_morning_save(payload: Dict) -> Tuple[bool, str]:
     from ..rituals import service as rituals
     svc = rituals.get_service()
     date = str(payload.get("date") or "").strip() or rituals._today()
-    existing = svc.get_morning(date) or {}
+    existing = await svc.get_morning(date) or {}
     data = {
         "intentie": payload.get("intentie", existing.get("intentie", "")),
         "affirmatie": payload.get("affirmatie", existing.get("affirmatie", "")),
@@ -340,7 +340,7 @@ async def _cmd_ritual_morning_save(payload: Dict) -> Tuple[bool, str]:
         "focusBlok1": payload.get("focusBlok1", existing.get("focus_blok1", {})),
         "focusBlok2": payload.get("focusBlok2", existing.get("focus_blok2", {})),
     }
-    svc.save_morning(date, data)
+    await svc.save_morning(date, data)
     return True, f"Ochtendritueel vastgelegd voor {date}"
 
 
@@ -349,7 +349,7 @@ async def _cmd_ritual_evening_save(payload: Dict) -> Tuple[bool, str]:
     from ..rituals import service as rituals
     svc = rituals.get_service()
     date = str(payload.get("date") or "").strip() or rituals._today()
-    existing = svc.get_evening(date) or {}
+    existing = await svc.get_evening(date) or {}
     data = {
         "whatWentWell": payload.get("whatWentWell", existing.get("what_went_well", "")),
         "biggestWin": payload.get("biggestWin", existing.get("biggest_win", "")),
@@ -360,7 +360,7 @@ async def _cmd_ritual_evening_save(payload: Dict) -> Tuple[bool, str]:
         "gratitude": payload.get("gratitude", existing.get("gratitude", "")),
         "adhdScores": payload.get("adhdScores", existing.get("adhd_scores", {})),
     }
-    svc.save_evening(date, data)
+    await svc.save_evening(date, data)
     return True, f"Avondritueel vastgelegd voor {date}"
 
 
@@ -369,7 +369,7 @@ async def _cmd_ritual_win_add(payload: Dict) -> Tuple[bool, str]:
     title = str(payload.get("title") or "").strip()
     if not title:
         return False, "Geen titel meegegeven"
-    rituals.get_service().add_win({
+    await rituals.get_service().add_win({
         "title": title,
         "description": payload.get("description", ""),
         "category": payload.get("category", "personal"),

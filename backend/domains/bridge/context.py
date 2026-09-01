@@ -747,7 +747,7 @@ def build_google_config() -> Optional[Dict[str, Any]]:
 
 # ── Rituelen ────────────────────────────────────────────────────────────────
 
-def build_rituals() -> Dict[str, Any]:
+async def build_rituals() -> Dict[str, Any]:
     """Persoonlijk: ochtend/avond-ritueel, week, wins, doelen.
 
     Puur een lokale SQLite-lezing (geen externe API, geen LLM), dus geen TTL-
@@ -763,10 +763,10 @@ def build_rituals() -> Dict[str, Any]:
         return {"status": "off", "reason": "Rituelen-domein niet geladen"}
     try:
         svc = rituals.get_service()
-        status = svc.get_today_status()
-        morning = svc.get_morning(status["date"])
-        evening = svc.get_evening(status["date"])
-        weekly_start = svc.get_weekly_start(status["year"], status["week_number"])
+        status = await svc.get_today_status()
+        morning = await svc.get_morning(status["date"])
+        evening = await svc.get_evening(status["date"])
+        weekly_start = await svc.get_weekly_start(status["year"], status["week_number"])
         # Avond-dankbaarheid is specifieker (vrije tekst over de hele dag) dan
         # de 3 ochtend-steekwoorden; de eerste beschikbare wint, nooit allebei
         # samengeplakt — dat leest als een tekst die niemand zo typte.
@@ -775,13 +775,13 @@ def build_rituals() -> Dict[str, Any]:
             gratitude = "; ".join(g for g in (morning.get("dankbaarheid") or []) if g)
         return {
             "today": status,
-            "streaks": svc.get_streaks(),
+            "streaks": await svc.get_streaks(),
             "morning": morning,
             "evening": evening,
             "weekly_start": weekly_start,
             "gratitude_today": gratitude,
             "energy_today": (evening or morning or {}).get("energy_level"),
-            "recent_wins": svc.get_recent_wins(limit=5),
+            "recent_wins": await svc.get_recent_wins(limit=5),
             "open_goals": svc.get_open_goals(),
         }
     except Exception as e:  # noqa: BLE001
@@ -1025,7 +1025,7 @@ async def build_context() -> Dict[str, Any]:
     # Geen _section()/cache: rituals is een goedkope lokale lezing en moet
     # binnen de sync-cyclus zelf al vers zijn als je onderweg net iets logde.
     try:
-        rituals_sec = build_rituals()
+        rituals_sec = await build_rituals()
     except Exception as e:  # noqa: BLE001
         logger.warning("Bridge-context: rituals-sectie mislukt: %s", e)
         rituals_sec = {"status": "error", "error": str(e)[:200]}

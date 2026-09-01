@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
-from .router import _call_mijn_ondernemers_os, _bridge_configured
+from ...shared.bridge_client import bridge_configured as _bridge_configured, call_mijn_ondernemers_os as _call_mijn_ondernemers_os
 
 logger = logging.getLogger(__name__)
 

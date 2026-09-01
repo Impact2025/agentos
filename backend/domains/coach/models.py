@@ -1,11 +1,10 @@
-"""De Sparringpartner — SQLite-schema (single-user, zelfde aanpak als
-backend/domains/rituals/models.py).
+"""De Sparringpartner — SQLite-schema (single-user).
 
-25 aug 2026: dit was eerst gebouwd tegen mijn-ondernemers-os (Next.js/Neon).
-Bleek fout: Vincents dagelijkse ritueel-gewoonte was al eerder verhuisd naar
-ImpactOS' eigen `rituals`-domein (zie de docstring daar) — de Neon-database had
-een gat van twee maanden. De coach las dus de verlaten kopie. Hier, native
-tegen dezelfde tabellen als Iris al ziet, is de enige plek waar dit klopt.
+Alleen de coach-eigen tabellen hieronder (coach_lessons, coach_energy_log,
+coach_whatsapp_sent) leven lokaal. De rituelen zelf (ochtend/avond/streaks)
+leest deze coach via `rituals.service.get_service()`, dat sinds de bridge-
+migratie zelf ook praat met mijn-ondernemers-os (Next.js/Neon) — zie
+backend/domains/rituals/service.py. Dit bestand slaat geen ritueeldata meer op.
 """
 from ...shared.database import get_conn
 

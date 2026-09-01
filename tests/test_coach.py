@@ -11,7 +11,6 @@ import asyncio
 import pytest
 
 from backend.domains.coach import service as coach_service
-from backend.domains.rituals.service import get_service as get_rituals_service
 from backend.shared.database import get_conn
 
 
@@ -110,27 +109,6 @@ def test_energy_log_roundtrip():
     assert len(rows) == 2
 
 
-def test_detect_proactive_signal_drie_dagen_laag():
-    rit = get_rituals_service()
-    import datetime
-    for i, energy in enumerate([3, 4, 2]):
-        d = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y-%m-%d")
-        rit.save_morning(d, {"energyLevel": energy})
-    result = coach_service.detect_proactive_signal()
-    assert result["signal"] is True
-    assert result["pattern_key"] == "cgt:energie-drie-dagen-laag"
-
-
-def test_detect_proactive_signal_geen_patroon():
-    rit = get_rituals_service()
-    import datetime
-    for i, energy in enumerate([7, 6, 8]):
-        d = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y-%m-%d")
-        rit.save_morning(d, {"energyLevel": energy})
-    result = coach_service.detect_proactive_signal()
-    assert result["signal"] is False
-
-
 def test_build_prompt_crasht_niet_op_windows():
     """Regressie: strftime("%-d %B") is een Unix-only extensie en gaf op deze
     Windows-backend `ValueError: Invalid format string` zodra iemand écht op
@@ -142,9 +120,16 @@ def test_build_prompt_crasht_niet_op_windows():
         assert isinstance(prompt, str) and len(prompt) > 100
 
 
-def test_run_analysis_weigert_zonder_ochtendritueel():
-    with get_conn() as c:
-        c.execute("DELETE FROM ritual_morning WHERE date = date('now')")
+def test_run_analysis_weigert_zonder_ochtendritueel(monkeypatch):
+    # rituals leest sinds de bridge-migratie niet meer ritual_morning (lokaal), maar
+    # mijn-ondernemers-os — dus hier de bridge zelf mocken i.p.v. de lokale tabel legen.
+    import backend.domains.rituals.service as rituals_service_module
+
+    async def fake_no_data(method, path, json=None):
+        return []
+
+    monkeypatch.setattr(rituals_service_module, "call_mijn_ondernemers_os", fake_no_data)
+
     result = asyncio.run(coach_service.run_analysis())
     assert result["ok"] is False
     assert result["status"] == 409
@@ -178,18 +163,15 @@ def test_scheduler_job_delegeert_aan_coach_service():
 
 def test_check_and_send_whatsapp_gebruikt_bridge(monkeypatch):
     """Regressie voor de 29-08-2026-wijziging: het proactieve signaal moet uit
-    mijn-ondernemers-os komen (de echte rituelen-data), niet uit de lokale
-    detect_proactive_signal(). Zend zelf blijft gemockt — dit test alleen de
-    signaal-bron, geen echt WhatsApp-bericht."""
-    calls = {"remote": 0, "local": 0}
+    mijn-ondernemers-os komen (de echte rituelen-data). De eigen lokale
+    detect_proactive_signal() bestaat niet meer (verwijderd toen rituals zelf
+    ook naar de bridge verhuisde) — dit test alleen de signaal-bron, geen
+    echt WhatsApp-bericht."""
+    calls = {"remote": 0}
 
     async def fake_remote_signal():
         calls["remote"] += 1
         return {"signal": True, "pattern_key": "test:vanaf-bridge", "message": "test"}
-
-    def fake_local_signal():
-        calls["local"] += 1
-        return {"signal": False, "pattern_key": "", "message": ""}
 
     class FakeBridgeService:
         @staticmethod
@@ -203,7 +185,6 @@ def test_check_and_send_whatsapp_gebruikt_bridge(monkeypatch):
     monkeypatch.setattr(
         "backend.domains.coach_bridge.whatsapp.fetch_remote_signal", fake_remote_signal
     )
-    monkeypatch.setattr(coach_service, "detect_proactive_signal", fake_local_signal)
     monkeypatch.setitem(
         __import__("sys").modules, "backend.domains.bridge.service", FakeBridgeService
     )
@@ -212,4 +193,3 @@ def test_check_and_send_whatsapp_gebruikt_bridge(monkeypatch):
 
     assert sent is True
     assert calls["remote"] == 1, "check_and_send_whatsapp moet het signaal via de bridge ophalen"
-    assert calls["local"] == 0, "de lokale detect_proactive_signal() mag niet meer aangeroepen worden"

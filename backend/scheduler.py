@@ -1189,7 +1189,7 @@ async def run_ritual_morning_check() -> None:
     vangt elke fout op zodat de job nooit de rest van de scheduler raakt."""
     try:
         from .domains.rituals import service as rituals_service
-        res = rituals_service.get_service().get_next_required()
+        res = await rituals_service.get_service().get_next_required()
         if not res.get("isRequired") or not res.get("next"):
             return  # alles al gedaan
         next_r = res["next"]

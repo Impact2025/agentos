@@ -1,16 +1,16 @@
 """
-Persoonlijke rituelen — SQLite-schema (ochtend/avond, weekstart/weekreview,
-wins, focus-sessies, persoonlijke doelen).
+Persoonlijke rituelen — SQLite-schema.
 
-Overgezet uit D:\\apps\\impactreis3\\mijn-ondernemers-os (Next.js/Neon), waar
-ritueel-*voltooiing* alleen in localStorage stond en dus onzichtbaar was voor
-Iris/ImpactOS. Hier leeft alles in SQLite (single-user, geen user_id) zodat het
-domein — zoals de rest van backend/domains/ — zelfstandig te verwijderen of
-verplaatsen is. `ensure_schema()` is idempotent, aangeroepen bij eerste gebruik.
-
-`ritual_goals` is bewust een eigen tabel en géén onderdeel van
-backend/domains/goal/: die laatste is projectuitvoering (LLM-decompositie →
-taken), dit zijn Robbins-stijl persoonlijke doelen (why/pain/pleasure).
+Alleen `ritual_goals` (Robbins-stijl why/pain/pleasure) leeft nog hier lokaal —
+géén onderdeel van backend/domains/goal/, dat is projectuitvoering
+(LLM-decompositie → taken). Ochtend/avond/weekstart/weekreview/wins/focus zijn
+verhuisd naar mijn-ondernemers-os (Next.js/Neon) als bron van waarheid; zie
+backend/domains/rituals/service.py. De ritual_morning/ritual_evening/
+ritual_weekly_start/ritual_weekly_review/ritual_wins/ritual_focus_sessions-
+tabellen hieronder blijven bewust bestaan (ongebruikte, niet-verwijderde data
+uit de periode vóór de bridge) — geen DDL-opruiming op Vincents lokale
+database, dat is onnodig risico voor iets dat ook prima als dode data kan
+blijven liggen. `ensure_schema()` is idempotent, aangeroepen bij eerste gebruik.
 """
 from ...shared.database import get_conn
 
