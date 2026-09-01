@@ -13,6 +13,8 @@ import re, os
 from typing import List, Dict, Optional
 
 from ...shared.database import get_conn
+from ...shared.projects import squash_project
+from ..rituals.models import has_project_bridge_token
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +199,9 @@ def _scan_projects() -> List[Dict]:
             "has_skill": has_skill,
             "content_count": len(content_files),
             "prospecting_runs": len(prospecting_runs),
+            # Fase 2 deel 2: toont de 'Rituelen'-tab in de frontend als dit project een
+            # klant-bridge-token heeft (project_bridge_tokens, zie rituals/models.py).
+            "has_client_bridge": has_project_bridge_token(squash_project(entry.name)),
         }
         if has_skill:
             meta["skill"] = _parse_skill_md(skill_path)

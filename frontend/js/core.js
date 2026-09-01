@@ -10,7 +10,7 @@ const DESCS = { WeAreImpact: 'AI en innovatie voor zorg, welzijn en gemeenten', 
 // is nu een sectie ónderaan Optimalisatie i.p.v. een los scherm, want beide
 // beantwoordden dezelfde vraag ("welke bestaande pagina verdient aandacht")
 // met een andere tijdshorizon. Zie renderOptimalisatieTab in tabs-memory.js.
-const TABS = ['Dashboard', 'Agenten', 'Postvak', 'Kansen', 'Optimalisatie', 'GEO', 'Wachtrij', 'Prestaties', 'Radar', 'Doelen', 'Geheugen', 'Kennis', 'Leads', 'Links', 'Opdrachten', 'Technisch', 'Activiteit', 'Social Creatie', 'Omni', 'Gauntlet', 'Facebook', 'Helpdesk', 'WhatsApp', 'Agenda', 'Verkoop', 'Klanten', 'Facturatie', 'Besluiten', 'Instellingen'];
+const TABS = ['Dashboard', 'Agenten', 'Postvak', 'Kansen', 'Optimalisatie', 'GEO', 'Wachtrij', 'Prestaties', 'Radar', 'Doelen', 'Geheugen', 'Kennis', 'Leads', 'Links', 'Opdrachten', 'Technisch', 'Activiteit', 'Social Creatie', 'Omni', 'Gauntlet', 'Facebook', 'Helpdesk', 'WhatsApp', 'Agenda', 'Verkoop', 'Klanten', 'Facturatie', 'Besluiten', 'Rituelen', 'Instellingen'];
 // Menu-iconen. Bewust één monochrome familie (geometrische vormen + pijlen) en
 // géén emoji: emoji krijgen op Windows een eigen kleur en een eigen optische
 // maat, waardoor een menu van zeventien regels zeventien verschillende hoogtes
@@ -57,7 +57,7 @@ const NAV_GROUPS = [
     { label: 'Inzicht', tabs: ['Prestaties', 'Technisch'] },
     { label: 'Verkenning', tabs: ['Radar', 'Omni'] },
   ] },
-  { label: 'Groei', tabs: ['Doelen', 'Leads', 'Links', 'Opdrachten'] },
+  { label: 'Groei', tabs: ['Doelen', 'Leads', 'Links', 'Opdrachten', 'Rituelen'] },
   { label: 'Systeem', tabs: ['Agenten', 'Gauntlet', 'Geheugen', 'Kennis', 'Activiteit', 'Health', 'Instellingen'] },
 ];
 // Welk backend-domein een tab nodig heeft (zie shared/config.py:domain_enabled).
@@ -93,6 +93,13 @@ function visibleTabs() {
       // bvj_stock). Squash-vergelijking, want currentProject komt gespatieerd
       // uit de URL-hash terwijl de interne sleutel aaneen is.
       if (t === 'Verkoop' && !isBewaardVoorJouProject(currentProject)) return false;
+      // Rituelen (Fase 2 deel 2): alleen op een project MET een gekoppelde klant
+      // (project_bridge_tokens) — nooit op de home (die heeft al #rituelen-panel voor
+      // Vincent zelf) en nooit op een project zonder koppeling.
+      if (t === 'Rituelen') {
+        return !!currentProject && !!window.__clientBridgeProjects &&
+          window.__clientBridgeProjects.has(squashProjectName(currentProject));
+      }
       return true;
     }
     return false;

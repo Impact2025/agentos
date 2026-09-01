@@ -99,6 +99,17 @@ CREATE TABLE IF NOT EXISTS ritual_focus_sessions (
     created_at  TEXT NOT NULL
 );
 
+-- Koppelt een ImpactOS-project (canonical/squashed via shared/projects.py) aan het
+-- bridge-token van diens mijn-ondernemers-os-organisatie (Fase 2 deel 1). Plaintext, niet
+-- gehasht — moet uitgaand verstuurd worden, zelfde niveau als COACH_BRIDGE_TOKEN in .env.
+-- Puur lokaal, nooit gesynchroniseerd. Zie scripts/link_client_bridge_token.py.
+CREATE TABLE IF NOT EXISTS project_bridge_tokens (
+    project_slug  TEXT PRIMARY KEY,
+    token         TEXT NOT NULL,
+    label         TEXT DEFAULT '',
+    created_at    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ritual_goals (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     title             TEXT NOT NULL,
@@ -148,3 +159,19 @@ def ensure_schema() -> None:
         conn.executescript(DDL)
         _migrate(conn)
     _schema_ready = True
+
+
+def get_project_bridge_token(project_slug: str) -> "str | None":
+    """Token voor een gekoppeld klant-project, of None als er geen koppeling is.
+    `project_slug` moet al gesquasht zijn (shared.projects.squash_project) — dit doet zelf
+    geen normalisatie, om niet twee plekken te hebben die kunnen uiteenlopen."""
+    ensure_schema()
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT token FROM project_bridge_tokens WHERE project_slug = ?", (project_slug,)
+        ).fetchone()
+    return row["token"] if row else None
+
+
+def has_project_bridge_token(project_slug: str) -> bool:
+    return get_project_bridge_token(project_slug) is not None

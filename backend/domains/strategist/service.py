@@ -157,6 +157,10 @@ def control_room_status() -> Dict[str, Any]:
             "goals_running": len(running_goals),
             "opportunities": opps,
             "gsc_configured": _find_site(name) is not None,
+            # Fase 2 deel 2: laat de 'Rituelen'-tab weten of dit project een klant is met
+            # een gekoppelde mijn-ondernemers-os (project_bridge_tokens) — al aanwezig op
+            # `p` via _scan_projects(), hier alleen doorgegeven.
+            "has_client_bridge": p.get("has_client_bridge", False),
         })
 
     # ── Doelen overzicht ────────────────────────────────────────

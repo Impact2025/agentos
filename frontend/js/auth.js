@@ -59,9 +59,23 @@ async function checkAuthAndStart() {
   try {
     var resp = await fetch('/api/auth/me');
     var d = await resp.json();
-    if (d.authenticated) { route(); return; }
+    if (d.authenticated) { await loadClientBridgeProjects(); route(); return; }
   } catch (e) { /* server weg of geen me-endpoint — val door naar login */ }
   showLoginScreen();
+}
+
+// Fase 2 deel 2: welke projecten een gekoppelde klant (mijn-ondernemers-os) hebben, zodat
+// visibleTabs() (core.js) de 'Rituelen'-tab alleen daar toont. Vóór de eerste route() opgehaald
+// (zelfde reden als loadInstanceStatus) zodat de sidebar meteen goed rendert.
+async function loadClientBridgeProjects() {
+  window.__clientBridgeProjects = new Set();
+  try {
+    var r = await fetch('/api/projects');
+    var list = await r.json();
+    (list || []).forEach(function (p) {
+      if (p.has_client_bridge) window.__clientBridgeProjects.add(squashProjectName(p.name));
+    });
+  } catch (e) { /* geen koppelingen zichtbaar tot de volgende load — geen harde fout */ }
 }
 
 // ── Workshop-intro — speelt direct ná het inloggen, vervaagt zodra de video

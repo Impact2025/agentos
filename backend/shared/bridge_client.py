@@ -20,17 +20,24 @@ def bridge_configured() -> bool:
     return bool(config.MIJN_ONDERNEMERS_OS_URL and config.COACH_BRIDGE_TOKEN)
 
 
-async def call_mijn_ondernemers_os(method: str, path: str, json: Optional[Any] = None) -> dict:
-    """Roept mijn-ondernemers-os aan met het gedeelde bridge-token. Gooit HTTPException bij
-    elke fout (niet-geconfigureerd, onbereikbaar, of een foutstatus) — de aanroeper beslist
-    zelf of dat fail-open (loggen, lege data) of fail-loud (doorgeven aan de frontend) wordt."""
-    if not bridge_configured():
+async def call_mijn_ondernemers_os(
+    method: str, path: str, json: Optional[Any] = None, token: Optional[str] = None
+) -> dict:
+    """Roept mijn-ondernemers-os aan. Zonder `token` wordt Vincents eigen gedeelde
+    COACH_BRIDGE_TOKEN gebruikt (ongewijzigd gedrag); met `token` (een klant-specifiek
+    bridge-token uit project_bridge_tokens, Fase 2 deel 2) wordt dát gebruikt in plaats
+    daarvan — MIJN_ONDERNEMERS_OS_URL is altijd hetzelfde gedeelde adres, alleen het token
+    bepaalt welke klant er terugkomt. Gooit HTTPException bij elke fout (niet-geconfigureerd,
+    onbereikbaar, of een foutstatus) — de aanroeper beslist zelf of dat fail-open (loggen,
+    lege data) of fail-loud (doorgeven aan de frontend) wordt."""
+    effective_token = token or config.COACH_BRIDGE_TOKEN
+    if not config.MIJN_ONDERNEMERS_OS_URL or not effective_token:
         raise HTTPException(
             status_code=503,
-            detail="mijn-ondernemers-os-bridge niet geconfigureerd (MIJN_ONDERNEMERS_OS_URL/COACH_BRIDGE_TOKEN leeg).",
+            detail="mijn-ondernemers-os-bridge niet geconfigureerd (MIJN_ONDERNEMERS_OS_URL/token leeg).",
         )
     url = config.MIJN_ONDERNEMERS_OS_URL.rstrip("/") + path
-    headers = {"Authorization": f"Bearer {config.COACH_BRIDGE_TOKEN}"}
+    headers = {"Authorization": f"Bearer {effective_token}"}
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.request(method, url, headers=headers, json=json)

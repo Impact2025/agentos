@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional
 
 from ...shared.bridge_client import call_mijn_ondernemers_os
 from ...shared.database import get_conn
-from .models import ensure_schema
+from .models import ensure_schema, get_project_bridge_token
 
 log = logging.getLogger(__name__)
 
@@ -57,11 +57,33 @@ def _iso_week(d: Optional[datetime] = None) -> tuple[int, int]:
     return d.year, week
 
 
-async def _bridge_get(path: str, fallback: Any) -> Any:
-    """Voor leespaden: bij elke fout (niet geconfigureerd, onbereikbaar, foutstatus)
-    loggen en de fallback teruggeven — nooit de aanroeper (en dus de gate) blokkeren."""
+class UnlinkedProjectError(Exception):
+    """Project heeft geen gekoppeld bridge-token (project_bridge_tokens) — geen fout van de
+    bridge zelf, gewoon nog niet gekoppeld. Aanroepers behandelen dit als lege data."""
+
+
+def _resolve_token(project: Optional[str]) -> Optional[str]:
+    """None (Vincents eigen aanroepen, ongewijzigd gedrag via COACH_BRIDGE_TOKEN) of het
+    klant-token voor `project` — gooit UnlinkedProjectError als dat project geen koppeling
+    heeft, i.p.v. stilzwijgend op Vincents eigen data terug te vallen."""
+    if project is None:
+        return None
+    token = get_project_bridge_token(project)
+    if token is None:
+        raise UnlinkedProjectError(project)
+    return token
+
+
+async def _bridge_get(path: str, fallback: Any, project: Optional[str] = None) -> Any:
+    """Voor leespaden: bij elke fout (niet geconfigureerd, onbereikbaar, foutstatus, project
+    niet gekoppeld) loggen en de fallback teruggeven — nooit de aanroeper (en dus de gate)
+    blokkeren."""
     try:
-        return await call_mijn_ondernemers_os("GET", path)
+        token = _resolve_token(project)
+    except UnlinkedProjectError:
+        return fallback
+    try:
+        return await call_mijn_ondernemers_os("GET", path, token=token)
     except Exception as e:  # noqa: BLE001
         log.warning("[rituals] bridge-read faalde, val terug op leeg (%s): %s", path, e)
         return fallback
@@ -72,12 +94,13 @@ class RitualsService:
         ensure_schema()  # alleen nog nodig voor ritual_goals
 
     # ---------------------------------------------------------------- morning
-    async def save_morning(self, date: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        await call_mijn_ondernemers_os("POST", "/api/logs", json={"type": "morning", "date": date, **data})
-        return await self.get_morning(date) or {}
+    async def save_morning(self, date: str, data: Dict[str, Any], project: Optional[str] = None) -> Dict[str, Any]:
+        token = _resolve_token(project)
+        await call_mijn_ondernemers_os("POST", "/api/logs", json={"type": "morning", "date": date, **data}, token=token)
+        return await self.get_morning(date, project) or {}
 
-    async def get_morning(self, date: str) -> Optional[Dict[str, Any]]:
-        payload = await self._get_log_payload("morning", date)
+    async def get_morning(self, date: str, project: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        payload = await self._get_log_payload("morning", date, project)
         if payload is None:
             return None
         return {
@@ -94,12 +117,13 @@ class RitualsService:
         }
 
     # ---------------------------------------------------------------- evening
-    async def save_evening(self, date: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        await call_mijn_ondernemers_os("POST", "/api/logs", json={"type": "evening", "date": date, **data})
-        return await self.get_evening(date) or {}
+    async def save_evening(self, date: str, data: Dict[str, Any], project: Optional[str] = None) -> Dict[str, Any]:
+        token = _resolve_token(project)
+        await call_mijn_ondernemers_os("POST", "/api/logs", json={"type": "evening", "date": date, **data}, token=token)
+        return await self.get_evening(date, project) or {}
 
-    async def get_evening(self, date: str) -> Optional[Dict[str, Any]]:
-        payload = await self._get_log_payload("evening", date)
+    async def get_evening(self, date: str, project: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        payload = await self._get_log_payload("evening", date, project)
         if payload is None:
             return None
         return {
@@ -116,11 +140,11 @@ class RitualsService:
         }
 
     @staticmethod
-    async def _get_log_payload(log_type: str, date: str) -> Optional[Dict[str, Any]]:
+    async def _get_log_payload(log_type: str, date: str, project: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Rauwe camelCase-vorm zoals mijn-ondernemers-os 'm opslaat (daily_logs.data) —
         alleen de get_morning/get_evening hierboven normaliseren naar de snake_case-vorm
         die de rest van ImpactOS (coach/service.py, iris) al verwachtte van vóór de bridge."""
-        rows = await _bridge_get(f"/api/logs?type={log_type}&date={date}", [])
+        rows = await _bridge_get(f"/api/logs?type={log_type}&date={date}", [], project)
         if not rows:
             return None
         payload = rows[0].get("data") or {}
@@ -144,39 +168,43 @@ class RitualsService:
         return out
 
     # ----------------------------------------------------------- weekly start
-    async def save_weekly_start(self, year: int, week: int, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def save_weekly_start(self, year: int, week: int, data: Dict[str, Any], project: Optional[str] = None) -> Dict[str, Any]:
+        token = _resolve_token(project)
         await call_mijn_ondernemers_os(
             "POST", "/api/weekly-reviews",
             json={"weekNumber": week, "type": "weekly-start", "year": year, "data": data},
+            token=token,
         )
-        return await self.get_weekly_start(year, week) or {}
+        return await self.get_weekly_start(year, week, project) or {}
 
-    async def get_weekly_start(self, year: int, week: int) -> Optional[Dict[str, Any]]:
+    async def get_weekly_start(self, year: int, week: int, project: Optional[str] = None) -> Optional[Dict[str, Any]]:
         # mijn-ondernemers-os' weekly-start page wrapt de echte velden een niveau dieper:
         # row.data = {type: 'weekly-start', year, data: {weekIntention, mainGoals, ...}} —
         # zie src/app/weekly-start/page.tsx:handleSave / src/app/api/weekly-reviews/route.ts.
-        rows = await _bridge_get(f"/api/weekly-reviews?weekNumber={week}", [])
+        rows = await _bridge_get(f"/api/weekly-reviews?weekNumber={week}", [], project)
         candidates = [r for r in rows if (r.get("data") or {}).get("type") == "weekly-start"]
         if not candidates:
             return None
         return (candidates[0].get("data") or {}).get("data") or {}
 
     # ----------------------------------------------------------- weekly review
-    async def save_weekly_review(self, year: int, week: int, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def save_weekly_review(self, year: int, week: int, data: Dict[str, Any], project: Optional[str] = None) -> Dict[str, Any]:
+        token = _resolve_token(project)
         await call_mijn_ondernemers_os(
-            "POST", "/api/weekly-reviews", json={"weekNumber": week, **data},
+            "POST", "/api/weekly-reviews", json={"weekNumber": week, **data}, token=token,
         )
-        return await self.get_weekly_review(year, week) or {}
+        return await self.get_weekly_review(year, week, project) or {}
 
-    async def get_weekly_review(self, year: int, week: int) -> Optional[Dict[str, Any]]:
-        rows = await _bridge_get(f"/api/weekly-reviews?weekNumber={week}", [])
+    async def get_weekly_review(self, year: int, week: int, project: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        rows = await _bridge_get(f"/api/weekly-reviews?weekNumber={week}", [], project)
         candidates = [r for r in rows if (r.get("data") or {}).get("type") != "weekly-start"]
         if not candidates:
             return None
         return candidates[0].get("data") or {}
 
     # ---------------------------------------------------------------- wins
-    async def add_win(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def add_win(self, data: Dict[str, Any], project: Optional[str] = None) -> Dict[str, Any]:
+        token = _resolve_token(project)
         return await call_mijn_ondernemers_os("POST", "/api/wins", json={
             "title": data["title"],
             "description": data.get("description", ""),
@@ -184,33 +212,36 @@ class RitualsService:
             "impactLevel": int(data.get("impactLevel", 1)),
             "date": data.get("date") or _today(),
             "tags": data.get("tags", []),
-        })
+        }, token=token)
 
-    async def list_wins(self, limit: int = 50, category: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def list_wins(self, limit: int = 50, category: Optional[str] = None, project: Optional[str] = None) -> List[Dict[str, Any]]:
         path = f"/api/wins?limit={limit}" if not category else f"/api/wins?limit={limit}&category={category}"
-        return await _bridge_get(path, [])
+        return await _bridge_get(path, [], project)
 
-    async def delete_win(self, win_id: int) -> None:
-        await call_mijn_ondernemers_os("DELETE", f"/api/wins/{win_id}")
+    async def delete_win(self, win_id: int, project: Optional[str] = None) -> None:
+        token = _resolve_token(project)
+        await call_mijn_ondernemers_os("DELETE", f"/api/wins/{win_id}", token=token)
 
     # ------------------------------------------------------------- focus
-    async def start_focus_session(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def start_focus_session(self, data: Dict[str, Any], project: Optional[str] = None) -> Dict[str, Any]:
+        token = _resolve_token(project)
         return await call_mijn_ondernemers_os("POST", "/api/focus", json={
             "date": data.get("date") or _today(),
             "startTime": data["startTime"],
             "goal": data.get("goal", ""),
-        })
+        }, token=token)
 
-    async def complete_focus_session(self, fid: int) -> Optional[Dict[str, Any]]:
+    async def complete_focus_session(self, fid: int, project: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
-            return await call_mijn_ondernemers_os("PUT", f"/api/focus/{fid}", json={"completed": True})
+            token = _resolve_token(project)
+            return await call_mijn_ondernemers_os("PUT", f"/api/focus/{fid}", json={"completed": True}, token=token)
         except Exception as e:  # noqa: BLE001
             log.warning("[rituals] focus-sessie afronden mislukt (%s): %s", fid, e)
             return None
 
-    async def list_focus_sessions(self, date: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    async def list_focus_sessions(self, date: Optional[str] = None, limit: int = 50, project: Optional[str] = None) -> List[Dict[str, Any]]:
         path = f"/api/focus?date={date}" if date else "/api/focus"
-        return await _bridge_get(path, [])
+        return await _bridge_get(path, [], project)
 
     # ------------------------------------------------------------- doelen
     # Robbins-stijl persoonlijke doelen (why/pain/pleasure) blijven lokaal —

@@ -33,27 +33,30 @@ class FakeBridge:
         self.wins: list[dict] = []
         self.focus: list[dict] = []
         self.weekly: list[dict] = []  # elk: {week_number, data}
-        self.calls: list[tuple[str, str, dict | None]] = []
+        self.calls: list[tuple[str, str, dict | None, str | None]] = []
 
-    async def __call__(self, method: str, path: str, json: dict | None = None) -> dict:
-        self.calls.append((method, path, json))
+    async def __call__(self, method: str, path: str, json: dict | None = None, token: str | None = None) -> dict:
+        self.calls.append((method, path, json, token))
         url = urlparse(path)
         qs = {k: v[0] for k, v in parse_qs(url.query).items()}
 
+        # In het echt zit isolatie tussen klanten in welke Neon-organisatie het token
+        # aanwijst — hier gesimuleerd door het token in elke sleutel mee te nemen, zodat een
+        # test die vergeet te isoleren zou falen i.p.v. per ongeluk toch te slagen.
         if url.path == "/api/logs":
             if method == "POST":
                 ltype, date = json["type"], json["date"]
                 fields = {k: v for k, v in json.items() if k not in ("type", "date")}
-                self.logs[(ltype, date)] = fields
+                self.logs[(token, ltype, date)] = fields
                 return {"data": fields}
             ltype, date = qs.get("type"), qs.get("date")
             if date is not None:
-                key = (ltype, date)
+                key = (token, ltype, date)
                 if key in self.logs:
-                    return [{"data": self.logs[key], "date_string": key[1]}]
+                    return [{"data": self.logs[key], "date_string": date}]
                 return []
-            # Geen datumfilter (zoals _streak() gebruikt): alle rijen van dit type.
-            return [{"data": v, "date_string": k[1]} for k, v in self.logs.items() if k[0] == ltype]
+            # Geen datumfilter (zoals _streak() gebruikt): alle rijen van dit type/token.
+            return [{"data": v, "date_string": k[2]} for k, v in self.logs.items() if k[0] == token and k[1] == ltype]
 
         if url.path == "/api/wins":
             if method == "POST":
@@ -111,7 +114,7 @@ class AlwaysUnreachable:
     """Simuleert een onbereikbare mijn-ondernemers-os — precies wat
     bridge_client.call_mijn_ondernemers_os gooit bij een netwerkfout."""
 
-    async def __call__(self, method: str, path: str, json: dict | None = None) -> dict:
+    async def __call__(self, method: str, path: str, json: dict | None = None, token: str | None = None) -> dict:
         raise HTTPException(status_code=502, detail="mijn-ondernemers-os is nu niet bereikbaar.")
 
 
@@ -128,6 +131,7 @@ def svc(clean_tables, bridge):
     from backend.shared.database import get_conn
     with get_conn() as conn:
         conn.execute("DELETE FROM ritual_goals")
+        conn.execute("DELETE FROM project_bridge_tokens")
     return RitualsService()
 
 
@@ -276,3 +280,47 @@ async def test_write_paths_fail_loud_when_bridge_unreachable(clean_tables, monke
 
     with pytest.raises(HTTPException):
         await svc.save_morning("2026-08-10", {"intentie": "x"})
+
+
+# ── Fase 2 deel 2: project-scoping ──────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_unlinked_project_read_returns_none_not_vincents_data(svc):
+    """Een project zonder gekoppeld bridge-token mag nooit stilzwijgend Vincents eigen
+    data tonen — het hoort gewoon leeg te zijn."""
+    await svc.save_morning("2026-08-10", {"intentie": "Vincents eigen intentie"})
+
+    result = await svc.get_morning("2026-08-10", project="onbekend-project")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_unlinked_project_write_fails_loud(svc):
+    with pytest.raises(Exception):
+        await svc.save_morning("2026-08-10", {"intentie": "x"}, project="onbekend-project")
+
+
+@pytest.mark.asyncio
+async def test_linked_project_uses_its_own_token_and_data(svc, bridge):
+    """Een gekoppeld project moet met zíjn eigen token bellen (niet Vincents COACH_BRIDGE_TOKEN)
+    en zijn eigen, aparte data zien — geen vermenging tussen klanten."""
+    from backend.shared.database import get_conn
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO project_bridge_tokens (project_slug, token, label, created_at) VALUES (?, ?, ?, ?)",
+            ("testklant", "klant-token-abc", "Testklant", "2026-01-01T00:00:00Z"),
+        )
+
+    await svc.save_morning("2026-08-10", {"intentie": "Vincents eigen intentie"})
+    await svc.save_morning("2026-08-10", {"intentie": "Klant-intentie"}, project="testklant")
+
+    vincent = await svc.get_morning("2026-08-10")
+    klant = await svc.get_morning("2026-08-10", project="testklant")
+
+    assert vincent["intentie"] == "Vincents eigen intentie"
+    assert klant["intentie"] == "Klant-intentie"
+
+    klant_calls = [c for c in bridge.calls if c[2] and c[2].get("intentie") == "Klant-intentie"]
+    assert klant_calls and klant_calls[0][3] == "klant-token-abc", \
+        "de klant-aanroep moet het klant-token gebruiken, niet Vincents eigen token (None)"

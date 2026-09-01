@@ -24,7 +24,15 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from ...shared.projects import squash_project
 from .service import get_service, _iso_week, _today
+
+
+def _project(project: Optional[str]) -> Optional[str]:
+    """Normaliseert een binnenkomende ?project=-query-param naar dezelfde canonical/squashed
+    vorm als project_bridge_tokens gebruikt (Fase 2 deel 2) — None blijft None (Vincents eigen
+    aanroepen, ongewijzigd gedrag)."""
+    return squash_project(project) if project else None
 
 router = APIRouter(prefix="/api/rituals", tags=["rituals"])
 
@@ -136,83 +144,83 @@ async def next_required():
 
 # ---------------------------------------------------------------- morning
 @router.get("/morning")
-async def get_morning(date: Optional[str] = None):
-    return await get_service().get_morning(date or _today()) or {}
+async def get_morning(date: Optional[str] = None, project: Optional[str] = None):
+    return await get_service().get_morning(date or _today(), _project(project)) or {}
 
 
 @router.post("/morning")
-async def save_morning(payload: MorningPayload, date: Optional[str] = None):
-    return await get_service().save_morning(date or _today(), payload.model_dump())
+async def save_morning(payload: MorningPayload, date: Optional[str] = None, project: Optional[str] = None):
+    return await get_service().save_morning(date or _today(), payload.model_dump(), _project(project))
 
 
 # ---------------------------------------------------------------- evening
 @router.get("/evening")
-async def get_evening(date: Optional[str] = None):
-    return await get_service().get_evening(date or _today()) or {}
+async def get_evening(date: Optional[str] = None, project: Optional[str] = None):
+    return await get_service().get_evening(date or _today(), _project(project)) or {}
 
 
 @router.post("/evening")
-async def save_evening(payload: EveningPayload, date: Optional[str] = None):
-    return await get_service().save_evening(date or _today(), payload.model_dump())
+async def save_evening(payload: EveningPayload, date: Optional[str] = None, project: Optional[str] = None):
+    return await get_service().save_evening(date or _today(), payload.model_dump(), _project(project))
 
 
 # ------------------------------------------------------------ weekly start
 @router.get("/weekly-start")
-async def get_weekly_start(year: Optional[int] = None, week: Optional[int] = None):
+async def get_weekly_start(year: Optional[int] = None, week: Optional[int] = None, project: Optional[str] = None):
     y, w = (year, week) if year and week else _iso_week()
-    return await get_service().get_weekly_start(y, w) or {}
+    return await get_service().get_weekly_start(y, w, _project(project)) or {}
 
 
 @router.post("/weekly-start")
-async def save_weekly_start(payload: WeeklyStartPayload, year: Optional[int] = None, week: Optional[int] = None):
+async def save_weekly_start(payload: WeeklyStartPayload, year: Optional[int] = None, week: Optional[int] = None, project: Optional[str] = None):
     y, w = (year, week) if year and week else _iso_week()
-    return await get_service().save_weekly_start(y, w, payload.model_dump())
+    return await get_service().save_weekly_start(y, w, payload.model_dump(), _project(project))
 
 
 # ----------------------------------------------------------- weekly review
 @router.get("/weekly-review")
-async def get_weekly_review(year: Optional[int] = None, week: Optional[int] = None):
+async def get_weekly_review(year: Optional[int] = None, week: Optional[int] = None, project: Optional[str] = None):
     y, w = (year, week) if year and week else _iso_week()
-    return await get_service().get_weekly_review(y, w) or {}
+    return await get_service().get_weekly_review(y, w, _project(project)) or {}
 
 
 @router.post("/weekly-review")
-async def save_weekly_review(payload: WeeklyReviewPayload, year: Optional[int] = None, week: Optional[int] = None):
+async def save_weekly_review(payload: WeeklyReviewPayload, year: Optional[int] = None, week: Optional[int] = None, project: Optional[str] = None):
     y, w = (year, week) if year and week else _iso_week()
-    return await get_service().save_weekly_review(y, w, payload.model_dump())
+    return await get_service().save_weekly_review(y, w, payload.model_dump(), _project(project))
 
 
 # ---------------------------------------------------------------- wins
 @router.get("/wins")
-async def list_wins(limit: int = 20, category: Optional[str] = None):
-    return await get_service().list_wins(limit=limit, category=category)
+async def list_wins(limit: int = 20, category: Optional[str] = None, project: Optional[str] = None):
+    return await get_service().list_wins(limit=limit, category=category, project=_project(project))
 
 
 @router.post("/wins")
-async def add_win(payload: WinPayload):
-    return await get_service().add_win(payload.model_dump())
+async def add_win(payload: WinPayload, project: Optional[str] = None):
+    return await get_service().add_win(payload.model_dump(), _project(project))
 
 
 @router.delete("/wins/{win_id}")
-async def delete_win(win_id: int):
-    await get_service().delete_win(win_id)
+async def delete_win(win_id: int, project: Optional[str] = None):
+    await get_service().delete_win(win_id, _project(project))
     return {"ok": True}
 
 
 # -------------------------------------------------------------- focus
 @router.get("/focus")
-async def list_focus(date: Optional[str] = None, limit: int = 20):
-    return await get_service().list_focus_sessions(date=date, limit=limit)
+async def list_focus(date: Optional[str] = None, limit: int = 20, project: Optional[str] = None):
+    return await get_service().list_focus_sessions(date=date, limit=limit, project=_project(project))
 
 
 @router.post("/focus")
-async def start_focus(payload: FocusStartPayload):
-    return await get_service().start_focus_session(payload.model_dump())
+async def start_focus(payload: FocusStartPayload, project: Optional[str] = None):
+    return await get_service().start_focus_session(payload.model_dump(), _project(project))
 
 
 @router.post("/focus/{focus_id}/complete")
-async def complete_focus(focus_id: int):
-    result = await get_service().complete_focus_session(focus_id)
+async def complete_focus(focus_id: int, project: Optional[str] = None):
+    result = await get_service().complete_focus_session(focus_id, _project(project))
     if result is None:
         raise HTTPException(status_code=404, detail="Focus-sessie niet gevonden")
     return result
