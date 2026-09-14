@@ -4,6 +4,7 @@ import email
 import email.message
 import re
 from email.header import decode_header
+from email.utils import parsedate_to_datetime
 from typing import List, Dict, Optional
 
 from . import bulk
@@ -176,6 +177,13 @@ def fetch_new(
         from_addr = _dm(msg["From"])
         from_name = from_addr.split("<")[0].strip().strip('"')
         subject = _dm(msg["Subject"])
+        # Datum van de mail zelf (RFC 2822 Date-header) — anders blijft die leeg
+        # en kunnen de inbox-tijden niet worden getoond/groepeerd.
+        date_hdr = _hdr(msg, "Date")
+        try:
+            received_at = parsedate_to_datetime(date_hdr).isoformat() if date_hdr else ""
+        except (ValueError, TypeError):
+            received_at = ""
         # Auto-submitted? (Out-of-office, bounce, vacation, mailinglist)
         auto_sub = (
             msg.get("Auto-Submitted") is not None
@@ -201,10 +209,10 @@ def fetch_new(
             body = ticket["question"]
             cur = conn.execute(
                 "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
-                "classified,message_id,in_reply_to,\"references\",auto_submitted) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (mailbox_id, uidl, from_addr, from_name, subject, body, "unknown",
-                 _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"), _hdr(msg, "References"), 0),
+                "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (mailbox_id, uidl, from_addr, from_name, subject, body, received_at,
+                 "unknown", _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"), _hdr(msg, "References"), 0),
             )
             out.append({
                 "id": cur.lastrowid,
@@ -228,10 +236,10 @@ def fetch_new(
         if ticket_mod.looks_like_ticket_notification(subject, from_addr, own_domain):
             cur = conn.execute(
                 "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
-                "classified,message_id,in_reply_to,\"references\",auto_submitted) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (mailbox_id, uidl, from_addr, from_name, subject, body, "unknown",
-                 _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"), _hdr(msg, "References"), 0),
+                "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (mailbox_id, uidl, from_addr, from_name, subject, body, received_at,
+                 "unknown", _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"), _hdr(msg, "References"), 0),
             )
             out.append({
                 "id": cur.lastrowid,
@@ -255,20 +263,20 @@ def fetch_new(
                 else "spam")
             conn.execute(
                 "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,subject,body_text,"
-                "classified,message_id,in_reply_to,\"references\",auto_submitted) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (mailbox_id, uidl, _addr_only(from_addr), subject, "",
+                "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (mailbox_id, uidl, _addr_only(from_addr), subject, "", received_at,
                  label, _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"),
                  _hdr(msg, "References"), 1 if auto_sub else 0),
             )
             continue
         cur = conn.execute(
             "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
-            "classified,message_id,in_reply_to,\"references\",auto_submitted) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (mailbox_id, uidl, _addr_only(from_addr), from_name, subject, body, "unknown",
-             _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"), _hdr(msg, "References"),
-             1 if auto_sub else 0),
+            "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (mailbox_id, uidl, _addr_only(from_addr), from_name, subject, body, received_at,
+             "unknown", _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"),
+             _hdr(msg, "References"), 1 if auto_sub else 0),
         )
         out.append({
             "id": cur.lastrowid,

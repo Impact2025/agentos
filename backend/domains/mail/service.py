@@ -200,9 +200,9 @@ def _run_mailbox_graph(mailbox: Dict) -> int:
                 body_text = ticket["question"]
                 cur = conn.execute(
                     "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
-                    "classified,message_id,in_reply_to,\"references\",auto_submitted) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                    (mid, uidl, from_addr, from_name, subject, body_text,
+                    "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (mid, uidl, from_addr, from_name, subject, body_text, m.get("received_at") or "",
                      "unknown", m.get("message_id"), m.get("in_reply_to"),
                      m.get("references"), 0),
                 )
@@ -220,10 +220,10 @@ def _run_mailbox_graph(mailbox: Dict) -> int:
             if ticket_mod.looks_like_ticket_notification(subject, from_addr, own_domain):
                 cur = conn.execute(
                     "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
-                    "classified,message_id,in_reply_to,\"references\",auto_submitted) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                    (mid, uidl, from_addr, m["from_name"], subject, body_text, "unknown",
-                     m.get("message_id"), m.get("in_reply_to"), m.get("references"), 0),
+                    "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (mid, uidl, from_addr, m["from_name"], subject, body_text, m.get("received_at") or "",
+                     "unknown", m.get("message_id"), m.get("in_reply_to"), m.get("references"), 0),
                 )
                 # Bewust NIET in `pending`: dat pad drafte automatisch een
                 # antwoord (_process_classified behandelt alles buiten
@@ -241,19 +241,20 @@ def _run_mailbox_graph(mailbox: Dict) -> int:
                     else "spam")
                 conn.execute(
                     "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,subject,body_text,"
-                    "classified,message_id,in_reply_to,\"references\",auto_submitted) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
-                    (mid, uidl, from_addr, m["subject"], "", label,
-                     m.get("message_id"), m.get("in_reply_to"), m.get("references"),
+                    "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (mid, uidl, from_addr, m["subject"], "", m.get("received_at") or "",
+                     label, m.get("message_id"), m.get("in_reply_to"), m.get("references"),
                      1 if auto_sub else 0),
                 )
                 continue
             from_name = m["from_name"]
             cur = conn.execute(
                 "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
-                "classified,message_id,in_reply_to,\"references\",auto_submitted) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (mid, uidl, from_addr, from_name, m["subject"], m["body_text"],
+                 m.get("received_at") or "",
                  "unknown", m.get("message_id"), m.get("in_reply_to"),
                  m.get("references"), 1 if auto_sub else 0),
             )
