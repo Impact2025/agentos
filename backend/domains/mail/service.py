@@ -356,18 +356,24 @@ def run_mailbox(mailbox: Dict) -> int:
     pending: List[tuple] = []  # verwerkt ná de transactie, zie _process_classified
     created = 0
     try:
+        # `inbox.fetch_new` doet zelf zijn eigen korte lees- en schrijftransacties
+        # rondom de POP3-sessie (netwerk) — die twee staan sinds 31 aug 2026 los
+        # van elkaar, want een `conn` die hier de hele retrieval-loop meereist
+        # hield de write-lock vast tijdens elke trage `retr`-roundtrip en liet
+        # onschuldige schrijvers elders (radar, scheduler, selfheal) op
+        # 'database is locked' stranden. Zie inbox.fetch_new voor de volledige
+        # toedracht.
+        fetched = inbox.fetch_new(
+            mailbox_id=mid,
+            host=mailbox["pop_host"],
+            port=int(mailbox["pop_port"] or 110),
+            user=mailbox["pop_user"],
+            pw=mailbox["pop_password"],
+            use_ssl=bool(int(mailbox.get("pop_ssl") or 0)),
+        )
+        if not fetched:
+            return 0
         with get_conn() as conn:
-            fetched = inbox.fetch_new(
-                mailbox_id=mid,
-                host=mailbox["pop_host"],
-                port=int(mailbox["pop_port"] or 110),
-                user=mailbox["pop_user"],
-                pw=mailbox["pop_password"],
-                conn=conn,
-                use_ssl=bool(int(mailbox.get("pop_ssl") or 0)),
-            )
-            if not fetched:
-                return 0
             for m in fetched:
                 if is_ignored_sender(conn, m["from_addr"]):
                     conn.execute(

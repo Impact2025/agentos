@@ -77,6 +77,21 @@ GEFILTERDE_LABELS = ("spam", "archief")
 # besluit over de afzender. Beide bestaan, en ze horen elkaar niet te overrulen.
 HANDMATIG_TERUG = "handmatig teruggezet"
 
+# Business-domeinen die vertrouwd zijn (weareimpact.nl etc.) en DAAROM ook
+# nooit als 'vendor noise' door een systeemregel mogen worden gearchiveerd.
+# Externe e-mailproviders (gmail.com, outlook.com) horen hier NIET bij: een
+# specifieke afzender als weareimpactnl@gmail.com is wel legitieme noise —
+# dit is een smallere, striktere lijst dan `mail.classify._TRUSTED_DOMAINS`
+# (die dekt spam-classificatie in het algemeen, dit dekt "mag nooit door een
+# systeemregel worden weggefilterd"). Module-level en niet lokaal in
+# seed_system_rules(), want `iris/integrity.py`'s invariant
+# `postvak_vertrouwd_domein_gefilterd` moet dezelfde bron raadplegen — anders
+# zijn het twee administraties van hetzelfde feit die uit elkaar kunnen lopen.
+BUSINESS_TRUSTED_DOMAINS = (
+    "weareimpact.nl", "bewaardvoorjou.nl", "skillkaart.nl", "bijeen.app",
+    "ictusgo.nl", "movimento-zorg.nl",
+)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -410,16 +425,7 @@ def seed_system_rules(conn=None) -> int:
     """
     from ..mail.classify import VENDOR_NOISE_DOMAINS, VENDOR_NOISE_SENDERS
 
-    # Business-domeinen die vertrouwd zijn (weareimpact.nl etc.) maar DAAROM
-    # ook nooit als 'vendor noise' mogen archiveren.  Externe e-mailproviders
-    # (gmail.com, outlook.com) horen hier NIET bij: een specifieke afzender
-    # als weareimpactnl@gmail.com is wel legitieme noise.
-    _BUSINESS_TRUSTED = (
-        "weareimpact.nl", "bewaardvoorjou.nl", "skillkaart.nl", "bijeen.app",
-        "ictusgo.nl", "movimento-zorg.nl",
-    )
-
-    eigen_domein_uitzondering = set(_BUSINESS_TRUSTED)
+    eigen_domein_uitzondering = set(BUSINESS_TRUSTED_DOMAINS)
     patronen = {p.lower().strip() for p in VENDOR_NOISE_DOMAINS if p and p.strip()}
     patronen |= {p.lower().strip() for p in VENDOR_NOISE_SENDERS if p and p.strip()}
     # Verwijder patronen die van een vertrouwd business-domein komen — bv.

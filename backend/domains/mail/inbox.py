@@ -9,6 +9,7 @@ from typing import List, Dict, Optional
 
 from . import bulk
 from . import ticket as ticket_mod
+from ...shared.database import get_conn
 
 # Afzenders die nooit een antwoord verdienen: nieuwsbrieven / hoster-spamrapporten.
 SPAM_SENDERS = (
@@ -122,176 +123,199 @@ def _hdr(msg: email.message.Message, name: str) -> str:
     return _dm(msg.get(name))
 
 
+def _pop3_fetch_raw(host: str, port: int, user: str, pw: str, use_ssl: bool,
+                     seen: set) -> List[tuple]:
+    """Netwerkfase: login + `retr` van elk ongezien bericht. Géén database-IO —
+    zie `fetch_new` voor waarom dat een harde eis is, niet een stijlkeuze."""
+    if use_ssl:
+        srv = poplib.POP3_SSL(host, int(port), timeout=20)
+    else:
+        srv = poplib.POP3(host, int(port), timeout=20)
+    try:
+        try:
+            srv.user(user)
+            srv.pass_(pw)
+            _, items, _ = srv.list()
+            _, uidl_lines, _ = srv.uidl()
+        except Exception as e:
+            raise RuntimeError(f"POP3 mislukt voor {user}: {e}") from e
+
+        uidl_map: Dict[str, str] = {}
+        for line in uidl_lines:
+            parts = line.decode().split()
+            if len(parts) >= 2:
+                uidl_map[parts[0]] = parts[1]
+
+        raw: List[tuple] = []
+        for num, uidl in uidl_map.items():
+            if uidl in seen:
+                continue
+            _, lines, _ = srv.retr(num)
+            raw.append((uidl, email.message_from_bytes(b"\n".join(lines))))
+        return raw
+    finally:
+        srv.quit()
+
+
 def fetch_new(
     mailbox_id: str,
     host: str,
     port: int,
     user: str,
     pw: str,
-    conn,
     use_ssl: bool = False,
 ) -> List[Dict]:
     """Haal ongeziene mails voor één mailbox op. Spam, nieuwsbrieven én
     auto-generated mail (out-of-office/bounces) worden als gelezen weg geschreven
-    en komen niet terug voor classificatie. `conn` is een geopende sqlite-connectie;
-    de caller commit.
+    en komen niet terug voor classificatie.
 
     `use_ssl` — wanneer True wordt er POP3_SSL (STARTTLS/TLS, bv. poort 995)
     gebruikt in plaats van kaal POP3. Office365/Exchange en vrijwel alle hosters
     hebben basic-auth op 110 uitgezet; die mailboxen VERPLICHTEN SSL.
 
     Bewaart threading-headers (Message-ID, In-Reply-To, References) zodat een
-    antwoord netjes als reply op de originele mail landt."""
-    if use_ssl:
-        srv = poplib.POP3_SSL(host, int(port), timeout=20)
-    else:
-        srv = poplib.POP3(host, int(port), timeout=20)
-    try:
-        srv.user(user)
-        srv.pass_(pw)
-        _, items, _ = srv.list()
-        _, uidl_lines, _ = srv.uidl()
-    except Exception as e:
-        srv.quit()
-        raise RuntimeError(f"POP3 mislukt voor {user}: {e}")
+    antwoord netjes als reply op de originele mail landt.
 
-    uidl_map: Dict[str, str] = {}
-    for line in uidl_lines:
-        parts = line.decode().split()
-        if len(parts) >= 2:
-            uidl_map[parts[0]] = parts[1]
+    De POP3-sessie (netwerk, elke `retr` een round-trip, tot 20s timeout per
+    call) en de database-schrijffase staan hier bewust los van elkaar: tot
+    31 aug 2026 nam `conn` als parameter deel aan de retrieval-loop, waardoor
+    een trage of volle mailbox de schrijf-lock van de hele SQLite-database
+    vasthield terwijl de radar-scan, de scheduler (`_record_run`) en
+    zelfherstel (`selfheal._log_heal`) allemaal op hun eigen, onschuldig kleine
+    write botsten en na `busy_timeout` met 'database is locked' strandden —
+    2400+ keer over tien dagen, verspreid over compleet andere domeinen. Zelfde
+    faalvorm en zelfde fix als `_run_mailbox_graph` (11 aug 2026), alleen was
+    de POP3-tak toen niet meeverhuisd."""
+    with get_conn() as conn:
+        seen = {
+            r["uidl"]
+            for r in conn.execute(
+                "SELECT uidl FROM mail_inbox WHERE mailbox_id=?", (mailbox_id,)
+            )
+        }
 
-    seen = {
-        r["uidl"]
-        for r in conn.execute(
-            "SELECT uidl FROM mail_inbox WHERE mailbox_id=?", (mailbox_id,)
-        )
-    }
+    raw_messages = _pop3_fetch_raw(host, port, user, pw, use_ssl, seen)
 
+    own_domain = user.split("@", 1)[1] if "@" in user else ""
     out: List[Dict] = []
-    for num, uidl in uidl_map.items():
-        if uidl in seen:
-            continue
-        _, lines, _ = srv.retr(num)
-        msg = email.message_from_bytes(b"\n".join(lines))
-        from_addr = _dm(msg["From"])
-        from_name = from_addr.split("<")[0].strip().strip('"')
-        subject = _dm(msg["Subject"])
-        # Datum van de mail zelf (RFC 2822 Date-header) — anders blijft die leeg
-        # en kunnen de inbox-tijden niet worden getoond/groepeerd.
-        date_hdr = _hdr(msg, "Date")
-        try:
-            received_at = parsedate_to_datetime(date_hdr).isoformat() if date_hdr else ""
-        except (ValueError, TypeError):
-            received_at = ""
-        # Auto-submitted? (Out-of-office, bounce, vacation, mailinglist)
-        auto_sub = (
-            msg.get("Auto-Submitted") is not None
-            or msg.get("Precedence") in ("junk", "bulk", "list")
-            or "Auto-Submitted" in (msg.get("X-Auto-Response", ""))
-        )
-        # De body eerst uitpakken: de afmeld-footer is het sterkste
-        # tekstsignaal en die zit nooit in het onderwerp. Uitpakken is gratis
-        # (het bericht staat al in het geheugen) en het scheelde vijf
-        # concept-antwoorden op nieuwsbrieven (1 aug 2026).
-        body = _body(msg)
+    with get_conn() as conn:
+        for uidl, msg in raw_messages:
+            from_addr = _dm(msg["From"])
+            from_name = from_addr.split("<")[0].strip().strip('"')
+            subject = _dm(msg["Subject"])
+            # Datum van de mail zelf (RFC 2822 Date-header) — anders blijft die leeg
+            # en kunnen de inbox-tijden niet worden getoond/groepeerd.
+            date_hdr = _hdr(msg, "Date")
+            try:
+                received_at = parsedate_to_datetime(date_hdr).isoformat() if date_hdr else ""
+            except (ValueError, TypeError):
+                received_at = ""
+            # Auto-submitted? (Out-of-office, bounce, vacation, mailinglist)
+            auto_sub = (
+                msg.get("Auto-Submitted") is not None
+                or msg.get("Precedence") in ("junk", "bulk", "list")
+                or "Auto-Submitted" in (msg.get("X-Auto-Response", ""))
+            )
+            # De body eerst uitpakken: de afmeld-footer is het sterkste
+            # tekstsignaal en die zit nooit in het onderwerp. Uitpakken is gratis
+            # (het bericht staat al in het geheugen) en het scheelde vijf
+            # concept-antwoorden op nieuwsbrieven (1 aug 2026).
+            body = _body(msg)
 
-        # Ticket-notificatie van het eigen domein? Ontpak vóór elke
-        # ignore/bulk-check — anders wint 'noreply-afzender' altijd en gaat
-        # de échte klantvraag + het échte antwoordadres verloren (zie
-        # ticket.py: BVJ-0002/BVJ-0003 op Bewaardvoorjou, 13 aug 2026).
-        own_domain = user.split("@", 1)[1] if "@" in user else ""
-        ticket = ticket_mod.unwrap_ticket_notification(subject, body, from_addr, own_domain)
-        if ticket:
-            from_addr = ticket["customer_email"]
-            from_name = ticket["customer_name"]
-            subject = ticket["subject"]
-            body = ticket["question"]
+            # Ticket-notificatie van het eigen domein? Ontpak vóór elke
+            # ignore/bulk-check — anders wint 'noreply-afzender' altijd en gaat
+            # de échte klantvraag + het échte antwoordadres verloren (zie
+            # ticket.py: BVJ-0002/BVJ-0003 op Bewaardvoorjou, 13 aug 2026).
+            ticket = ticket_mod.unwrap_ticket_notification(subject, body, from_addr, own_domain)
+            if ticket:
+                from_addr = ticket["customer_email"]
+                from_name = ticket["customer_name"]
+                subject = ticket["subject"]
+                body = ticket["question"]
+                cur = conn.execute(
+                    "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
+                    "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (mailbox_id, uidl, from_addr, from_name, subject, body, received_at,
+                     "unknown", _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"), _hdr(msg, "References"), 0),
+                )
+                out.append({
+                    "id": cur.lastrowid,
+                    "uidl": uidl,
+                    "from_addr": from_addr,
+                    "from_name": from_name,
+                    "subject": subject,
+                    "body_text": body,
+                    "message_id": _hdr(msg, "Message-ID"),
+                    "in_reply_to": _hdr(msg, "In-Reply-To"),
+                    "references": _hdr(msg, "References"),
+                    "headers": msg,
+                    "_forced_kind": "question",
+                })
+                continue
+
+            # Ruikt naar een ticketmelding maar het velden-sjabloon hierboven
+            # kende het niet (ander project, andere support-tool): hou de body
+            # intact i.p.v. hem straks als 'newsletter' te legen — zie
+            # ticket.looks_like_ticket_notification.
+            if ticket_mod.looks_like_ticket_notification(subject, from_addr, own_domain):
+                cur = conn.execute(
+                    "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
+                    "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (mailbox_id, uidl, from_addr, from_name, subject, body, received_at,
+                     "unknown", _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"), _hdr(msg, "References"), 0),
+                )
+                out.append({
+                    "id": cur.lastrowid,
+                    "uidl": uidl,
+                    "from_addr": from_addr,
+                    "from_name": from_name,
+                    "subject": subject,
+                    "body_text": body,
+                    "message_id": _hdr(msg, "Message-ID"),
+                    "in_reply_to": _hdr(msg, "In-Reply-To"),
+                    "references": _hdr(msg, "References"),
+                    "headers": msg,
+                })
+                continue
+
+            bulk_reden = bulk.bulk_reason(msg, from_addr, subject, body)
+            if _should_ignore(from_addr, subject, body=body,
+                              auto_submitted=auto_sub, headers=msg):
+                label = "auto" if auto_sub else (
+                    "newsletter" if (bulk_reden or _looks_like_newsletter(subject, body))
+                    else "spam")
+                conn.execute(
+                    "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,subject,body_text,"
+                    "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (mailbox_id, uidl, _addr_only(from_addr), subject, "", received_at,
+                     label, _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"),
+                     _hdr(msg, "References"), 1 if auto_sub else 0),
+                )
+                continue
             cur = conn.execute(
                 "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
                 "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (mailbox_id, uidl, from_addr, from_name, subject, body, received_at,
-                 "unknown", _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"), _hdr(msg, "References"), 0),
-            )
-            out.append({
-                "id": cur.lastrowid,
-                "uidl": uidl,
-                "from_addr": from_addr,
-                "from_name": from_name,
-                "subject": subject,
-                "body_text": body,
-                "message_id": _hdr(msg, "Message-ID"),
-                "in_reply_to": _hdr(msg, "In-Reply-To"),
-                "references": _hdr(msg, "References"),
-                "headers": msg,
-                "_forced_kind": "question",
-            })
-            continue
-
-        # Ruikt naar een ticketmelding maar het velden-sjabloon hierboven
-        # kende het niet (ander project, andere support-tool): hou de body
-        # intact i.p.v. hem straks als 'newsletter' te legen — zie
-        # ticket.looks_like_ticket_notification.
-        if ticket_mod.looks_like_ticket_notification(subject, from_addr, own_domain):
-            cur = conn.execute(
-                "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
-                "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (mailbox_id, uidl, from_addr, from_name, subject, body, received_at,
-                 "unknown", _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"), _hdr(msg, "References"), 0),
-            )
-            out.append({
-                "id": cur.lastrowid,
-                "uidl": uidl,
-                "from_addr": from_addr,
-                "from_name": from_name,
-                "subject": subject,
-                "body_text": body,
-                "message_id": _hdr(msg, "Message-ID"),
-                "in_reply_to": _hdr(msg, "In-Reply-To"),
-                "references": _hdr(msg, "References"),
-                "headers": msg,
-            })
-            continue
-
-        bulk_reden = bulk.bulk_reason(msg, from_addr, subject, body)
-        if _should_ignore(from_addr, subject, body=body,
-                          auto_submitted=auto_sub, headers=msg):
-            label = "auto" if auto_sub else (
-                "newsletter" if (bulk_reden or _looks_like_newsletter(subject, body))
-                else "spam")
-            conn.execute(
-                "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,subject,body_text,"
-                "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (mailbox_id, uidl, _addr_only(from_addr), subject, "", received_at,
-                 label, _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"),
+                (mailbox_id, uidl, _addr_only(from_addr), from_name, subject, body, received_at,
+                 "unknown", _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"),
                  _hdr(msg, "References"), 1 if auto_sub else 0),
             )
-            continue
-        cur = conn.execute(
-            "INSERT INTO mail_inbox(mailbox_id,uidl,from_addr,from_name,subject,body_text,"
-            "received_at,classified,message_id,in_reply_to,\"references\",auto_submitted) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-            (mailbox_id, uidl, _addr_only(from_addr), from_name, subject, body, received_at,
-             "unknown", _hdr(msg, "Message-ID"), _hdr(msg, "In-Reply-To"),
-             _hdr(msg, "References"), 1 if auto_sub else 0),
-        )
-        out.append({
-            "id": cur.lastrowid,
-            "uidl": uidl,
-            "from_addr": _addr_only(from_addr),
-            "from_name": from_name,
-            "subject": subject,
-            "body_text": body,
-            "message_id": _hdr(msg, "Message-ID"),
-            "in_reply_to": _hdr(msg, "In-Reply-To"),
-            "references": _hdr(msg, "References"),
-            # De headers meegeven zodat de classificatie verderop hetzelfde
-            # bulk-bewijs heeft als deze gate. Een dict (geen Message-object)
-            # omdat de aanroeper hem alleen leest.
-            "headers": {k.lower(): v for k, v in msg.items()},
-        })
-    srv.quit()
+            out.append({
+                "id": cur.lastrowid,
+                "uidl": uidl,
+                "from_addr": _addr_only(from_addr),
+                "from_name": from_name,
+                "subject": subject,
+                "body_text": body,
+                "message_id": _hdr(msg, "Message-ID"),
+                "in_reply_to": _hdr(msg, "In-Reply-To"),
+                "references": _hdr(msg, "References"),
+                # De headers meegeven zodat de classificatie verderop hetzelfde
+                # bulk-bewijs heeft als deze gate. Een dict (geen Message-object)
+                # omdat de aanroeper hem alleen leest.
+                "headers": {k.lower(): v for k, v in msg.items()},
+            })
     return out

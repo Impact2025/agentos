@@ -3148,6 +3148,72 @@ def _check_postvak_triage_achterstand() -> List[Bevinding]:
     )]
 
 
+def _check_postvak_vertrouwd_domein_gefilterd() -> List[Bevinding]:
+    """Mail van een eigen business-domein die door een systeemregel is weggefilterd.
+
+    30 aug 2026: een herstart liet `apply_all()` opnieuw over het volledige
+    postvak draaien. Twee gaten sloegen tegelijk toe — 'noreply'/'no-reply' als
+    kale SCOPE_DEEL-substring ving elke afzender met die string, en
+    `seed_system_rules()` sloot Vincents eigen/project-domeinen niet uit. 945
+    van 1022 mails (92,5%) verdwenen naar archief/spam, waaronder zijn eigen
+    iris@/noreply@weareimpact.nl-rapportages en bewaardvoorjou.nl-tickets. Drie
+    herstarts lang onopgemerkt tot een mens toevallig het postvak controleerde.
+
+    Toetst tegen `rules.BUSINESS_TRUSTED_DOMAINS` — bewust NIET tegen de
+    bredere `mail.classify._is_trusted` (die dekt spam-classificatie in het
+    algemeen en bevat generieke providers als gmail.com/google.com, waarbinnen
+    losse afzenders zoals googlealerts-noreply@google.com of
+    weareimpactnl@gmail.com terecht wél ruis blijven). Alleen een regel die
+    een mens zelf instelde (`source='mens'`) mag een eigen domein overrulen —
+    dat is een bewust besluit, geen systeemgok.
+    """
+    try:
+        from ..mail.classify import _sender_domain
+        from ..outlook import rules as mail_rules
+    except Exception:
+        return []
+    eigen_domeinen = tuple(mail_rules.BUSINESS_TRUSTED_DOMAINS)
+    try:
+        with get_conn() as conn:
+            rijen = conn.execute(
+                "SELECT id, subject, from_email, filter_reason, filter_rule_id "
+                "FROM outlook_emails "
+                "WHERE folder='inbox' AND triage_label IN ('spam','archief') "
+                "  AND filter_rule_id IS NOT NULL "
+                "  AND COALESCE(filter_reason,'') != ?",
+                (mail_rules.HANDMATIG_TERUG,),
+            ).fetchall()
+            if not rijen:
+                return []
+            regel_ids = sorted({r["filter_rule_id"] for r in rijen})
+            placeholders = ",".join("?" * len(regel_ids))
+            bron_per_regel = {
+                row["id"]: row["source"]
+                for row in conn.execute(
+                    f"SELECT id, source FROM mail_sender_rules WHERE id IN ({placeholders})",
+                    regel_ids,
+                ).fetchall()
+            }
+    except Exception:
+        return []
+    bevindingen: List[Bevinding] = []
+    for r in rijen:
+        adres = (r["from_email"] or "").lower()
+        domein = _sender_domain(adres)
+        if not domein or not any(td in domein for td in eigen_domeinen):
+            continue
+        if bron_per_regel.get(r["filter_rule_id"]) == "mens":
+            continue
+        bevindingen.append(Bevinding(
+            subject=f"mail:{r['id']}",
+            detail=(f"{adres} ('{(r['subject'] or '')[:50]}') komt van een eigen "
+                    f"business-domein maar is door een systeemregel weggefilterd "
+                    f"({(r['filter_reason'] or '')[:60]})"),
+            project="Postvak",
+        ))
+    return bevindingen[:_MAX_GEVALLEN_PER_INVARIANT]
+
+
 def _project_van_goal(goal_id: str) -> str:
     try:
         with get_conn() as conn:
@@ -4288,6 +4354,22 @@ INVARIANTEN: List[Invariant] = [
         stap="Draai de triage tot de achterstand leeg is (POST /api/outlook/triage/batch) "
              "en controleer of de LLM-quota-rem actief staat.",
         check=_check_postvak_triage_achterstand,
+    ),
+    Invariant(
+        key="postvak_vertrouwd_domein_gefilterd",
+        titel="Eigen business-domein wordt door een systeemregel weggefilterd",
+        incident="30 aug 2026: een herstart liet `apply_all()` opnieuw over het volledige "
+                 "postvak draaien. 'noreply'/'no-reply' stonden als kale substring in de "
+                 "systeemregels (elke afzender met die string, ook legitieme bedrijven) en "
+                 "`seed_system_rules()` sloot Vincents eigen/project-domeinen niet uit. 945 "
+                 "van 1022 mails (92,5%) verdwenen naar archief/spam, waaronder zijn eigen "
+                 "weareimpact.nl- en bewaardvoorjou.nl-post. Drie herstarts lang onopgemerkt "
+                 "tot een mens toevallig het postvak controleerde.",
+        severity=BLOKKEREND,
+        stap="Deactiveer de systeemregel die matcht (rules.deactivate_rule) en controleer "
+             "of het domein in rules.BUSINESS_TRUSTED_DOMAINS én in de uitsluiting van "
+             "seed_system_rules (outlook/rules.py, dezelfde lijst) staat.",
+        check=_check_postvak_vertrouwd_domein_gefilterd,
     ),
     Invariant(
         key="onboarding_onvolledig_maar_actief",

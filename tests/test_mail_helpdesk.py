@@ -25,10 +25,27 @@ import poplib  # noqa: E402
 from email.mime.text import MIMEText  # noqa: E402
 
 from backend.shared import database as db  # noqa: E402
-db.DB_PATH = _DB
-db.init_db()
 
 from backend.domains.mail import inbox, classify, drafter, service  # noqa: E402
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _use_own_db():
+    """Dit bestand draait tegen zijn eigen wegwerp-DB (geschreven vóórdat
+    tests/conftest.py bestond) in plaats van de gedeelde sessie-DB. Zonder
+    restore in teardown blijft `db.DB_PATH` — een kaal module-attribuut, geen
+    scoped fixture — voor de rest van de pytest-run naar deze kale DB wijzen
+    (geen radar_signals, geen crm/billing/quotes/notes-schema): 14 sep 2026
+    strandde de pre-commit hook zo op 'no such table: radar_signals' in
+    test_aeo_autonomy.py, een compleet ongerelateerd bestand dat alfabetisch
+    ná dit bestand collect maar diens module-level `db.DB_PATH = _DB` al tijdens
+    de collectiefase (vóór enige test draait) had opgelopen.
+    """
+    saved = db.DB_PATH
+    db.DB_PATH = _DB
+    db.init_db()
+    yield
+    db.DB_PATH = saved
 
 
 # ── fake POP3 ──────────────────────────────────────────────────────────────
@@ -110,7 +127,7 @@ def test_classify():
 def test_fetch_new_filters_spam(monkeypatch, mailbox_row):
     monkeypatch.setattr(poplib, "POP3", FakePop)
     with db.get_conn() as conn:
-        got = inbox.fetch_new("mb_test", "h", 110, "u", "p", conn)
+        got = inbox.fetch_new("mb_test", "h", 110, "u", "p")
         # spam + newsletter worden niet teruggegeven, alleen de echte vraag
         assert len(got) == 1
         assert got[0]["subject"] == "Hoe reset ik mijn wachtwoord?"
@@ -215,7 +232,7 @@ def test_fetch_new_ignores_auto_submitted(monkeypatch, mailbox_row):
 
     monkeypatch.setattr(poplib, "POP3", AutoPop)
     with db.get_conn() as conn:
-        got = inbox.fetch_new("mb_test", "h", 110, "u", "p", conn)
+        got = inbox.fetch_new("mb_test", "h", 110, "u", "p")
         # de vraag komt door, de auto-reply niet
         assert len(got) == 1
         auto = conn.execute(
@@ -483,7 +500,7 @@ def test_html_only_mail_gets_text_body(mailbox_row, monkeypatch):
             return (b"+OK", [b"1 UH1"], 10)
     monkeypatch.setattr(poplib, "POP3", HtmlPop)
     with db.get_conn() as conn:
-        got = inbox.fetch_new("mb_test", "h", 110, "u", "p", conn)
+        got = inbox.fetch_new("mb_test", "h", 110, "u", "p")
     assert len(got) == 1
     assert "inloggen" in got[0]["body_text"]
     assert "<" not in got[0]["body_text"]  # tags gestript
