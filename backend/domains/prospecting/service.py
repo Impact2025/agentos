@@ -1036,9 +1036,19 @@ Regels:
         new_contacts = analysis.get("contacts") or []
         merged_contacts = new_contacts if new_contacts else json.loads(lead.get("contacts") or "[]")
 
-        # Hunter-verrijking: zoek contacten als geen e-mail gevonden via scraping
-        has_email = updates["email"] or any(c.get("email") for c in merged_contacts)
-        if not has_email and self._hunter.is_configured() and lead.get("website"):
+        # Hunter-verrijking: zoek contacten als er nog geen sérieus prospect-
+        # adres is. Een algemeen postbus-adres (info@, contact@, ...) dat de
+        # scraper al op de website vond telt hier NIET als "gevonden" —
+        # anders stopt de verrijking vóórdat hij ooit naar een echte inkoper
+        # zoekt, en blijft de lead voorgoed op een adres steken dat
+        # outreach.valid_target() sowieso afwijst (14 sep 2026:
+        # 'info@thenailnerds.nl' bleef na verrijking het enige adres).
+        from .outreach import _email_is_valid
+        has_real_email = (
+            (updates["email"] and _email_is_valid(updates["email"])[0])
+            or any(c.get("email") and _email_is_valid(c["email"])[0] for c in merged_contacts)
+        )
+        if not has_real_email and self._hunter.is_configured() and lead.get("website"):
             hunter_contacts = self._hunter.domain_search(lead["website"])
             if hunter_contacts:
                 verified = self._hunter.verify_contacts(hunter_contacts)

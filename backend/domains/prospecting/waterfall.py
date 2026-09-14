@@ -290,7 +290,21 @@ def run_waterfall(lead: Dict, *, include_phone: bool = True) -> Dict[str, Any]:
     # (GetLeads → Apollo) als Hunter geen e-mail oplevert. Elke provider is
     # key-gated: zonder key slaat die provider over. De keten stopt zodra een
     # provider een e-mail vindt (goedkoopste eerst).
-    primary_email = (lead.get("email") or "").strip().lower()
+    #
+    # Een algemeen postbus-adres (info@, contact@, ...) dat de scraper al op
+    # de website vond telt hier NIET als "gevonden" — anders stopt de hele
+    # keten vóórdat hij ooit naar een echte inkoper zoekt, en blijft de lead
+    # voorgoed op een adres steken dat outreach.valid_target() toch afwijst
+    # (14 sep 2026: 'info@thenailnerds.nl' bleef na verrijking het enige
+    # adres omdat het al als "gevonden" telde). Bij niets beters aan het
+    # einde geven we dit generieke adres alsnog terug — beter dan niets.
+    from .outreach import _email_is_valid
+    raw_email = (lead.get("email") or "").strip().lower()
+    generic_fallback = ""
+    primary_email = raw_email
+    if raw_email and not _email_is_valid(raw_email)[0]:
+        generic_fallback = raw_email
+        primary_email = ""
 
     if not primary_email and HUNTER_API_KEY:
         tried.append("hunter")
@@ -342,7 +356,7 @@ def run_waterfall(lead: Dict, *, include_phone: bool = True) -> Dict[str, Any]:
         "email_found": bool(primary_email),
         "phone_found": bool(primary_phone),
         "added_contacts": [c for c in merged if c not in existing],
-        "primary_email": primary_email,
+        "primary_email": primary_email or generic_fallback,
         "primary_phone": primary_phone,
         "sources_used": sorted(set(sources_used)),
         "total_contacts": len(merged),
