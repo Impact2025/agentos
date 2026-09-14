@@ -410,10 +410,27 @@ def seed_system_rules(conn=None) -> int:
     """
     from ..mail.classify import VENDOR_NOISE_DOMAINS, VENDOR_NOISE_SENDERS
 
-    eigen_domein_uitzondering = {"weareimpact.nl"}
+    # Business-domeinen die vertrouwd zijn (weareimpact.nl etc.) maar DAAROM
+    # ook nooit als 'vendor noise' mogen archiveren.  Externe e-mailproviders
+    # (gmail.com, outlook.com) horen hier NIET bij: een specifieke afzender
+    # als weareimpactnl@gmail.com is wel legitieme noise.
+    _BUSINESS_TRUSTED = (
+        "weareimpact.nl", "bewaardvoorjou.nl", "skillkaart.nl", "bijeen.app",
+        "ictusgo.nl", "movimento-zorg.nl",
+    )
+
+    eigen_domein_uitzondering = set(_BUSINESS_TRUSTED)
     patronen = {p.lower().strip() for p in VENDOR_NOISE_DOMAINS if p and p.strip()}
     patronen |= {p.lower().strip() for p in VENDOR_NOISE_SENDERS if p and p.strip()}
-    patronen -= eigen_domein_uitzondering
+    # Verwijder patronen die van een vertrouwd business-domein komen — bv.
+    # 'v.munster@weareimpact.nl' of 'bewaardvoorjou.nl'.  Zonder deze check
+    # archiveerde apply_all() op de herstart van 30-aug 2026 alle notificaties
+    # van Vincents eigen domein (weareimpact.nl is vertrouwd in _is_trusted
+    # maar dat werd niet toegepakt door het DB-rulesysteem).
+    patronen = {
+        p for p in patronen
+        if not any(td in p for td in eigen_domein_uitzondering)
+    } - set(eigen_domein_uitzondering)
 
     def _schrijf(c) -> int:
         n = 0

@@ -32,7 +32,7 @@ SPAM_SENDER_DOMAINS = (
     "beursgenoten.nl", "bewaardvoorjou", "pootgelukkig", "vrijwilligersassistent",
     "samsung.com", "email.samsung.com", "m1.email.samsung", "samsungmobile",
     "dhgate.com", "e3.dhgate.com", "ali", "wish.com", "shein", "temu",
-    "marketing", "newsletter", "nieuwsbrief", "noreply", "no-reply", "notify", "do-not-reply",
+    "marketing", "newsletter", "nieuwsbrief", "notify", "do-not-reply",
 )
 SPAM_SUBJECT_HINTS = (
     "win up to", "win up", "usdt", "btc", "crypto", "invitation to win",
@@ -139,8 +139,11 @@ VENDOR_NOISE_DOMAINS = (
     "facebookmail.com", "friendupdates", "linkedin.com/e/", "skool.com",
     "community", "digest",
     # Systeemnotificaties / rapportages (DMARC, CI, monitoring)
+    # N.B.: 'noreply' en 'no-reply' als blote substring (SCOPE_DEEL) zijn TE BREED
+    # — ze vangen elke afzender met 'noreply' in het adres, inclusief legitieme
+    # bedrijven. Verwijderd na incident 30-aug-2026 (zie classify.py commentaar).
     "dmarcreport", "dmarc", "getsentry.com", "sentry", "neon.tech",
-    "noreply", "no-reply", "mailer-daemon", "postmaster", "bounce",
+    "mailer-daemon", "postmaster", "bounce",
     "googlealerts", "googlealerts-noreply",
     # Cloud / hosting platform notificaties (GitHub, Vercel, etc.)
     "notifications@github", "github.com", "noreply@github",
@@ -151,12 +154,12 @@ VENDOR_NOISE_DOMAINS = (
 # automatische mailingen, nieuwsbrieven van eigen projecten). Worden herkend
 # op (sub)string in het adres.
 VENDOR_NOISE_SENDERS = (
-    "shop-canda.com", "bewaardvoorjou.nl", "weareimpact.nl",
-    # Eigen geautomatiseerde rapportages / dagbladen
-    "weareimpactnl@gmail.com",
-    "hello@skillkaart.nl",
-    "v.munster@weareimpact.nl",
-    "noreply@weareimpact.nl",
+    "shop-canda.com", "weareimpactnl@gmail.com",
+    # N.B.: bewaardvoorjou.nl en hello@skillkaart.nl MOETEN hier NIET staan
+    # — beide domeinen zijn vertrouwd (_is_trusted) en deze afzenders zijn
+    # Vincent's eigen / project-eigen automatisering. Na de herstart van
+    # 30-aug 2026 zijn ze samen met noreply/no-reply per ongeluk gearchiveerd.
+    # seed_system_rules() sluit nu ALLE vertrouwde domeinen expliciet uit.
 )
 
 
@@ -303,20 +306,22 @@ def classify(subject: str, body: str, from_addr: str = "", headers=None) -> str:
     return "other"
 
 
+_TRUSTED_DOMAINS = (
+    "weareimpact.nl", "bewaardvoorjou.nl", "skillkaart.nl", "bijeen.app",
+    "ictusgo.nl", "movimento-zorg.nl", "interim", "_overheid", "belasting",
+    "kvk.nl", "kamer.van.koophandel", "rabobank", "ing.nl", "abnamro",
+    "microsoft.com", "outlook.com", "live.com", "office365", "google.com",
+    "gmail.com", "linkedin.com", "xing", "novi", "huisarts", "zorg",
+)
+
+
 def _is_trusted(domain: str) -> bool:
     """Domeinen die we nooit als spam zien, ondanks een 'verdacht' substring.
 
     bv. 'notify' zit in SPAM_SENDER_DOMAINS maar ook in legitieme
     notificaties; we vertrouwen hier op expliciete whitelist.
     """
-    trusted = (
-        "weareimpact.nl", "bewaardvoorjou.nl", "skillkaart.nl", "bijeen.app",
-        "ictusgo.nl", "movimento-zorg.nl", "interim", "_overheid", "belasting",
-        "kvk.nl", "kamer.van.koophandel", "rabobank", "ing.nl", "abnamro",
-        "microsoft.com", "outlook.com", "live.com", "office365", "google.com",
-        "gmail.com", "linkedin.com", "xing", "novi", "huisarts", "zorg",
-    )
-    return any(t in domain for t in trusted)
+    return any(t in domain for t in _TRUSTED_DOMAINS)
 
 
 _DAYS = ("maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag",
