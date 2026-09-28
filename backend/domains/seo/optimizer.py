@@ -221,7 +221,8 @@ def _canonical_key(url: str) -> str:
 
 
 def _analyze_internal_links(pages: Dict[str, Dict], top_queries: Dict[str, Dict],
-                            gsc_pages: List[Dict]) -> List[Dict]:
+                            gsc_pages: List[Dict], site: Optional[Dict] = None) -> List[Dict]:
+    from .pillars import pillar_for_text
     imp_by_page = {p["page"]: p["impressions"] for p in gsc_pages}
     # Merknaam (host zonder tld) is geen bruikbaar anker — die matcht overal.
     brand_tokens = set()
@@ -255,6 +256,11 @@ def _analyze_internal_links(pages: Dict[str, Dict], top_queries: Dict[str, Dict]
             if source_key == target_key:
                 continue  # zelfde pagina (evt. www/niet-www variant)
             pair = (source_key, target_key)
+        # Pijlerterm als anker naar een andere pagina dan de pijler versterkt
+        # juist de concurrent (27 sep 2026: 'levensboek maken' → /kennisbank).
+        pijler = pillar_for_text(site or {}, anchor)
+        if pijler and pijler[1].rstrip("/") != target_path:
+            continue
             if pair in seen_pairs:
                 continue
             if target_path in source["links"]:
@@ -386,7 +392,7 @@ async def run_scan(site: Dict, types: Optional[List[str]] = None) -> Dict[str, A
     if "internal_link" in types:
         urls = [p["page"] for p in sorted(cur_pages, key=lambda x: -x["impressions"])[:_MAX_PAGES_TO_FETCH]]
         pages = await _fetch_pages(urls)
-        links = _analyze_internal_links(pages, top_queries, cur_pages)
+        links = _analyze_internal_links(pages, top_queries, cur_pages, site)
         summary["counts"]["internal_link"] = _store_suggestions(site["id"], "internal_link", links)
         summary["pages_fetched"] = len(pages)
 

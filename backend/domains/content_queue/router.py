@@ -59,8 +59,13 @@ def _with_parsed_social_copy(job: dict) -> dict:
     #zelfde check als in approve_and_publish(), hier al vóóraf uitgerekend zodat de
     # frontend niet eerst hoeft te falen bij de klik.
     try:
-        from .publish.content_pipeline import is_internal_document
+        from ..publish.content_pipeline import is_internal_document
         blocked = is_internal_document(job.get("title") or "", job.get("blog_html") or "")
+        if not blocked:
+            from ..seo.pillars import pillar_conflict
+            _site = sites_service.get_site(job["site_id"]) if job.get("site_id") else {}
+            blocked = pillar_conflict(_site or {}, job.get("title") or "",
+                                      job.get("keyword") or "", job.get("slug") or "")
         if blocked:
             job["publish_blocked"] = True
             job["publish_block_reason"] = blocked
@@ -105,6 +110,7 @@ async def approve_content_job(job_id: str, body: Optional[Dict] = Body(None)):
             job_id,
             social_channels=_channels_from_body(body),
             publish_date=(body or {}).get("publish_date") or None,
+            pillar_override=bool((body or {}).get("pillar_override")),
         )
         return {"success": True, "result": result}
     except ValueError as e:

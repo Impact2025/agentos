@@ -3225,7 +3225,8 @@ def mark_ready_for_linkedin(job_id: str) -> None:
 
 async def approve_and_publish(job_id: str,
                               social_channels: Optional[List[str]] = None,
-                              publish_date: Optional[str] = None) -> Dict:
+                              publish_date: Optional[str] = None,
+                              pillar_override: bool = False) -> Dict:
     """Publiceer naar de website van de site (Netlify óf de per-project
     publish-endpoint), dien de sitemap in bij Google Search Console, en post
     naar elk platform waarvoor de site credentials heeft. Wordt uitsluitend
@@ -3417,6 +3418,16 @@ async def approve_and_publish(job_id: str,
             site, job["title"], job["blog_html"], job["keyword"],
             job["slug"], int(job.get("seo_score") or 0),
             publish_date=publish_date)
+    # Pijlergate: een tweede artikel op een zoekterm die al een eigen pagina
+    # heeft, concurreert met die pagina (zie seo/pillars.py). Alleen met een
+    # expliciete `pillar_override` van de reviewer.
+    if not pillar_override:
+        from ..seo.pillars import pillar_conflict
+        conflict = pillar_conflict(_site_for_gate, job["title"],
+                                   job.get("keyword") or "", job.get("slug") or "")
+        if conflict:
+            raise ValueError(f"'{job['title']}' is niet publiceerbaar: {conflict}.")
+
         result["site"] = site_result
         if site_result.get("path"):
             article_url = site_result["path"]
