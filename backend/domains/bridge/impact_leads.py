@@ -74,6 +74,22 @@ def _feiten_block(lead: Dict[str, Any]) -> str:
     ook bruikbaar als Iris' analyse mislukt (zie _process_one)."""
     inputs = lead.get("inputs") or {}
     results = lead.get("results") or {}
+    if inputs.get("profiel") == "ondernemer":
+        # Ondernemersvariant: andere invoer (geen FTE-admindruk of SROI). Geen
+        # 'onbekend'-regels voor velden die hier niet bestaan.
+        return (
+            f"- Profiel: sociale/duurzame ondernemer (ondernemers-calculator)\n"
+            f"- Naam: {lead.get('naam') or 'onbekend'}\n"
+            f"- Organisatie: {lead.get('organisatie') or 'onbekend'}\n"
+            f"- E-mail: {lead.get('email')}\n"
+            f"- Grootte: {inputs.get('fte', 'onbekend')} medewerkers\n"
+            f"- Gekozen proces: {inputs.get('proces', 'onbekend')}, "
+            f"{inputs.get('urenPerWeek', 'onbekend')} uur/week à EUR {inputs.get('uurwaarde', 'onbekend')}/uur\n"
+            f"- Berekende tijdwinst: {results.get('weeklyHoursSaved', 'onbekend')} uur/week "
+            f"(aanname 30-50%, geen meting)\n"
+            f"- Waarde vrijgekomen tijd: EUR {results.get('grossSavingsPerYear', 'onbekend')}/jaar\n"
+            f"- Terugverdientijd Doorbraak Sprint (EUR 1.750): {results.get('terugverdientijdWeken', 'onbekend')} weken"
+        )
     return (
         f"- Naam: {lead.get('naam') or 'onbekend'}\n"
         f"- Organisatie: {lead.get('organisatie') or 'onbekend'}\n"
