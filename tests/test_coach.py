@@ -188,6 +188,9 @@ def test_check_and_send_whatsapp_gebruikt_bridge(monkeypatch):
     monkeypatch.setitem(
         __import__("sys").modules, "backend.domains.bridge.service", FakeBridgeService
     )
+    # `from ..bridge import service` pakt het package-attribuut zodra een eerdere test
+    # de echte module importeerde; zonder deze patch is de uitkomst volgorde-afhankelijk.
+    monkeypatch.setattr("backend.domains.bridge.service", FakeBridgeService, raising=False)
 
     sent = asyncio.run(coach_service.check_and_send_whatsapp())
 
